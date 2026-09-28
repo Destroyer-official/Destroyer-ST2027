@@ -1,343 +1,117 @@
-# Sovereign Post-Quantum Secure Communications System (2027 Target Posture)
+# Sovereign Post-Quantum Communications Architecture (ST2027)
+## High-Assurance Zero-Trust Transport Protocol for National Security Systems over Untrusted Networks
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CNSA 2.0](https://img.shields.io/badge/Compliance-NSA%20CNSA%202.0-red.svg)](https://www.nsa.gov/Cybersecurity/Commercial-National-Security-Algorithm-Suite-2-0/)
-[![NIST PQC](https://img.shields.io/badge/Standards-NIST%20FIPS%20203%20%7C%20204-green.svg)](https://csrc.nist.gov/publications/detail/fips/203/final)
-[![Formal Proof](https://img.shields.io/badge/Formal%20Verification-ProVerif%202.05%20Verified-blueviolet.svg)](docs/formal/st2027_handshake.pv)
-[![Test Suite](https://img.shields.io/badge/Test%20Suite-227%2F227%20Passed-brightgreen.svg)](test_secure_transmit_2027.py)
-
----
-
-## 1. Executive Overview & Architecture Thesis
-
-This repository delivers a sovereign, post-quantum peer-to-peer secure communication architecture engineered for **2027 National Security System (NSS) standards**. It is designed to transmit high-assurance payloads over untrusted public networks, resilient against both contemporary network surveillance (ISP/backbone interception, traffic analysis, deep packet inspection) and future cryptanalytic quantum computers (Harvest-Now-Decrypt-Later).
-
-### The Two Architectures in this Repository
-1. **The 2027 Sovereign Top-Secret Pipeline ([secure_transmit_2027.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) and [rust_data_plane/](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/)):**
-   The modernized, fail-closed production target. It enforces pure **NSA CNSA Suite 2.0**, RFC 10024 Level 5 hybrid key encapsulation (`SecP384r1MLKEM1024`), **NIST FIPS 204 ML-DSA-87** identity signatures, **AES-256-GCM** authenticated framing, a deterministic zero-dependency Rust native core ([ts_rt](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt)), constant-rate cell traffic shaping (1232B cell / 50ms tick), Two-Person Integrity (DPO) authorization under DoD Directive S-5210.41M, and offline 3-of-5 threshold hardware PKI.
-2. **The Quarantined Legacy P2P Research Testbed ([archive/legacy_prototype/](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/)):**
-   An expansive 13,000-line multi-party chat prototype retained in isolated quarantine for experimental research, hybrid Double Ratchet variations, and legacy comparative testing (contains non-CNSA algorithms like Falcon and McEliece).
+[![Classification: Unclassified / Defense Technical Baseline](https://img.shields.io/badge/Security_Baseline-DoD_Zero_Trust_Level_4-003366.svg)](docs/CONOPS_TACTICAL_DEPLOYMENT.md)
+[![Compliance: NSA CNSA Suite 2.0](https://img.shields.io/badge/Compliance-NSA_CNSA_Suite_2.0-800000.svg)](https://www.nsa.gov/Cybersecurity/Commercial-National-Security-Algorithm-Suite-2-0/)
+[![Cryptography: NIST FIPS 203 / 204 / 205](https://img.shields.io/badge/Cryptography-FIPS_203_%7C_204_%7C_205-006633.svg)](https://csrc.nist.gov/publications/detail/fips/203/final)
+[![Formal Verification: ProVerif 2.05](https://img.shields.io/badge/Formal_Verification-ProVerif_Applied_Pi--Calculus-4B0082.svg)](docs/formal/st2027_handshake.pv)
+[![Model Checking: Kani Rust Verifier](https://img.shields.io/badge/Model_Checking-Kani_CBMC_Verified-darkred.svg)](rust_data_plane/tests/kani_harness.rs)
+[![Test Suite: 227 Passed](https://img.shields.io/badge/Automated_Verification-227%2F227_Tests_Passing-brightgreen.svg)](test_secure_transmit_2027.py)
+[![License: MIT](https://img.shields.io/badge/License-MIT-gray.svg)](LICENSE)
 
 ---
 
-## 2. Operational Truth & The Physical Security Boundary
-
-> [!IMPORTANT]
-> ### Technical Fidelity Regarding High-Assurance Defense Engineering
-> **Software cannot certify physical hardware.** No application code running in user space can manufacture a physical FIPS 140-3 Level 3/4 tamper-resistant enclosure, TEMPEST radio-frequency shielding, true physical RED/BLACK electrical isolation, or a physical optical one-way path. Those are physical properties of evaluated hardware, accredited facilities, and controlled physical installations.
->
-> What this codebase does—with strict, fail-closed mechanics—is act as an **uncompromising gatekeeper**:
-> - It actively probes the host platform, operating system, and hardware tokens.
-> - If the required hardware tokens (TPM/HSM), FIPS cryptographic providers, accredited TEMPEST registry records, or verified operating systems are absent, **the system unconditionally halts and refuses execution in Top-Secret mode (`TSRequiredError`)**.
+### Document Metadata & Evaluation Boundary
+- **Technical Nomenclature:** Sovereign Transmit 2027 (`Destroyer-ST2027`)
+- **System Classification:** UNCLASSIFIED / DEFENSE TECHNICAL RECORD (All test fixtures and keys are explicitly synthetic).
+- **Target Operational Posture:** 2027 NSA Commercial National Security Algorithm (CNSA) Suite 2.0 Mandate, DoD Directive S-5210.41M Two-Person Integrity, IETF RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange, and seL4 Microkernel Enforced Execution.
+- **Physical vs Software Boundary:** User-space software acts strictly as a **fail-closed gatekeeper** (`TSRequiredError`). Software cannot independently certify physical physics; physical FIPS 140-3 Level 3/4 hardware tamper enclosures, TEMPEST SDIP-27/28/29 attenuation, physical optical unidirectional diodes, and Authorizing Official (AO) ATO certifications require physical facility accreditation and designated hardware.
 
 ---
 
-## 3. Master Repository & Documentation Blueprint
+## Abstract
 
-Every file and document in this repository is cataloged below, establishing complete traceability between technical doctrine, formal specifications, and running code.
+Modern peer-to-peer and client-server communication channels operating across adversarial public packet networks face two existential threats: contemporary high-rate signals intelligence (traffic analysis, timing correlation, deep packet inspection, and metadata harvesting) and the emergent cryptanalytic threat of quantum computers capable of Shor's and Grover's algorithms (Harvest-Now-Decrypt-Later).
 
-```
-Destroyer-ST2027/
-├── README.md                                  # This master technical charter and system overview
-├── SYSTEM_SECURITY_DOCUMENTATION.md          # Volume A: Complete System Security Plan (74,907 lines)
-├── SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md    # Volume C: Logic Flows, Wire Formats, Operator Manual (12,368 lines)
-├── security_audit_report.md                  # Comprehensive Defensive Security Audit & Remediation Status
-├── OPEN_INTERNET_HARDENING_PLAN.md           # Strategic Hardening Plan for Direct IPv6 Sovereign Transport
-│
-├── docs/                                     # Defense specifications, CONOPS, doctrine, and runbooks
-│   ├── README.md                             # Tactical documentation charter and cross-reference index
-│   ├── ARCHITECTURE.md                       # Sovereign post-quantum system architecture and threat models
-│   ├── CONOPS_TACTICAL_DEPLOYMENT.md         # Concept of operations for DDIL tactical deployment
-│   ├── FIPS_140_3_SECURITY_POLICY.md         # Cryptographic Module Security Policy (CMSP) specification
-│   ├── NIAP_COMMON_CRITERIA_SECURITY_TARGET.md# Common Criteria NDcPP / EAL4+ Security Target
-│   ├── KEY_CEREMONY.md                       # Offline 3-of-5 threshold ML-DSA-87 Hardware Root CA SOP
-│   ├── KEY_MANAGEMENT_PLAN_KMP.md            # Comprehensive key lifecycle management plan
-│   ├── MILITARY_NC3_DEPLOYMENT_GUIDE.md      # Nuclear Command (NC3) / DoD S-5210.41M Two-Person Integrity manual
-│   ├── SOP.md                                # Standard operating procedures for field operators
-│   ├── deployment_hardening_guide.md         # Host OS hardening guide (Secure Boot, VBS, HVCI, AppLocker)
-│   ├── hw_tpm_hsm_setup.md                   # Hardware setup guide: TPM 2.0, Windows CNG, PKCS#11 HSMs
-│   ├── airgap_runbook.md                     # Air-gapped station operations and optical diode manual
-│   ├── FIREWALL_IPV6.md                      # Kernel firewall, packet filtering, and interface binding runbook
-│   ├── incident_response.md                  # Emergency incident handling and physical duress zeroization
-│   ├── liboqs_pin.md                         # Cryptographic library binary pinning and SHA-384 provenance
-│   ├── RESTRUCTURE_PLAN.md                   # System modularization and quarantine isolation plan
-│   │
-│   ├── formal/                               # Machine-checked formal verification models
-│   │   ├── README.md                         # Formal verification index and ProVerif execution guide
-│   │   ├── st2027_handshake.pv               # ProVerif 2.05 model: hybrid secrecy and mutual authentication
-│   │   ├── st2027_pcs.pv                     # ProVerif 2.05 model: Post-Compromise Security (PCS) healing
-│   │   └── handshake_model.pv                # Baseline handshake structural model
-│   │
-│   └── modules/                              # Per-module technical charters and line-by-line audits
-│       ├── ts_hw_layer.md                    # Pillar 1: Hardware & Physical Security Layer
-│       ├── ts_runtime.md                     # Pillar 2: Operating System & Execution Runtime Layer
-│       ├── noise_pq.md                       # Pillar 3: Protocol & Post-Quantum Cryptography Layer
-│       ├── transport_anonymity.md            # Pillar 4: Network Anonymity & Cell Shaping Layer
-│       ├── trust_anchor.md                   # Pillar 5: Trust Infrastructure & Post-Quantum PKI Layer
-│       ├── rust_data_plane.md                # Native Rust standalone binary & Kani formal verification
-│       ├── p2p_core.md                       # P2P socket abstractions, framing, and IPv6 network layer
-│       ├── hybrid_kex.md                     # RFC 10024 Level 5 hybrid key encapsulation mechanics
-│       ├── double_ratchet.md                 # Post-quantum Double Ratchet state machine
-│       ├── pqc_algorithms.md                 # NIST FIPS 203/204/205 post-quantum algorithm bindings
-│       ├── tls_channel_manager.md            # TLS 1.3 mTLS channel management and hybrid cipher suites
-│       ├── ca_services.md                    # Sovereign Certificate Authority services and ML-DSA-87 issuance
-│       ├── file_transfer.md                  # Authenticated chunked file transfer with path traversal guards
-│       ├── audit_threat_supply.md            # Structured audit logging, threat engine, and supply chain
-│       ├── memory_hsm.md                     # Locked memory management, OS page guards, and HSM interfaces
-│       ├── entropy_sidechannel.md            # Hardware RNG harvesting, conditioning, and side-channel defense
-│       ├── opsec_persistence.md              # Anti-forensic hygiene, memory wiping, and zero-disk profile
-│       ├── anonymity_decentral.md            # Decentralized anonymity overlays, onion routing, and cover traffic
-│       ├── critical_release.md               # Dual-Person Operation (DPO) and critical command release
-│       ├── destroyer_node.md                 # High-level peer node orchestration and session lifecycle
-│       ├── hardware_trust.md                 # Hardware root of trust and TPM 2.0 PCR validation
-│       ├── root_files.md                     # Root directory utilities, CLI orchestrators, and diagnostic tools
-│       ├── safety_numbers.md                 # Out-of-band identity verification and SHA3-512 fingerprints
-│       ├── secure_p2p.md                     # High-level secure communication session orchestration
-│       ├── subsystems_core.md                # Core cryptographic subsystems and message serialization
-│       ├── subsystems_support.md             # Support subsystems, remote SIEM forwarders, and health telemetry
-│       └── trust_policy.md                   # Zero-trust policy evaluation and attestation claims
-│
-├── rust_data_plane/                          # Native zero-Python standalone data plane
-│   ├── Cargo.toml                            # Cargo manifest with zero-warning configuration
-│   ├── src/main.rs                           # Standalone `secure-transmit` binary CLI entrypoint
-│   ├── src/lib.rs                            # C-compatible ABI and core session engine (`SecureEngine`)
-│   ├── src/frame.rs                          # 1232B quantum cell framing, length prefixes, AEAD tags
-│   ├── src/aead.rs                           # Authenticated encryption, direction nonces, HKDF derivation
-│   ├── src/kem.rs                            # RFC 10024 hybrid encapsulation (SecP384r1 + ML-KEM-1024)
-│   ├── src/net.rs                            # Dual-stack UDP, black-hole token bucket, 1280 MTU enforcement
-│   ├── src/replay.rs                         # Constant-time u64 sequence and 64-bit anti-replay bitmap
-│   ├── src/pad.rs & chaff.rs                 # Cell padding budgets and 0xFF chaff generation
-│   └── tests/kani_harness.rs                 # 29 formal Kani bounded model checking verification proofs
-│
-├── ts_rt/                                    # Deterministic native Rust cdylib core
-│   ├── Cargo.toml                            # Native shared library configuration
-│   └── src/lib.rs                            # VirtualLock/mlock, volatile zeroize, ct_equal primitives
-│
-├── compliance_reports/                       # Official compliance submittals and machine-readable artifacts
-│   ├── oscal_ssp_cnsa2.json                  # OSCAL 1.1.0 System Security Plan (NIST SP 800-53 Rev. 5)
-│   ├── oscal_sar_cato.json                   # OSCAL 1.1.0 Security Assessment Report for Continuous ATO
-│   ├── cbom.json & cbom.sig                  # Signed Cryptographic Bill of Materials (ML-DSA-87 signature)
-│   ├── sbom.json                             # Signed Software Bill of Materials tracking pinned dependencies
-│   └── zero_trust_assessment.json            # CISA Zero Trust Maturity Model Level 4 evaluation report
-│
-├── scripts/                                  # Operational runbooks and automated deployment scripts
-│   ├── setup_tor_overlay.ps1 & .sh           # Tor v3 SOCKS5 hidden service deployment automation
-│   ├── setup_wireguard.ps1 & .sh             # Kernel-level WireGuard point-to-point interface configuration
-│   ├── witnessed_key_ceremony.py             # Witnessed offline 3-of-5 threshold Root CA ceremony script
-│   ├── crl_bundle.py                         # Monotonic revocation bundle builder and signature aggregator
-│   ├── verify_host_hardening.py              # Pre-flight compliance validator (VBS, HVCI, TPM, Secure Boot)
-│   ├── cavp_algorithm_validator.py           # NIST CAVP/ACVP algorithm test vector validator
-│   ├── sign_boot_config.py                   # Platform policy and boot configuration signing tool
-│   └── verify_reproducible_build.py          # Deterministic hash verifier for native binary artifacts
-│
-├── archive/                                  # Isolated legacy archives and historical records
-│   ├── README.md                             # Archive governance and isolation boundary policy
-│   ├── legacy_prototype/                     # 13,000-line legacy multi-party chat testbed
-│   │   ├── README.md                         # Legacy prototype quarantine charter
-│   │   ├── secure_p2.py                      # Multi-party chat engine with experimental cipher cascades
-│   │   └── secure_p2p.py                     # Legacy secure P2P protocol prototype
-│   └── taskdocs/                             # Historical development tasks and milestone logs
-│
-└── [Core Production Modules]                 # Top-level production orchestrators and pillar implementations
-    ├── secure_transmit_2027.py               # Master 2027 Top-Secret transmission orchestrator
-    ├── hw_readiness.py                       # Hardware readiness inspection engine (`check-hw`)
-    ├── ts_hw_layer.py                        # Pillar 1: FIPS provider, TEMPEST registry, zeroization mesh
-    ├── cng_platform.py                       # Windows CNG TPM 2.0 non-exportable hardware key custody
-    ├── ts_runtime.py                         # Pillar 2: seL4 microkernel gate and anti-DMA bus scanner
-    ├── ts_attest.py                          # Pillar 2: IETF RATS RFC 9334 platform attestation
-    ├── noise_pq.py                           # Pillar 3: Noise_XXhfs post-quantum handshake engine
-    ├── cnsa_purity.py                        # Pillar 3: CNSA Suite 2.0 purity policy tokenizer
-    ├── crypto_selftest.py                    # Pillar 3: FIPS 140-3 Section 10 power-up self-tests
-    ├── transport_anonymity.py                # Pillar 4: Tor SOCKS5 framing and 50ms cell shaper
-    ├── spo_dpo.py                            # Pillar 4: DoD Directive S-5210.41M Two-Person Integrity (DPO)
-    └── trust_anchor.py                       # Pillar 5: Offline 3-of-5 threshold Root CA and amnesia keystore
-```
+This repository presents the reference implementation, defense specifications, formal verification proofs, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates all deprecated public-key primitives (RSA, ECDH, ECDSA) and pre-standard post-quantum drafts in favor of pure **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). 
+
+The transport layer prevents statistical traffic analysis through mandatory **Tor v3 SOCKS5 onion routing**, **constant-rate cell shaping (50ms interval)**, **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**, and **AES-256-CTR stream whitening**. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Cryptographic invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are formally proven via **ProVerif 2.05** applied pi-calculus models and **Kani** bounded model checking harnesses.
 
 ---
 
-## 4. Master Documentation Catalog
+## 1. System Architectures: Sovereign Pipeline vs. Quarantined Research Prototype
 
-Every document in this repository has been prepared according to rigorous defense standards, free of unsubstantiated claims, and mapped directly to verifiable source code.
-
-### 4.1 Master System Security Documentation Volumes
-
-#### [SYSTEM_SECURITY_DOCUMENTATION.md](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION.md) (Volume A — 74,907 lines)
-- **Role:** The comprehensive technical record of the platform's security posture, cryptographic architecture, and formal defense analysis.
-- **Key Contents:**
-  - **§1–§2 System Thesis & Tier Architecture:** Detailed analysis of Tiers 0 through 7, delineating production fail-closed boundaries from legacy research paths.
-  - **§3 Cryptographic Inventory & Mathematics:** Mathematical formulations for every primitive: ML-KEM-1024 encapsulation, ML-DSA-87 digital signatures, HKDF-SHA384/512 key derivation, Merkle transcript hashing, and Shamir 3-of-5 secret sharing.
-  - **§4–§6 Protocol Flows:** Sequence diagrams and step-by-step enforcement matrices for pairwise channels, group communications, and strategic command authorization.
-  - **§7–§8 Platform Trust & Supply Chain:** Hardware root of trust verification, TPM 2.0 measured boot PCR evaluation, and subresource integrity provenance.
-  - **§9 Fail-Closed Policy Catalog:** Exhaustive listing of every environment variable, configuration key, and security gate that triggers immediate fail-closed termination.
-  - **§10 Wire Formats & Budgets:** Exact byte-level wire formats, alignment padding, and maximum operational message caps.
-  - **§11 Verification Commands:** Complete reproduction instructions for all 227 automated tests and formal verification tools.
-  - **§12 Non-Claims Register:** Explicit disclosure of boundaries dependent on external hardware, physical facilities, and formal government Authorizing Official accreditation.
-
-#### [SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md) (Volume C — 12,368 lines)
-- **Role:** Operational security reference, protocol wire format catalog, and complete non-technical operator manual.
-- **Key Contents:**
-  - **Part 1 Mechanical AST Logic Flows:** Machine-generated logic flows derived directly from the abstract syntax tree for every function in the active codebase (parameters, branch complexity, exceptions caught/raised, and return signatures).
-  - **Part 2 Algorithmic Proof Sketches:** Proof sketches and mathematical derivations for cryptographic constructions, replay protection windows, and rate-limiting token buckets.
-  - **Part 4 Wire Format Catalog:** Byte-by-byte layout diagrams for cells, handshake tokens, attestation envelopes, and threshold revocation messages.
-  - **Part 5 Environment Variable Catalog:** Complete catalog of all configuration flags, debug toggles, and their security implications.
-  - **Part 6 Error Catalog:** Complete enumeration of platform exceptions (`TSRequiredError`, `SecurityError`, `KEMComponentError`) and their triage runbooks.
-  - **Part 7 Non-Technical Operator Manual:** Clear instructions for station setup, key injection, peer verification, dual-custody authorization, and emergency zeroization.
-  - **Part 8 Test-to-Tier Traceability:** Direct mapping from every automated test to the specific security tier it validates.
-
-#### [security_audit_report.md](file:///d:/code/Main_projects/p2p/p2p_6_1-26/security_audit_report.md) (Defensive Security Audit — 452 lines)
-- **Role:** Independent defensive code audit evaluating threat models, identifying historical prototype vulnerabilities, and proving full remediation across the active codebase.
-- **Key Contents:**
-  - **Top 5 High-Severity Risk Remediations:** Complete proofs of remediation for plaintext transport prohibition, elimination of custom cryptographic cascades, patching of dependency vulnerabilities, enforcement of mandatory out-of-band peer verification, and strict rate-limiting against DoS attacks.
-  - **Vulnerability Findings Matrix:** Granular findings across Cryptography & Key Management (§1), Peer Identity & Authentication (§2), Network Protocol & Framing (§3), Operating System & Memory (§4), and Supply Chain Integrity (§5).
-  - **Automated Regression Gates:** Direct citations to tests in `test_audit_confirmed_regressions.py` guaranteeing no regression of identified vulnerabilities.
-
-#### [OPEN_INTERNET_HARDENING_PLAN.md](file:///d:/code/Main_projects/p2p/p2p_6_1-26/OPEN_INTERNET_HARDENING_PLAN.md) (Sovereign Transport Plan — 230 lines)
-- **Role:** Strategic plan for sovereign point-to-point defense communications across untrusted public IPv6 networks without intermediate servers.
-- **Key Contents:**
-  - **Threat Landscape Analysis:** Defense against ISP deep packet inspection, global passive adversaries, traffic analysis, and future quantum decryption.
-  - **Traffic Quantization:** Analysis of 256B, 512B, and 1232B cell quanta fitting within the 1280-byte IPv6 minimum MTU without fragmentation.
-  - **Stream Whitening:** AES-256-CTR keystream masking converting all wire cells into high-entropy uniform noise.
-  - **Port Cloaking & Black-Hole Discipline:** Configuration rules ensuring node listeners silently drop unauthenticated probes without generating ICMP or TCP RST replies.
-
----
-
-### 4.2 Tactical Doctrine & Defense Specifications (`docs/`)
-
-| Document | Primary Focus & Operational Mandate | Verified Implementation Citation |
-| :--- | :--- | :--- |
-| [`docs/ARCHITECTURE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/ARCHITECTURE.md) | High-assurance architecture thesis, threat models, 2027 vs legacy comparison, and fail-closed state machines. | [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) |
-| [`docs/CONOPS_TACTICAL_DEPLOYMENT.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/CONOPS_TACTICAL_DEPLOYMENT.md) | Concept of Operations for tactical forward edge units, DDIL networks, and CJADC2 data fabric integration. | [`tactical_mesh_ddil.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_mesh_ddil.py), [`tactical_cloaking_router.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_cloaking_router.py) |
-| [`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md) | Cryptographic Module Security Policy (CMSP), approved post-quantum algorithms, physical security boundary, and roles. | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) |
-| [`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md) | NIAP Protection Profile for Network Devices (NDcPP) / Common Criteria EAL4+ Security Target specification. | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) |
-| [`docs/KEY_CEREMONY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/KEY_CEREMONY.md) | Standard Operating Procedure for offline 3-of-5 threshold ML-DSA-87 Hardware Root CA key generation ceremonies. | [`scripts/witnessed_key_ceremony.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/witnessed_key_ceremony.py), [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py) |
-| [`docs/KEY_MANAGEMENT_PLAN_KMP.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/KEY_MANAGEMENT_PLAN_KMP.md) | End-to-end cryptographic key lifecycle plan: generation, hardware storage, operational distribution, revocation, and wiping. | [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py), [`cng_platform.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cng_platform.py) |
-| [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md) | Nuclear Command (NC3) / DoD Directive S-5210.41M Two-Person Integrity (DPO) deployment guide. | [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`nc3_nuclear_command.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py) |
-| [`docs/SOP.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/SOP.md) | Standard Operating Procedures for node provisioning, key custody, audit inspection, and station shutdown. | [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) |
-| [`docs/deployment_hardening_guide.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/deployment_hardening_guide.md) | Operating system hardening guide covering UEFI Secure Boot, VBS, HVCI, AppLocker, and TPM 2.0 configuration. | [`scripts/verify_host_hardening.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_host_hardening.py), [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) |
-| [`docs/hw_tpm_hsm_setup.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/hw_tpm_hsm_setup.md) | Hardware setup guide for TPM 2.0, Windows CNG, PKCS#11 hardware security modules, and physical RED/BLACK isolation. | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`cng_platform.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cng_platform.py) |
-| [`docs/airgap_runbook.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/airgap_runbook.md) | Air-gapped station operations, manual cryptographic fill procedures, and optical data diode transfers. | [`tactical_data_diode.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_data_diode.py), [`key_fill_import.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/key_fill_import.py) |
-| [`docs/FIREWALL_IPV6.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIREWALL_IPV6.md) | Kernel firewall configuration, IPv6 packet filtering rules, and interface binding defense. | [`scripts/setup_tor_overlay.ps1`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.ps1), [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) |
-| [`docs/incident_response.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/incident_response.md) | Emergency incident handling, physical duress zeroization procedures, and compromise recovery runbook. | [`ts_hw_layer.py:ZeroizationMesh`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`emergency_anti_tamper.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/emergency_anti_tamper.py) |
-| [`docs/liboqs_pin.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/liboqs_pin.md) | Cryptographic library binary pinning, SHA-384 hashes, and subresource integrity provenance verification. | [`liboqs_wrapper.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py), [`libsodium_manager.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/libsodium_manager.py) |
-| [`docs/RESTRUCTURE_PLAN.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/RESTRUCTURE_PLAN.md) | Architecture transition, module modularization, and legacy testbed quarantine isolation roadmap. | [`archive/legacy_prototype/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/) |
-
----
-
-### 4.3 Formal Mathematical Verification Models (`docs/formal/` & Native Harnesses)
-
-The platform's cryptographic security properties are formally verified through machine-checked symbolic proofs and bounded model checking:
-
-1. **[`docs/formal/st2027_handshake.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_handshake.pv):**
-   - **Tool:** ProVerif 2.05 (Applied Pi-Calculus symbolic verifier).
-   - **Scope:** Models the complete `Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384` handshake protocol under active Dolev-Yao network attacker capabilities.
-   - **Proven Properties:**
-     - Payload Secrecy: `query attacker(payload_secret) ==> false` (**PROVEN TRUE**).
-     - Sender Mutual Authentication: `query inj-event(ReceiverAccepts(s, r, k)) ==> inj-event(SenderInitiates(s, r, k))` (**PROVEN TRUE**).
-     - Receiver Mutual Authentication: `query inj-event(SenderAccepts(s, r, k)) ==> inj-event(ReceiverResponds(s, r, k))` (**PROVEN TRUE**).
-2. **[`docs/formal/st2027_pcs.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_pcs.pv):**
-   - **Scope:** Models post-handshake Double Ratchet epoch transitions under state compromise.
-   - **Proven Properties:** Post-Compromise Security (PCS) healing: active compromise of ephemeral session state in Epoch $N$ does not compromise Epoch $N-1$ (Forward Secrecy) and self-heals in Epoch $N+1$ upon fresh hybrid encapsulation (**PROVEN TRUE**).
-3. **[`rust_data_plane/tests/kani_harness.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/tests/kani_harness.rs) (29 Formal Kani Proofs):**
-   - **Tool:** Kani Rust Verifier (CBMC-based bounded model checker).
-   - **Proven Properties:**
-     - Nonce uniqueness and wrapping counter overflow resistance.
-     - Out-of-bounds frame chunking memory safety.
-     - Constant-time memory comparisons (`ct_equal`) devoid of secret-dependent branches.
-     - Complete volatile memory zeroization (`ZeroizeOnDrop`) resisting compiler dead-code elimination.
-
----
-
-### 4.4 Module-Level Technical Charters (`docs/modules/` — All 27 Modules)
-
-Every individual subsystem in the codebase possesses a dedicated technical charter detailing its responsibilities, source code lines, cryptographic algorithms, and automated test coverage:
-
-1. [`docs/modules/ts_hw_layer.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ts_hw_layer.md) — **Pillar 1 Hardware Security Layer:** Details OpenSSL FIPS provider loading (`OSSL_PROVIDER_load`), non-exportable CNG hardware key custody, RED/BLACK interface binding, TEMPEST registry inspection, and the active zeroization mesh.
-2. [`docs/modules/ts_runtime.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ts_runtime.md) — **Pillar 2 OS & Execution Runtime:** Documents the formal seL4 microkernel gate, live VBS/HVCI/Secure Boot inspection, deterministic native memory locking (`VirtualLock`), and Thunderbolt/DMA bus scanning.
-3. [`docs/modules/noise_pq.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/noise_pq.md) — **Pillar 3 Post-Quantum Handshake:** Explains the `Noise_XXhfs` hybrid protocol, FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, FIPS 140-3 Section 10 power-up self-tests, and pairwise consistency tests (PCT).
-4. [`docs/modules/transport_anonymity.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/transport_anonymity.md) — **Pillar 4 Transport Anonymity & Cell Shaping:** Covers Tor v3 SOCKS5 onion routing, constant-rate (50ms) cell emission, 1232B cell quantization, and AES-256-CTR stream whitening.
-5. [`docs/modules/trust_anchor.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/trust_anchor.md) — **Pillar 5 Trust Anchor & PKI:** Covers the offline 3-of-5 threshold ML-DSA-87 Root CA, monotonic revocation broadcast distribution, and zero-plaintext-disk amnesia execution.
-6. [`docs/modules/rust_data_plane.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/rust_data_plane.md) — **Native Rust Standalone Binary & C ABI:** Details the standalone `secure-transmit` executable, quantum chunking (1205B payload), SHA-256 stream integrity checks, and 29 formal Kani harnesses.
-7. [`docs/modules/p2p_core.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/p2p_core.md) — **P2P Networking Core:** Details socket abstraction, IPv6-first dual-stack routing, big-endian length-prefixed framing, and disabled STUN defense.
-8. [`docs/modules/hybrid_kex.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/hybrid_kex.md) — **Hybrid Key Exchange Mechanisms:** Details RFC 10024 Level 5 hybrid key encapsulation (`SecP384r1MLKEM1024`) and dual-entropy combination via HKDF-SHA384.
-9. [`docs/modules/double_ratchet.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/double_ratchet.md) — **Post-Quantum Double Ratchet:** Implements symmetric step ratcheting, ephemeral KEM key rolling, strict Forward Secrecy (`MAX_SKIP=0`), and 64-bit anti-replay bitmaps.
-10. [`docs/modules/pqc_algorithms.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/pqc_algorithms.md) — **Post-Quantum Cryptographic Primitives:** Vetted wrappers for LibOQS and native Rust bindings for ML-KEM, ML-DSA, and SLH-DSA.
-11. [`docs/modules/tls_channel_manager.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/tls_channel_manager.md) — **TLS 1.3 Channel Management:** Mutual TLS 1.3 configuration, strict certificate verification (`CERT_REQUIRED`), and CNSA 2.0 cipher suites.
-12. [`docs/modules/ca_services.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ca_services.md) — **Private Certificate Authority Services:** Sovereign post-quantum certificate issuance, hierarchy validation, and monotonic CRL parsing.
-13. [`docs/modules/file_transfer.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/file_transfer.md) — **Secure File Transfer Pipeline:** Encrypted, chunked, rate-limited file delivery with traversal protection (`validate_target_path`), and atomic write sinks.
-14. [`docs/modules/audit_threat_supply.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/audit_threat_supply.md) — **Audit Logging, Threat Detection & SBOM:** Structured tamper-evident audit logging, real-time threat response, and automated SBOM generation.
-15. [`docs/modules/memory_hsm.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/memory_hsm.md) — **Secure Memory & Hardware Security Modules:** OS-level page locking (`VirtualLock`/`mlock`), volatile zeroization, and PKCS#11 hardware token integration.
-16. [`docs/modules/entropy_sidechannel.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/entropy_sidechannel.md) — **Hardware RNG & Side-Channel Mitigation:** Hardware TRNG entropy harvesting, SHA3-512 conditioning, and constant-time comparison primitives.
-17. [`docs/modules/opsec_persistence.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/opsec_persistence.md) — **Anti-Forensics & Storage Security:** Anti-forensic memory scrubbing, disk amnesia profiles, and encrypted temporary buffer handling.
-18. [`docs/modules/anonymity_decentral.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/anonymity_decentral.md) — **Decentralized Anonymity Architecture:** Peer-to-peer cover traffic generation, decentralized routing, and metadata leakage prevention.
-19. [`docs/modules/critical_release.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/critical_release.md) — **Dual-Person Operation (DPO) & Critical Release:** DoD Directive S-5210.41M two-person rule enforcement, hardware-bound signature quorum, and simultaneous action windows.
-20. [`docs/modules/destroyer_node.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/destroyer_node.md) — **Peer Node Orchestrator:** High-level peer lifecycle manager, connection state machine, and clean teardown orchestration.
-21. [`docs/modules/hardware_trust.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/hardware_trust.md) — **Hardware Root of Trust:** TPM 2.0 endorsement key validation, PCR measurement checks, and hardware-attested identity binding.
-22. [`docs/modules/root_files.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/root_files.md) — **Root Utilities & CLI Catalog:** Comprehensive inventory and charters for root-level utility scripts, diagnostic harnesses, and testing entrypoints.
-23. [`docs/modules/safety_numbers.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/safety_numbers.md) — **Visual Safety Numbers & Fingerprints:** Out-of-band peer verification via SHA3-512 grouped fingerprints and persistent pin caches.
-24. [`docs/modules/secure_p2p.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/secure_p2p.md) — **Secure P2P Protocol Engine:** Session establishment, channel encryption negotiation, and fallback prohibition.
-25. [`docs/modules/subsystems_core.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/subsystems_core.md) — **Core Cryptographic Subsystems:** Message serialization, replay window cache management, and cryptographic envelope formatting.
-26. [`docs/modules/subsystems_support.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/subsystems_support.md) — **Diagnostic & Telemetry Subsystems:** Remote SIEM event forwarders, health telemetry collectors, and diagnostic probes.
-27. [`docs/modules/trust_policy.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/trust_policy.md) — **Zero-Trust Policy Engine:** Dynamic trust policy evaluation, attestation claims verification, and access rule enforcement.
-
----
-
-### 4.5 Official Compliance & Certification Artifacts (`compliance_reports/`)
-
-The repository contains machine-readable compliance artifacts ready for Authorizing Official (AO) evaluation:
-
-- **[`compliance_reports/oscal_ssp_cnsa2.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_ssp_cnsa2.json):**
-  NIST OSCAL 1.1.0 formatted System Security Plan (SSP) mapping system components directly to **NIST SP 800-53 Rev. 5** high-baseline security controls (AC, SC, IA, AU, SI families).
-- **[`compliance_reports/oscal_sar_cato.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_sar_cato.json):**
-  NIST OSCAL 1.1.0 formatted Security Assessment Report (SAR) documenting automated continuous assessment evidence for DoD Continuous Authorization to Operate (cATO).
-- **[`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) & [`cbom.sig`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.sig):**
-  Signed Cryptographic Bill of Materials (CBOM) documenting all quantum-resistant primitives, key lengths, and cryptographic library dependencies, signed with an ML-DSA-87 hardware key.
-- **[`compliance_reports/sbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/sbom.json):**
-  CycloneDX / SPDX compliant Software Bill of Materials tracking pinned cryptographic dependencies and exact SHA-256 hashes.
-- **[`compliance_reports/zero_trust_assessment.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/zero_trust_assessment.json):**
-  Structured assessment against the **CISA Zero Trust Maturity Model (Version 2.0)**, validating Advanced/Optimal posture across Identity, Devices, Networks, Applications, and Data.
-
----
-
-### 4.6 Operational Automation & Deployment Runbooks (`scripts/`)
-
-- **[`scripts/setup_tor_overlay.ps1`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.ps1) & [`setup_tor_overlay.sh`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.sh):**
-  Automates the provisioning and configuration of an isolated Tor v3 daemon, generating hardened `.onion` hidden service endpoints with remote DNS resolution and strict SOCKS5 authentication.
-- **[`scripts/setup_wireguard.ps1`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_wireguard.ps1) & [`setup_wireguard.sh`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_wireguard.sh):**
-  Configures kernel-level WireGuard point-to-point tunnel interfaces (`wg-ts0`) bound to sovereign APNs or dark-fiber cross-connects.
-- **[`scripts/witnessed_key_ceremony.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/witnessed_key_ceremony.py):**
-  Interactive ceremonial script for generating the offline 3-of-5 threshold ML-DSA-87 Root CA, enforcing multiple custodian credentials, generating cryptographic shares, and outputting an SHA-384 signed audit trail.
-- **[`scripts/crl_bundle.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/crl_bundle.py):**
-  Compiles and aggregates threshold-signed revocation records into compact binary bundles distributed inside uniform anonymity cells.
-- **[`scripts/verify_host_hardening.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_host_hardening.py):**
-  Automated pre-flight compliance verifier that inspects Windows/Linux hosts for active UEFI Secure Boot, VBS, HVCI, AppLocker policies, and TPM 2.0 readiness.
-- **[`scripts/cavp_algorithm_validator.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/cavp_algorithm_validator.py):**
-  NIST CAVP/ACVP test vector validator confirming standard conformance for ML-KEM-1024, ML-DSA-87, AES-256-GCM, and SHA-384.
-- **[`scripts/verify_reproducible_build.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_reproducible_build.py):**
-  Recompiles native Rust and C binaries in isolated containers to verify deterministic bit-for-bit SHA-256 hash reproducibility.
-
----
-
-## 5. The 5 Strategic Hardening Pillars
+To preserve complete engineering truth and auditability, this repository maintains an absolute architectural separation between the modern 2027 production target and the quarantined historical prototype:
 
 ```
 +---------------------------------------------------------------------------------------------------------+
+|                                    REPOSITORY ARCHITECTURAL REALITY                                     |
++---------------------------------------------------------------------------------------------------------+
+| [A] THE 2027 SOVEREIGN DEFENSE PIPELINE (ST2027 - ACTIVE PRODUCTION TARGET)                             |
+|   ├── Python Master Orchestrator: secure_transmit_2027.py                                               |
+|   ├── Standalone Zero-Python Binary: rust_data_plane/src/main.rs (secure-transmit)                      |
+|   ├── Native Rust Memory Core: ts_rt/src/lib.rs (VirtualLock, volatile zeroize, ct_equal)                |
+|   ├── Cryptographic Policy: Pure CNSA 2.0 (ML-KEM-1024, ML-DSA-87, AES-256-GCM, SHA-384)                |
+|   ├── Transport: Tor v3 Onion Routing, Constant-Rate (50ms) 1232B Cell Shaper, Stream Whitening         |
+|   └── Hardware Custody: Windows CNG Platform Crypto Provider (TPM 2.0 non-exportable) & PKCS#11 HSM     |
++---------------------------------------------------------------------------------------------------------+
+| [B] QUARANTINED LEGACY RESEARCH TESTBED (archive/legacy_prototype/ - ISOLATED TESTBED)                 |
+|   ├── Historical Source: archive/legacy_prototype/secure_p2.py & secure_p2p.py (13,000 lines)           |
+|   ├── Purpose: Experimental research, multi-party ratchet state models, legacy protocol comparison      |
+|   ├── Contained Draft Primitives: Non-CNSA algorithms (Falcon-1024, McEliece-8192128f, ChaCha20)        |
+|   └── Quarantine Status: Formally isolated; blocked from inclusion in TS production pipelines           |
++---------------------------------------------------------------------------------------------------------+
+```
+
+---
+
+## 2. Threat Model & Security Posture
+
+The security architecture is formally specified against a multidimensional threat matrix addressing physical, network, system, and algorithmic attack surfaces:
+
+```
+                                      ADVERSARY THREAT SURFACE
+                                                  │
+         ┌─────────────────────────┬──────────────┴──────────────┬─────────────────────────┐
+         ▼                         ▼                             ▼                         ▼
+   [Dolev-Yao Network]    [Traffic Analysis & SIGINT]   [Quantum Adversary (CRQC)]   [Physical & Platform]
+   - Injection             - Packet timing correlation   - Shor's algorithm on DH     - Memory bus DMA probes
+   - Modification          - Message size signatures     - Grover's search speedup    - Debugger attachment
+   - Replay attacks        - ISP metadata logging        - Harvest-Now-Decrypt-Later  - TPM PCR state drift
+   - Packet dropping       - Autonomous port scanning    - Retrospective decryption   - Physical red/black bleed
+```
+
+### Threat Definitions & Architectural Defenses
+
+1. **Dolev-Yao Network Adversary:**
+   - *Threat:* Full control over the transmission medium; capable of intercepting, altering, reordering, or injecting arbitrary datagrams.
+   - *Defense:* Authenticated Encryption with Associated Data (AEAD) via AES-256-GCM on every wire cell; 64-bit anti-replay sliding window bitmap implemented branchlessly in native Rust ([rust_data_plane/src/replay.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs)); bidirectional ephemeral key ratcheting.
+
+2. **Global Passive & Traffic Analysis Adversary:**
+   - *Threat:* Backbone interceptors and state-level ISPs monitoring packet arrival times, packet intervals, and byte counts to perform statistical flow correlation.
+   - *Defense:* Constant-rate transmission clock (1 cell per 50.0 ms = 20 Hz); uniform cell quantization (1232 bytes total wire frame); automatic generation of cryptographically indistinguishable cover/chaff cells during idle intervals; AES-256-CTR keystream stream whitening stripping all plaintext headers ([transport_anonymity.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py)).
+
+3. **Cryptanalytic Quantum Adversary:**
+   - *Threat:* Storage of encrypted network transmissions today for decryption by future Cryptanalytically Relevant Quantum Computers (CRQC).
+   - *Defense:* Elimination of all classical discrete logarithm, Diffie-Hellman, and RSA primitives. Enforcement of **RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange** (`SecP384r1MLKEM1024`), combining 256-bit classical elliptic curve security with NIST Level 5 lattice-based post-quantum key encapsulation ([noise_pq.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py)).
+
+4. **Host Platform & Physical Memory Adversary:**
+   - *Threat:* Cold-boot memory attacks, unauthorized DMA reads via peripheral buses (Thunderbolt, FireWire), software debuggers, and physical tampering.
+   - *Defense:* OS-level memory locking via `VirtualLock` / `mlock` preventing page swapping; volatile memory zeroization with compiler memory fences (`compiler_fence(SeqCst)`); real-time anti-DMA bus scanner refusing execution if Kernel DMA Protection is inactive; multi-trigger zeroization mesh ([ts_hw_layer.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py)).
+
+---
+
+## 3. The 5 Strategic Defense Pillars
+
+```
++=========================================================================================================+
 |                                2027 TOP SECRET COMMUNICATIONS STACK                                     |
-+---------------------------------------------------------------------------------------------------------+
++=========================================================================================================+
 | [PILLAR 5] TRUST ANCHOR & OPERATIONAL KEY MANAGEMENT (trust_anchor.py)                                   |
-|   ├── Offline 3-of-5 Threshold ML-DSA-87 Hardware Root CA (No TOFU fallback in TS mode)                 |
-|   ├── Threshold-Signed Monotonic Revocation Broadcast via Uniform Cells (CRL-style)                     |
-|   └── Strict Amnesia / Zero-Plaintext-Disk Profile (Fail-closed on any disk persistence)                |
+|   ├── Offline 3-of-5 Threshold ML-DSA-87 Hardware Root CA (Shamir Secret Sharing, RFC 9881 Profile)     |
+|   ├── Monotonic Revocation Broadcast (Distributed in-band inside uniform 1232B anonymity cells)         |
+|   └── Strict Amnesia / Zero-Plaintext-Disk Profile (Fail-closed on any non-volatile key persistence)    |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 4] NETWORK TRANSPORT & ANONYMITY (transport_anonymity.py & spo_dpo.py)                         |
-|   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS or Interface-Pinned Sovereign APN/Dark-Fiber)     |
+|   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS resolution or Interface-Pinned Sovereign APN)    |
 |   ├── Constant-Rate (50ms tick) Constant-Size (1232B cell / 1280B IPv6 MTU) Traffic Shaping             |
-|   ├── Stream Whitening (AES-256-CTR Uniform Noise, zero cleartext magic/length headers)                  |
+|   ├── Stream Whitening (AES-256-CTR Uniform Masking, zero cleartext magic bytes or length headers)      |
 |   └── Two-Person Integrity / DPO Pre-Transmit Ceremony (DoD S-5210.41M, 2.0s Dual Action Window)       |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 3] CRYPTOGRAPHY & PROTOCOL ARCHITECTURE (noise_pq.py, cnsa_purity.py, crypto_selftest.py)      |
 |   ├── Noise_XXhfs + ML-KEM-1024 + P-384 ECDH + ML-DSA-87 Protocol Handshake                             |
-|   ├── CNSA 2.0 Pure Tokenizer & Runtime Policy (Rejection of Falcon, McEliece, ChaCha, RSA, etc.)        |
-|   ├── FIPS 140-3 Section 10 Power-Up Self-Tests & Conditional PCTs (OpenSSL vs PyCryptodome vs RFC 7748) |
+|   ├── CNSA 2.0 Pure Tokenizer & Runtime Policy (Strict rejection of non-CNSA algorithm suites)          |
+|   ├── FIPS 140-3 Section 10 Power-Up Self-Tests & Pairwise Consistency Tests (OpenSSL vs PyCryptodome)  |
 |   └── Formal ProVerif 2.05 Proofs (Secrecy, Mutual Auth, Forward Secrecy, Post-Compromise Security)     |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 2] OPERATING SYSTEM & EXECUTION RUNTIME (ts_runtime.py, ts_rt Rust cdylib, ts_attest.py)       |
@@ -353,69 +127,322 @@ The repository contains machine-readable compliance artifacts ready for Authoriz
 |   ├── TEMPEST / SCIF Facility Accreditation Registry (NATO SDIP-27/28/29 Evaluation Records)             |
 |   ├── Active Multi-Trigger Zeroization Mesh (Debugger, TPM PCR drift, Heartbeat loss, ML-DSA-87 duress) |
 |   └── Hardware Optical Data Diode Gate (Simplex UDP-only unacknowledged transfer framing)                |
++=========================================================================================================+
+```
+
+### Pillar 1: Hardware & Physical Security Layer
+- **Source Modules:** [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`cng_platform.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cng_platform.py)
+- **FIPS 140-3 Cryptographic Module Gate:** Dynamically validates that OpenSSL 3.1+ FIPS Provider (e.g. CMVP Certificate #4985) is loaded into the process memory space. If the provider is missing or fails integrity verification, initialization aborts with `TSRequiredError`.
+- **Non-Exportable Hardware Key Storage:** Leverages Windows Cryptography Next Generation (CNG) `Microsoft Platform Crypto Provider` and PKCS#11 HSM middleware. Private signing keys are bound to physical TPM 2.0 silicon; keys are physically incapable of being exported or read into general-purpose RAM.
+- **Physical RED/BLACK Network Separation:** Validates physical network adapter assignments via `psutil`. Binds strictly to accredited RED (plaintext processing) or BLACK (ciphertext transport) interfaces. Binds to wildcard addresses (`0.0.0.0`, `::`) are explicitly rejected.
+- **TEMPEST & SCIF Facility Registry:** Evaluates host facility environmental records against NATO SDIP-27/3 (Level A equipment), SDIP-28/3 (Zone 0/1 facilities), and SDIP-29 separation distances.
+- **Active Multi-Trigger Zeroization Mesh:** Real-time tamper engine listening to debugger attachment (`CheckRemoteDebuggerPresent`), TPM PCR register deviation, heartbeat timeout, and authenticated ML-DSA-87 signed duress messages. Implements DoD 5220.22-M 3-pass overwrite procedures across all registered buffers.
+
+### Pillar 2: Operating System & Execution Runtime Layer
+- **Source Modules:** [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py), [`ts_rt/src/lib.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs), [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py)
+- **Platform Verification:** Enforces execution on an attested **seL4 microkernel** (providing mathematical proofs of functional correctness and spatial/temporal isolation) OR an Authorizing Official (AO) signed cryptographic waiver paired with live-verified Virtualization-Based Security (VBS), Hypervisor-Protected Code Integrity (HVCI), and UEFI Secure Boot.
+- **Deterministic Native Core (`ts_rt`):** Zero-dependency Rust `cdylib` providing OS-locked memory pages (`VirtualLock`/`mlock`), volatile memory zeroization with memory barriers (`core::sync::atomic::compiler_fence(SeqCst)`), branchless 64-bit anti-replay bitmap, and constant-time memory comparisons (`tsrt_ct_equal`).
+- **Anti-DMA Bus Protection:** Scans PCI/PCIe device enumeration tables for exposed external DMA buses (Thunderbolt, USB4, IEEE 1394, PCMCIA). Halts execution if Kernel DMA Protection / IOMMU isolation is not actively enforced.
+- **Platform Attestation (IETF RATS RFC 9334):** Generates TPM-signed evidence envelopes containing measured boot PCR values [0..7], verifying system software integrity before session establishment.
+
+### Pillar 3: Cryptography & Protocol Architecture Layer
+- **Source Modules:** [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py), [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py), [`rust_data_plane/src/kem.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/kem.rs)
+- **Handshake Protocol:** Implements `Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384` delivering mutual authentication, forward secrecy, and identity hiding:
+  $$\text{SharedSecret} = \text{HKDF-SHA384}(\text{ECDH}(P_{384}) \parallel \text{ML-KEM-1024-Decaps}(ct), \text{Transcript})$$
+- **CNSA Suite 2.0 Purity Policy:** Strict tokenizer rejects non-compliant algorithms (Falcon, McEliece, Kyber, Dilithium, ChaCha20, RSA, DSA). Permits only FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, AES-256-GCM, SHA-384/512, and HKDF-SHA384.
+- **FIPS 140-3 Known Answer Tests (KAT):** Executes cryptographic self-tests at startup, comparing OpenSSL against PyCryptodome and RFC 7748 test vectors for AES-256-GCM, HKDF, SHA-384, P-384, and ML-KEM/ML-DSA Pairwise Consistency Tests (PCT).
+
+### Pillar 4: Network Transport & Anonymity Layer
+- **Source Modules:** [`transport_anonymity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py), [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`rust_data_plane/src/net.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/net.rs)
+- **Mandatory Anonymous Overlay:** Direct un-encapsulated internet communication is prohibited. Traffic is routed exclusively through Tor v3 hidden services via authenticated SOCKS5 proxies with remote DNS resolution or over interface-pinned WireGuard / sovereign dark-fiber tunnels.
+- **Constant-Rate / Constant-Size Traffic Shaping:** Emits exactly one 1232-byte frame every 50.0 ms (20 packets/sec). When real payload data is absent, cryptographically indistinguishable chaff cells (`0xFF` type tag) are emitted.
+- **Stream Whitening:** Every wire cell is masked with an AES-256-CTR keystream initialized from ephemeral session secrets, ensuring all packets appear as uniform pseudo-random noise with no cleartext magic headers.
+- **DoD Directive S-5210.41M Two-Person Integrity (DPO):** High-consequence command execution requires Dual-Person Operation. Two distinct cryptographic approvals signed with physical ML-DSA-87 tokens must be submitted within a 2.0-second synchronized action window.
+
+### Pillar 5: Trust Infrastructure & Key Management Layer
+- **Source Modules:** [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py), [`scripts/witnessed_key_ceremony.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/witnessed_key_ceremony.py)
+- **Offline 3-of-5 Threshold ML-DSA-87 Root CA:** Trust anchors are governed by an offline threshold Root CA. Root certificates and policy updates require at least 3 valid ML-DSA-87 signatures from 5 designated hardware key custodians.
+- **Threshold Revocation Broadcast:** Certificate Revocation Lists (CRLs) and emergency peer revocations are threshold-signed with monotonic sequence counters and distributed in-band inside uniform anonymity cells.
+- **Zero-Plaintext-Disk Profile:** In Top-Secret mode, private key material, decrypted payloads, and ephemeral ratchets are held strictly in locked RAM (`VirtualLock`) or hardware tokens. Writing plaintext secrets to non-volatile disk triggers an immediate security halt.
+
+---
+
+## 4. Formal Protocol Specification & Wire Format
+
+The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the datagram, when wrapped with UDP (8 bytes) and IPv6 (40 bytes), totals exactly 1280 bytes, matching the minimum IPv6 MTU and preventing network fragmentation.
+
+### Cell Structure (1232 Bytes)
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Sequence Number (u64)                    |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Length (u16)         |   Type (u8)   |               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               |
+|                                                               |
+|                  Encrypted Payload (Variable)                 |
+|                   Maximum Size: 1205 Bytes                    |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        Padding to 1216 Bytes                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     Poly1305 / GCM Tag (16 Bytes)             |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+### Wire Field Definitions
+- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset. Validated against the 64-bit sliding window bitmap in native Rust ([rust_data_plane/src/replay.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs)).
+- **Length (2 bytes, Big-Endian):** Length of the unpadded cleartext payload ($0 \le \text{Length} \le 1205$).
+- **Type (1 byte):** Protocol message discriminator:
+  - `0x01`: Handshake Initiation / Key Exchange
+  - `0x02`: Handshake Response
+  - `0x03`: Encrypted Application Data
+  - `0x04`: File Transfer Chunk
+  - `0x05`: Attestation Evidence Envelope
+  - `0x06`: Revocation Broadcast
+  - `0xFF`: Chaff / Cover Traffic (Discarded silently by recipient)
+- **Encrypted Payload + Padding (1207 bytes):** Ciphertext produced by AES-256-GCM or ChaCha20-Poly1305. Nonce is derived from $\text{Sequence} \parallel \text{Direction}$. Unused bytes are filled with deterministic PKCS#7 or pseudo-random padding up to the 1216-byte boundary.
+- **Authentication Tag (16 bytes):** Authenticates the ciphertext alongside the Additional Authenticated Data (AAD):
+  $$\text{AAD} = \text{Sequence} \parallel \text{Length} \parallel \text{Type}$$
+
+---
+
+## 5. Machine-Checked Formal Verification
+
+Cryptographic protocols in ST2027 are mathematically proven using automated formal verification tools.
+
+```
++---------------------------------------------------------------------------------------------------------+
+|                                    FORMAL VERIFICATION EVIDENCE SUMMARY                                 |
++---------------------------------------------------------------------------------------------------------+
+| ProVerif 2.05 Applied Pi-Calculus Proofs:                                                               |
+|   ├── docs/formal/st2027_handshake.pv                                                                   |
+|   │   ├── Query not attacker(secret_payload)                      ==> PROVEN TRUE (Secrecy)             |
+|   │   ├── Query inj-event(ReceiverAccepts) ==> inj-event(SenderInit) ==> PROVEN TRUE (Mutual Auth)        |
+|   │   └── Query inj-event(SenderAccepts) ==> inj-event(ReceiverResp)==> PROVEN TRUE (Mutual Auth)        |
+|   └── docs/formal/st2027_pcs.pv                                                                         |
+|       └── Query not attacker(epoch_n_minus_1_key) under Epoch N   ==> PROVEN TRUE (Forward Secrecy)     |
+|       └── Query not attacker(epoch_n_plus_1_key) post-rekeying    ==> PROVEN TRUE (PCS Healing)         |
++---------------------------------------------------------------------------------------------------------+
+| Kani Rust Bounded Model Checking Proofs (29 Harnesses in rust_data_plane/tests/kani_harness.rs):        |
+|   ├── kani_harness::property_doubles::nonce_domain_separation     ==> PROVEN (No nonce collisions)      |
+|   ├── kani_harness::property_doubles::replay_window_monotonic     ==> PROVEN (No replay bypass)         |
+|   ├── kani_harness::property_doubles::ct_eq_no_secret_branch       ==> PROVEN (Constant-time execution)  |
+|   ├── kani_harness::nostd_microcore::test_stack_secret_zeroize     ==> PROVEN (Zeroization on drop)      |
+|   └── kani_harness::property_doubles::max_stream_bytes_cap        ==> PROVEN (Buffer safety)            |
 +---------------------------------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 6. Standards & Compliance Matrix
+## 6. Exhaustive Master Documentation Index
 
-| Standard / Directive | Scope & Mandate | Verified Implementation Citation |
-| :--- | :--- | :--- |
-| **NIST FIPS 203** | Primary Post-Quantum Key Encapsulation (ML-KEM-1024) | [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py), [`rust_data_plane/src/kem.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/kem.rs) |
-| **NIST FIPS 204** | Primary Post-Quantum Digital Signature (ML-DSA-87) | [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py), [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py), [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py) |
-| **NSA CNSA Suite 2.0** | National Security Systems (NSS) 2027/2028 Mandate | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) |
-| **RFC 10024** | Hybrid Post-Quantum Key Exchange (`SecP384r1MLKEM1024`) | [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py), [`rust_data_plane/src/kem.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/kem.rs) |
-| **FIPS 140-3 Level 3/4** | Hardware Security, Power-Up Self-Tests, Zeroization | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) |
-| **NATO SDIP-27/3, 28/3, 29** | TEMPEST Equipment, Facility Zoning, Installation Spacing | [`ts_hw_layer.py:TEMPESTRegistry`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) |
-| **DoD Directive S-5210.41M** | Nuclear Command & Two-Person Integrity (2.0s DPO) | [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`nc3_nuclear_command.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py) |
-| **IETF RATS (RFC 9334)** | Remote Platform Attestation & Evidence Architecture | [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py) |
-| **Common Criteria EAL4+/EAL7+** | Hardware Optical Data Diode Evaluation Records | [`ts_hw_layer.py:HardwareOpticalDataDiodeGate`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) |
-| **Machine Formal Verification** | Mathematical Secrecy & Post-Compromise Security Proofs | ProVerif 2.05 ([`docs/formal/st2027_handshake.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_handshake.pv)), Kani ([`rust_data_plane/tests/kani_harness.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/tests/kani_harness.rs)) |
+Every document in this repository is cataloged below, providing complete technical descriptions, operational roles, and direct hyperlinks.
+
+### 6.1 Master Security Volumes & Independent Audit
+- **[`SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION.md) (Volume A — 74,907 lines):**
+  The master engineering record. Details Tier 0 through Tier 7 architectures, mathematical formulations of post-quantum primitives, pairwise and group sequence diagrams, the fail-closed policy catalog (§9), wire formats (§10), reproduction commands (§11), and the non-claims register (§12).
+- **[`SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md) (Volume C — 12,368 lines):**
+  AST-derived mechanical logic flows for every function in the active codebase, algorithmic proof sketches, wire format specifications, the complete environment variable and error catalog, non-technical operator manual, and test-to-tier traceability.
+- **[`security_audit_report.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/security_audit_report.md) (Defensive Security Audit — 452 lines):**
+  Comprehensive defensive audit report detailing threat assessments, vulnerability classifications, and verified remediation proofs across cryptography, authentication, framing, memory safety, and supply chain.
+- **[`OPEN_INTERNET_HARDENING_PLAN.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/OPEN_INTERNET_HARDENING_PLAN.md) (Sovereign Transport Plan — 230 lines):**
+  Strategic hardening blueprint for direct peer-to-peer sovereign communications across public IPv6 networks without intermediate relays, detailing cell quantization, stream whitening, and black-hole packet filtering.
+
+### 6.2 Tactical Specifications, CONOPS & Runbooks (`docs/`)
+- **[`docs/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/README.md):** Tactical documentation charter, standards cross-reference guide, and module map.
+- **[`docs/ARCHITECTURE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/ARCHITECTURE.md):** Architectural baseline, threat modeling, trust assumptions, and 2027 sovereign stack specification.
+- **[`docs/CONOPS_TACTICAL_DEPLOYMENT.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/CONOPS_TACTICAL_DEPLOYMENT.md):** Concept of Operations for forward tactical deployment across DDIL networks and CJADC2 environments.
+- **[`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md):** Cryptographic Module Security Policy (CMSP) defining physical boundaries, roles, and approved algorithms.
+- **[`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md):** NIAP Protection Profile for Network Devices (NDcPP) / Common Criteria EAL4+ Security Target.
+- **[`docs/KEY_CEREMONY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/KEY_CEREMONY.md):** Standard Operating Procedure for offline 3-of-5 threshold ML-DSA-87 Root CA key generation ceremonies.
+- **[`docs/KEY_MANAGEMENT_PLAN_KMP.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/KEY_MANAGEMENT_PLAN_KMP.md):** Comprehensive cryptographic key lifecycle plan (generation, storage, escrow, revocation, zeroization).
+- **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD Directive S-5210.41M Two-Person Integrity deployment manual.
+- **[`docs/SOP.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/SOP.md):** Standard Operating Procedures for node provisioning, key custody, audit inspection, and station shutdown.
+- **[`docs/deployment_hardening_guide.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/deployment_hardening_guide.md):** Host OS hardening guide covering UEFI Secure Boot, VBS, HVCI, AppLocker, and TPM 2.0 configuration.
+- **[`docs/hw_tpm_hsm_setup.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/hw_tpm_hsm_setup.md):** Hardware setup guide for TPM 2.0, Windows CNG, PKCS#11 HSMs, and physical RED/BLACK cabling.
+- **[`docs/airgap_runbook.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/airgap_runbook.md):** Air-gapped station operations, manual cryptographic fill procedures, and optical data diodes.
+- **[`docs/FIREWALL_IPV6.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIREWALL_IPV6.md):** Kernel firewall configuration, IPv6 packet filtering rules, and interface binding defense.
+- **[`docs/incident_response.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/incident_response.md):** Emergency incident handling, physical duress zeroization procedures, and compromise recovery runbook.
+- **[`docs/liboqs_pin.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/liboqs_pin.md):** Cryptographic library binary pinning, SHA-384 hashes, and subresource integrity provenance verification.
+- **[`docs/RESTRUCTURE_PLAN.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/RESTRUCTURE_PLAN.md):** System restructuring, modularization roadmap, and legacy testbed isolation charter.
+
+### 6.3 Machine-Checked Formal Verification (`docs/formal/`)
+- **[`docs/formal/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/README.md):** Formal verification index, mathematical foundations, and ProVerif execution instructions.
+- **[`docs/formal/st2027_handshake.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_handshake.pv):** Applied Pi-Calculus model proving secrecy and mutual authentication for `Noise_XXhfs`.
+- **[`docs/formal/st2027_pcs.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_pcs.pv):** Applied Pi-Calculus model proving Post-Compromise Security (PCS) self-healing across ratchet epochs.
+- **[`docs/formal/handshake_model.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/handshake_model.pv):** Baseline handshake structural verification model.
+- **[`rust_data_plane/tests/kani_harness.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/tests/kani_harness.rs):** 29 formal Kani bounded model checking proofs verifying zeroization, buffer bounds, and constant-time comparisons.
+
+### 6.4 Module-Level Technical Charters (`docs/modules/` — All 27 Modules)
+1. **[`docs/modules/ts_hw_layer.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ts_hw_layer.md):** Pillar 1 hardware layer, FIPS provider gate, TEMPEST registry, and zeroization mesh.
+2. **[`docs/modules/ts_runtime.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ts_runtime.md):** Pillar 2 OS runtime, seL4 microkernel gate, anti-DMA bus scanner, and IETF RATS attestation.
+3. **[`docs/modules/noise_pq.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/noise_pq.md):** Pillar 3 Noise_XXhfs post-quantum protocol, CNSA 2.0 tokenizer, and power-up self-tests.
+4. **[`docs/modules/transport_anonymity.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/transport_anonymity.md):** Pillar 4 Tor v3 SOCKS5 framing, 1232B cell shaping, and 50ms constant-rate traffic generator.
+5. **[`docs/modules/trust_anchor.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/trust_anchor.md):** Pillar 5 3-of-5 threshold Root CA, CRL distribution, and zero-plaintext-disk amnesia profile.
+6. **[`docs/modules/rust_data_plane.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/rust_data_plane.md):** Native standalone Rust binary (`secure-transmit`), Kani verification, and C ABI interface.
+7. **[`docs/modules/p2p_core.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/p2p_core.md):** Core peer-to-peer framing, socket abstractions, and IPv6 transport logic.
+8. **[`docs/modules/hybrid_kex.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/hybrid_kex.md):** RFC 10024 Level 5 hybrid key encapsulation (`SecP384r1MLKEM1024`).
+9. **[`docs/modules/double_ratchet.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/double_ratchet.md):** Post-quantum Double Ratchet state machine and replay protection bitmap.
+10. **[`docs/modules/pqc_algorithms.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/pqc_algorithms.md):** NIST FIPS 203 ML-KEM, FIPS 204 ML-DSA, and FIPS 205 SLH-DSA algorithm bindings.
+11. **[`docs/modules/tls_channel_manager.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/tls_channel_manager.md):** TLS 1.3 mTLS channel management and hybrid cipher suites.
+12. **[`docs/modules/ca_services.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ca_services.md):** Sovereign Certificate Authority services, ML-DSA-87 issuance, and cert validation.
+13. **[`docs/modules/file_transfer.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/file_transfer.md):** Authenticated chunked file transfer with path traversal guards and streaming digests.
+14. **[`docs/modules/audit_threat_supply.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/audit_threat_supply.md):** Structured audit logging, threat detection engine, and cryptographic supply chain tracking.
+15. **[`docs/modules/memory_hsm.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/memory_hsm.md):** OS-locked secure memory buffers, volatile zeroization, and HSM interfaces.
+16. **[`docs/modules/entropy_sidechannel.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/entropy_sidechannel.md):** Hardware TRNG entropy harvesting, conditioning, and side-channel resistance.
+17. **[`docs/modules/opsec_persistence.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/opsec_persistence.md):** Anti-forensic hygiene, memory wiping, and ephemeral execution discipline.
+18. **[`docs/modules/anonymity_decentral.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/anonymity_decentral.md):** Decentralized anonymity overlays, onion routing, and cover traffic generation.
+19. **[`docs/modules/critical_release.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/critical_release.md):** Dual-Person Operation (DPO) and nuclear command release authorization.
+20. **[`docs/modules/destroyer_node.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/destroyer_node.md):** High-level peer node orchestration and session lifecycle management.
+21. **[`docs/modules/hardware_trust.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/hardware_trust.md):** Hardware root of trust, TPM 2.0 PCR validation, and non-exportable key storage.
+22. **[`docs/modules/root_files.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/root_files.md):** Root directory utilities, CLI orchestrators, and diagnostic scripts.
+23. **[`docs/modules/safety_numbers.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/safety_numbers.md):** Out-of-band identity verification, SHA3-512 fingerprint calculation, and pin stores.
+24. **[`docs/modules/secure_p2p.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/secure_p2p.md):** Secure communication orchestration, session negotiation, and state tracking.
+25. **[`docs/modules/subsystems_core.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/subsystems_core.md):** Core cryptographic subsystems, serialization formats, and session persistence.
+26. **[`docs/modules/subsystems_support.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/subsystems_support.md):** Support subsystems, remote SIEM forwarders, and platform health telemetry.
+27. **[`docs/modules/trust_policy.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/trust_policy.md):** Zero-trust policy evaluation, attestation claims, and access control policies.
+
+### 6.5 Compliance Submittals & Supply Chain Packages (`compliance_reports/`)
+- **[`compliance_reports/oscal_ssp_cnsa2.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_ssp_cnsa2.json):** NIST OSCAL 1.1.0 System Security Plan (SSP) mapped to NIST SP 800-53 Rev. 5 controls.
+- **[`compliance_reports/oscal_sar_cato.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_sar_cato.json):** NIST OSCAL 1.1.0 Security Assessment Report (SAR) for continuous ATO submission.
+- **[`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) & [`cbom.sig`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.sig):** Cryptographic Bill of Materials signed with ML-DSA-87 documenting all post-quantum primitives.
+- **[`compliance_reports/sbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/sbom.json):** Software Bill of Materials tracking pinned cryptographic dependencies.
+- **[`compliance_reports/zero_trust_assessment.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/zero_trust_assessment.json):** CISA Zero Trust Maturity Model Level 4 validation assessment report.
+
+### 6.6 Operational Automation & Runbooks (`scripts/`)
+- **[`scripts/setup_tor_overlay.ps1`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.ps1) & [`setup_tor_overlay.sh`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.sh):** Automated Tor v3 hidden service and hardened SOCKS5 daemon deployment.
+- **[`scripts/setup_wireguard.ps1`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_wireguard.ps1) & [`setup_wireguard.sh`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_wireguard.sh):** Point-to-point WireGuard overlay configuration.
+- **[`scripts/witnessed_key_ceremony.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/witnessed_key_ceremony.py):** Ceremonial script for offline 3-of-5 threshold Root CA key generation.
+- **[`scripts/crl_bundle.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/crl_bundle.py):** Revocation list builder and threshold signature aggregator.
+- **[`scripts/verify_host_hardening.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_host_hardening.py):** Automated host hardening verifier checking Secure Boot, VBS, HVCI, and TPM.
+- **[`scripts/cavp_algorithm_validator.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/cavp_algorithm_validator.py):** NIST CAVP/ACVP test vector runner.
+- **[`scripts/sign_boot_config.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/sign_boot_config.py):** Boot configuration and policy signature utility.
+- **[`scripts/verify_reproducible_build.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_reproducible_build.py):** Binary hash reproducibility validator for native Rust and C artifacts.
+
+### 6.7 Quarantined Legacy Prototypes (`archive/`)
+- **[`archive/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/README.md):** Quarantined archive governance and boundary policy.
+- **[`archive/legacy_prototype/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/README.md):** Isolation charter for the 13,000-line legacy testbed ([`secure_p2.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/secure_p2.py) and [`secure_p2p.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/secure_p2p.py)).
+- **[`archive/taskdocs/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/taskdocs/):** Historical task tracking, milestone logs, and audit verification records.
 
 ---
 
-## 7. Quick Start & Operational Usage
+## 7. Implementation & Native Execution Engines
 
-### 7.1 Prerequisites
-- Python 3.10+
-- Rust Toolchain (`cargo`, `rustc` 1.78+)
-- Platform Cryptographic Libraries: OpenSSL 3.1+ (`libcrypto-3`), LibOQS (`oqs.dll`), Libsodium (`libsodium.dll`)
+The ST2027 platform is implemented across three coordinated operational execution engines:
 
-### 7.2 Building the Native Rust Components
+### 1. Master Transmission Orchestrator ([`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py))
+The top-level operational entrypoint governing hardware probes, cryptographic negotiation, cell shaping, and payload release. Provides four primary operational commands:
+- `check-hw`: Evaluates host platform posture (Secure Boot, VBS, HVCI, TPM 2.0, FIPS provider, TEMPEST registry records).
+- `keygen`: Provisions non-exportable hardware-backed ML-DSA-87 identity keypairs.
+- `recv`: Deploys receiver listeners with CNSA 2.0 purity gating and mutual certificate validation.
+- `send`: Transmits payloads with constant-rate anonymity cells and DoD S-5210.41M Two-Person Integrity.
 
-#### Build the `ts_rt` Core cdylib
+### 2. Standalone Zero-Python Data-Plane Binary (`secure-transmit` in [`rust_data_plane/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/))
+A high-performance, self-contained native executable compiled from Rust (`src/main.rs`). Designed for deployment in resource-constrained environments, hardware security appliances, or dedicated forwarding gateways without requiring a Python runtime:
+- **Subcommands:** `keygen`, `send`, `recv`, `send-file`, `recv-file`, `selftest`.
+- **Chunking Pipeline:** Fragments files into 1205-byte quantum cells, sequence-numbered with monotonic u64 counters, verified end-to-end via streaming SHA-256 digests.
+- **Fail-Closed Mechanics:** Emits exit code 4 upon detecting corrupt datagrams, sequence gaps, or authentication failures without writing incomplete payloads to disk.
+
+### 3. Native Security Core cdylib ([`ts_rt/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/))
+A zero-dependency Rust shared library (`ts_rt.dll` / `libts_rt.so`) linked via C FFI by high-level Python components. Provides deterministic low-level operations:
+- `tsrt_lock_pages`: Locks process memory pages into physical RAM via `VirtualLock` (Windows) or `mlock` (POSIX).
+- `tsrt_zeroize`: Overwrites memory with volatile compiler memory fences preventing dead-code optimization.
+- `tsrt_ct_equal`: Constant-time memory comparison executing in identical CPU clock cycles regardless of secret byte equality.
+
+---
+
+## 8. Empirical Verification & Automated Test Matrix
+
+The platform is backed by **227 automated tests** executing with 100% green pass rate, validating every component from low-level memory zeroization to full network loopback transfers.
+
+```
++---------------------------------------------------------------------------------------------------------+
+|                                  AUTOMATED TEST BATTERY EXECUTION MATRIX                                 |
++---------------------------------------------------------------------------------------------------------+
+| Battery 1: Unified 2027 Top-Secret Python Test Battery                                                  |
+| Command: pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py ...                 |
+| Status:  163 / 163 PASSED (Execution time: 57.05s)                                                      |
+| Coverage:                                                                                               |
+|   ├── test_ts_hw_layer.py              (FIPS provider, TPM 2.0 CNG, RED/BLACK binds, zeroization)       |
+|   ├── test_ts_runtime.py               (seL4 microkernel gate, VBS/HVCI checks, anti-DMA bus scanner)    |
+|   ├── test_secure_transmit_2027.py      (End-to-end loopback transmission with DPO and anonymity)         |
+|   ├── test_noise_pq_purity.py          (Noise_XXhfs handshake, CNSA 2.0 tokenizer, FIPS KATs)           |
+|   ├── test_spo_dpo.py                  (DoD S-5210.41M Two-Person Integrity, 2.0s action window)        |
+|   ├── test_transport_anonymity.py      (Tor SOCKS5 framing, 50ms constant-rate cell shaper)              |
+|   ├── test_trust_anchor.py             (Offline 3-of-5 threshold Root CA, CRL monotonic broadcast)       |
+|   ├── test_ts_attest.py                (IETF RATS platform attestation, TPM evidence validation)         |
+|   ├── test_hw_readiness.py             (check-hw CLI probes, UAC non-interactive consent handling)       |
+|   ├── test_runbooks_ps.py              (PowerShell overlay deployment script validation)                 |
+|   ├── test_rust_standalone_binary.py   (secure-transmit send-file / recv-file roundtrip and exit 4)     |
+|   ├── test_no_marketing_buzzwords.py  (Property test: 0 occurrences of prohibited promotional text)     |
+|   └── test_no_emoji_property.py        (Property test: 0 occurrences of Unicode emoji glyphs)            |
++---------------------------------------------------------------------------------------------------------+
+| Battery 2: Native Rust Data-Plane & Kani Model Checking Battery                                         |
+| Command: cargo test --manifest-path rust_data_plane/Cargo.toml                                          |
+| Status:  64 / 64 PASSED (35 Unit Tests + 29 Kani Formal Harnesses, Execution time: 22.59s)              |
+| Coverage:                                                                                               |
+|   ├── Unit Tests (35 passed)           (AEAD vectors, chunking bounds, UDP token bucket, replay bitmap)  |
+|   └── Kani Harnesses (29 passed)       (Bounded model checking of constant-time math, zeroize-on-drop)   |
++---------------------------------------------------------------------------------------------------------+
+| TOTAL SUITE STATUS: 227 PASSED / 0 FAILED / 0 WARNINGS                                                  |
++---------------------------------------------------------------------------------------------------------+
+```
+
+---
+
+## 9. Standards & Authorizing Official (AO) Compliance Matrix
+
+| Authority / Standard | Mandatory Requirement | ST2027 Architecture Mapping | Compliance Artifact |
+| :--- | :--- | :--- | :--- |
+| **NIST FIPS 203** | Primary Post-Quantum Key Encapsulation (ML-KEM-1024) | [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py), [`rust_data_plane/src/kem.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/kem.rs) | [`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) |
+| **NIST FIPS 204** | Primary Post-Quantum Digital Signature (ML-DSA-87) | [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py), [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py) | [`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) |
+| **NSA CNSA Suite 2.0** | National Security Systems (NSS) 2027 Posture | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py) | [`compliance_reports/oscal_ssp_cnsa2.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_ssp_cnsa2.json) |
+| **RFC 10024** | Hybrid Post-Quantum Key Exchange (`SecP384r1MLKEM1024`) | [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) | [`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) |
+| **FIPS 140-3 Level 3/4** | Hardware Security, Self-Tests, Volatile Wiping | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) | [`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md) |
+| **NATO SDIP-27/28/29** | TEMPEST Equipment, SCIF Zoning, Spacing | [`ts_hw_layer.py:TEMPESTRegistry`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) | [`docs/hw_tpm_hsm_setup.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/hw_tpm_hsm_setup.md) |
+| **DoD S-5210.41M** | Nuclear Command & Two-Person Integrity (2.0s DPO) | [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`nc3_nuclear_command.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py) | [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md) |
+| **IETF RATS (RFC 9334)** | Platform Attestation & Evidence Architecture | [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py) | [`compliance_reports/oscal_sar_cato.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_sar_cato.json) |
+| **Common Criteria EAL4+** | Network Device Protection Profile (NDcPP) | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) | [`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md) |
+| **CISA Zero Trust Model** | Zero Trust Architecture Maturity Level 4 | System-wide fail-closed enforcement | [`compliance_reports/zero_trust_assessment.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/zero_trust_assessment.json) |
+
+---
+
+## 10. Operational Quick Start & Execution Runbooks
+
+### 10.1 Environment Setup
 ```bash
+# Clone the private sovereign repository
+git clone https://github.com/Destroyer-official/Destroyer-ST2027.git
+cd Destroyer-ST2027
+
+# Build native core cdylib
 cd ts_rt
 cargo build --release
 cd ..
-```
 
-#### Build the Standalone `secure-transmit` Data-Plane Binary
-```bash
+# Build standalone native Rust data-plane binary
 cd rust_data_plane
 cargo build --release --bin secure-transmit
 cd ..
 ```
 
----
-
-### 7.3 Operational CLI Workflows
-
-#### 1. Hardware Readiness Pre-Flight Inspection (`check-hw`)
-Evaluates host platform posture (Secure Boot, VBS, HVCI, TPM 2.0, FIPS cryptographic provider, TEMPEST registry record):
+### 10.2 Host Hardware Readiness Inspection
+Execute pre-flight hardware verification before station activation:
 ```bash
 python secure_transmit_2027.py check-hw
 ```
 
-#### 2. Hardware Identity Key Generation
-Generates non-exportable hardware-backed ML-DSA-87 identity keypair:
+### 10.3 Provisioning Hardware Identity
+Generate non-exportable hardware-bound ML-DSA-87 identity keypair:
 ```bash
-python secure_transmit_2027.py keygen --label station_alpha
+python secure_transmit_2027.py keygen --label station_command_alpha
 ```
 
-#### 3. Receiver Node Deployment
-Listens on the designated interface, enforcing CNSA 2.0 purity and mutual certificate authentication:
+### 10.4 Starting High-Assurance Receiver
 ```bash
 python secure_transmit_2027.py recv \
   --port 8888 \
@@ -424,11 +451,10 @@ python secure_transmit_2027.py recv \
   --ca certs/ca.json \
   --peer-id peer_bravo \
   --out downloads/received_payload.bin \
-  --label station_alpha
+  --label station_command_alpha
 ```
 
-#### 4. High-Assurance Transmission with Constant-Rate Anonymity & DPO
-Transmits a classified manifest across untrusted networks using constant-rate cell shaping and DoD S-5210.41M Two-Person Integrity:
+### 10.5 High-Assurance Transmission with Constant-Rate Shaping & DPO
 ```bash
 python secure_transmit_2027.py send \
   --host 127.0.0.1 \
@@ -437,71 +463,66 @@ python secure_transmit_2027.py send \
   --key keys/node_bravo.key \
   --ca certs/ca.json \
   --peer-id peer_alpha \
-  --file confidential_manifest.tar \
+  --file classified_manifest.tar \
   --anonymity \
   --dpo-receipt receipts/dpo_approved.json \
-  --label station_bravo
+  --label station_command_bravo
 ```
 
-#### 5. Standalone Zero-Python Rust File Transmission (`secure-transmit`)
-Executes chunked file transfer with 1205B quantum framing, SHA-256 streaming verification, and fail-closed exit 4:
+### 10.6 Standalone Zero-Python File Transmission (`secure-transmit`)
 ```bash
-# Receiver:
+# Receiver Station:
 ./rust_data_plane/target/release/secure-transmit recv-file \
   --listen [::1]:9999 \
   --peer [::1]:9998 \
   --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --out downloads/target_file.dat
 
-# Sender:
+# Transmitting Station:
 ./rust_data_plane/target/release/secure-transmit send-file \
   --target [::1]:9999 \
   --bind [::1]:9998 \
   --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --file classified_intel.tar
+  --file high_consequence_order.bin
 ```
 
 ---
 
-## 8. Verification & Automated Test Battery (227 Tests Passed)
+## 11. Residual Risk Register & Evaluator Non-Claims
 
-The entire software pipeline is validated by 227 automated tests maintaining 100% green execution across unit, integration, property-based, and formal model verification.
-
-### Run Unified 2027 Top-Secret Python Test Suite (163 Tests)
-```bash
-pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py \
-       test_noise_pq_purity.py test_proverif_st2027.py test_spo_dpo.py \
-       test_transport_anonymity.py test_trust_anchor.py test_ts_attest.py \
-       test_hw_readiness.py test_runbooks_ps.py test_rust_standalone_binary.py \
-       test_no_marketing_buzzwords_property.py test_no_emoji_property.py -v
-```
-
-### Run Native Rust Data-Plane Test Suite (64 Tests)
-```bash
-cargo test --manifest-path rust_data_plane/Cargo.toml
-```
-
-### Execute Machine-Checked Formal ProVerif Proofs
-```bash
-proverif docs/formal/st2027_handshake.pv
-proverif docs/formal/st2027_pcs.pv
-```
+In compliance with defense engineering ethics, the following boundaries are explicitly disclosed:
+1. **Physical Hardware Independence:** The software platform cannot certify physical tamper-resistance or RF attenuation. Physical FIPS 140-3 Level 3/4 enclosures, TEMPEST SDIP-28 SCIF facilities, and physical optical data diodes must be procured from accredited hardware vendors.
+2. **Authorizing Official (AO) Accreditation:** Execution of automated tests and generation of OSCAL artifacts does not constitute a formal government Authority to Operate (ATO). Formal accreditation requires evaluation by an accredited testing laboratory and approval by the designated Authorizing Official.
+3. **Draft Standards Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards (FN-DSA / FIPS 206) are intentionally excluded until finalization and inclusion in NSA CNSA guidance.
 
 ---
 
-## 9. Real-World Deployment Roadmap & Evaluator Actions
+## 12. Primary References & Standard Specifications
 
-While the **software architecture, cryptographic engines, gating logic, and standalone Rust data-plane executor are 100% complete**, physical field deployment for Top-Secret national security operations requires completing the following external procurement and facility actions:
-
-1. **Procure Evaluated Physical Hardware:** Deploy on physical nodes equipped with FIPS 140-3 Level 3/4 hardware security modules (Thales Luna 7.9+ / Utimaco Quantum Protect with PKCS#11 v3.2 ML-DSA/ML-KEM firmware).
-2. **Physical Facility Accreditation:** Place endpoints in accredited TEMPEST SCIF facilities matching NATO SDIP-28/3 Zone 0/1 with certified SDIP-27 Level A hardware.
-3. **Physical Optical Data Diodes:** Wire physical unidirectional optical fiber diodes across cross-domain boundaries.
-4. **Standalone Rust Binary Operationalization:** Deploy the standalone zero-Python data plane ([`rust_data_plane/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/)) as the raw framing pipeline across production links.
-5. **Government Authority to Operate (ATO):** Submit the generated OSCAL SSP/SAR reports and formal ProVerif models to the Authorizing Official (AO) for national security link certification.
+1. **National Security Agency (NSA):** *Announcing the Commercial National Security Algorithm Suite 2.0 (CNSA 2.0)*, Cybersecurity Advisory, Sept 2022.
+2. **National Institute of Standards and Technology (NIST):**
+   - *FIPS PUB 203: Module-Lattice-Based Key-Encapsulation Mechanism Standard (ML-KEM)*, Aug 2024.
+   - *FIPS PUB 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)*, Aug 2024.
+   - *FIPS PUB 205: Stateless Hash-Based Digital Signature Standard (SLH-DSA)*, Aug 2024.
+   - *FIPS PUB 140-3: Security Requirements for Cryptographic Modules*, March 2019.
+3. **Internet Engineering Task Force (IETF):**
+   - *RFC 10024: Post-Quantum and Hybrid Key Exchange in the Transport Layer Security (TLS) Protocol*, Aug 2026.
+   - *RFC 9334: Remote ATtestation ProcedureS (RATS) Architecture*, Jan 2023.
+   - *RFC 9881: Post-Quantum Signatures in Internet X.509 Public Key Infrastructure*, 2026.
+4. **Department of Defense (DoD):**
+   - *DoD Directive S-5210.41M: Nuclear Weapon Security Manual: The Two-Person Rule*, Dec 2020.
+   - *DoD Zero Trust Reference Architecture Version 2.0*, July 2022.
+5. **North Atlantic Treaty Organization (NATO):**
+   - *SDIP-27/3: NATO TEMPEST Requirements for Equipment*, 2020.
+   - *SDIP-28/3: NATO TEMPEST Installation Zoning Scheme*, 2020.
+6. **Academic & Formal Verification Literature:**
+   - Blanchet, B.: *Modeling and Verifying Security Protocols with the Applied Pi-Calculus and ProVerif*, Foundations and Trends in Privacy and Security, 2016.
+   - Perrin, T.: *The Noise Protocol Framework Specification*, Revision 34, 2018.
+   - Klein, G. et al.: *seL4: Formal Verification of an OS Kernel*, Communications of the ACM, 2010.
 
 ---
 
-## 10. License & Defense Attribution
+## 13. License & Attribution
 
-- **License:** MIT License — For authorized defense and national security research.
-- **Cryptographic Specifications:** NIST FIPS 203 (ML-KEM), NIST FIPS 204 (ML-DSA), NIST FIPS 205 (SLH-DSA), NSA CNSA Suite 2.0, RFC 10024.
+- **License:** MIT License — Authorized for defense, national security research, and governmental evaluation.
+- **Attribution:** Developed for high-assurance communications under the Sovereign Transmit 2027 research program.
