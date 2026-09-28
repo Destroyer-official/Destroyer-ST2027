@@ -1,0 +1,30 @@
+# wg-ts0.conf.template — sovereign WireGuard / private-APN path template.
+# DEPLOYMENT (operator, on the hardened endpoint):
+#   1. cp wg-ts0.conf.template /etc/wireguard/wg-ts0.conf ; chmod 600 /etc/wireguard/wg-ts0.conf
+#   2. Replace EVERY __OPERATOR_*__ placeholder. Unfilled placeholders are a
+#      hard FAIL: setup_wireguard.sh refuses (no handshake possible) and the
+#      pipeline require_overlay gate refuses without a live peer handshake.
+#   3. Keys are generated OFFLINE on the air-gapped ceremony host:
+#        umask 077; wg genkey | tee peer.key | wg pubkey > peer.pub
+#      NEVER transmit private keys over any network. NEVER commit this file
+#      with real keys (template ships with placeholders only).
+#   4. systemctl enable --now wg-quick@wg-ts0
+#
+# SCOPE: sovereign APN / private WireGuard transport for the 2027 pipeline.
+# Peer MUST be an IPv6 /64 or shorter (enforced by setup_wireguard.sh and
+# by transport_anonymity.require_overlay before any session starts).
+
+[Interface]
+PrivateKey = __OPERATOR_PRIVATE_KEY_B64__
+Address = __OPERATOR_SELF_IPV6__/64
+ListenPort = __OPERATOR_LISTEN_PORT__
+# RED/BLACK discipline: bind the tunnel to the BLACK-side uplink only.
+# Table=off + explicit policy routing keeps RED plaintext off this path.
+Table = off
+PreUp = /bin/sh -c 'test ! -f /etc/wireguard/wg-ts0.conf || exit 0'
+
+[Peer]
+PublicKey = __OPERATOR_PEER_PUBKEY_B64__
+AllowedIPs = __OPERATOR_PEER_PREFIX__
+Endpoint = __OPERATOR_PEER_ENDPOINT__
+PersistentKeepalive = 25

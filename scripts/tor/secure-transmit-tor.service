@@ -1,0 +1,32 @@
+[Unit]
+Description=Tor onion overlay for 2027 sovereign transmit pipeline (ts instance)
+Documentation=https://www.torproject.org/docs/
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+# The pipeline NEVER starts without this unit active: transport_anonymity
+# require_overlay dials 127.0.0.1:9050 and refuses on any greeting failure.
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=tor-ts
+Group=tor-ts
+ExecStartPre=/usr/bin/test -f /etc/tor/tor-ts/torrc
+# Unfilled __OPERATOR_*__ placeholders are a hard deployment failure.
+ExecStartPre=/bin/sh -c '! grep -Eq "__OPERATOR_[A-Z_0-9]+__" /etc/tor/tor-ts/torrc'
+ExecStart=/usr/bin/tor -f /etc/tor/tor-ts/torrc
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+# Hardening: client-only daemon, no new privileges, private FS view.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tor-ts
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETGID CAP_SETUID
+AmbientCapabilities=
+SecureBits=keep-caps
+
+[Install]
+WantedBy=multi-user.target

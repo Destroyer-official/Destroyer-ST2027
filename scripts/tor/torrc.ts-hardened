@@ -1,0 +1,43 @@
+# torrc.ts-hardened — hardened Tor client template for TOP SECRET transport.
+# DEPLOYMENT (operator, on the hardened endpoint):
+#   1. cp torrc.ts-hardened /etc/tor/tor-ts/torrc   (or %ProgramData%\Tor\torrc on Windows)
+#   2. Replace EVERY __OPERATOR_*__ placeholder below with site values.
+#      Unfilled placeholders are a hard FAIL: setup_tor_overlay.sh refuses
+#      to mark the overlay ready while any __OPERATOR_*__ token remains.
+#   3. Obtain bridge lines from bridges.torproject.org (or @GetBridgesBot)
+#      over an authenticated channel; NEVER commit real bridge lines.
+#   4. systemctl enable --now secure-transmit-tor.service
+#
+# SCOPE: client-only onion routing for the 2027 pipeline. No relay, no exit,
+# no onion service. Every session additionally requires P2P_OVERLAY_ACTIVE=1
+# (see transport_anonymity.require_overlay) and --anonymity tor|strict.
+
+SocksPort 127.0.0.1:9050 IsolateClientAddr IsolateSOCKSAuth
+SocksPolicy accept 127.0.0.1
+SocksPolicy reject *
+
+# No DNS leaks: remote resolution only (SOCKS5h semantics enforced client-side).
+DNSPort 127.0.0.1:53530
+AutomapHostsOnResolve 1
+
+# Censorship circumvention is MANDATORY, never opportunistic.
+UseBridges 1
+ClientTransportPlugin obfs4 exec __OPERATOR_LYREBIRD_PATH__ -logLevel ERROR
+ClientTransportPlugin webtunnel exec __OPERATOR_LYREBIRD_PATH__ -logLevel ERROR
+
+# __OPERATOR_BRIDGE_1__  e.g.: Bridge obfs4 <IP>:<PORT> <FINGERPRINT> cert=... iat-mode=0
+# __OPERATOR_BRIDGE_2__  (minimum two bridges from disjoint /16s; add more lines as issued)
+Bridge __OPERATOR_BRIDGE_1__
+Bridge __OPERATOR_BRIDGE_2__
+
+# Fail-closed client posture.
+AvoidDiskWrites 1
+SafeLogging 1
+Log notice syslog
+MaxCircuitDirtiness 300
+NewCircuitPeriod 120
+CircuitBuildTimeout 30
+ExcludeNodes __OPERATOR_EXCLUDE_NODES__
+StrictNodes 1
+DataDirectory __OPERATOR_TOR_DATADIR__
+PidFile __OPERATOR_TOR_PIDFILE__
