@@ -1,0 +1,31 @@
+# Test deps - pinned + hashed (install with --require-hashes -r requirements.txt -r requirements-test.txt)
+# 2026-09-14 refresh: pytest 8.2.2->9.1.1 fixes CVE-2025-71176 (GHSA, tmpdir handling,
+# fixed in 9.0.3); pytest-asyncio 0.23.7->1.4.0 (2y stale, 1.x required for pytest>=8.4);
+# pytest-cov 5.0.0->7.1.0; coverage 7.15.4->7.16.1; hypothesis 6.165.5->6.168.0.
+pytest==9.1.1 \
+    --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c \
+    --hash=sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313
+
+pytest-asyncio==1.4.0 \
+    --hash=sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1 \
+    --hash=sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42
+
+pytest-cov==7.1.0 \
+    --hash=sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678 \
+    --hash=sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2
+
+pytest-timeout==2.4.0 \
+    --hash=sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2 \
+    --hash=sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a
+
+coverage==7.16.1 \
+    --hash=sha256:684c7ee9b4c04358fe6ac8b517ab51ec35fcd79d08ff0f105dd8bcd96885bbb7 \
+    --hash=sha256:c510dad19552d912058e4c3e3cbec3fb155dbe8d0ce0ceb7e7dbf5c5822bae0b \
+    --hash=sha256:3d8bd4e58b6a5c2018d808f297905393c6c61da466a48c3f0596a76a4900ebe4 \
+    --hash=sha256:f83981779bcf9dfa06fa0a8d4cb43e0faec1706328ce07aa3e7b665b4ac0f210
+
+hypothesis==6.168.0 \
+    --hash=sha256:719b45b0512e3535a6a0077c2f7c6053b02ac0e72d60693f66f98790a33855b2 \
+    --hash=sha256:db2751c27bffc8491a96d72969649089d5400115e4b7c49bf7167ebbdcc84193 \
+    --hash=sha256:72af51087b7b5ab21c49f0d502f803c20897678652835596bd2a8b169a39135e
+

@@ -1,0 +1,162 @@
+# Secure P2P Military-Grade Communication System
+# .gitignore - Files to exclude from version control
+
+# =============================================================================
+# NOTUPLOAD FOLDER - Contains all development artifacts, logs, and temp files
+# =============================================================================
+notupload/
+secure_p2p_core/
+tests/
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =============================================================================
+# Virtual Environments
+# =============================================================================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# IDE and Editor
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# Testing
+# =============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# =============================================================================
+# Logs and Databases
+# =============================================================================
+*.log
+*.log*
+*.db*
+*.sqlite*
+logs/
+
+# =============================================================================
+# Security - NEVER commit these
+# =============================================================================
+*.pem
+*.key
+*.crt
+*.cert
+*.seal
+*.sealed
+.device_master.seal
+secure_keys/
+*.p12
+*.pfx
+*_keys.json
+authorized_military_peers.json
+tactical_manifest.json
+credentials/
+private_keys/
+secrets/
+keys/
+# ...but keys/*.py is SOURCE (manager/storage/generation), not key material.
+# Un-ignore source so it stays tracked; material (*.pem/*.key/sealed) above stays ignored.
+!keys/*.py
+certs/
+.env.local
+.env.production
+config.json
+
+# =============================================================================
+# OS Generated
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# =============================================================================
+# Temporary Files
+# =============================================================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# =============================================================================
+# Build Artifacts
+# =============================================================================
+*.dll
+*.exe
+*.o
+*.obj
+*.pdb
+target/
+**/target/
+ts_rt/target/
+
+# Keep specific DLLs needed for the project
+!libsodium.dll
+!oqs.dll
+
+# =============================================================================
+# Deployment Hygiene (H31) - never commit generated artifacts
+# =============================================================================
+config_backup/
+deployment_report*
+*.worm
+archive/artifacts/*.tar.gz
+secure_p2p_audit.db*
+*.db-shm
+*.db-wal
+# Ephemeral per-run ceremony receipts (timestamped, host-specific, unbounded)
+compliance_reports/ceremony_receipt_*.json
+
+# Runtime state and ephemeral caches
+.acd_quarantine.json
+peer_discovery_cache.json

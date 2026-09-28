@@ -1,0 +1,27 @@
+# Military-Grade Secure P2P Requirements (NIST L5 / CNSA 2.0, 2028 hardening)
+# Python 3.11+ required. Install: pip install --require-hashes -r requirements.txt -r requirements-test.txt
+# 2026-09-14 refresh: pycryptodome 3.20.0->3.23.0, psutil 5.9.8->7.2.2,
+# pyyaml 6.0.1->6.0.3 (stale-pin Dependabot alerts); cryptography stays 50.0.1
+# (fixes CVE-2026-69247/34073/39892/26007, OpenSSL 3.5.6). Multi-hash (win+linux+sdist)
+# so --require-hashes passes on both Windows dev and ubuntu-latest CI.
+    # via cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl, cryptography-50.0.1-cp311-abi3-win_amd64.whl
+cryptography==50.0.1 --hash=sha256:ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef \
+    --hash=sha256:aed8db4f6d71c51efb89530e12d9464e7bf2923d46c3205dc794a2a93f8c0648 \
+    --hash=sha256:5dd9bda1c12b4162f6ff568eeb5e0ff956c28d14406e875cfe8a63a2d414ff20
+    # via pycryptodome-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl, pycryptodome-3.23.0-cp37-abi3-win_amd64.whl
+pycryptodome==3.23.0 \
+    --hash=sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575 \
+    --hash=sha256:c75b52aacc6c0c260f204cbdd834f76edc9fb0d8e0da9fbf8352ef58202564e2 \
+    --hash=sha256:447700a657182d60338bab09fdb27518f8856aecd80ae4c6bdddb67ff5da44ef
+    # via psutil-7.2.2-cp37-abi3-win_amd64.whl, cp36-abi3-manylinux x86_64, sdist (CI ubuntu needs manylinux hash)
+psutil==7.2.2 \
+    --hash=sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988 \
+    --hash=sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9 \
+    --hash=sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372
+    # via pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl, pyyaml-6.0.3-cp311-cp311-win_amd64.whl
+pyyaml==6.0.3 \
+    --hash=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d \
+    --hash=sha256:9f3bfb4965eb874431221a3ff3fdcddc7e74e3b07799e0e84ca4a0f867d449bf \
+    --hash=sha256:c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5 \
+    --hash=sha256:4a2e8cebe2ff6ab7d1050ecd59c25d4c8bd7e6f400f5f82b96557ac0abafd0ac \
+    --hash=sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f
