@@ -5,8 +5,8 @@
 # NOTUPLOAD FOLDER - Contains all development artifacts, logs, and temp files
 # =============================================================================
 notupload/
-secure_p2p_core/
-tests/
+/tests/
+!rust_data_plane/tests/
 
 # =============================================================================
 # Python

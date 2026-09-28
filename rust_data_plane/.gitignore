@@ -1,0 +1,5 @@
+# maturin develop/build artifacts — never commit compiled extensions
+*.so
+*.pyd
+target/
+python/destroyer_core/_native*

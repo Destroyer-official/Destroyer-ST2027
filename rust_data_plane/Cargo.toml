@@ -1,0 +1,42 @@
+[package]
+name = "destroyer_core"
+version = "0.1.0"
+edition = "2021"
+description = "Rust data plane for sovereign direct-IPv6 P2P: AEAD framing, anti-replay, padding, chaff, silent-drop"
+license = "MIT"
+
+[lib]
+name = "destroyer_core"
+# rlib lets the standalone binary link the same tested modules;
+# cdylib remains the maturin/pyo3 artifact (unchanged).
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "secure-transmit"
+path = "src/main.rs"
+
+[dependencies]
+chacha20poly1305 = { version = "0.11.0", features = ["alloc"] }
+getrandom = "0.4.3"
+hkdf = "0.13.0"
+ml-kem = { version = "0.3.2", features = ["zeroize", "getrandom"] }
+pyo3 = { version = "0.29.2", features = ["extension-module"] }
+sha2 = "0.11.0"
+tokio = { version = "1.53.1", features = ["full"] }
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+zeroize = { version = "1.9.0", features = ["derive"] }
+# Further deps (tokio, chacha20poly1305, x25519-dalek, hkdf, sha2, zeroize,
+# ml-kem) are added via `cargo add` at module-implementation time, then frozen
+# in Cargo.lock. Maturin packaging config lives in pyproject.toml.
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# Declare the Kani verifier cfg so `unexpected_cfgs` stays a live lint for
+# everything EXCEPT the intentional #[cfg(kani)] harnesses (compiler-
+# recommended form; silences nothing else).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
