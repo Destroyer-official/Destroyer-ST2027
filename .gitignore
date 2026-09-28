@@ -5,6 +5,7 @@
 # NOTUPLOAD FOLDER - Contains all development artifacts, logs, and temp files
 # =============================================================================
 notupload/
+secure_p2p_core/
 /tests/
 !rust_data_plane/tests/
 
@@ -160,3 +161,16 @@ compliance_reports/ceremony_receipt_*.json
 # Runtime state and ephemeral caches
 .acd_quarantine.json
 peer_discovery_cache.json
+
+# Scratch, devscripts, and local helper exclusions
+tree.txt
+*.bat
+archive/reports/
+archive/caches/
+archive/devscripts/
+simple_chat_implementation.py
+military_base_alpha.py
+military_base_bravo.py
+final_recovery_report.json
+final_security_status.json
+redesign/
