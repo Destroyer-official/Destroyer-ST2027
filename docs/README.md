@@ -29,24 +29,34 @@ docs/
 │   ├── st2027_handshake.pv                  # ProVerif model: hybrid secrecy & mutual auth proof
 │   ├── st2027_pcs.pv                        # ProVerif model: post-compromise security (PCS) healing
 │   └── handshake_model.pv                   # Structural baseline handshake model
-└── modules/                                 # Per-module technical charters and line audits
+└── modules/                                 # Per-module technical charters and line audits (27 modules)
     ├── ts_hw_layer.md                       # Pillar 1: Hardware & Physical Security (FIPS/TEMPEST/CNG)
     ├── ts_runtime.md                        # Pillar 2: OS & Execution Runtime (seL4/VBS/VirtualLock)
     ├── noise_pq.md                          # Pillar 3: Protocol & Post-Quantum Cryptography (CNSA 2.0)
     ├── transport_anonymity.md               # Pillar 4: Transport Anonymity & Cell Shaping (Tor/DPO)
     ├── trust_anchor.md                      # Pillar 5: Trust Anchor & Post-Quantum PKI (3-of-5 Root)
-    ├── p2p_core.md                          # Networking core: STUN, framing, sockets
-    ├── hybrid_kex.md                        # Hybrid key exchange mechanisms
+    ├── rust_data_plane.md                   # Native Rust standalone binary & Kani verification
+    ├── p2p_core.md                          # Networking core: STUN, framing, sockets, IPv6
+    ├── hybrid_kex.md                        # Hybrid key exchange mechanisms (SecP384r1MLKEM1024)
     ├── double_ratchet.md                    # Double Ratchet state machine and replay caches
-    ├── pqc_algorithms.md                    # Post-quantum cryptographic primitives
-    ├── rust_data_plane.md                   # Native Rust crate (ts_rt & destroyer_core)
-    ├── tls_channel_manager.md               # TLS 1.3 mTLS channel management
+    ├── pqc_algorithms.md                    # Post-quantum cryptographic primitives (FIPS 203/204/205)
+    ├── tls_channel_manager.md               # TLS 1.3 mTLS channel management and hybrid ciphers
     ├── ca_services.md                       # Private CA services and certificate issuance
-    ├── file_transfer.md                     # Encrypted file transfer pipeline
-    ├── audit_threat_supply.md               # Audit logging, threat detection, and SBOM
+    ├── file_transfer.md                     # Encrypted chunked file transfer pipeline
+    ├── audit_threat_supply.md               # Audit logging, threat detection, and SBOM tracking
     ├── memory_hsm.md                        # Secure memory management and HSM interfaces
     ├── entropy_sidechannel.md               # Hardware RNG, side-channel resistance, serialization
-    └── opsec_persistence.md                 # Anti-forensics, zeroization, and amnesia profiles
+    ├── opsec_persistence.md                 # Anti-forensics, zeroization, and amnesia profiles
+    ├── anonymity_decentral.md               # Decentralized anonymity overlays and cover traffic
+    ├── critical_release.md                  # Dual-person integrity and critical command release
+    ├── destroyer_node.md                    # High-level peer node orchestration and session lifecycle
+    ├── hardware_trust.md                    # Hardware root of trust and TPM 2.0 PCR validation
+    ├── root_files.md                        # Root directory utilities, CLI orchestrators, diagnostic tools
+    ├── safety_numbers.md                    # Out-of-band identity verification and SHA3-512 fingerprints
+    ├── secure_p2p.md                        # Secure P2P communication orchestration and negotiation
+    ├── subsystems_core.md                   # Core cryptographic subsystems and serialization
+    ├── subsystems_support.md                # Support subsystems, remote SIEM forwarders, health telemetry
+    └── trust_policy.md                      # Zero-trust policy evaluation and attestation claims
 ```
 
 ---
