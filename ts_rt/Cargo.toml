@@ -1,0 +1,13 @@
+[package]
+name = "ts_rt"
+version = "1.0.0"
+edition = "2021"
+description = "Deterministic Top-Secret runtime core: locked memory, zeroize-on-drop, replay bitmap, constant-time compare. Zero external dependencies."
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+debug-assertions = true
