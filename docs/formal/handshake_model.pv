@@ -1,0 +1,187 @@
+(* handshake_model.pv -- SUPERSEDED for the session path.
+ *
+ * HISTORICAL NOTE (Sept 2026): this model describes a McEliece-based
+ * triple-DH design that the deployed secure_transmit_2027.py v1 handshake
+ * does NOT implement (deployed: ephemeral P-384 + ephemeral ML-KEM-1024,
+ * HKDF-SHA384, ML-DSA-87, AES-256-GCM). It is retained for archaeology;
+ * the MACHINE-CHECKED model of the deployed protocol is
+ * docs/formal/st2027_handshake.pv, executed by test_proverif_st2027.py
+ * (ProVerif 2.05, all queries RESULT true). Do NOT cite this file as
+ * evidence for the deployed handshake; per CNSA purity it must not be
+ * extended with non-CNSA primitives.
+ *
+ * Original header follows (USENIX Security '24 Transcript-Bound Hybrid
+ * Handshake Model):
+ * Formal verification model conforming to:
+ * - Bhargavan et al., USENIX Security '24 (Signal PQXDH Analysis)
+ * - NIST FIPS 203 (ML-KEM-1024) + Classic-McEliece-8192128f IND-CCA2 KEM Combiner
+ * - NIST FIPS 204 (ML-DSA-87) + SLH-DSA-256f EUF-CMA Hybrid Signatures
+ * - X25519 Ephemeral-Static Diffie-Hellman Triple-DH / Quad-DH
+ * - Full Transcript Binding: KDF(IKM, Info) where Info cryptographically binds
+ *   all public keys, nonces, KEM ciphertexts, and protocol transcripts.
+ *)
+
+free net : channel.
+
+type key.
+type skey.
+type pkey.
+type ss.
+type nonce.
+
+(* --- Asymmetric Keypairs --- *)
+fun pk(skey) : pkey.
+
+(* --- Diffie-Hellman (X25519) --- *)
+fun dh(skey, pkey) : ss.
+equation forall a:skey, b:skey;
+  dh(a, pk(b)) = dh(b, pk(a)).
+
+(* --- Post-Quantum KEM 1: ML-KEM-1024 (FIPS 203) --- *)
+fun mlkem_encap(pkey, nonce) : bitstring.   (* ciphertext *)
+fun mlkem_ss(pkey, nonce) : ss.             (* shared secret *)
+fun mlkem_decap(skey, bitstring) : ss.
+equation forall sk:skey, r:nonce;
+  mlkem_decap(sk, mlkem_encap(pk(sk), r)) = mlkem_ss(pk(sk), r).
+
+(* --- Post-Quantum KEM 2: Classic-McEliece-8192128f --- *)
+fun mceliece_encap(pkey, nonce) : bitstring.
+fun mceliece_ss(pkey, nonce) : ss.
+fun mceliece_decap(skey, bitstring) : ss.
+equation forall sk:skey, r:nonce;
+  mceliece_decap(sk, mceliece_encap(pk(sk), r)) = mceliece_ss(pk(sk), r).
+
+(* --- Post-Quantum Hybrid Signatures: ML-DSA-87 + SLH-DSA-256f --- *)
+fun pq_sign(skey, bitstring) : bitstring.
+fun pq_verify(pkey, bitstring, bitstring) : bool
+reduc forall sk:skey, m:bitstring;
+  pq_verify(pk(sk), m, pq_sign(sk, m)) = true.
+
+(* --- Symmetric AEAD Encryption (ChaCha20-Poly1305) --- *)
+fun aead_enc(key, nonce, bitstring, bitstring) : bitstring.
+fun aead_dec(key, nonce, bitstring, bitstring) : bitstring
+reduc forall k:key, n:nonce, p:bitstring, aad:bitstring;
+  aead_dec(k, n, aead_enc(k, n, p, aad), aad) = p.
+
+(* --- Transcript-Bound Key Derivation Function (HKDF-SHA384) ---
+ * IKM = DH1 || DH2 || DH3 || KEM1_ss || KEM2_ss
+ * Info = Transcript(IK_A, IK_B, EK_A, SPK_B, CT_MLKEM, CT_MCELIECE)
+ *)
+fun hkdf_combine(ss, ss, ss, ss, ss, bitstring) : key.
+fun make_transcript(pkey, pkey, pkey, pkey, bitstring, bitstring) : bitstring.
+
+(* --- Correspondence Events --- *)
+event InitAgrees(key, bitstring).
+event RespAgrees(key, bitstring).
+event InitSends(pkey, pkey, bitstring, bitstring).
+event RespReceives(pkey, pkey, bitstring, bitstring).
+event SessionEstablished(pkey, pkey, key).
+event LeakLongTermKeys(pkey, pkey).
+
+(* --- Top-Secret Classified Payload --- *)
+free secret_payload : bitstring [private].
+
+(* =========================================================================
+ * Formal Security Queries
+ * ========================================================================= *)
+
+(* 1. Secrecy: Passive & Active Dolev-Yao adversary cannot learn secret payload *)
+query attacker(secret_payload).
+
+(* 2. Injective Agreement: Responder on key k and transcript t implies
+ * an authenticated Initiator on exact same (k, t) pair.
+ * Proves immunity against Unknown Key-Share (UKS) and transcript-tampering attacks. *)
+query k:key, t:bitstring;
+  inj-event(RespAgrees(k, t)) ==> inj-event(InitAgrees(k, t)).
+
+(* 3. Mutual Session Key Consistency *)
+query ipk:pkey, rpk:pkey, k:key;
+  event(SessionEstablished(ipk, rpk, k)) ==> inj-event(SessionEstablished(ipk, rpk, k)).
+
+(* =========================================================================
+ * Process Specifications
+ * ========================================================================= *)
+
+let Initiator(ik_a:skey, ik_b_pub:pkey, spk_b_pub:pkey, kpk_mlkem:pkey, kpk_mceliece:pkey) =
+  new ek_a:skey;
+  new r1:nonce;
+  new r2:nonce;
+
+  (* Ephemeral DH contributions *)
+  let dh1 = dh(ik_a, spk_b_pub) in
+  let dh2 = dh(ek_a, ik_b_pub) in
+  let dh3 = dh(ek_a, spk_b_pub) in
+
+  (* Post-Quantum Dual Encapsulations *)
+  let ct_mlkem = mlkem_encap(kpk_mlkem, r1) in
+  let ss_mlkem = mlkem_ss(kpk_mlkem, r1) in
+  let ct_mceliece = mceliece_encap(kpk_mceliece, r2) in
+  let ss_mceliece = mceliece_ss(kpk_mceliece, r2) in
+
+  (* Strict Transcript Binding *)
+  let info = make_transcript(pk(ik_a), ik_b_pub, pk(ek_a), spk_b_pub, ct_mlkem, ct_mceliece) in
+  let session_key = hkdf_combine(dh1, dh2, dh3, ss_mlkem, ss_mceliece, info) in
+
+  (* Sign identity & ephemeral key using Sovereign ML-DSA-87 key *)
+  let sig_init = pq_sign(ik_a, info) in
+
+  event InitAgrees(session_key, info);
+  event InitSends(pk(ik_a), pk(ek_a), ct_mlkem, ct_mceliece);
+  out(net, (pk(ik_a), pk(ek_a), ct_mlkem, ct_mceliece, sig_init));
+
+  (* Receive encrypted confirmation *)
+  in(net, (n_resp:nonce, enc_resp:bitstring));
+  let decrypted_resp = aead_dec(session_key, n_resp, enc_resp, info) in
+  event SessionEstablished(pk(ik_a), ik_b_pub, session_key).
+
+let Responder(ik_b:skey, spk_b:skey, ksk_mlkem:skey, ksk_mceliece:skey) =
+  in(net, (ik_a_pub:pkey, ek_a_pub:pkey, ct_mlkem:bitstring, ct_mceliece:bitstring, sig_init:bitstring));
+  
+  let info = make_transcript(ik_a_pub, pk(ik_b), ek_a_pub, pk(spk_b), ct_mlkem, ct_mceliece) in
+
+  (* Authenticate Initiator Signature *)
+  if pq_verify(ik_a_pub, info, sig_init) = true then
+  (
+    let dh1 = dh(spk_b, ik_a_pub) in
+    let dh2 = dh(ik_b, ek_a_pub) in
+    let dh3 = dh(spk_b, ek_a_pub) in
+
+    let ss_mlkem = mlkem_decap(ksk_mlkem, ct_mlkem) in
+    let ss_mceliece = mceliece_decap(ksk_mceliece, ct_mceliece) in
+
+    let session_key = hkdf_combine(dh1, dh2, dh3, ss_mlkem, ss_mceliece, info) in
+
+    event RespReceives(ik_a_pub, ek_a_pub, ct_mlkem, ct_mceliece);
+    event RespAgrees(session_key, info);
+
+    new n_resp:nonce;
+    out(net, (n_resp, aead_enc(session_key, n_resp, secret_payload, info)));
+    event SessionEstablished(ik_a_pub, pk(ik_b), session_key)
+  ).
+
+(* --- Main Process with Forward Secrecy / Compromise Phase --- *)
+process
+  new ik_a:skey;
+  new ik_b:skey;
+  new spk_b:skey;
+  new ksk_mlkem:skey;
+  new ksk_mceliece:skey;
+
+  (* Public Directory Distribution *)
+  out(net, pk(ik_a));
+  out(net, pk(ik_b));
+  out(net, pk(spk_b));
+  out(net, pk(ksk_mlkem));
+  out(net, pk(ksk_mceliece));
+
+  (
+    (* Active Session Execution *)
+    ( Initiator(ik_a, pk(ik_b), pk(spk_b), pk(ksk_mlkem), pk(ksk_mceliece))
+    | Responder(ik_b, spk_b, ksk_mlkem, ksk_mceliece) )
+  |
+    (* Phase 2: Post-Session Forward Secrecy Leak of Long-Term Keys *)
+    phase 1;
+    event LeakLongTermKeys(pk(ik_a), pk(ik_b));
+    out(net, ik_a);
+    out(net, ik_b)
+  )

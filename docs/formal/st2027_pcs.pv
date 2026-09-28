@@ -1,0 +1,136 @@
+(* st2027_pcs.pv -- Post-compromise security of the ST2027 rehandshake.
+ *
+ * Threat model (PCS, precisely and ONLY this): the adversary learns the
+ * ENTIRE session-1 record key k1 (RAM disclosure, backup theft, compelled
+ * handover of one epoch). Long-term ML-DSA-87 identities are NEVER
+ * compromised in this file — that is the FS scenario, proven separately
+ * in st2027_handshake.pv. This separation is load-bearing, not stylistic:
+ * combining a session-key leak with a long-term-key leak in one timeline
+ * admits live MITM of any new handshake (forged signatures), which NO
+ * session protocol survives — recovery from long-term compromise requires
+ * re-provisioning of identities (operator duty, documented). A model
+ * claiming "PCS despite total identity compromise" would be proving
+ * something false.
+ *
+ * Client1 publishes k1 itself, immediately, on the PUBLIC net (upfront).
+ * Upfront publication is SOUND for PCS: attacker knowledge is monotonic,
+ * and k1 is usable only as an AEAD key for session-1 records — never for
+ * handshake authentication (needs sksC/sksS, never leaked here) nor for
+ * derivation (needs fresh ephemerals). So secrecy under upfront leak
+ * IMPLIES secrecy under post-hoc leak. (Lesson learned the hard way and
+ * verified empirically: leaking across ProVerif phases via a private
+ * channel does NOT work — phase-guarded inputs cannot read earlier-phase
+ * private outputs, which silently evacuates the compromise and renders
+ * the proof vacuous. The upfront public leak avoids the pattern
+ * entirely; the negative control below would catch any recurrence.)
+ *
+ * Session 2 = REHANDSHAKE with FRESH ephemerals on both sides under the
+ * SAME identities. Proven: attacker(payload2) RESULT true (healing
+ * works). Sanity negative control (pytest runner, scratch copy):
+ * attacker(payload1) is false — the compromise genuinely takes effect.
+ *
+ * Abstractions inherited from st2027_handshake.pv (see its header):
+ * timestamps-as-freshness, injective symbolic tuples, TOFU-as-pinned,
+ * kdf one-way (dual-PRF assumption documented there), no outer TLS.
+ * Single session pair (no replication): PCS is a per-epoch property;
+ * multi-session confusion is covered by the main model.
+ *)
+
+free net: channel.
+
+type key.
+type skey.
+type pkey.
+type ss.
+type nonce.
+
+fun pk(skey): pkey.
+fun ecdh(skey, pkey): ss.
+equation forall a:skey, b:skey;
+  ecdh(a, pk(b)) = ecdh(b, pk(a)).
+
+fun mlkem_pk(skey): pkey.
+fun mlkem_ct(pkey, nonce): bitstring.
+fun mlkem_ss(pkey, nonce): ss.
+fun mlkem_open(skey, bitstring): ss.
+equation forall sk:skey, r:nonce;
+  mlkem_open(sk, mlkem_ct(mlkem_pk(sk), r)) = mlkem_ss(mlkem_pk(sk), r).
+
+fun mldsa_sign(skey, bitstring): bitstring.
+fun mldsa_verify(pkey, bitstring, bitstring): bool
+reduc forall sk:skey, m:bitstring;
+  mldsa_verify(pk(sk), m, mldsa_sign(sk, m)) = true.
+
+fun kdf(ss, ss, bitstring): key.
+
+fun aead_enc(key, nonce, bitstring, bitstring): bitstring.
+fun aead_dec(key, nonce, bitstring, bitstring): bitstring
+reduc forall k:key, n:nonce, p:bitstring, aad:bitstring;
+  aead_dec(k, n, aead_enc(k, n, p, aad), aad) = p.
+
+fun sha384(bitstring): bitstring.
+
+free sksC: skey [private].
+free sksS: skey [private].
+free secret_payload1: bitstring [private].
+free secret_payload2: bitstring [private].
+
+(* --- Epoch 1: full ephemeral handshake, payload under k1 --- *)
+let Client1() =
+  new eC:skey; new dkC:skey; new t:nonce;
+  let m1 = (pk(eC), mlkem_pk(dkC), t, pk(sksC),
+            mldsa_sign(sksC, (pk(eC), mlkem_pk(dkC), t))) in
+  out(net, m1);
+  in(net, m2:bitstring);
+  let (eS:pkey, ct:bitstring, ts:nonce, sigS:bitstring) = m2 in
+  if mldsa_verify(pk(sksS), (pk(eC), mlkem_pk(dkC), t, eS, ct, ts), sigS) = true then
+  let k1 = kdf(ecdh(eC, eS), mlkem_open(dkC, ct),
+               (pk(eC), mlkem_pk(dkC), t, eS, ct, ts)) in
+  new seq:nonce;
+  out(net, (seq, aead_enc(k1, seq, (secret_payload1, sha384(secret_payload1)),
+                          (seq, t))));
+  (* Epoch-1 key compromise, published immediately (superset of post-hoc
+   * compromise — see header). No private cross-phase channel involved. *)
+  out(net, k1).
+
+let Server1() =
+  in(net, m1:bitstring);
+  let (eC:pkey, ekC:pkey, t:nonce, pkC:pkey, sigC:bitstring) = m1 in
+  if mldsa_verify(pkC, (eC, ekC, t), sigC) = true then
+  new eS:skey; new r:nonce; new ts:nonce;
+  let ct = mlkem_ct(ekC, r) in
+  let k1 = kdf(ecdh(eS, eC), mlkem_ss(ekC, r),
+               (eC, ekC, t, pk(eS), ct, ts)) in
+  out(net, (pk(eS), ct, ts,
+            mldsa_sign(sksS, (eC, ekC, t, pk(eS), ct, ts)))).
+
+(* --- Epoch 2: REHANDSHAKE, fresh ephemerals, same identities --- *)
+let Client2() =
+  new eC:skey; new dkC:skey; new t:nonce;
+  let m1 = (pk(eC), mlkem_pk(dkC), t, pk(sksC),
+            mldsa_sign(sksC, (pk(eC), mlkem_pk(dkC), t))) in
+  out(net, m1);
+  in(net, m2:bitstring);
+  let (eS:pkey, ct:bitstring, ts:nonce, sigS:bitstring) = m2 in
+  if mldsa_verify(pk(sksS), (pk(eC), mlkem_pk(dkC), t, eS, ct, ts), sigS) = true then
+  let k2 = kdf(ecdh(eC, eS), mlkem_open(dkC, ct),
+               (pk(eC), mlkem_pk(dkC), t, eS, ct, ts)) in
+  new seq:nonce;
+  out(net, (seq, aead_enc(k2, seq, (secret_payload2, sha384(secret_payload2)),
+                          (seq, t)))).
+
+let Server2() =
+  in(net, m1:bitstring);
+  let (eC:pkey, ekC:pkey, t:nonce, pkC:pkey, sigC:bitstring) = m1 in
+  if mldsa_verify(pkC, (eC, ekC, t), sigC) = true then
+  new eS:skey; new r:nonce; new ts:nonce;
+  let ct = mlkem_ct(ekC, r) in
+  out(net, (pk(eS), ct, ts,
+            mldsa_sign(sksS, (eC, ekC, t, pk(eS), ct, ts)))).
+
+(* PCS: post-healing payload stays secret despite total epoch-1 compromise.
+ * Long-term identities are never compromised in this file (see header). *)
+query attacker(secret_payload2).
+
+process
+  ( (Client1() | Server1() | Client2() | Server2()) )
