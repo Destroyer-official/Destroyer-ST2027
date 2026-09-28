@@ -1,0 +1,18 @@
+# Python Production Packaging Manifest for Military P2P
+# Exclude lab benchmarks, tests, batch launchers, and temporary development artifacts from production distribution
+
+prune tests
+prune notupload
+prune logs
+prune unsent_messages
+prune scratch
+
+exclude test_*.py
+exclude benchmark_*.py
+exclude run_*.py
+exclude generate_*.py
+exclude update_*.py
+exclude mark_*.py
+exclude *.bat
+exclude *.log
+exclude deployment_report_*.json

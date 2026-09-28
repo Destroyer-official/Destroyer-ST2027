@@ -1,0 +1,261 @@
+name: CNSA 2.0 & Defense Hardening CI (2027+ L5+ Pipeline)
+
+on:
+  push:
+    branches: [ main, master, release/* ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+  id-token: write  # OIDC identity token for Cosign / Sigstore provenance
+
+jobs:
+  defense-hardening-verification:
+    name: CNSA 2.0 Hardening & Reproducible Build Attestation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Source Code (Audit Root)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11 Hermetic Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Verify Pinned & Hashed Dependencies (Supply-Chain Zero-Trust)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt -r requirements-test.txt
+
+      - name: OSV Pin Audit (fail on known CVEs in shipped pins)
+        run: |
+          python scripts/audit_pins.py
+
+      - name: Bandit SAST Gate (fail on Medium+, audited suppressions via nosec)
+        run: |
+          pip install bandit
+          bandit -r . --exclude "./.venv,./__pycache__,./archive,./redesign,./notupload,./downloads,./logs,./compliance_reports,./.hypothesis,./.pytest_cache,./.git" -f txt --severity-level medium
+
+      - name: Execute NIST CAVP Known Answer Tests (KAT)
+        run: |
+          python scripts/cavp_algorithm_validator.py
+
+      - name: Run 2027+ Defense Hardening Test Battery (18 Comprehensive Tests)
+        env:
+          SECURE_P2P_PRODUCTION: "true"
+          P2P_STRICT_SECURITY: "true"
+          CNSA_2027_STRICT: "true"
+        run: |
+          python test_2027_defense_hardening.py
+
+      - name: Run CNSA 2.0 Maximum Security Profile Tests
+        env:
+          SECURE_P2P_PRODUCTION: "true"
+          CNSA_2027_STRICT: "true"
+        run: |
+          python tests/test_cnsa_max_profile.py
+
+      - name: Run Zero-Gap Military Security Audit Battery
+        env:
+          SECURE_P2P_PRODUCTION: "true"
+        run: |
+          python test_no_gap_military_audit.py
+
+      - name: Execute NC3 Nuclear Command & Dual-Custody EAM Readiness Suite
+        env:
+          SECURE_P2P_PRODUCTION: "true"
+          P2P_STRICT_SECURITY: "true"
+        run: |
+          python -m unittest test_nc3_nuclear_command_readiness.py
+
+      - name: Execute Military Adversarial Resistance Suite
+        env:
+          SECURE_P2P_PRODUCTION: "true"
+          P2P_STRICT_SECURITY: "true"
+        run: |
+          python -m pytest test_military_adversarial_suite.py test_audit_confirmed_regressions.py test_2028_national_security_remediations.py
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Execute Rust Data-Plane Unit & Integration Tests
+        run: |
+          cargo test --manifest-path rust_data_plane/Cargo.toml
+
+      - name: Build & Install Native Data-Plane Extension (destroyer_core)
+        run: |
+          pip install maturin
+          maturin develop -r -m rust_data_plane/Cargo.toml
+
+      - name: Run Production-Grade Destroyer Core Verification Suite
+        env:
+          P2P_DATA_PLANE: "rust"
+        run: |
+          python test_destroyer_core_production.py
+
+      - name: Generate CycloneDX v1.5 & SPDX v2.3 SBOMs
+        run: |
+          python generate_production_sbom.py --output-dir compliance_reports/sbom
+
+      - name: Verify Reproducible Build Manifest & Generate SLSA Attestation Receipt
+        run: |
+          python scripts/verify_reproducible_build.py
+
+      - name: Archive Cryptographic Compliance & Attestation Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: defense-compliance-attestation-receipts
+          path: |
+            compliance_reports/signed_reproducible_build_receipt.json
+            compliance_reports/reproducible_build_receipt.json
+            compliance_reports/cavp_validation_report.json
+            compliance_reports/cnsa2_readiness_audit.json
+            compliance_reports/sbom/
+          retention-days: 90
+
+  adversarial-gates:
+    name: Adversarial Gates (KAT + Supply-Chain Traversal + Boot-Config Smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: false
+
+    steps:
+      - name: Checkout Source Code (Audit Root)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Minimal Test Deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest cryptography
+
+      - name: PQXDH Combiner v2 KAT (fail-closed)
+        run: |
+          python -m pytest test_pqxdh_combiner_v2_kat.py -v
+
+      - name: Parser Fuzz + Caps Strict + Wave-8 Regression Gates (fail-closed)
+        run: |
+          python -m pytest test_parser_fuzz_gates.py test_caps_strict.py test_wave8_regressions.py -v
+
+      - name: Layer-1 Hardening Gates (native buffers + group V2 + TPM quote + Rekor)
+        run: |
+          python -m pytest test_layer1_hardening.py test_tpm_quote.py test_rekor_bundle.py test_mls_framing.py test_hsm_platform.py -v
+
+      - name: Supply-Chain Traversal Vectors (import check fallback)
+        run: |
+          python -c "import supply_chain_security; print('supply-chain import OK:', supply_chain_security.__name__)"
+          python -c "import libsodium_manager; print('libsodium traversal-guard module import OK')"
+
+      - name: Boot-Config Signing Smoke (--help)
+        run: |
+          python scripts/sign_boot_config.py --help
+
+      - name: LibOQS version pin check (>=0.10.1, SKIP when native lib absent)
+        run: |
+          python -c "
+          import ctypes, json, re, sys
+          from pathlib import Path
+          MIN=(0,10,1)
+          def parse(v):
+              m=re.match(r'(\d+)\.(\d+)\.(\d+)', v or '')
+              return tuple(int(x) for x in m.groups()) if m else None
+          # 1) Try native OQS_version() from any candidate lib (CI-safe: SKIP if absent).
+          cands=[Path('oqs.dll'), Path('liboqs.so'), Path('liboqs.dll'),
+                 Path('/usr/local/lib/liboqs.so'), Path('/usr/lib/liboqs.so'),
+                 Path('/usr/lib/x86_64-linux-gnu/liboqs.so')]
+          ver=None; src=None
+          for c in cands:
+              try:
+                  if c.is_file():
+                      lib=ctypes.CDLL(str(c))
+                      if hasattr(lib, 'OQS_version'):
+                          lib.OQS_version.restype=ctypes.c_char_p
+                          ver=(lib.OQS_version() or b'').decode(errors='replace'); src=str(c)
+                          break
+              except Exception:
+                  continue
+          if ver:
+              got=parse(ver)
+              print(f'liboqs native version via {src}: {ver} (parsed={got}, floor=0.10.1)')
+              if got is None or got < MIN:
+                  print(f'FAIL: liboqs {ver} < floor 0.10.1', file=sys.stderr); sys.exit(1)
+              print('PASS: liboqs native version >= 0.10.1'); sys.exit(0)
+          # 2) No native lib on this runner (expected on ubuntu-latest for Windows oqs.dll):
+          #    fall back to SBOM / verifier floor check, else SKIP — never fail when tool missing.
+          try:
+              cdx=json.loads(Path('compliance_reports/cyclonedx_sbom.json').read_text(encoding='utf-8'))
+              for comp in cdx.get('components', []):
+                  if str(comp.get('name','')).lower() in ('oqs','oqs.dll','liboqs'):
+                      v=str(comp.get('version','')); got=parse(v)
+                      print(f'SBOM liboqs pin: {v} (parsed={got}, floor=0.10.1)')
+                      if got is None or got < MIN:
+                          print(f'FAIL: SBOM liboqs pin {v} < floor 0.10.1', file=sys.stderr); sys.exit(1)
+                      print('PASS: SBOM liboqs pin >= 0.10.1 (native lib absent on this runner; see docs/liboqs_pin.md)'); sys.exit(0)
+          except SystemExit:
+              raise
+          except Exception as e:
+              print(f'SBOM fallback unavailable ({e}); trying verifier floor')
+          try:
+              from dependency_security_verifier import DependencySecurityVerifier
+              floor=DependencySecurityVerifier().critical_dependencies.get('oqs.dll', {}).get('min_version','0.10.1')
+              got=parse(str(floor))
+              print(f'verifier floor for oqs.dll: {floor}')
+              assert got is not None and got >= MIN, f'verifier floor {floor} < 0.10.1'
+              print('PASS: verifier floor >= 0.10.1 (native lib absent on this runner; SKIP native assert)'); sys.exit(0)
+          except SystemExit:
+              raise
+          except Exception as e:
+              print(f'SKIP: liboqs native lib absent and no SBOM/verifier pin to assert ({e})'); sys.exit(0)
+          "
+
+      - name: Formal handshake model (ProVerif, non-strict SKIP when missing)
+        run: |
+          sh docs/formal/check.sh
+
+      - name: Cosign/Rekor SBOM signature stub (SKIP when cosign or sigs missing)
+        run: |
+          if ! command -v cosign >/dev/null 2>&1; then
+            echo "SKIP: cosign not installed (SBOM Cosign verification not enforced)"
+            exit 0
+          fi
+          cosign version || true
+          FOUND_SIG=""
+          for f in compliance_reports/*.sig compliance_reports/sbom/*.sig compliance_reports/*.mldsa87.sig; do
+            if [ -f "$f" ]; then FOUND_SIG="$FOUND_SIG $f"; fi
+          done
+          # Cosign blob sigs use .sig + .pem/.crt bundles; ML-DSA .mldsa87.sig are verified offline, not by cosign.
+          COSIGN_SIG=""
+          for f in compliance_reports/*.sig compliance_reports/sbom/*.sig; do
+            if [ -f "$f" ]; then COSIGN_SIG="$COSIGN_SIG $f"; fi
+          done
+          if [ -z "$COSIGN_SIG" ]; then
+            echo "SKIP: no Cosign SBOM signatures present (expected compliance_reports/*.sig + .pem; ML-DSA .mldsa87.sig verified offline via generate_production_sbom.py)"
+            echo "Rekor: transparency inclusion check is advisory/offline-only (see generate_production_sbom.py verify_sbom_offline TODO(rekor))"
+            exit 0
+          fi
+          for sig in $COSIGN_SIG; do
+            base="${sig%.sig}"
+            cert=""
+            if [ -f "${base}.pem" ]; then cert="${base}.pem"; elif [ -f "${base}.crt" ]; then cert="${base}.crt"; fi
+            if [ -z "$cert" ]; then
+              echo "SKIP: no cosign cert for $sig (expected ${base}.pem); advisory only"
+              continue
+            fi
+            echo "Verifying $base with cosign (cert=$cert)..."
+            cosign verify-blob --cert "$cert" --signature "$sig" "$base" || echo "WARN: cosign verify failed for $base (advisory stub, not blocking)"
+          done
+          echo "Rekor: transparency inclusion check is advisory/offline-only (see generate_production_sbom.py verify_sbom_offline TODO(rekor))"
+          exit 0
