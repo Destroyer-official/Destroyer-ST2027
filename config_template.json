@@ -1,0 +1,98 @@
+{
+  "_comment": "Military-Grade Secure P2P Configuration Template",
+  "_version": "2.0.0",
+  "_classification": "UNCLASSIFIED",
+  
+  "security_level": "MAXIMUM",
+  "key_lifetime": 3072,
+  "enable_hsm": false,
+  "audit_logging": true,
+  
+  "network": {
+    "listen_address": "::",
+    "listen_port": 8888,
+    "max_connections": 100,
+    "handshake_timeout": 30,
+    "heartbeat_interval": 60,
+    "connection_retry_max": 3,
+    "connection_retry_delay": 5
+  },
+  
+  "cryptography": {
+    "algorithms": {
+      "kem": "ML-KEM-1024",
+      "signature": "ML-DSA-87",
+      "hash": "SHA384",
+      "symmetric": "AES-256-GCM"
+    },
+    "key_rotation_interval": 3600,
+    "ephemeral_keys": true,
+    "in_memory_only": true
+  },
+  
+  "security": {
+    "enable_anti_debugging": true,
+    "enable_memory_protection": true,
+    "enable_secure_boot_check": true,
+    "enable_integrity_checks": true,
+    "enable_canary_checks": true,
+    "enable_intrusion_detection": true,
+    "security_monitoring_interval": 60
+  },
+  
+  "hsm_tpm": {
+    "enable_hsm": false,
+    "hsm_type": "pkcs11",
+    "hsm_library_path": "",
+    "hsm_slot": 0,
+    "hsm_pin": "",
+    "enable_tpm": false,
+    "tpm_version": "2.0",
+    "tpm_device": "/dev/tpm0"
+  },
+  
+  "logging": {
+    "log_level": "INFO",
+    "log_format": "json",
+    "log_dir": "logs",
+    "log_rotation": {
+      "max_size_mb": 100,
+      "max_files": 10,
+      "compress": true
+    },
+    "audit_logging": {
+      "enabled": true,
+      "sign_logs": true,
+      "log_file": "logs/audit.log"
+    }
+  },
+  
+  "performance": {
+    "fast_init": true,
+    "lazy_loading": true,
+    "cache_size_mb": 50,
+    "worker_threads": 4
+  },
+  
+  "paths": {
+    "keys_dir": "keys",
+    "logs_dir": "logs",
+    "certs_dir": "certs",
+    "backup_dir": "backup"
+  },
+  
+  "features": {
+    "enable_file_transfer": true,
+    "enable_peer_discovery": true,
+    "enable_user_profiles": true,
+    "enable_message_history": false,
+    "max_file_size_mb": 50
+  },
+  
+  "compliance": {
+    "nist_level": 5,
+    "cnsa_2_0": true,
+    "fips_mode": false,
+    "audit_all_operations": true
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "_comment": "Military-Grade Secure P2P PRODUCTION Configuration",
+  "_version": "2.0.0",
+  "_classification": "SECRET",
+  "security_level": "MAXIMUM",
+  "key_lifetime": 3072,
+  "enable_hsm": true,
+  "audit_logging": true,
+  "network": {
+    "listen_address": "::",
+    "listen_port": 8888,
+    "max_connections": 50,
+    "handshake_timeout": 10,
+    "heartbeat_interval": 30,
+    "connection_retry_max": 5,
+    "connection_retry_delay": 2,
+    "air_gapped_mode": true
+  },
+  "cryptography": {
+    "algorithms": {
+      "kem": "ML-KEM-1024",
+      "signature": "ML-DSA-87",
+      "hash": "SHA384",
+      "symmetric": "AES-256-GCM"
+    },
+    "key_rotation_interval": 1800,
+    "ephemeral_keys": true,
+    "in_memory_only": true
+  },
+  "security": {
+    "enable_anti_debugging": true,
+    "enable_memory_protection": true,
+    "enable_secure_boot_check": true,
+    "enable_integrity_checks": true,
+    "enable_canary_checks": true,
+    "enable_intrusion_detection": true,
+    "security_monitoring_interval": 10,
+    "hardware_security": {
+      "tpm_required": true,
+      "hsm_required": true,
+      "fail_on_software_fallback": true
+    }
+  },
+  "hsm_tpm": {
+    "enable_hsm": true,
+    "hsm_type": "pkcs11",
+    "hsm_library_path": "",
+    "hsm_slot": 0,
+    "hsm_pin": "",
+    "enable_tpm": true,
+    "tpm_version": "2.0",
+    "tpm_device": "/dev/tpm0",
+    "fail_on_software_fallback": true
+  },
+  "authentication": {
+    "required": true,
+    "anonymous_mode": false,
+    "multi_factor": true,
+    "cac_card_support": true
+  },
+  "logging": {
+    "log_level": "WARNING",
+    "log_format": "json",
+    "log_dir": "logs",
+    "log_rotation": {
+      "max_size_mb": 50,
+      "max_files": 20,
+      "compress": true
+    },
+    "audit_logging": {
+      "enabled": true,
+      "sign_logs": true,
+      "log_file": "logs/audit.log"
+    }
+  },
+  "performance": {
+    "fast_init": false,
+    "lazy_loading": false,
+    "cache_size_mb": 100,
+    "worker_threads": 8
+  },
+  "features": {
+    "enable_file_transfer": true,
+    "enable_peer_discovery": false,
+    "enable_user_profiles": false,
+    "enable_message_history": false,
+    "max_file_size_mb": 50
+  },
+  "compliance": {
+    "nist_level": 5,
+    "cnsa_2_0": true,
+    "fips_mode": true,
+    "audit_all_operations": true
+  }
+}
