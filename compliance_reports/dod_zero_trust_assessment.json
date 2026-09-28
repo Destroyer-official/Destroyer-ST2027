@@ -1,0 +1,370 @@
+{
+  "dod_zero_trust_assessment": {
+    "assessment_kind": "SELF-ASSESSMENT (developer-run capability checklist; not an independent assessment, not a compliance determination)",
+    "assessment_timestamp_utc": "2026-09-24T14:17:11.061142+00:00",
+    "framework": "Department of Defense (DoD) Zero Trust Strategy 2027",
+    "overall_score_percentage": 100.0,
+    "pillars": [
+      {
+        "capabilities": [
+          {
+            "details": "Mutual TLS 1.3 with client certificate requirement",
+            "evidence": [
+              "tls_channel_manager.py",
+              "test_2027_defense_hardening.py::mTLS suites"
+            ],
+            "id": "U.1",
+            "implemented": true,
+            "name": "Continuous Multi-Factor Authentication"
+          },
+          {
+            "details": "ML-DSA-87 (FIPS 204) identity keys with SHA3-512 fingerprinting",
+            "evidence": [
+              "pqc_algorithms.py (EnhancedMLDSA_87)",
+              "test_crypto_root_fixes.py"
+            ],
+            "id": "U.2",
+            "implemented": true,
+            "name": "Post-Quantum Identity Credentials"
+          },
+          {
+            "details": "P2P_REQUIRE_AUTH strictly enforced; anonymous bypass fatal",
+            "evidence": [
+              "secure_p2p.py (fail-closed auth gates)",
+              "test_audit_confirmed_regressions.py"
+            ],
+            "id": "U.3",
+            "implemented": true,
+            "name": "Zero Anonymous Bypass"
+          },
+          {
+            "details": "Constant-time role evaluation and strict whitelist validation",
+            "evidence": [
+              "zero_trust_engine.py",
+              "test_2028_national_security_remediations.py"
+            ],
+            "id": "U.4",
+            "implemented": true,
+            "name": "Role-Based Access Control (RBAC)"
+          }
+        ],
+        "name": "User",
+        "pillar_id": 1,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      },
+      {
+        "capabilities": [
+          {
+            "details": "Win32 TBS TPM 2.0 physical PCR quote or witnessed ceremony",
+            "evidence": [
+              "platform_hsm_interface.py (TBS PCR reads)",
+              "test_hsm_platform.py",
+              "test_tpm_quote.py"
+            ],
+            "id": "D.1",
+            "implemented": true,
+            "name": "Hardware Root of Trust"
+          },
+          {
+            "details": "PCR registers 0, 1, 2, 7 measured and validated",
+            "evidence": [
+              "tpm_quote.py (quote/composite verify)",
+              "test_tpm_quote.py"
+            ],
+            "id": "D.2",
+            "implemented": true,
+            "name": "Cryptographic PCR Attestation"
+          },
+          {
+            "details": "Node cryptographic identity bound to hardware root",
+            "evidence": [
+              "secure_enclave_key_storage.py (backend selection)",
+              "platform_hsm_interface.py"
+            ],
+            "id": "D.3",
+            "implemented": true,
+            "name": "Device Identity Binding"
+          },
+          {
+            "details": "Pre-flight dependency and DLL hash verification",
+            "evidence": [
+              "dependency_security_verifier.py",
+              "verify_deployment.py"
+            ],
+            "id": "D.4",
+            "implemented": true,
+            "name": "Integrity State Validation"
+          }
+        ],
+        "name": "Device",
+        "pillar_id": 2,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      },
+      {
+        "capabilities": [
+          {
+            "details": "Zero fallback to plaintext, unauthenticated sockets, or classical ciphers",
+            "evidence": [
+              "cnsa2_policy_engine.py (NEVER_AUTHORIZED_2027)",
+              "test_cnsa27_gate_2026.py"
+            ],
+            "id": "A.1",
+            "implemented": true,
+            "name": "Fail-Closed Security Boundaries"
+          },
+          {
+            "details": "Key lifecycle zeroization and locked memory pages",
+            "evidence": [
+              "native_secure_buffer.py",
+              "secure_memory_wiper.py",
+              "enhanced_secure_memory.py"
+            ],
+            "id": "A.2",
+            "implemented": true,
+            "name": "Deterministic Memory Zeroization"
+          },
+          {
+            "details": "100% shell=True eradication across all subprocess routines",
+            "evidence": [
+              "test_parser_fuzz_gates.py (shell=True eradication probes)"
+            ],
+            "id": "A.3",
+            "implemented": true,
+            "name": "Insecure Process Elimination"
+          },
+          {
+            "details": "CycloneDX 1.6 CBOM and SLSA Level 3+ in-toto provenance",
+            "evidence": [
+              "compliance_reports/spdx_sbom.json",
+              "compliance_reports/cyclonedx_sbom.json",
+              "generate_production_sbom.py"
+            ],
+            "id": "A.4",
+            "implemented": true,
+            "name": "Software Supply Chain Provenance"
+          }
+        ],
+        "name": "Applications & Workloads",
+        "pillar_id": 3,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      },
+      {
+        "capabilities": [
+          {
+            "details": "FIPS 203 ML-KEM-1024 primary KEM",
+            "evidence": [
+              "liboqs_wrapper.py (LibOQS_MLKEM_1024)",
+              "test_pqxdh_combiner_v2_kat.py"
+            ],
+            "id": "DT.1",
+            "implemented": true,
+            "name": "Post-Quantum Level 5 Key Encapsulation"
+          },
+          {
+            "details": "FIPS 204 ML-DSA-87 & FIPS 205 SLH-DSA-256f",
+            "evidence": [
+              "pqc_algorithms.py (ML-DSA-87/SLH-DSA)",
+              "test_crypto_root_fixes.py"
+            ],
+            "id": "DT.2",
+            "implemented": true,
+            "name": "Post-Quantum Level 5 Digital Signatures"
+          },
+          {
+            "details": "AES-256-GCM (NIST SP 800-38D) & ChaCha20-Poly1305",
+            "evidence": [
+              "rust_data_plane/src/aead.rs",
+              "test_rust_python_crosscheck.py"
+            ],
+            "id": "DT.3",
+            "implemented": true,
+            "name": "Authenticated Symmetric Encryption"
+          },
+          {
+            "details": "Signal Double Ratchet with MAX_SKIP_MESSAGE_KEYS=0",
+            "evidence": [
+              "double_ratchet.py (SPQR/Braid-lite, MAX_SKIP=0)",
+              "test_wave8_regressions.py",
+              "test_defensive_nc3_audit.py"
+            ],
+            "id": "DT.4",
+            "implemented": true,
+            "name": "Post-Compromise Security & Forward Secrecy"
+          },
+          {
+            "details": "Memory-only unsent queue (P2P_PERSIST_QUEUE=false default)",
+            "evidence": [
+              "secure_message_serializer.py",
+              "ephemeral_messaging.py",
+              "utils/message_caps.py"
+            ],
+            "id": "DT.5",
+            "implemented": true,
+            "name": "Zero Plaintext Disk Persistence"
+          }
+        ],
+        "name": "Data",
+        "pillar_id": 4,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      },
+      {
+        "capabilities": [
+          {
+            "details": "Prohibition of unencapsulated direct public IP sockets",
+            "evidence": [
+              "cnsa2_policy_engine.py (direct-public-IP refusal)",
+              "test_2027_defense_hardening.py::transport policy"
+            ],
+            "id": "N.1",
+            "implemented": true,
+            "name": "Tactical Network Cloaking"
+          },
+          {
+            "details": "1280B IPv6 MTU budget with 1205B chunk streaming",
+            "evidence": [
+              "rust_data_plane/src/net.rs",
+              "test_production_grade_destroyer_suite.py"
+            ],
+            "id": "N.2",
+            "implemented": true,
+            "name": "High-Throughput WireGuard UDP Data Plane"
+          },
+          {
+            "details": "Fixed quanta {256, 512, 1232B} and Poisson chaff injection",
+            "evidence": [
+              "rust_data_plane/src/frame.rs (quanta)",
+              "metadata_resistance.py",
+              "network_adversary_resistance.py"
+            ],
+            "id": "N.3",
+            "implemented": true,
+            "name": "Traffic Morphing & Quantization"
+          },
+          {
+            "details": "64-bit branchless sliding bitmap anti-replay window",
+            "evidence": [
+              "rust_data_plane/src/replay.rs",
+              "test_rust_python_crosscheck.py"
+            ],
+            "id": "N.4",
+            "implemented": true,
+            "name": "Anti-Replay Window Enforcement"
+          }
+        ],
+        "name": "Network & Environment",
+        "pillar_id": 5,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      },
+      {
+        "capabilities": [
+          {
+            "details": "Sliding-window threat detection and autonomous mitigation",
+            "evidence": [
+              "active_cyber_defense.py",
+              "test_defensive_audit_targets.py"
+            ],
+            "id": "AO.1",
+            "implemented": true,
+            "name": "Real-Time Active Cyber Defense (ACD)"
+          },
+          {
+            "details": "PLAYBOOK_QUARANTINE_PEER executed upon replay flood",
+            "evidence": [
+              "active_cyber_defense.py (PLAYBOOK_QUARANTINE_PEER)",
+              "test_defensive_audit_remediations.py"
+            ],
+            "id": "AO.2",
+            "implemented": true,
+            "name": "Autonomous Replay Quarantine"
+          },
+          {
+            "details": "PLAYBOOK_SEVER_SESSION_AND_ISOLATE on HMAC chain breach",
+            "evidence": [
+              "active_cyber_defense.py (PLAYBOOK_SEVER_SESSION_AND_ISOLATE)",
+              "test_security_audit_remediations.py"
+            ],
+            "id": "AO.3",
+            "implemented": true,
+            "name": "Autonomous Tamper Session Severance"
+          },
+          {
+            "details": "PLAYBOOK_FORCE_TACTICAL_CLOAK on traffic anomaly",
+            "evidence": [
+              "tactical_cloaking_router.py",
+              "test_defensive_audit_roadmap.py"
+            ],
+            "id": "AO.4",
+            "implemented": true,
+            "name": "Dynamic Cloaking Enforcement"
+          }
+        ],
+        "name": "Automation & Orchestration",
+        "pillar_id": 6,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      },
+      {
+        "capabilities": [
+          {
+            "details": "Cryptographic forward chaining of all audit events",
+            "evidence": [
+              "audit_logging_system.py",
+              "enhanced_audit_logging.py"
+            ],
+            "id": "VA.1",
+            "implemented": true,
+            "name": "Tamper-Evident HMAC-SHA384 SIEM Chaining"
+          },
+          {
+            "details": "Tail truncation protection via signed head anchor export",
+            "evidence": [
+              "audit_logging_system.py (head anchors)",
+              "test_security_audit_remediations.py::Item 42"
+            ],
+            "id": "VA.2",
+            "implemented": true,
+            "name": "Immutable Head Anchor Locking"
+          },
+          {
+            "details": "NIST SP 800-137 continuous telemetry across 5 probes",
+            "evidence": [
+              "continuous_security_monitor.py (5 probes)",
+              "verify_deployment.py"
+            ],
+            "id": "VA.3",
+            "implemented": true,
+            "name": "Continuous Monitoring (ISCM Telemetry)"
+          },
+          {
+            "details": "Machine-readable NIST OSCAL v1.1.0 SSP and SCTM",
+            "evidence": [
+              "generate_oscal_ssp.py",
+              "compliance_reports/oscal_ssp_cnsa2.json"
+            ],
+            "id": "VA.4",
+            "implemented": true,
+            "name": "Automated RMF Control Traceability"
+          }
+        ],
+        "name": "Visibility & Analytics",
+        "pillar_id": 7,
+        "score_percentage": 100.0,
+        "status": "COMPLIANT"
+      }
+    ],
+    "status": "TARGET_LEVEL_ACHIEVED",
+    "summary": {
+      "compliant_pillars": 7,
+      "implemented_capabilities": 29,
+      "total_capabilities_evaluated": 29,
+      "total_pillars_evaluated": 7
+    },
+    "target_capability_baseline": "Target Level (2027 Mandate)",
+    "target_level_achieved": true
+  }
+}

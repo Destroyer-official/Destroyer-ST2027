@@ -1,0 +1,171 @@
+{
+  "attestation_kind": "SELF-ATTESTATION (producer assertion; not third-party validation, not authorization)",
+  "cisa_common_form_note": "Designed as an ADDENDUM to the CISA Secure Software Attestation Common Form, not the form itself.",
+  "eo_reference": "EO 14028 Section 4e (software producer viewpoint)",
+  "framework": "NIST SP 800-218 SSDF v1.1",
+  "generated_utc": "2026-09-22T03:27:25.512322+00:00",
+  "practices": [
+    {
+      "evidence": [
+        "cnsa2_policy_engine.py (NEVER_AUTHORIZED_2027, CNSA_2027_STRICT)",
+        "test_cnsa27_gate_2026.py",
+        "verify_deployment.py"
+      ],
+      "group": "PO",
+      "practice": "Define security requirements for software development",
+      "producer_statement": "CNSA 2.0 strict is the enforced baseline: ML-KEM-1024 + ML-DSA-87 mandatory, allowlists deny by default, production fail-closed gates refuse downgrades.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "generate_oscal_ssp.py (roles section)",
+        "scripts/witnessed_key_ceremony.py (quorum approvals)"
+      ],
+      "gap_and_plan": "Formal security roles staffing/training is organizational work; tracked in SAR POA&M.",
+      "group": "PO",
+      "practice": "Implement roles and responsibilities",
+      "producer_statement": "In-repo roles exist (AO/ISSO/custodian in OSCAL SSP; two-person rule + custodian quorum in code), but no formal staffing or training program exists outside the repository.",
+      "status": "partial"
+    },
+    {
+      "evidence": [
+        ".github/workflows/defense_ci.yml",
+        "requirements.txt (+hashes)",
+        "scripts/audit_pins.py",
+        "scripts/cve_scan.py",
+        "scripts/verify_reproducible_build.py",
+        "pytest.ini"
+      ],
+      "group": "PO",
+      "practice": "Implement supporting toolchains and secure environments",
+      "producer_statement": "Pinned hashed dependencies, offline CVE/OSV scanning, Bandit SAST gate in CI, reproducible-build verification, air-gap-capable operation with no network calls in gates.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "verify_deployment.py",
+        "test_parser_fuzz_gates.py",
+        "test_pqxdh_combiner_v2_kat.py"
+      ],
+      "group": "PO",
+      "practice": "Define and use criteria for software security checks",
+      "producer_statement": "Deployment verifier (79+ checks), CNSA-2027 readiness gate, parser fuzz gates, KAT suites, and Bandit medium+ gate define release criteria; failures block (fail-closed, exit nonzero).",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "supply_chain_security.py (TUFReleaseManager)",
+        "test_tuf_pq_dual_sign.py"
+      ],
+      "gap_and_plan": "Hosting-platform access controls must be evidenced by the hosting owner.",
+      "group": "PS",
+      "practice": "Protect all forms of code from unauthorized access/tampering",
+      "producer_statement": "Release integrity is cryptographic (TUF 4-role + manifest dual signatures, SBOM/CBOM ML-DSA-87 seals). Repository-hosting access controls (branch protection, reviewer rules) live outside this repo and are not asserted here.",
+      "status": "partial"
+    },
+    {
+      "evidence": [
+        "generate_production_sbom.py (_mldsa_sign_verified)",
+        "test_rekor_bundle.py"
+      ],
+      "group": "PS",
+      "practice": "Provide a mechanism for verifying software release integrity",
+      "producer_statement": "Every release artifact ships detached ML-DSA-87 signatures with colocated trust anchors plus SHA-512/SHA3-512 manifests; verification is offline and scripted.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "compliance_reports/signed_reproducible_build_receipt.json",
+        "compliance_reports/provenance.intoto.jsonl"
+      ],
+      "group": "PS",
+      "practice": "Archive and protect each software release",
+      "producer_statement": "Reproducible-build receipts, signed SBOM/CBOM, and SLSA provenance stubs are retained per release in compliance_reports/.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "security_audit_report.md",
+        "double_ratchet.py",
+        "rust_data_plane/src/ (SecureEngine, ct.rs)"
+      ],
+      "group": "PW",
+      "practice": "Design software to meet security requirements / mitigate risk",
+      "producer_statement": "Documented threat model and audit report drive design; fail-closed defaults, authenticated handshake transcript binding, memory-safe data plane in Rust.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "crypto/kem.py",
+        "test_pqxdh_combiner_v2_kat.py"
+      ],
+      "group": "PW",
+      "practice": "Reuse existing, well-secured software",
+      "producer_statement": "Vetted primitives only (liboqs, libsodium, cryptography); no custom ciphers. The one custom combiner (hybrid_combine_v2) is length-framed, transcript-bound, KAT-pinned, and documented as custom (X-Wing combiner lessons applied).",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "utils/message_caps.py",
+        "test_caps_strict.py",
+        "test_audit_confirmed_regressions.py"
+      ],
+      "group": "PW",
+      "practice": "Create software with secure settings by default",
+      "producer_statement": "Deny-by-default: plaintext refused, unverified TOFU refused, software fallback refused in production, strictest caps pre-allocation. Every bypass requires explicit operator opt-in.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "test_parser_fuzz_gates.py",
+        "test_production_grade_destroyer_suite.py",
+        "test_wave8_regressions.py"
+      ],
+      "group": "PW",
+      "practice": "Review human-readable code and test executable code",
+      "producer_statement": "Parser fuzz gates (26), KAT suites, live two-terminal handshake proofs, 290+ gate tests, Bandit SAST, adversarial suites; defects fixed with regression locks (e.g., twins-parity guard).",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "rust_data_plane/Cargo.toml ([profile.release])"
+      ],
+      "gap_and_plan": "Record toolchain versions/hashes per release; tracked in SAR POA&M.",
+      "group": "PW",
+      "practice": "Configure compilers/interpreters/tools securely",
+      "producer_statement": "Rust release profile hardened (lto, single codegen unit, stripped, panic=abort); Python runs without hardening flags audit. Toolchain provenance beyond reproducible-build receipts is not yet recorded.",
+      "status": "partial"
+    },
+    {
+      "evidence": [
+        "scripts/cve_scan.py",
+        "test_remediated_63_findings.py",
+        "liboqs_wrapper.py (_record_decaps_result)"
+      ],
+      "group": "RV",
+      "practice": "Identify, assess, and remediate vulnerabilities",
+      "producer_statement": "Offline CVE scanning of pinned dependencies, 63-finding remediation battery with regression locks, fail-closed decaps/fault counters with alerting thresholds.",
+      "status": "implemented"
+    },
+    {
+      "evidence": [
+        "audit_logging_system.py",
+        "compliance_reports/oscal_sar_cato.json (POA&M)"
+      ],
+      "gap_and_plan": "Publish SECURITY.md with contact + SLA; tracked in SAR POA&M.",
+      "group": "RV",
+      "practice": "Vulnerability disclosure and response process",
+      "producer_statement": "No SECURITY.md contact or coordinated-disclosure policy ships with the repo; incidents are audit-logged with incident IDs and POA&M items track remediation programs.",
+      "status": "partial"
+    }
+  ],
+  "producer": "Repository maintainers (self-asserting; see signature key)",
+  "product": "Secure P2P Sovereign Communications Engine v2.0.0-CNSA2-2027",
+  "summary": {
+    "by_status": {
+      "implemented": 10,
+      "partial": 4
+    },
+    "total": 14
+  }
+}

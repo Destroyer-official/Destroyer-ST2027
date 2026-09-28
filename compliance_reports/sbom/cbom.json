@@ -1,0 +1,196 @@
+{
+  "cbom_version": "1.0",
+  "generated_utc": "2026-09-23T06:17:18.417826+00:00",
+  "policy_basis": "CNSA 2.0 Jan-2027 procurement gate (ML-KEM-1024 + ML-DSA-87 mandatory); FIPS 203/204/205 final; FIPS 206 draft excluded as primary; IR 8610 candidates + HashML-DSA never authorized",
+  "components": [
+    {
+      "component": "double_ratchet",
+      "role": "session message authentication + chain KDF",
+      "algorithms": [
+        {
+          "name": "ML-DSA-87",
+          "standard": "FIPS 204",
+          "use": "per-message signature (session identity)",
+          "params": {
+            "pk": 2592,
+            "sk": 4896,
+            "sig": 4627
+          }
+        },
+        {
+          "name": "ML-KEM-1024",
+          "standard": "FIPS 203",
+          "use": "PQ ratchet KEM (Braid-lite fresh encaps)",
+          "params": {
+            "pk": 1568,
+            "ct": 1568,
+            "ss": 32
+          }
+        },
+        {
+          "name": "X25519",
+          "standard": "RFC 7748",
+          "use": "hybrid DH component ONLY (never standalone)"
+        },
+        {
+          "name": "ChaCha20-Poly1305",
+          "standard": "RFC 8439",
+          "use": "message AEAD"
+        },
+        {
+          "name": "HKDF-SHA384",
+          "standard": "RFC 5869",
+          "use": "hybrid_combine_v2 combiner + chain KDF"
+        }
+      ]
+    },
+    {
+      "component": "hybrid_kex/pqxdh",
+      "role": "initial handshake key establishment (PQXDH)",
+      "algorithms": [
+        {
+          "name": "ML-KEM-1024",
+          "standard": "FIPS 203",
+          "use": "handshake KEM",
+          "params": {
+            "pk": 1568,
+            "ct": 1568
+          }
+        },
+        {
+          "name": "Classic-McEliece-8192128f",
+          "standard": "NIST Round 4",
+          "use": "diversity KEM (out-of-band sized)",
+          "params": {
+            "pk": 1357824,
+            "ct": 208
+          }
+        },
+        {
+          "name": "X25519",
+          "standard": "RFC 7748",
+          "use": "hybrid DH component ONLY"
+        },
+        {
+          "name": "ML-DSA-87",
+          "standard": "FIPS 204",
+          "use": "bundle authentication signatures"
+        },
+        {
+          "name": "HKDF-SHA384",
+          "standard": "RFC 5869",
+          "use": "hybrid_combine_v2 (length-framed, transcript-bound)"
+        }
+      ]
+    },
+    {
+      "component": "tls_channel",
+      "role": "transport security (mutual TLS 1.3)",
+      "algorithms": [
+        {
+          "name": "TLS 1.3",
+          "standard": "RFC 8446",
+          "use": "mutual-auth transport",
+          "params": {
+            "groups": "PQ/T hybrid + ML-KEM"
+          }
+        },
+        {
+          "name": "AES-256-GCM",
+          "standard": "FIPS 197",
+          "use": "record AEAD"
+        },
+        {
+          "name": "SHA-384",
+          "standard": "FIPS 180-4",
+          "use": "handshake hash / HKDF"
+        }
+      ]
+    },
+    {
+      "component": "supply_chain/tuf",
+      "role": "release + update signing (TUF 4-role + manifest)",
+      "algorithms": [
+        {
+          "name": "ML-DSA-87",
+          "standard": "FIPS 204",
+          "use": "primary release signature (.mldsa87.sig dual)"
+        },
+        {
+          "name": "Ed25519",
+          "standard": "RFC 8032",
+          "use": "legacy co-signature (migration window only)"
+        },
+        {
+          "name": "SHA3-512",
+          "standard": "FIPS 202",
+          "use": "target integrity hashes"
+        }
+      ]
+    },
+    {
+      "component": "sbom/cbom/ceremony signing",
+      "role": "artifact + ceremony signatures",
+      "algorithms": [
+        {
+          "name": "ML-DSA-87",
+          "standard": "FIPS 204",
+          "use": "SBOM/CBOM detached signatures"
+        },
+        {
+          "name": "Ed25519",
+          "standard": "RFC 8032",
+          "use": "ceremony custodian approvals + Rekor checkpoint"
+        }
+      ]
+    },
+    {
+      "component": "storage/enclave",
+      "role": "key storage + at-rest sealing",
+      "algorithms": [
+        {
+          "name": "AES-256-GCM",
+          "standard": "FIPS 197",
+          "use": "envelope encryption"
+        },
+        {
+          "name": "scrypt N=131072/r=8/p=1",
+          "standard": "RFC 7914",
+          "use": "passphrase KDF for sealed keys"
+        },
+        {
+          "name": "HKDF-SHA512",
+          "standard": "RFC 5869",
+          "use": "key separation"
+        }
+      ]
+    },
+    {
+      "component": "rust_data_plane",
+      "role": "native data-plane (AEAD/framing/replay, X-Wing-style hybrid KEM)",
+      "algorithms": [
+        {
+          "name": "ML-KEM-1024",
+          "standard": "FIPS 203",
+          "use": "hybrid KEM via ml-kem crate (audited-path cross-checked)"
+        },
+        {
+          "name": "X25519",
+          "standard": "RFC 7748",
+          "use": "hybrid KEM component via x25519-dalek"
+        },
+        {
+          "name": "ChaCha20-Poly1305",
+          "standard": "RFC 8439",
+          "use": "frame AEAD (RFC 8439 vectors pinned)"
+        }
+      ]
+    }
+  ],
+  "live_verification": {
+    "native_present": true,
+    "native_sizes_ok": true,
+    "policy_spotcheck_ok": true,
+    "detail": "mlkem pk/ct=1568/1568, mldsa pk/sig=2592/4627"
+  }
+}

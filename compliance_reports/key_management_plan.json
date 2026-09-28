@@ -1,0 +1,61 @@
+{
+  "$schema": "https://csrc.nist.gov/nsa/cnsa2.0/kmp-v1.json",
+  "kmp_metadata": {
+    "document_id": "KMP-P2P-2028-CNSA2-V1",
+    "title": "Cryptographic Key Management Plan (KMP)",
+    "standards_compliance": ["NIST SP 800-57 Part 1 Rev 5", "NIST SP 800-57 Part 2 Rev 1", "NSA CNSA 2.0 Strict"],
+    "security_category": "FIPS 199 HIGH",
+    "timestamp_utc": "2026-09-19T13:45:00Z"
+  },
+  "key_inventory": [
+    {
+      "key_type": "ROOT_IDENTITY_SIGNATURE",
+      "algorithm": "ML-DSA-87 (FIPS 204)",
+      "backup_algorithm": "SLH-DSA-256f (FIPS 205)",
+      "nist_security_level": 5,
+      "storage_mechanism": "Hardware TPM 2.0 Sealed / PKCS#11 HSM",
+      "cryptoperiod_days": 365,
+      "purpose": "Node identity attestation, prekey certification, and audit log signing"
+    },
+    {
+      "key_type": "SIGNED_PREKEY",
+      "algorithm": "ML-KEM-1024 (FIPS 203) + Classic-McEliece-8192128f",
+      "nist_security_level": 5,
+      "storage_mechanism": "Encrypted Key Vault with TPM Sealing",
+      "cryptoperiod_days": 30,
+      "purpose": "Asynchronous zero-roundtrip key establishment"
+    },
+    {
+      "key_type": "EPHEMERAL_SESSION_KEM",
+      "algorithm": "ML-KEM-1024 (FIPS 203)",
+      "nist_security_level": 5,
+      "storage_mechanism": "Volatile RAM with ZeroizeOnDrop",
+      "cryptoperiod_seconds": 3600,
+      "max_frames": 50000,
+      "purpose": "Interactive transport session key derivation via HKDF-SHA384"
+    },
+    {
+      "key_type": "DOUBLE_RATCHET_MESSAGE_KEY",
+      "algorithm": "ChaCha20-Poly1305 (RFC 8439) / AES-256-GCM (FIPS 197)",
+      "nist_security_level": 5,
+      "storage_mechanism": "Rust Native Core ZeroizeOnDrop Stack",
+      "cryptoperiod_frames": 1,
+      "purpose": "Per-datagram forward secrecy and post-compromise security"
+    },
+    {
+      "key_type": "SIEM_AUDIT_HMAC_KEY",
+      "algorithm": "HMAC-SHA384 (FIPS 198-1)",
+      "nist_security_level": 5,
+      "storage_mechanism": "TPM 2.0 Non-Volatile Index",
+      "cryptoperiod_days": 90,
+      "purpose": "Forward-secure cryptographic chaining of remote audit records"
+    }
+  ],
+  "lifecycle_rules": {
+    "generation": "True Random Generation via Windows CryptGenRandom / TPM 2.0 hardware TRNG",
+    "distribution": "Authenticated out-of-band via ML-DSA-87 signed manifests and TOFU safety numbers",
+    "storage": "Strict separation between public certificates and hardware-bound private keys",
+    "zeroization": "Multi-pass memory overwrite (0x00) and Rust ZeroizeOnDrop destructor on session close",
+    "compromise_recovery": "Automated post-compromise key ratchet renewal, emergency CRL publication, and operator re-auth"
+  }
+}

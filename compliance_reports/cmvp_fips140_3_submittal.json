@@ -1,0 +1,62 @@
+{
+  "document_kind": "DRAFT SUBMITTAL PREPARATION PACKAGE (self-assessment). NOT submitted to any laboratory; no NVLAP lab engaged; no CMVP certificate exists or is implied. Vendor drafts like this one are legitimate preparation; lab evaluation is the required next step.",
+  "revision_note_20260921": "Fabricated lab code removed; levels marked TARGET; re-signed with repo SBOM ceremony key as original per-artifact keys are unavailable.",
+  "cmvp_submittal_metadata": {
+    "module_name": "Secure P2P Sovereign Cryptographic Module",
+    "module_version": "2.0.0-CNSA2-2027",
+    "target_security_level": "FIPS 140-3 Level 4 Overall (TARGET - not assessed)",
+    "module_type": "Multi-Chip Standalone / Hardware-Bound Software Cryptographic Boundary",
+    "draft_prepared_utc": "2026-09-09T20:38:30Z",
+    "cmvp_testing_laboratory": "NONE ENGAGED (a NVLAP-accredited CST laboratory must be contracted before submittal)",
+    "vendor_name": "Sovereign Defense Communications Consortium (draft author)"
+  },
+  "fips_140_3_security_levels_by_section": {
+    "assessment_note": "All values below are TARGET levels for lab evaluation, not awarded levels.",
+    "1_cryptographic_module_specification": 4,
+    "2_cryptographic_module_interfaces": 4,
+    "3_roles_services_and_authentication": 4,
+    "4_software_firmware_security": 4,
+    "5_operational_environment": 4,
+    "6_physical_security": 4,
+    "7_non_invasive_security": 4,
+    "8_sensitive_parameter_management": 4,
+    "9_cryptographic_algorithm_security": 4,
+    "10_electromagnetic_interference_compatibility": 4,
+    "11_life_cycle_assurance": 4,
+    "12_mitigation_of_other_attacks": 4
+  },
+  "cryptographic_boundary": {
+    "physical_boundary": "Host hardware platform enclosing hardware TPM 2.0 (ISO/IEC 11889) or PKCS#11 Level 4 HSM with active physical tamper detection and zeroization circuitry.",
+    "logical_boundary": "Native shared libraries (oqs.dll, libsodium.dll) and Python cryptographic policy enforcement engine (platform_hsm_interface.py, cnsa2_policy_engine.py, pqc_algorithms.py)."
+  },
+  "roles_and_services": {
+    "roles": [
+      {"role": "Cryptographic Officer", "type": "Multi-Factor HSM Quorum Authenticated", "services": ["Key Ceremony", "Root Key Zeroization", "Firmware Update"]},
+      {"role": "Tactical User", "type": "Mutual ML-DSA-87 Certificate Authenticated", "services": ["Double Ratchet Session", "File Transfer", "Ephemeral Messaging"]}
+    ],
+    "services_matrix": [
+      {"service": "FIPS 203 ML-KEM-1024 Key Agreement", "approved": true, "roles": ["Tactical User"]},
+      {"service": "FIPS 204 ML-DSA-87 Digital Signature", "approved": true, "roles": ["Cryptographic Officer", "Tactical User"]},
+      {"service": "FIPS 205 SLH-DSA-256f Stateless Hash Signature", "approved": true, "roles": ["Cryptographic Officer"]},
+      {"service": "FIPS 197 AES-256-GCM AEAD Encryption", "approved": true, "roles": ["Tactical User"]},
+      {"service": "FIPS 202 SHA3-512 & SHAKE-256 Digest", "approved": true, "roles": ["Tactical User", "Cryptographic Officer"]},
+      {"service": "Cryptographic Zeroization (sodium_memzero)", "approved": true, "roles": ["Cryptographic Officer", "Tactical User"]}
+    ]
+  },
+  "cavp_validation_reference": {
+    "report_file": "compliance_reports/cavp_validation_report.json",
+    "total_kat_tests": 17,
+    "tests_passed": 17,
+    "tests_failed": 0,
+    "verification_rate": "100.0%",
+    "algorithms_verified": [
+      "ML-KEM-1024 (FIPS 203)",
+      "ML-DSA-87 (FIPS 204)",
+      "SLH-DSA-256f (FIPS 205)",
+      "AES-256-GCM (FIPS 197 / SP 800-38D)",
+      "SHA3-512 & SHAKE-256 (FIPS 202)",
+      "HKDF-SHA512 (SP 800-56C)"
+    ]
+  },
+  "zeroization_rationale": "All ephemeral session keys, ratcheting states, and private keys in C/Python memory spaces are purged deterministically upon disconnection or process termination using native libsodium sodium_memzero() and memory_protection_engine.py."
+}

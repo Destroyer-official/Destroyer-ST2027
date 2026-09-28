@@ -1,0 +1,166 @@
+{
+  "metadata": {
+    "harness_name": "ACVP-CAVP-PQC-Validator",
+    "version": "2028.1.0",
+    "timestamp_utc": "2026-09-28T16:52:48.269035+00:00",
+    "target_profile": "NSA-CNSA-2.0-STRICT",
+    "nist_security_level": 5,
+    "overall_status": "COMPLIANT"
+  },
+  "summary": {
+    "total_tests": 13,
+    "passed": 13,
+    "failed": 0,
+    "duration_seconds": 0.259
+  },
+  "algorithms_validated": [
+    {
+      "name": "ML-KEM-1024",
+      "standard": "FIPS 203",
+      "function": "Key Encapsulation (KEM)",
+      "status": "PASS"
+    },
+    {
+      "name": "ML-DSA-87",
+      "standard": "FIPS 204",
+      "function": "Digital Signature (DSS)",
+      "status": "PASS"
+    },
+    {
+      "name": "SLH-DSA-256f",
+      "standard": "FIPS 205",
+      "function": "Stateless Hash Signature (DSS)",
+      "status": "PASS"
+    },
+    {
+      "name": "AES-256-GCM",
+      "standard": "FIPS 197 / SP 800-38D",
+      "function": "Symmetric AEAD",
+      "status": "PASS"
+    },
+    {
+      "name": "ChaCha20-Poly1305",
+      "standard": "RFC 8439",
+      "function": "Symmetric AEAD",
+      "status": "PASS"
+    },
+    {
+      "name": "SHA-384 / SHA-512 / SHA3-512 / SHAKE-256",
+      "standard": "FIPS 180-4 / FIPS 202",
+      "function": "Hash & XOF",
+      "status": "PASS"
+    },
+    {
+      "name": "Monte Carlo Iterated Chaining (MCT)",
+      "standard": "FIPS 140-3 ACVP",
+      "function": "Iterated State Testing",
+      "status": "PASS"
+    }
+  ],
+  "results": [
+    {
+      "standard": "FIPS 203",
+      "algorithm": "ML-KEM-1024",
+      "test_type": "KeyGen-AFT",
+      "status": "PASS",
+      "details": "pk=1568B, sk=3168B match NIST Level 5 FIPS 203 specs",
+      "duration_ms": 0.32
+    },
+    {
+      "standard": "FIPS 203",
+      "algorithm": "ML-KEM-1024",
+      "test_type": "EncapDecap-KAT",
+      "status": "PASS",
+      "details": "ct=1568B, ss=32B roundtrip verified",
+      "duration_ms": 0.34
+    },
+    {
+      "standard": "FIPS 203",
+      "algorithm": "ML-KEM-1024",
+      "test_type": "ImplicitRejection-KAT",
+      "status": "PASS",
+      "details": "Tampered ciphertext decapsulation rejected/diverged per FIPS 203 implicit rejection",
+      "duration_ms": 0.16
+    },
+    {
+      "standard": "FIPS 204",
+      "algorithm": "ML-DSA-87",
+      "test_type": "KeyGen-AFT",
+      "status": "PASS",
+      "details": "pk=2592B, sk=4896B match NIST Level 5 FIPS 204 specs",
+      "duration_ms": 0.46
+    },
+    {
+      "standard": "FIPS 204",
+      "algorithm": "ML-DSA-87",
+      "test_type": "SigGenVer-KAT",
+      "status": "PASS",
+      "details": "4 distinct vectors signed (sig=4627B) and verified successfully",
+      "duration_ms": 8.46
+    },
+    {
+      "standard": "FIPS 204",
+      "algorithm": "ML-DSA-87",
+      "test_type": "TamperRejection-KAT",
+      "status": "PASS",
+      "details": "Bit-flipped signatures and message substitutions rejected fail-closed",
+      "duration_ms": 2.54
+    },
+    {
+      "standard": "FIPS 205",
+      "algorithm": "SLH-DSA-256f",
+      "test_type": "KeyGen-AFT",
+      "status": "PASS",
+      "details": "pk=64B, sk=128B match NIST Level 5 FIPS 205 specs",
+      "duration_ms": 10.79
+    },
+    {
+      "standard": "FIPS 205",
+      "algorithm": "SLH-DSA-256f",
+      "test_type": "SigGenVer-KAT",
+      "status": "PASS",
+      "details": "SLH-DSA-256f sig=49856B generated and verified successfully",
+      "duration_ms": 224.02
+    },
+    {
+      "standard": "FIPS 205",
+      "algorithm": "SLH-DSA-256f",
+      "test_type": "TamperRejection-KAT",
+      "status": "PASS",
+      "details": "Tampered SLH-DSA signature rejected fail-closed",
+      "duration_ms": 4.85
+    },
+    {
+      "standard": "FIPS 197 / SP 800-38D",
+      "algorithm": "AES-256-GCM",
+      "test_type": "CAVP-KAT",
+      "status": "PASS",
+      "details": "Byte-for-byte match with official NIST SP 800-38D Test Vector 15",
+      "duration_ms": 0.68
+    },
+    {
+      "standard": "RFC 8439",
+      "algorithm": "ChaCha20-Poly1305",
+      "test_type": "RFC8439-KAT",
+      "status": "PASS",
+      "details": "Byte-for-byte match with official RFC 8439 Section 2.8.2 Vector",
+      "duration_ms": 0.04
+    },
+    {
+      "standard": "FIPS 180-4 / 202",
+      "algorithm": "SHA3-512 / SHA-384 / SHAKE-256",
+      "test_type": "Hash-KAT",
+      "status": "PASS",
+      "details": "All standard FIPS 180-4 and FIPS 202 hash vectors verified exactly",
+      "duration_ms": 0.04
+    },
+    {
+      "standard": "FIPS 140-3 ACVP",
+      "algorithm": "SHA-384 / SHA3-512 / ChaCha20",
+      "test_type": "Monte-Carlo-MCT",
+      "status": "PASS",
+      "details": "1,000 iterated hashing and 100 AEAD chaining rounds verified without state divergence",
+      "duration_ms": 6.11
+    }
+  ]
+}

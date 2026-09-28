@@ -1,0 +1,98 @@
+{
+  "assessment_kind": "SELF-ASSESSMENT EVIDENCE PACK (not an authorization decision; no AO action)",
+  "metadata": {
+    "decision_id": "ATO-2028-STRATEGIC-CNSA2-001",
+    "authority": "None -- self-assessment prepared FOR Designated Authorizing Official review (DoD RMF / NSA CNSA 2.0 evidence; eMASS + NIAP/CMVP/CSfC steps still required for NSS)",
+    "system_name": "Sovereign Military P2P Tactical Mesh (Destroyer-P2P)",
+    "timestamp_utc": "2026-09-28T16:52:51.491624+00:00",
+    "fips_199_impact_level": "HIGH-HIGH-HIGH",
+    "cryptographic_profile": "NSA-CNSA-2.0-STRICT",
+    "cato_pillars_self_assessed": [
+      "Pillar 1: Continuous Monitoring (CONMON / NIST SP 800-137)",
+      "Pillar 2: Active Cyber Defense (ACD / Autonomous Playbooks)",
+      "Pillar 3: Approved DevSecOps Reference Design & OSCAL SAR/POA&M"
+    ],
+    "zero_trust_rating": "DoD ZTA 2027 Target Level SELF-ASSESSMENT (not a compliance determination)"
+  },
+  "evaluation_summary": {
+    "total_gates": 10,
+    "passed_gates": 10,
+    "all_gates_passed": true
+  },
+  "gate_evaluations": [
+    {
+      "gate_id": "G1",
+      "title": "OSCAL System Security Plan (SSP)",
+      "status": "PASS",
+      "details": "OSCAL v1.1.0 SSP schema verified & signed with ML-DSA-87 (FIPS 204)"
+    },
+    {
+      "gate_id": "G2",
+      "title": "NIST ACVP / CAVP Validation",
+      "status": "PASS",
+      "details": "13/13 CAVP test vectors verified (0 failures) for FIPS 203/204/205/197"
+    },
+    {
+      "gate_id": "G3",
+      "title": "CycloneDX 1.6 CBOM Provenance",
+      "status": "PASS",
+      "details": "CycloneDX 1.6 CBOM cataloging 13 crypto assets verified & signed with ML-DSA-87"
+    },
+    {
+      "gate_id": "G4",
+      "title": "Hardware Root-of-Trust (TPM 2.0)",
+      "status": "PASS",
+      "details": "Native Win32 TBS physical TPM 2.0 PCR registers (0/1/2/7) verified"
+    },
+    {
+      "gate_id": "G5",
+      "title": "Adversarial Red-Team Drill",
+      "status": "PASS",
+      "details": "5/5 nation-state assault vectors defended (timing, jamming, sizing, zeroize, replay)"
+    },
+    {
+      "gate_id": "G6",
+      "title": "CONOPS & Key Management Plan (KMP)",
+      "status": "PASS",
+      "details": "CONOPS (3 environments, 4 roles) & KMP (5 key types, SP 800-57/CNSA 2.0) verified"
+    },
+    {
+      "gate_id": "G7",
+      "title": "Canary Pilot ISCM Continuous Telemetry",
+      "status": "PASS",
+      "details": "5/5 continuous monitoring probes OPERATIONAL per NIST SP 800-137 / DoD cATO"
+    },
+    {
+      "gate_id": "G8",
+      "title": "Active Cyber Defense (ACD) Engine",
+      "status": "PASS",
+      "details": "DoD cATO Pillar 2 Active Cyber Defense OPERATIONAL & signed with ML-DSA-87 (FIPS 204)"
+    },
+    {
+      "gate_id": "G9",
+      "title": "DoD Zero Trust Architecture (ZTA 2.0)",
+      "status": "PASS",
+      "details": "DoD ZTA 7-Pillar Target Level Achieved (100.0%) & signed with ML-DSA-87 (FIPS 204)"
+    },
+    {
+      "gate_id": "G10",
+      "title": "NIST OSCAL SAR & POA&M",
+      "status": "PASS",
+      "details": "OSCAL v1.1.0 SAR & POA&M (0 open critical/high vulnerabilities) verified & signed with ML-DSA-87"
+    }
+  ],
+  "authorization_decision": {
+    "status": "SELF-ASSESS-PASS",
+    "authorization_type": "SELF-ASSESSMENT EVIDENCE PACK FOR AO REVIEW",
+    "valid_through_utc": null,
+    "conditions": [
+      "Strict CNSA 2.0 algorithm suite enforcement (FIPS 203, 204, 205, AES-256-GCM)",
+      "Continuous hardware TPM 2.0 PCR measurement verification",
+      "Tamper-evident HMAC-SHA384 audit log streaming to remote SIEM",
+      "WireGuard-style UDP data plane with black-hole silent drop discipline",
+      "NIST SP 800-137 continuous monitoring telemetry and active cyber defense (ACD)",
+      "Autonomous mitigation playbooks active (quarantine, session severance, cloak)",
+      "REQUIRED NEXT: delegated AO review in eMASS; NIAP evaluation; CMVP validation; CSfC registration for NSS use"
+    ]
+  }
+}

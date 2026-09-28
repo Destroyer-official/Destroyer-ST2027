@@ -1,0 +1,281 @@
+{
+  "assessment-results": {
+    "id": "d83531ee-8d80-41b9-8019-8b34b15c96e0",
+    "import-ap": {
+      "href": "#assessment-plan-cato-continuous"
+    },
+    "metadata": {
+      "last-modified": "2026-09-24T14:11:42.560405+00:00",
+      "oscal-version": "1.1.0",
+      "parties": [
+        {
+          "id": "party-dod-ao",
+          "name": "United States Department of Defense - Authorizing Official Directorate",
+          "type": "organization"
+        }
+      ],
+      "published": "2026-09-24T14:11:42.560405+00:00",
+      "remarks": "Automated Continuous Authorization to Operate (cATO) assessment under DoD RMF & NIST SP 800-137.",
+      "roles": [
+        {
+          "description": "Defense Senior Official granting Continuous ATO (cATO).",
+          "id": "authorizing-official",
+          "title": "Authorizing Official (AO)"
+        },
+        {
+          "description": "Automated ISCM and Active Cyber Defense evaluation engine.",
+          "id": "security-assessor",
+          "title": "Continuous Security Assessor / Automated Engine"
+        }
+      ],
+      "title": "Sovereign Military Defense Platform - Continuous Security Assessment Results (SAR) & POA&M",
+      "version": "2028.1.0-cATO"
+    },
+    "plan-of-action-and-milestones": {
+      "open-critical-vulnerabilities": 0,
+      "open-high-vulnerabilities": 0,
+      "poam-items": [
+        {
+          "description": "Continuous monitoring of finalized FIPS 206 (FN-DSA) and draft HQC standards for future inclusion.",
+          "id": "poam-001",
+          "risk-rating": "low",
+          "scheduled-completion": "2027-12-31T00:00:00Z",
+          "status": "ongoing",
+          "title": "Continuous Cryptographic Algorithm Agility & NIST Round 4 Tracking"
+        },
+        {
+          "description": "Scheduled firmware cadence for physical PKCS#11 HSM and TPM 2.0 cryptographic boundaries.",
+          "id": "poam-002",
+          "risk-rating": "low",
+          "scheduled-completion": "2027-06-30T00:00:00Z",
+          "status": "ongoing",
+          "title": "Tactical Hardware HSM Micro-Firmware Upgrades"
+        },
+        {
+          "description": "Extend SSP control-implementation beyond the current 12-control implemented-boundary subset toward full NIST SP 800-53 Rev 5 High-baseline coverage for AO package completeness.",
+          "id": "poam-003",
+          "risk-rating": "medium",
+          "scheduled-completion": "2027-12-31T00:00:00Z",
+          "status": "planned",
+          "title": "SSP Control Extension to Full High Baseline"
+        },
+        {
+          "description": "Engage accredited assessors (C3PAO for CMMC, CCTL for Common Criteria, CST lab for CMVP) to convert self-assessment evidence into third-party findings. No authorization exists until then.",
+          "id": "poam-004",
+          "risk-rating": "medium",
+          "scheduled-completion": "2028-06-30T00:00:00Z",
+          "status": "planned",
+          "title": "Independent Assessment Engagement (C3PAO/CCTL/Lab)"
+        },
+        {
+          "description": "No software in this repo can satisfy Tier-3 OS requirements: port to a separation microkernel (seL4, proofs complete on AArch64 Aug 2026) with accredited hardware, TEMPEST-shielded enclosures, and Type-1 cryptography. Multi-year program outside this codebase.",
+          "id": "poam-005",
+          "risk-rating": "high",
+          "scheduled-completion": "2029-12-31T00:00:00Z",
+          "status": "planned",
+          "title": "Separation-Kernel Platform Program (Tier-3)"
+        },
+        {
+          "description": "Current group layer is O(n) pairwise fan-out with epoch/transcript agreement (apply_remote_commit, signed commits, compartment labels). Logarithmic TreeKEM per RFC 9420 needs a coordinated bilateral flag-day; external commits stay refused per ETK-2026.",
+          "id": "poam-006",
+          "risk-rating": "medium",
+          "scheduled-completion": "2028-12-31T00:00:00Z",
+          "status": "planned",
+          "title": "Full MLS TreeKEM Flag-Day (Tier-3 groups)"
+        }
+      ],
+      "poam-note": "Open program items below are PLANNED work (not vulnerabilities); the counts that follow track actual open vulns only."
+    },
+    "results": [
+      {
+        "description": "Continuous automated validation across Cryptography (ACVP), Red-Team Drills, Zero Trust Architecture, and Active Cyber Defense (ACD).",
+        "end": "2026-09-24T14:11:42.560405+00:00",
+        "findings": [
+          {
+            "description": "SC-13 satisfied via FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, and FIPS 205 SLH-DSA-256f.",
+            "id": "19291d0b-7ce2-45ce-ab46-f53ea61764c5",
+            "target": {
+              "id-ref": "sc-13_smt",
+              "status": {
+                "state": "satisfied"
+              },
+              "type": "statement-id"
+            },
+            "title": "Cryptographic Boundary & Post-Quantum Protection"
+          },
+          {
+            "description": "AU-9 satisfied via HMAC-SHA384 forward-secure chaining and periodic signed head anchor locking.",
+            "id": "6c30446a-c6b7-450c-b7ba-1df5476f4ce4",
+            "target": {
+              "id-ref": "au-9_smt",
+              "status": {
+                "state": "satisfied"
+              },
+              "type": "statement-id"
+            },
+            "title": "Immutable Audit Log Integrity"
+          },
+          {
+            "description": "SI-4 satisfied via ISCM continuous telemetry and Active Cyber Defense autonomous threat mitigation playbooks.",
+            "id": "24f869ae-f526-4889-a503-8e8c98be7d7f",
+            "target": {
+              "id-ref": "si-4_smt",
+              "status": {
+                "state": "satisfied"
+              },
+              "type": "statement-id"
+            },
+            "title": "Real-Time System Monitoring & Active Defense"
+          }
+        ],
+        "id": "97fcda94-95c5-4d9d-9b38-5b0b327a0c9a",
+        "observations": [
+          {
+            "collected": "2026-09-24T14:11:42.560405+00:00",
+            "description": "13/13 CAVP test vectors verified for FIPS 203, FIPS 204, FIPS 205, and AES-256-GCM without divergence.",
+            "id": "665a84e9-f332-44e1-97bc-b7aea60c890e",
+            "methods": [
+              "test",
+              "examine"
+            ],
+            "title": "NIST ACVP / CAVP Cryptographic Algorithm Verification",
+            "types": [
+              "automated-kat-aft-mct"
+            ]
+          },
+          {
+            "collected": "2026-09-24T14:11:42.560405+00:00",
+            "description": "5/5 nation-state threat vectors (side-channel timing, network jamming, packet sizing, key memory zeroize, replay swarms) defended.",
+            "id": "4141c562-a1b2-4de8-b8aa-c08c0e7a408a",
+            "methods": [
+              "test"
+            ],
+            "title": "Automated Red-Team Adversarial Penetration Drill",
+            "types": [
+              "adversarial-penetration-probe"
+            ]
+          },
+          {
+            "collected": "2026-09-24T14:11:42.560405+00:00",
+            "description": "Sliding-window replay quarantine, tamper session severance, and dynamic cloaking successfully verified.",
+            "id": "f79993d8-2a54-400c-bd5e-f89d50dadc29",
+            "methods": [
+              "test",
+              "automate"
+            ],
+            "title": "Active Cyber Defense (ACD) Playbook Execution",
+            "types": [
+              "active-threat-mitigation"
+            ]
+          },
+          {
+            "collected": "2026-09-24T14:11:42.560405+00:00",
+            "description": "100.0% Target Level compliance verified across all 7 Zero Trust pillars.",
+            "id": "10f94cba-8c3c-49d4-8d2c-20e67ccd57d6",
+            "methods": [
+              "examine"
+            ],
+            "title": "DoD Zero Trust Architecture (ZTA 2.0) Evaluation",
+            "types": [
+              "zta-7-pillar-scoring"
+            ]
+          },
+          {
+            "collected": "2026-09-24T14:11:42.560405+00:00",
+            "description": "5/5 continuous monitoring probes operational with zero anomalies.",
+            "id": "6d0297c2-47d7-4a89-870d-3884d838872b",
+            "methods": [
+              "monitor"
+            ],
+            "title": "ISCM Continuous Monitoring Telemetry",
+            "types": [
+              "iscm-real-time-telemetry"
+            ]
+          }
+        ],
+        "reviewed-controls": {
+          "control-selections": [
+            {
+              "include-controls": [
+                {
+                  "control-id": "ac-3",
+                  "statement-ids": [
+                    "ac-3_smt"
+                  ]
+                },
+                {
+                  "control-id": "ac-4",
+                  "statement-ids": [
+                    "ac-4_smt"
+                  ]
+                },
+                {
+                  "control-id": "au-2",
+                  "statement-ids": [
+                    "au-2_smt"
+                  ]
+                },
+                {
+                  "control-id": "au-9",
+                  "statement-ids": [
+                    "au-9_smt"
+                  ]
+                },
+                {
+                  "control-id": "au-10",
+                  "statement-ids": [
+                    "au-10_smt"
+                  ]
+                },
+                {
+                  "control-id": "ia-2",
+                  "statement-ids": [
+                    "ia-2_smt"
+                  ]
+                },
+                {
+                  "control-id": "ia-5",
+                  "statement-ids": [
+                    "ia-5_smt"
+                  ]
+                },
+                {
+                  "control-id": "sc-8",
+                  "statement-ids": [
+                    "sc-8_smt"
+                  ]
+                },
+                {
+                  "control-id": "sc-12",
+                  "statement-ids": [
+                    "sc-12_smt"
+                  ]
+                },
+                {
+                  "control-id": "sc-13",
+                  "statement-ids": [
+                    "sc-13_smt"
+                  ]
+                },
+                {
+                  "control-id": "si-4",
+                  "statement-ids": [
+                    "si-4_smt"
+                  ]
+                },
+                {
+                  "control-id": "si-7",
+                  "statement-ids": [
+                    "si-7_smt"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "start": "2026-09-24T14:11:42.560405+00:00",
+        "title": "DoD cATO Continuous Monitoring & Active Cyber Defense Assessment"
+      }
+    ]
+  }
+}

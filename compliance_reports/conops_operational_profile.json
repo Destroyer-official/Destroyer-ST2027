@@ -1,0 +1,99 @@
+{
+  "$schema": "https://csrc.nist.gov/nsa/cnsa2.0/conops-v1.json",
+  "conops_metadata": {
+    "document_id": "CONOPS-TACTICAL-P2P-2028-V1",
+    "title": "Concept of Operations (CONOPS): Sovereign Military Tactical P2P Communications Mesh",
+    "version": "1.0.0",
+    "classification": "UNCLASSIFIED (self-marked work product; no distribution limitation asserted by any authority; FOUO retired 2019 -- not used)",
+    "security_profile": "DoD RMF High-High-High / NSA CNSA 2.0 Strict",
+    "timestamp_utc": "2026-09-19T13:45:00Z"
+  },
+  "operational_environments": [
+    {
+      "env_id": "ENV-AIRGAP",
+      "name": "Air-Gapped Strategic Command Post (C2)",
+      "network_type": "Isolated LAN / Fiber Ring",
+      "threat_level": "Tier-6 Strategic Adversary",
+      "cloaking_mode": "TACTICAL_CLOAK_STRICT",
+      "allowed_subnets": ["10.0.0.0/8", "127.0.0.0/8", "fd00::/8"]
+    },
+    {
+      "env_id": "ENV-EDGE",
+      "name": "Tactical Edge Mobile Relay (Forward Operating Base)",
+      "network_type": "Private Tactical Cellular / Mesh Radio (MIL-STD)",
+      "threat_level": "Tier-5 Electronic Warfare / SIGINT",
+      "cloaking_mode": "TACTICAL_CLOAK_ACTIVE",
+      "allowed_subnets": ["10.99.0.0/16", "172.16.0.0/12"]
+    },
+    {
+      "env_id": "ENV-DDIL",
+      "name": "Disconnected, Intermittent, Low-Bandwidth (DDIL) Recon",
+      "network_type": "Opportunistic Direct Point-to-Point UDP",
+      "threat_level": "Tier-6 Battlefield Intercept / Capture Threat",
+      "cloaking_mode": "TACTICAL_CLOAK_STEALTH",
+      "allowed_subnets": ["10.99.0.0/16", "192.168.0.0/16"]
+    }
+  ],
+  "operational_roles": [
+    {
+      "role_id": "ROLE-AO",
+      "title": "Designated Authorizing Official (AO)",
+      "responsibilities": [
+        "Issue formal Authority to Operate (ATO) and continuous authorization (cATO)",
+        "Review OSCAL System Security Plans and periodic continuous monitoring telemetry",
+        "Authorize operational threshold adjustments and risk acceptances"
+      ]
+    },
+    {
+      "role_id": "ROLE-CO",
+      "title": "Cryptographic Officer (CO)",
+      "responsibilities": [
+        "Conduct multi-party witnessed post-quantum key generation ceremonies",
+        "Maintain Hardware TPM 2.0 / PKCS#11 HSM state and integrity",
+        "Authorize key revocations and oversee emergency zeroization"
+      ]
+    },
+    {
+      "role_id": "ROLE-TNO",
+      "title": "Tactical Node Operator (TNO)",
+      "responsibilities": [
+        "Operate localized peer-to-peer communications node",
+        "Verify Out-Of-Band (OOB) TOFU safety number fingerprints",
+        "Initiate emergency tactical zeroization upon physical overrun threat"
+      ]
+    },
+    {
+      "role_id": "ROLE-IRC",
+      "title": "Incident Response Commander (IRC)",
+      "responsibilities": [
+        "Monitor tamper-evident SIEM audit streams and head anchors",
+        "Investigate active cyber defense (ACD) automated probe black-hole alerts",
+        "Coordinate post-compromise key rotation and forensic log preservation"
+      ]
+    }
+  ],
+  "operational_modes": {
+    "normal_mode": {
+      "transport": "WireGuard-style UDP Data Plane with Rust native core",
+      "framing": "Fixed quantum framing (256B, 512B, 1232B)",
+      "chaff_traffic": "Active with 2.5s-6.0s random Poisson jitter",
+      "rate_limiting": "Token-bucket (64 burst, 16 refill/sec)"
+    },
+    "tactical_cloak_mode": {
+      "flag": "P2P_TACTICAL_CLOAK=1",
+      "prohibition": "0x direct unencapsulated public internet sockets",
+      "allowed_channels": "Private APN, dedicated overlay tunnel (10.99.0.0/16), loopback",
+      "stealth_behavior": "Black-hole silent drop for all out-of-boundary traffic"
+    },
+    "emergency_zeroize_mode": {
+      "trigger": "Physical breach signal, operator command, or repeated TPM PCR tamper",
+      "actions": [
+        "Zeroize all ephemeral session and ratchet keys in RAM immediately",
+        "Invoke native ZeroizeOnDrop destructor on Rust data plane buffers",
+        "Invalidate TPM 2.0 PCR authorization sessions",
+        "Shred local SQLite database and memory caches with random overwrites",
+        "Send cryptographic tamper distress beacon to SIEM before shutdown"
+      ]
+    }
+  }
+}

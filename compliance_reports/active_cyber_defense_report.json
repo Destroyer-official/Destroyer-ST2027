@@ -1,0 +1,62 @@
+{
+  "active_cyber_defense_assessment": {
+    "active_quarantines": [
+      {
+        "expires_in_sec": 9.998422861099243,
+        "peer_id": "peer_alpha"
+      },
+      {
+        "expires_in_sec": 19.999104261398315,
+        "peer_id": "peer_beta"
+      }
+    ],
+    "blocked_sources": [
+      "198.51.100.42"
+    ],
+    "configured_thresholds": {
+      "auth_failure_limit": 3,
+      "auth_failure_window_seconds": 5.0,
+      "quarantine_duration_seconds": 10.0,
+      "replay_burst_limit": 3,
+      "replay_window_seconds": 5.0
+    },
+    "evaluation_standard": "DoD Continuous Authority to Operate (cATO) Pillar 2",
+    "metrics": {
+      "active_quarantined_peers": 2,
+      "blocked_sources_count": 1,
+      "severed_sessions_count": 1,
+      "tactical_cloak_enforced": false,
+      "total_mitigations_applied": 3,
+      "total_security_events_processed": 7
+    },
+    "recent_playbook_executions": [
+      {
+        "duration_sec": 10.0,
+        "playbook": "PLAYBOOK_QUARANTINE_PEER",
+        "reason": "Replay burst (3 within 5.0s)",
+        "status": "ENFORCED",
+        "target": "peer_alpha",
+        "timestamp_utc": "2026-09-19T15:00:46.045387+00:00"
+      },
+      {
+        "action": "Immediate socket teardown, ephemeral key zeroization & peer isolation",
+        "peer_id": "peer_beta",
+        "playbook": "PLAYBOOK_SEVER_SESSION_AND_ISOLATE",
+        "reason": "Tamper detected: corrupt_frame_mac_invalid",
+        "session_id": "sess_xyz123",
+        "status": "ENFORCED",
+        "timestamp_utc": "2026-09-19T15:00:46.046012+00:00"
+      },
+      {
+        "action": "Persistent source ingress block, ratchet master seed forward advance",
+        "playbook": "PLAYBOOK_BLOCK_SOURCE_AND_REKEY",
+        "reason": "Auth failure flood (3 within 5.0s)",
+        "source": "198.51.100.42",
+        "status": "ENFORCED",
+        "timestamp_utc": "2026-09-19T15:00:46.046178+00:00"
+      }
+    ],
+    "status": "OPERATIONAL",
+    "timestamp_utc": "2026-09-19T15:00:46.046435+00:00"
+  }
+}

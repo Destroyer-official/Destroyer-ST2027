@@ -1,0 +1,69 @@
+{
+  "timestamp_utc": "2026-09-23T06:17:24.697116+00:00",
+  "verification_standard": "SLSA Level 3+ / NIST SP 800-161 / FIPS 140-3",
+  "binaries": {
+    "oqs.dll": {
+      "hashes": {
+        "size_bytes": 3030016,
+        "sha256": "ab7f7005df004d0168b23afa8b2fba41a2b2c0c60a8a555abc1b6be56846d4da",
+        "sha512": "995ed25ed9345be0bb1f6e1ba6dfd90ad804af4fe877cc3b74dbf38b7d8634dbdf7a9fb9326dc3881af1838ef14126d483065e02dde1302f49980c6ac254581e",
+        "sha3_512": "7c6801cd0faf6aad077bf11220f98b0b171bf23970c6d2fc918a36004b7da8984e635846cfcba7020220579dfb5e42b4ea3a8fee12d5f05f2dc9062f1d2292b1"
+      },
+      "signature_verified": true,
+      "manifest_matched": true,
+      "status": "PASS"
+    },
+    "libsodium.dll": {
+      "hashes": {
+        "size_bytes": 346624,
+        "sha256": "5cfdc4bf7628777d4fd807a6f9e15ed8fb6fdaee5be65c816b3c6c3dd1c93ed1",
+        "sha512": "79a55a5140befc28772cd4b23501b322ae9ab8cf3435253b98906a4b2090cd910e9c3e038a499f4ccc8c80a5e09f12251dd82941ed93485da7f2aed957b15a98",
+        "sha3_512": "31b92c7e2986d4a8a39cbab49b48de627352223db60ab3bdde10a371d1713f5f97c5c7205140878bab87fe0a992cffc151bd216be645ed3a8e27e78318d93cd0"
+      },
+      "signature_verified": true,
+      "manifest_matched": true,
+      "status": "PASS"
+    }
+  },
+  "core_modules": {
+    "platform_hsm_interface.py": {
+      "size_bytes": 514660,
+      "sha3_512": "606a67d116e56030fd3cb126834426fb8b4cde064a94cf6d4a96e13e55995154425ad847d1608b90f559fa5e31cb071910d71ed6a604f725e7bc7884e8b62f89"
+    },
+    "cnsa2_policy_engine.py": {
+      "size_bytes": 28004,
+      "sha3_512": "3197216c187256471239de95142d4750dc129d59ee90b5a920281839c90db367bda4159ca02593c1f59f22dbe602909405922fa6da3917530bdc4c7b36fcc6e8"
+    },
+    "audit_logging_system.py": {
+      "size_bytes": 38904,
+      "sha3_512": "5c66019a03aa982ea4f2930939fbbd605f10341c53011aec6ab85b9b8af9a4b7f4f3ba8bc27026e3d6d225e7150ea1cb605dc529b828e76bdbeb113e3b67a7e6"
+    },
+    "pqc_algorithms.py": {
+      "size_bytes": 347482,
+      "sha3_512": "8478bca4c5bdca0579f87ab19b644ddd36a093d94a643ec6bd1a22ed404b45538ae69171a7e9f481722978efce934859660baf261d0d7ccba393f96fb62b6417"
+    },
+    "metadata_resistance.py": {
+      "size_bytes": 34591,
+      "sha3_512": "d61f995209da4e93c7fef69bfa1c8ba21aaff5f5d84cb4715abf09f5cf2b9ec3d24070a55887fe599f46e86567af7b84a256eb5e18adbead976af8849d8e8a10"
+    },
+    "network_adversary_resistance.py": {
+      "size_bytes": 59108,
+      "sha3_512": "84b3d592aecf4c37694a4e23fd0ece91b5ed3d2c5cb60943bd765a589ccd40703c0cf4d6dedb3c91398abf31c3f3dadb5bb082dec812ef1c01d70caa11bc7fe2"
+    },
+    "secure_p2p.py": {
+      "size_bytes": 694387,
+      "sha3_512": "5177c7577ff777172d56fa178bd4eb2da4f56f070bd7c55f451db9877d33e7466e2134207d8388783c1a5875f4cb6470a5b12c1a5d5156c8b60c57c51226ac00"
+    }
+  },
+  "sbom_status": {
+    "cyclonedx_v1_5_present": true,
+    "cyclonedx_path": "compliance_reports\\cyclonedx_sbom.json",
+    "cyclonedx_mldsa87_signature_verified": true,
+    "spdx_v2_3_present": true,
+    "spdx_path": "compliance_reports\\spdx_sbom.json",
+    "spdx_mldsa87_signature_verified": true,
+    "trusted_anchor_verified": true
+  },
+  "overall_status": "PASS",
+  "source_tree_merkle_root": "5662e8363f5677d582098928fc8ef4e730b43ab81f323e1fec1613ac5dc9253646c814ad601316f4a9d1a161e559b2b0a66bbaaabde04bcf3d00419b1295e710"
+}

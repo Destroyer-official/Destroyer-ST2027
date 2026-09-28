@@ -1,0 +1,24 @@
+{
+  "byzantine_consensus_attestation": {
+    "receipt": {
+      "authorized_signers": [
+        "COMMANDER_ALPHA",
+        "COMMANDER_BRAVO"
+      ],
+      "command_type": "TACTICAL_REKEY_ALL",
+      "epoch_id": null,
+      "proposal_id": "COMMANDER_ALPHA:TACTICAL_REKEY_ALL:none:none:3ebba136a6cee725",
+      "proposal_seq": null,
+      "proposed_by": "COMMANDER_ALPHA",
+      "quorum_satisfied": true,
+      "required_quorum_m": 2,
+      "status": "APPROVED",
+      "target_payload": {
+        "epoch": 42
+      },
+      "timestamp_utc": "2026-09-19T17:14:54.917721+00:00",
+      "valid_signatures_collected": 2
+    },
+    "standard": "DoD CSRMC Phase 5 Multi-Party Fault Tolerant Quorum"
+  }
+}

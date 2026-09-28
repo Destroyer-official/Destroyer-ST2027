@@ -1,0 +1,41 @@
+{
+  "cjadc2_cross_domain_security_audit": {
+    "authorized_caveats": [
+      "NOFORN",
+      "REL_TO_FVEY"
+    ],
+    "cryptographic_compartmentalization": "HKDF-SHA3-512 + ChaCha20-Poly1305",
+    "metrics": {
+      "fail_closed_posture": "ACTIVE_STRICT",
+      "spillages_blocked": 2,
+      "transfers_authorized": 1
+    },
+    "mls_model": "Bell-LaPadula (No Read Up, No Write Down) + Biba Integrity",
+    "node_clearance": "SECRET",
+    "recent_audit_events": [
+      {
+        "details": "Passed MLS & RTB inspection",
+        "event_type": "CROSS_DOMAIN_TRANSFER_AUTHORIZED",
+        "source_classification": "SECRET",
+        "target_classification": "TOP_SECRET",
+        "timestamp_utc": "2026-09-19T17:58:30.763027+00:00"
+      },
+      {
+        "details": "BELL-LAPADULA VIOLATION (*-PROPERTY / NO WRITE DOWN): Cannot egress from SECRET to lower-level UNCLASSIFIED",
+        "event_type": "SPILLAGE_WRITE_DOWN_BLOCKED",
+        "source_classification": "SECRET",
+        "target_classification": "UNCLASSIFIED",
+        "timestamp_utc": "2026-09-19T17:58:30.763094+00:00"
+      },
+      {
+        "details": "NSA RTB CONTENT INSPECTION FAILURE: Classified indicator or dirty-word detected matching \\bTOP\\s+SECRET\\b",
+        "event_type": "DIRTY_WORD_SPILLAGE_BLOCKED",
+        "source_classification": "CONFIDENTIAL",
+        "target_classification": "SECRET",
+        "timestamp_utc": "2026-09-19T17:58:30.763147+00:00"
+      }
+    ],
+    "standard": "DoD CJADC2 Data Fabric / NSA NCDSMO Raise the Bar (RTB) v2.5",
+    "timestamp_utc": "2026-09-19T17:58:30.764280+00:00"
+  }
+}

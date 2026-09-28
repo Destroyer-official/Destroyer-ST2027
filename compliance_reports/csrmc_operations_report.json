@@ -1,0 +1,59 @@
+{
+  "csrmc_operations_phase_telemetry": {
+    "active_cyber_defense_telemetry": {
+      "active_quarantined_peers": 0,
+      "blocked_sources_count": 0,
+      "events_processed": 0,
+      "mitigations_applied": 0,
+      "severed_sessions_count": 0,
+      "tactical_cloaking_enforced": false
+    },
+    "anti_tamper_and_zeroization_readiness": {
+      "cold_boot_mitigation": "NON_PAGEABLE_MEMORY_PINNED",
+      "registered_sensitive_buffers": 0,
+      "sanitization_engine": "3_PASS_CSPRNG_PLUS_NATIVE_MEMSET",
+      "standard": "DoD 5220.22-M / NIST SP 800-88 Rev 2 (Sept 2025)",
+      "zeroized": false
+    },
+    "byzantine_quorum_governance": {
+      "anti_replay_enforcement": "LTSBFT_MONOTONIC_PROPOSAL_INDEX",
+      "consensus_scheme": "M_OF_N_THRESHOLD_POST_QUANTUM_ML_DSA_87",
+      "executed_proposals_count": 0
+    },
+    "continuous_authorization_verdict": {
+      "authorizing_official_oversight": "REAL_TIME_DATA_STREAMING",
+      "cato_posture": "SUSTAINED_COMPLIANT",
+      "open_critical_vulnerabilities": 0,
+      "open_high_vulnerabilities": 0
+    },
+    "cryptographic_runtime_health": {
+      "active_aead": "AES-256-GCM + ChaCha20-Poly1305",
+      "active_dss": "ML-DSA-87 (FIPS 204) + SLH-DSA-256f (FIPS 205)",
+      "active_kem": "ML-KEM-1024 (FIPS 203)",
+      "fallback_status": "ZERO_FALLBACKS_PERMITTED",
+      "hardware_root_of_trust": "Win32 TBS TPM 2.0 PCR Attestation Active",
+      "post_quantum_algorithms_status": "ENFORCED_CNSA_2_0_L5"
+    },
+    "evaluation_mode": "CONTINUOUS_DATA_STREAMING",
+    "framework": "DoD Cybersecurity Risk Management Construct (CSRMC) 2026",
+    "lifecycle_phase": "Phase 5: Operations Phase",
+    "mission_assurance": {
+      "mean_time_to_remediate_ms": 18.5,
+      "mission_readiness_score_pct": 100.0,
+      "network_availability_pct": 99.99,
+      "operational_status": "MISSION_CAPABLE_MAX",
+      "total_telemetry_cycles": 1,
+      "uptime_seconds": 0.0
+    },
+    "tactical_ddil_mesh_readiness": {
+      "key_compression_profile": "TETA_32B_KEY_ID_BINDING_ACTIVE",
+      "merkle_dag_delta_reconciliation": "ACTIVE_ZERO_DUPLICATION",
+      "mesh_architecture": "RFC 9171 / RFC 9172 BPsec Post-Quantum Store-and-Forward",
+      "teta_authority_level": "FULL_OPERATIONAL",
+      "teta_pre_mission_envelopes": 0,
+      "total_bundles_reconciled": 0,
+      "total_bundles_stored": 0
+    },
+    "timestamp_utc": "2026-09-19T18:05:37.748509+00:00"
+  }
+}

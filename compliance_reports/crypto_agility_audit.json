@@ -1,0 +1,53 @@
+{
+  "crypto_agility_maturity_audit": {
+    "active_cryptographic_suite": {
+      "digital_signatures": "SLH-DSA-256f",
+      "key_encapsulation": "Classic-McEliece-8192128f",
+      "security_level": "NIST_LEVEL_5_PLUS"
+    },
+    "metrics": {
+      "downgrade_attempts_blocked": 2,
+      "migrations_committed": 1,
+      "zero_downtime_guaranteed": true
+    },
+    "migration_history": [
+      {
+        "active_suite": {
+          "dss": "SLH-DSA-256f",
+          "kem": "Classic-McEliece-8192128f"
+        },
+        "error": "",
+        "event_type": "HOTSWAP_COMMITTED",
+        "state": "COMMITTED_MIGRATION",
+        "success": true,
+        "timestamp_utc": "2026-09-19T17:58:53.912551+00:00"
+      },
+      {
+        "active_suite": {
+          "dss": "SLH-DSA-256f",
+          "kem": "Classic-McEliece-8192128f"
+        },
+        "error": "FORBIDDEN ALGORITHM DETECTED: (RSA-4096, ML-DSA-87) contains classical/deprecated primitives!",
+        "event_type": "DOWNGRADE_ATTEMPT_REJECTED",
+        "state": "DOWNGRADE_DEFENDED",
+        "success": false,
+        "timestamp_utc": "2026-09-19T17:58:53.912664+00:00"
+      },
+      {
+        "active_suite": {
+          "dss": "SLH-DSA-256f",
+          "kem": "Classic-McEliece-8192128f"
+        },
+        "error": "FORBIDDEN ALGORITHM DETECTED: (Kyber-512, ML-DSA-87) contains classical/deprecated primitives!",
+        "event_type": "DOWNGRADE_ATTEMPT_REJECTED",
+        "state": "DOWNGRADE_DEFENDED",
+        "success": false,
+        "timestamp_utc": "2026-09-19T17:58:53.912726+00:00"
+      }
+    ],
+    "node_id": "TACTICAL_COMMAND_ALPHA",
+    "standard": "NIST CSWP 39 (Dec 2025) / NSA CNSA 2.0 Strict",
+    "state_machine_status": "DOWNGRADE_DEFENDED",
+    "timestamp_utc": "2026-09-19T17:58:53.912983+00:00"
+  }
+}

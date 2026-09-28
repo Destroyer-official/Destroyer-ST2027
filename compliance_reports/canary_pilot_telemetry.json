@@ -1,0 +1,51 @@
+{
+  "deployment_id": "CANARY-1789826047",
+  "standards": [
+    "NIST SP 800-137 (ISCM)",
+    "DoD cATO Active Cyber Defense",
+    "NSA CNSA 2.0"
+  ],
+  "timestamp_utc": "2026-09-19T13:54:07.415696+00:00",
+  "nodes": [
+    "CANARY-ALPHA",
+    "CANARY-BRAVO"
+  ],
+  "probes": [
+    {
+      "probe_id": "ISCM-P1",
+      "title": "CNSA 2.0 Cryptographic Enforcement (FIPS 203/204/205)",
+      "status": "PASS",
+      "details": "ML-KEM-1024 and ML-DSA-87 verified operational with zero classical fallbacks"
+    },
+    {
+      "probe_id": "ISCM-P2",
+      "title": "Tactical Cloaking & Zero Public Socket Egress",
+      "status": "PASS",
+      "details": "Direct public IP blocked; tactical overlay subnet (10.99.0.0/16) permitted"
+    },
+    {
+      "probe_id": "ISCM-P3",
+      "title": "WireGuard UDP Framing & Fixed Quantum Sizing",
+      "status": "PASS",
+      "details": "All wire frames match discrete quanta {256, 512, 1232}; chaff conforms to quantum"
+    },
+    {
+      "probe_id": "ISCM-P4",
+      "title": "Anti-Replay Sliding Window (64-Packet Bitmap)",
+      "status": "PASS",
+      "details": "In-window accepted; duplicates and out-of-window rejected fail-closed"
+    },
+    {
+      "probe_id": "ISCM-P5",
+      "title": "Forward-Secure Remote SIEM Chaining & Head Anchor",
+      "status": "PASS",
+      "details": "Chain verified: 2 records sequentially locked (Successfully verified all 2 chained audit entries with zero tampering detected)"
+    }
+  ],
+  "overall_status": "OPERATIONAL",
+  "summary": {
+    "total_probes": 5,
+    "probes_passed": 5,
+    "all_probes_passed": true
+  }
+}

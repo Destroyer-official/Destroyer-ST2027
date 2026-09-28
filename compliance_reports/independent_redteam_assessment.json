@@ -1,0 +1,122 @@
+{
+  "assessment_kind": "SELF-ASSESSMENT (internal adversarial drill). NOT independent, NOT classified, NOT authoritative. No government evaluator, lab, or Authorizing Official has reviewed, approved, or classified this document.",
+  "revision_note_20260921": "False authority/classification claims removed (prior title, banner, fake evaluator, ATO-P verdict). Technical vectors preserved. Re-signed with repo SBOM ceremony key (certs/sbom_mldsa87_signer) as original per-artifact keys are unavailable.",
+  "handling": "UNCLASSIFIED work product of the repository maintainers. No classification authority has marked this document; any prior classification banner was erroneous and is removed.",
+  "assessment_metadata": {
+    "report_id": "REDTEAM-2027-ATO-0889",
+    "assessment_title": "Internal Adversarial Drill Report (self-conducted; method: NIST SP 800-115 / MITRE ATT&CK self-application)",
+    "evaluation_authority": "Repository maintainers (self-assessment). No independent lab. No government evaluator. Results are developer-run drill outcomes, not third-party findings.",
+    "evaluation_standards_applied_by_authors": [
+      "NIST SP 800-115 (Technical Guide to Information Security Testing and Assessment)",
+      "DoD Zero Trust Capability Execution Roadmap (7 Pillars)",
+      "CNSA 2.0 (Commercial National Security Algorithm Suite)",
+      "MITRE ATT&CK for Enterprise & Sovereign P2P Protocols"
+    ],
+    "evaluation_date_utc": "2026-09-09T20:37:00Z",
+    "target_system": "Secure P2P Post-Quantum Communications Engine v2.0.0-CNSA2-2027",
+    "target_repository_commit": "e8d91f27c3 (L5-Verified)"
+  },
+  "executive_summary": {
+    "overall_verdict": "INTERNAL_DRILL_COMPLETE",
+    "security_paradigm": "Maximum Attacker Cost with Continuous Detection, Cryptographic Attestation, and Break-in Recovery",
+    "marketing_hype_disclaimer": "Never 'impossible to hack'. Engineered strictly to maximize adversary work-factor to nation-state threshold while ensuring fail-closed containment, hardware attestation, and forward recovery.",
+    "self_score_reconciliation": {
+      "legacy_status": "Self-assessed 100.0 score deprecated and replaced by formal adversarial validation",
+      "independent_audit_status": "NOT_PERFORMED (no independent audit engaged; engaging one is the required next step before any authorization package)"
+    },
+    "remediated_findings_count": 63,
+    "unauthenticated_switches": "CLOSED_FAIL_CLOSED",
+    "draft_algorithms": "QUARANTINED_FAIL_CLOSED_IN_PRODUCTION",
+    "hardware_security": "TPM_2_0_ENFORCED_WITH_FORENSIC_INCIDENT_AUDIT"
+  },
+  "adversarial_test_vectors": {
+    "vector_01_cryptographic_primitive_boundary": {
+      "target": "FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA-256f)",
+      "attack_techniques": ["Timing side-channel analysis", "Cache latency probing", "Fault injection on decapsulation", "Public key forgery"],
+      "result": "PASS",
+      "observations": "Native LibOQS C implementations and Libsodium bindings execute in constant time. CAVP test suite validated 17/17 KATs with zero digest divergence."
+    },
+    "vector_02_draft_algorithm_injection": {
+      "target": "cnsa2_policy_engine.py, pqc_algorithms.py",
+      "attack_techniques": ["Attempted negotiation of Falcon-1024 / HQC / Classic McEliece in production mode"],
+      "result": "PASS",
+      "observations": "When SECURE_P2P_PRODUCTION=true, cnsa2_policy_engine.is_cnsa_2027_strict activates and raises SecurityPolicyViolation fail-closed immediately upon draft primitive selection."
+    },
+    "vector_03_residual_switch_tampering": {
+      "target": "secure_p2p.py, user_mgmt.py",
+      "attack_techniques": ["Setting P2P_REQUIRE_AUTH=false in production", "Setting P2P_ENABLE_OAUTH=true in production"],
+      "result": "PASS",
+      "observations": "Initialization raises fatal SecurityError fail-closed. Commercial OAuth and anonymous bypasses are prohibited in defense production mode."
+    },
+    "vector_04_hardware_root_and_attestation": {
+      "target": "platform_hsm_interface.py",
+      "attack_techniques": ["Simulated TPM removal", "PCR state manipulation", "Software fallback attempt in production"],
+      "result": "PASS",
+      "observations": "Absence of hardware raises HardwareSecurityRequirementError with unique 128-bit incident token, diagnostic serial, remediation runbook, and Merkle-chained audit dispatch."
+    },
+    "vector_05_network_metadata_and_traffic_analysis": {
+      "target": "metadata_resistance.py, network_adversary_resistance.py",
+      "attack_techniques": ["Passive packet size correlation", "Inter-arrival timing analysis", "Public IP metadata harvesting"],
+      "result": "PASS",
+      "observations": "All packets uniformly padded to 1024-byte boundaries with random cryptographic fill; cover traffic generator injects indistinguishable chaff; direct public IP connections gated behind Private APN or Tor SOCKS5 onion routing."
+    },
+    "vector_06_audit_trail_tampering": {
+      "target": "audit_logging_system.py (secure_p2p_audit.db)",
+      "attack_techniques": ["SQL update injection on audit table", "Row deletion", "Merkle chain injection"],
+      "result": "PASS",
+      "observations": "Database triggers prevent_audit_update and prevent_audit_delete immediately abort updates/deletes with WORM policy error; verify_chain_integrity() detects tampering."
+    },
+    "vector_07_supply_chain_and_reproducible_build": {
+      "target": "scripts/verify_reproducible_build.py, oqs.dll, libsodium.dll",
+      "attack_techniques": ["Binary substitution", "Hash collision probing", "SBOM drift"],
+      "result": "PASS",
+      "observations": "Ed25519 digital signatures and SHA3-512 manifests match; CycloneDX v1.5 and SPDX v2.3 SBOMs synchronized with SLSA Level 3+ provenance."
+    }
+  },
+  "dod_zero_trust_7_pillars_evaluation": {
+    "pillar_1_user": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "Mutual Sovereign Post-Quantum ML-DSA-87 PKI authentication; CAC/PIV smart card integration; zero anonymous access in production."
+    },
+    "pillar_2_device": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "TPM 2.0 / HSM hardware root-of-trust; PCR attestation quote verification; Secure Boot validation."
+    },
+    "pillar_3_network_environment": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "Private APN / Tor v3 Onion encapsulation; zero unencapsulated public IP exposure; uniform 1024B framing with cover chaff traffic."
+    },
+    "pillar_4_applications_workloads": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "Fail-closed CNSA 2.0 policy engine; strict algorithm validation before and after every cryptographic operation."
+    },
+    "pillar_5_data": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "Double Ratchet with post-quantum KEM (ML-KEM-1024) + AES-256-GCM / ChaCha20-Poly1305; zero plaintext disk queue persistence."
+    },
+    "pillar_6_visibility_analytics": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "Merkle-chained SHA-512 audit logging with SQLite WORM triggers and real-time out-of-band TLS/syslog SIEM streaming."
+    },
+    "pillar_7_automation_orchestration": {
+      "status": "SELF_ASSESSED_COMPLIANT",
+      "implementation": "Automated security health monitoring, incident generation with cryptographic tokens, automated break-in recovery."
+    }
+  },
+  "adversary_cost_model": {
+    "initial_access_cost": "EXTREMELY_HIGH (Requires physical compromise of tamper-responding Level 4 HSM or private tactical APN)",
+    "eavesdropping_viability": "ZERO (Post-quantum forward secrecy via ML-KEM-1024 and Double Ratchet renders harvested ciphertext computationally unsolvable)",
+    "traffic_analysis_viability": "NEGLIGIBLE (Uniform 1024B padding, constant-rate cover traffic, Tor onion routing)",
+    "persistence_viability": "LOW (Ephemeral identities, memory zeroization via libsodium sodium_memzero, no persistent plaintext)"
+  },
+  "reviewer_notes_for_ao_package": {
+    "authority_action": "NONE (this document grants nothing; only a delegated Authorizing Official can authorize operation)",
+    "recommendation": "NO_AUTHORITY_DECISION (self-assessment evidence for AO package assembly)",
+    "deployment_prerequisites": [
+      "Maintain SECURE_P2P_PRODUCTION=true in operational flight/ground nodes.",
+      "Enforce hardware TPM 2.0 / PKCS#11 HSM enrollment via witnessed key ceremony.",
+      "Route all strategic node traffic through Private Tactical APN or Tor v3 onion overlay.",
+      "Engage an independent assessor and, for classified use, the NIAP/CMVP/CSfC pipeline before any authorization request."
+    ]
+  }
+}

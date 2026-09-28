@@ -1,0 +1,79 @@
+{
+  "content_disarm_reconstruction_profile": {
+    "cross_domain_redaction": "Enforced fail-closed (NOFORN strictly non-exportable)",
+    "forbidden_active_elements": [
+      "script",
+      "iframe",
+      "embed",
+      "macro",
+      "eval"
+    ],
+    "post_quantum_signature_suite": "ML-DSA-87 (FIPS 204)"
+  },
+  "gateway_id": "US-CJADC2-ALLIED-GW-01",
+  "report_id": "CJADC2-ALLIED-GW-1790614371",
+  "standard": "DoD CJADC2 Combined Interoperability / NATO STANAG 4774/4778",
+  "statistics": {
+    "blocked_noforn_count": 0,
+    "decisions_logged": 0,
+    "quarantine_held": 0,
+    "quarantined_count": 0,
+    "redacted_transfers_count": 0,
+    "reviewed_count": 0
+  },
+  "supported_alliances": [
+    "FVEY",
+    "AUKUS",
+    "NATO",
+    "QUAD",
+    "USA_GBR",
+    "USA_AUS"
+  ],
+  "supported_partners": {
+    "AUKUS": [
+      "AUS",
+      "GBR",
+      "USA"
+    ],
+    "FVEY": [
+      "AUS",
+      "CAN",
+      "GBR",
+      "NZL",
+      "USA"
+    ],
+    "NATO": [
+      "BEL",
+      "CAN",
+      "DEU",
+      "DNK",
+      "ESP",
+      "FRA",
+      "GBR",
+      "GRC",
+      "ITA",
+      "NLD",
+      "NOR",
+      "POL",
+      "PRT",
+      "TUR",
+      "UKR",
+      "USA"
+    ],
+    "QUAD": [
+      "AUS",
+      "IND",
+      "JPN",
+      "USA"
+    ],
+    "USA_AUS": [
+      "AUS",
+      "USA"
+    ],
+    "USA_GBR": [
+      "GBR",
+      "USA"
+    ]
+  },
+  "timestamp": "2026-09-28T16:52:51.776593+00:00"
+}
