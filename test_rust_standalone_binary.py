@@ -486,7 +486,43 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertFalse(os.path.exists(key_a))
             self.assertFalse(os.path.exists(key_b))
 
+    def test_zeroize_cryptographic_media_purge(self):
+        """NIST SP 800-88 Rev 1 / DoD 5220.22-M 3-pass emergency zeroization."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = os.path.join(tmp, "compromised_session.key")
+            state_path = os.path.join(tmp, "compromised_session.state")
+            extra_path = os.path.join(tmp, "classified_payload.dat")
+
+            # Write secrets to files
+            with open(key_path, "w") as f:
+                f.write("0123456789abcdef" * 4)
+            with open(state_path, "wb") as f:
+                f.write(b"STSTATE1" + b"\x99" * 40)
+            with open(extra_path, "wb") as f:
+                f.write(b"TOP SECRET INTELLIGENCE DATA" * 100)
+
+            self.assertTrue(os.path.exists(key_path))
+            self.assertTrue(os.path.exists(state_path))
+            self.assertTrue(os.path.exists(extra_path))
+
+            # Run zeroize with --key-file, --state, and --target
+            res = _run("zeroize", "--key-file", key_path, "--state", state_path,
+                       "--target", extra_path)
+            self.assertEqual(res.returncode, 0, res.stderr[-500:])
+            self.assertIn("ZEROIZE COMPLETE: 3 file(s)", res.stdout)
+
+            # Assert all files are permanently unlinked
+            self.assertFalse(os.path.exists(key_path))
+            self.assertFalse(os.path.exists(state_path))
+            self.assertFalse(os.path.exists(extra_path))
+
+            # Fail-closed: zeroize on non-existent file must exit non-zero
+            res_fail = _run("zeroize", "--target", os.path.join(tmp, "nonexistent.bin"))
+            self.assertNotEqual(res_fail.returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -19,6 +19,7 @@ pub mod net;
 pub mod nostd_microcore;
 pub mod pad;
 pub mod pacing;
+pub mod purge;
 pub mod replay;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};

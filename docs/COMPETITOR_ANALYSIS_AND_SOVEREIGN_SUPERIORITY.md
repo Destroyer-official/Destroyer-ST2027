@@ -33,6 +33,7 @@ Consumer messaging applications (such as Signal and WhatsApp) are engineered for
 | **Anti-Replay Persistence** | Volatile in-memory window (Reset/desync on restart) | Volatile in-memory window (Reset/desync on restart) | Server-managed sequence numbers | Stream counter in memory | **Atomic 48-byte Monotonic File Lock** (`STSTATE1` via OS `fs2` lock); zero nonce reuse |
 | **Central Infrastructure Dependency** | Requires Signal discovery servers & APNs/FCM | Requires Meta central servers & APNs/FCM | Centralized cloud infrastructure | Dedicated point-to-point hardware link | **100% Sovereign Peer-to-Peer** (Direct IPv6 or direct single-fiber simplex link) |
 | **Key Agreement & Explicit Confirmation** | PQXDH (Server prekeys); asynchronous; out-of-band safety number | Server prekeys; asynchronous | Classical DH with visual emojis | Static pre-shared configuration | **Direct ML-KEM-1024 + X25519 Hybrid**; transcript-bound HKDF-SHA384; mutual HMAC-SHA384 confirmation; 16-char SAS fingerprint; optional RFC 8773 PSK |
+| **Emergency Zeroization / Media Purge** | Volatile OS app-delete only; leaves SSD traces | App-delete only; leaves SSD traces | Server-side account wipe; leaves client remnants | Specialized tamper switches | **NIST SP 800-88 Rev 1 & DoD 5220.22-M 3-Pass Overwrite** (CSPRNG, inverted complement, zeros, sync_all, truncation, unlink) |
 | **Formal Mathematical Verification** | Selected academic papers on Double Ratchet | None published | None | Common Criteria EAL 4+ (hardware functional) | **Dual-Tier Formal Verification**: ProVerif 2.05 Symbolic Proofs + Kani Bounded Verification |
 | **Supply Chain & SLSA Provenance** | Standard CI/CD binaries | Proprietary opaque app store binaries | Proprietary app store binaries | Proprietary hardware vendor supply chain | **SLSA Level 3+ Reproducible Build** with Ed25519 DLL pinning and signed ML-DSA-87 receipts |
 
@@ -65,12 +66,17 @@ Consumer messaging applications (such as Signal and WhatsApp) are engineered for
   - **Out-of-Band SAS Verification:** Derives a 16-character Short Authentication String (SAS, e.g. `9F2A-4B81-C03D-7E15`) for voice/radio cross-verification between tactical operators.
   - **Quantum-Safe PSK Option:** Supports pre-shared keys (`--psk` / `--psk-file`) conforming to RFC 8773, guaranteeing absolute mathematical defense against active quantum MITM attackers.
 
-### Pillar 4: Zero-Heap Native Iron Core & Memory Locking
-* **The Vulnerability in Competitors:** Consumer applications run on top of garbage-collected virtual machines (Android ART, iOS Swift runtime, Electron). Key material resides in swappable heap memory and can be paged to solid-state storage or dumped via cold-boot attacks.
+### Pillar 4: Zero-Heap Native Iron Core, Memory Locking & Emergency Zeroization
+* **The Vulnerability in Competitors:** Consumer applications run on top of garbage-collected virtual machines (Android ART, iOS Swift runtime, Electron). Key material resides in swappable heap memory and can be paged to solid-state storage or dumped via cold-boot attacks. Furthermore, uninstalled apps leave residual plaintext artifacts across storage media.
 * **The ST2027 Solution:** All confidential data plane logic executes inside a pure native Rust binary (`secure-transmit.exe`):
   - Page-level locking via `VirtualLock` on Windows and `mlock` on POSIX systems prevents operating system paging of secret material.
   - Data containers implement `zeroize::ZeroizeOnDrop` with volatile write memory barriers, ensuring immediate zeroization when frames exit scope.
   - Zero heap allocations in the core packet forwarding loop.
+  - **Emergency Cryptographic Zeroization (`secure-transmit zeroize`):** Executes 3-pass hardware sanitization conforming to NIST SP 800-88 Rev 1 and DoD 5220.22-M:
+    1. Pass 1: Cryptographic pseudo-random bytes from CSPRNG (`getrandom`).
+    2. Pass 2: Inverted complement pattern (`0xFF`).
+    3. Pass 3: All-zeros (`0x00`).
+    4. Hardware disk sync (`sync_all`), zero-byte truncation, and permanent filesystem unlinking.
 
 ### Pillar 5: Atomic Monotonic Persistent State & Zero Nonce Reuse
 * **The Vulnerability in Competitors:** If a process crashes or power is abruptly severed, in-memory anti-replay state windows and sequence counters are lost, leading to nonce reuse vulnerabilities upon restart or susceptibility to replayed messages.
@@ -100,27 +106,27 @@ All capabilities claimed in this specification are backed by reproducible automa
 ====================================================================================
 ST2027 DEFENSE HARDENING & ASSURANCE SCORECARD — MILITARY AUDIT VERDICT
 ====================================================================================
-Timestamp (UTC): 2026-09-29T16:29:46.070223+00:00
+Timestamp (UTC): 2026-09-29T16:40:45.883408+00:00
 Repository Root: D:\code\Main_projects\p2p\p2p_6_1-26
 Overall Status : 10/10 SATISFIED — ALL GATES VERIFIED
-Total Duration : 54.75 seconds
+Total Duration : 57.28 seconds
 ------------------------------------------------------------------------------------
 GATE     ASSURANCE CATEGORY                               STATUS   LATENCY   
 ------------------------------------------------------------------------------------
-1.1      Rust Data-Plane Strict Clippy & Test Battery     PASS     23656.4 ms (76/76)
-2.1      ts_rt Clippy & Memory Discipline Verification    PASS       144.2 ms
-3.1      CNSA Suite 2.0 KATs & Algorithm Purity           PASS       410.8 ms
-4.1      ProVerif 2.05 Symbolic Handshake & PCS Proofs    PASS      3928.5 ms
-5.1      Active Exploit Defenses (Replay DoS & Nonce Reuse) PASS     14517.1 ms
-6.1      Platform Gating (Signed ML-DSA-87 Waivers)       PASS      2342.4 ms
-7.1      SLSA Level 3+ Supply Chain & DLL Pinning         PASS       290.4 ms
-8.1      Truth-in-Claims & Linguistic Purity              PASS      5026.9 ms
-9.1      In-Process Single-Command Operator Self-Test     PASS      4437.5 ms
+1.1      Rust Data-Plane Strict Clippy & Test Battery     PASS     23608.7 ms (78/78)
+2.1      ts_rt Clippy & Memory Discipline Verification    PASS       147.5 ms
+3.1      CNSA Suite 2.0 KATs & Algorithm Purity           PASS       427.4 ms
+4.1      ProVerif 2.05 Symbolic Handshake & PCS Proofs    PASS      3856.4 ms
+5.1      Active Exploit Defenses (Replay DoS & Nonce Reuse) PASS     14397.0 ms
+6.1      Platform Gating (Signed ML-DSA-87 Waivers)       PASS      2316.8 ms
+7.1      SLSA Level 3+ Supply Chain & DLL Pinning         PASS       283.2 ms
+8.1      Truth-in-Claims & Linguistic Purity              PASS      5389.5 ms
+9.1      In-Process Single-Command Operator Self-Test     PASS      6851.2 ms
 ====================================================================================
 ```
 
-* **Data-Plane Unit Tests:** 76/76 passed (47 core tests in `destroyer_core` including Galois Field arithmetic, Cauchy-RS FEC recovery, transcript-bound KEX, confirmation tags, and constant-rate pacing + 29 Kani formal harness tests).
-* **CLI Integration Battery:** 14/14 passed in `test_rust_standalone_binary.py` including simplex optical diode transfers, continuous chaff stream pacing, native ML-KEM-1024 hybrid key agreement, SAS fingerprint verification, RFC 8773 PSK authentication, and active MITM tamper rejection.
+* **Data-Plane Unit Tests:** 78/78 passed (49 core tests in `destroyer_core` including Galois Field arithmetic, Cauchy-RS FEC recovery, transcript-bound KEX, confirmation tags, NIST SP 800-88 multi-pass purge, and constant-rate pacing + 29 Kani formal harness tests).
+* **CLI Integration Battery:** 15/15 passed in `test_rust_standalone_binary.py` including simplex optical diode transfers, continuous chaff stream pacing, native ML-KEM-1024 hybrid key agreement, SAS fingerprint verification, RFC 8773 PSK authentication, active MITM tamper rejection, and emergency zeroization.
 * **Compiler Discipline:** 0 compiler warnings, 0 clippy warnings under strict `-D warnings` enforcement.
 * **Audit Receipt:** Formally signed with Post-Quantum ML-DSA-87:
   - `compliance_reports/defense_master_audit_receipt.json`

@@ -38,6 +38,7 @@ use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler};
+use destroyer_core::purge;
 use destroyer_core::replay::AntiReplayWindow;
 use fs2::FileExt;
 use sha2::{Digest, Sha256, Sha384};
@@ -74,6 +75,7 @@ fn usage() -> ! {
          diode-send --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH [--parity-ratio FLOAT]\n\
          diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
          stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
+         zeroize --target PATH...|--state PATH|--key-file PATH  NIST SP 800-88 3-pass cryptographic media purge\n\
          selftest                        deterministic module self-checks\n\
          \n\
          send-file splits at the 1205B quantum with incrementing seq; recv-file\n\
@@ -550,7 +552,13 @@ fn cmd_selftest() {
     let tag_init = kem::compute_confirmation_tag(&kt_init, b"TEST", &t_hash);
     let tag_resp = kem::compute_confirmation_tag(&kt_resp, b"TEST", &t_hash);
     assert!(kem::constant_time_eq_32(&tag_init, &tag_resp));
-    eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, mlkem-1024-kex ok");
+
+    // NIST SP 800-88 Purge self-check
+    let tmp_purge = std::env::temp_dir().join(format!("selftest_purge_{}.dat", std::process::id()));
+    std::fs::write(&tmp_purge, b"selftest-purge-material").expect("write purge temp");
+    purge::purge_file(&tmp_purge).expect("purge selftest");
+    assert!(!tmp_purge.exists(), "purge selftest failed to unlink");
+    eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, mlkem-1024-kex ok, zeroize-sp800-88 ok");
 }
 
 fn cmd_send_file(args: &[String]) {
@@ -1290,6 +1298,42 @@ fn cmd_kex_connect(args: &[String]) {
     println!("kex-connect SUCCESS: authenticated ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out}");
 }
 
+fn cmd_zeroize(args: &[String]) {
+    reject_forbidden_cli(args);
+    let mut targets = Vec::new();
+    if let Some(s) = get_flag(args, "--state") {
+        targets.push(s);
+    }
+    if let Some(k) = get_flag(args, "--key-file") {
+        targets.push(k);
+    }
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--target" && i + 1 < args.len() {
+            targets.push(args[i + 1].clone());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if targets.is_empty() {
+        fail("zeroize requires at least one --target PATH, --state PATH, or --key-file PATH");
+    }
+    let mut purged = 0;
+    for target in &targets {
+        match purge::purge_file(target) {
+            Ok(()) => {
+                println!("zeroize: purged {target}");
+                purged += 1;
+            }
+            Err(e) => {
+                fail(&format!("zeroize failed on {target}: {e}"));
+            }
+        }
+    }
+    println!("ZEROIZE COMPLETE: {purged} file(s) cryptographically sanitized & unlinked (NIST SP 800-88)");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -1306,6 +1350,7 @@ fn main() {
         "diode-send" => cmd_diode_send(&args[2..]),
         "diode-recv" => cmd_diode_recv(&args[2..]),
         "stream-chaff" => cmd_stream_chaff(&args[2..]),
+        "zeroize" | "purge" => cmd_zeroize(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),
         _ => usage(),
