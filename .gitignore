@@ -165,6 +165,10 @@ peer_discovery_cache.json
 # Scratch, devscripts, and local helper exclusions
 tree.txt
 *.bat
+!launch_tactical_terminals.bat
+!launch_tactical_web.bat
+!start_tactical_alpha.bat
+!start_tactical_bravo.bat
 archive/reports/
 archive/caches/
 archive/devscripts/

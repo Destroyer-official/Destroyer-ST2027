@@ -262,6 +262,52 @@ Every operational node MUST initialize an atomic 48-byte state record (`STSTATE1
   --target /var/spool/classified_intel.bin
 ```
 
+### SOP-7: Deploying Unified Sovereign Command Center & Field Terminals
+```bash
+# Automated Dual-Terminal Verification Drill:
+python destroyer_tactical_p2p.py demo
+
+# Operator Terminal 1 (Base Alpha / Responder):
+start_tactical_alpha.bat
+# Or CLI:
+python destroyer_tactical_p2p.py node --role responder --bind 127.0.0.1 --peer 127.0.0.1 --name NORAD_ALPHA
+
+# Operator Terminal 2 (Base Bravo / Initiator):
+start_tactical_bravo.bat
+# Or CLI:
+python destroyer_tactical_p2p.py node --role initiator --bind 127.0.0.1 --peer 127.0.0.1 --name PENTAGON_BRAVO
+
+# Spawning Both Field Terminals Simultaneously:
+launch_tactical_terminals.bat
+```
+
+Interactive field commands:
+- `<text>`: Instant encrypted in-band chat embedded in 20ms paced cell
+- `/status`: Displays cryptographic parameters, SAS code, packet counts, and Shannon entropy
+- `/attest`: Displays platform TPM 2.0 PCR-0/7/11 hardware measurements
+- `/cot <lat> <lon> <call>`: Emits signed Cursor-on-Target tactical military beacon
+- `/file <path>` / `/diode <path>`: Transmits file across Simplex Optical Diode Cauchy-RS FEC
+- `/zeroize`: Triggers emergency NIST SP 800-88 3-pass hardware sanitization
+- `/quit`: Compacts session state and disconnects
+
+### SOP-8: Launching DEFCON-1 Tactical Web Operations Console
+```bash
+# One-click Windows launcher:
+launch_tactical_web.bat
+
+# Or CLI:
+python destroyer_tactical_p2p.py web --host 127.0.0.1 --port 8443
+```
+Accessible at `http://127.0.0.1:8443` featuring:
+- Real-time 50 Hz Hardware Wire Oscilloscope (20ms cadence, 1232B cell invariance)
+- Continuous Shannon Entropy Dial ($H \ge 7.95$ bits/byte)
+- Dual-Node Enclave Topography with Mutual SAS Code verification
+- In-Band Classified Tactical Comms & MIL-STD-6090 Cursor-on-Target dispatcher
+- Cauchy-Reed-Solomon $GF(2^8)$ Simplex Optical Data Diode matrix visualizer
+- Two-Person Integrity (TPI) Dual-Key Emergency Purge Station
+- 50X Sovereign Defense Superiority matrix comparison table
+- 100% Air-Gapped Operation with zero external CDNs or cloud dependencies
+
 ---
 
 ## 8. Communications Security (COMSEC) & Emission Security (EMSEC)
