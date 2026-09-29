@@ -11,11 +11,14 @@
 pub mod aead;
 pub mod chaff;
 pub mod ct;
+pub mod fec;
 pub mod frame;
 pub mod kem;
+pub mod memlock;
 pub mod net;
 pub mod nostd_microcore;
 pub mod pad;
+pub mod pacing;
 pub mod replay;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};

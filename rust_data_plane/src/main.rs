@@ -32,11 +32,15 @@
 //! (stealth discipline from `net.rs`).
 
 use destroyer_core::aead::{self, FrameKey, DIR_SEND};
+use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::frame::{self, FTYPE_MSG};
+use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
+use destroyer_core::pacing::{self, PacedScheduler};
 use destroyer_core::replay::AntiReplayWindow;
 use fs2::FileExt;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha384};
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
@@ -63,11 +67,18 @@ fn usage() -> ! {
          recv   --key-file PATH|--key-stdin --state PATH --bind ADDR [--count N] [--timeout-ms MS]\n\
          send-file --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH\n\
          recv-file --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH --count K [--timeout-ms MS]\n\
+         diode-send --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH [--parity-ratio FLOAT]\n\
+         diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
+         stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
          selftest                        deterministic module self-checks\n\
          \n\
          send-file splits at the 1205B quantum with incrementing seq; recv-file\n\
          accepts only K consecutive seqs, reassembles, prints SHA-256, and\n\
          writes the file. Any gap/tamper/timeout: exit 4, nothing written.\n\
+         \n\
+         diode-send/recv: Simplex Optical Data Diode transfer with Cauchy-Reed-Solomon\n\
+         Forward Error Correction (FEC). ZERO return channel / zero ACKs.\n\
+         Reconstructs original file from ANY K chunks even with packet loss.\n\
          \n\
          Security: --seq and --key HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Key NEVER\n\
@@ -116,8 +127,11 @@ fn parse_key_hex(h: &str) -> [u8; 32] {
 }
 
 /// Load frame key bytes from --key-file or --key-stdin (exactly one).
-/// Returns (key_bytes, key_id). Key file should be 0600 on Unix.
-fn load_key_material(args: &[String]) -> ([u8; 32], [u8; 16]) {
+/// Returns (locked key guard, key_id). Key file should be 0600 on Unix.
+/// The guard page-locks (best-effort) a heap-stable copy, wipes + unlocks
+/// on drop; callers copy out once via as_bytes() then drop at the same
+/// points where the raw array was previously zeroized (identical lifetime).
+fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
     reject_forbidden_cli(args);
     let from_file = get_flag(args, "--key-file");
     let from_stdin = has_flag(args, "--key-stdin");
@@ -150,8 +164,8 @@ fn load_key_material(args: &[String]) -> ([u8; 32], [u8; 16]) {
     let digest = Sha256::digest(bytes);
     let mut key_id = [0u8; 16];
     key_id.copy_from_slice(&digest[..16]);
-    // Caller builds FrameKey then zeroizes `bytes`.
-    let out = bytes;
+    // Caller builds FrameKey then drops the guard (unlock + wipe).
+    let out = LockedKey32::new(bytes);
     bytes.zeroize();
     (out, key_id)
 }
@@ -336,7 +350,7 @@ fn hex_of(b: &[u8]) -> String {
 }
 
 fn cmd_send(args: &[String]) {
-    let (mut kb, key_id) = load_key_material(args);
+    let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let to: SocketAddr = get_flag(args, "--to")
         .unwrap_or_else(|| usage())
@@ -344,13 +358,13 @@ fn cmd_send(args: &[String]) {
         .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
     let msg = get_flag(args, "--msg").unwrap_or_else(|| usage());
     if msg.len() > MAX_PAYLOAD {
-        kb.zeroize();
+        drop(kb);
         fail("payload exceeds largest quantum (1205B)");
     }
     // Reserve BEFORE encrypt: crash skips, never reuses (NIST SP 800-38D).
     let seq = reserve_send_seq(&state, &key_id, 1);
-    let key = FrameKey::from_bytes(kb);
-    kb.zeroize();
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
     let frame = aead::seal(&key, seq, DIR_SEND, FTYPE_MSG, msg.as_bytes())
         .unwrap_or_else(|_| fail("seal failed"));
     if frame.len() > MAX_DATAGRAM {
@@ -375,7 +389,7 @@ fn cmd_send(args: &[String]) {
 }
 
 fn cmd_recv(args: &[String]) {
-    let (mut kb, key_id) = load_key_material(args);
+    let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let bind = get_flag(args, "--bind").unwrap_or_else(|| usage());
     let want: u64 = get_flag(args, "--count")
@@ -384,8 +398,8 @@ fn cmd_recv(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(5000);
-    let key = FrameKey::from_bytes(kb);
-    kb.zeroize();
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
     // Hold the state lock for the whole recv session so concurrent
     // receivers cannot accept the same seq twice.
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
@@ -486,10 +500,37 @@ fn cmd_selftest() {
     let dec = decode_state(&enc, &[0xABu8; 16]);
     assert_eq!(dec.send_seq, 41);
     eprintln!("selftest: aead-roundtrip ok, tamper-reject ok, replay ok, mtu ok");
+    // Page-lock probe (best-effort, reported never failed: containers without
+    // lock privilege run wipe-only hygiene by design).
+    let probe = [0u8; 32];
+    let probe_locked = destroyer_core::memlock::lock_slice(&probe);
+    destroyer_core::memlock::unlock_slice(&probe);
+    eprintln!("selftest: memlock-probe {}", if probe_locked { "locked" } else { "unlocked-best-effort" });
+
+    // Cauchy-Reed-Solomon FEC self-check
+    let crs = CauchyReedSolomon::new(3, 2).expect("crs new");
+    let d0 = vec![1u8, 2, 3, 4];
+    let d1 = vec![5u8, 6, 7, 8];
+    let d2 = vec![9u8, 10, 11, 12];
+    let parities = crs.encode(&[&d0, &d1, &d2]).expect("crs encode");
+    let recovered = crs.decode(&[(0, &d0), (3, &parities[0]), (4, &parities[1])]).expect("crs decode");
+    assert_eq!(&recovered[0], &d0);
+    assert_eq!(&recovered[1], &d1);
+    assert_eq!(&recovered[2], &d2);
+
+    // Pacing chaff and entropy self-check
+    let chaff = pacing::build_chaff_frame(&key, 99, 1232).expect("chaff build");
+    assert_eq!(chaff.len(), 1232);
+    let entropy = pacing::calculate_shannon_entropy(&chaff);
+    assert!(entropy > 7.80, "chaff entropy below threshold");
+    let (c_seq, c_type, _) = aead::open_indexed(&key, DIR_SEND, &chaff).expect("chaff open");
+    assert_eq!(c_seq, 99);
+    assert_eq!(c_type, frame::FTYPE_CHAFF);
+    eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, entropy ok");
 }
 
 fn cmd_send_file(args: &[String]) {
-    let (mut kb, key_id) = load_key_material(args);
+    let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let to: SocketAddr = get_flag(args, "--to")
         .unwrap_or_else(|| usage())
@@ -498,20 +539,20 @@ fn cmd_send_file(args: &[String]) {
     let path = get_flag(args, "--file").unwrap_or_else(|| usage());
     let bytes = std::fs::read(&path).unwrap_or_else(|_| fail("file unreadable"));
     if bytes.len() > MAX_STREAM_BYTES {
-        kb.zeroize();
+        drop(kb);
         fail("file exceeds 16 MiB stream cap");
     }
     let chunks = frame::split_payload(&bytes);
     let digest = hex_of(&Sha256::digest(&bytes));
     let n = chunks.len() as u64;
     if n == 0 {
-        kb.zeroize();
+        drop(kb);
         fail("file empty refused");
     }
     // Reserve the full range BEFORE sealing any chunk.
     let seq0 = reserve_send_seq(&state, &key_id, n);
-    let key = FrameKey::from_bytes(kb);
-    kb.zeroize();
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -541,7 +582,7 @@ fn cmd_send_file(args: &[String]) {
 }
 
 fn cmd_recv_file(args: &[String]) {
-    let (mut kb, key_id) = load_key_material(args);
+    let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let bind = get_flag(args, "--bind").unwrap_or_else(|| usage());
     let out = get_flag(args, "--out").unwrap_or_else(|| usage());
@@ -549,14 +590,14 @@ fn cmd_recv_file(args: &[String]) {
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
         .unwrap_or_else(|| fail("--count K (chunk count) is required"));
     if want == 0 || want * MAX_PAYLOAD > MAX_STREAM_BYTES {
-        kb.zeroize();
+        drop(kb);
         fail("count outside 16 MiB stream cap");
     }
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(15000);
-    let key = FrameKey::from_bytes(kb);
-    kb.zeroize();
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
     let send_preserve: u64 = {
         sf.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
@@ -649,6 +690,397 @@ fn cmd_recv_file(args: &[String]) {
     println!("received chunks={want} bytes={} digest={digest}", data.len());
 }
 
+const DIODE_MAGIC: &[u8; 4] = b"STDD";
+const DIODE_HEADER_LEN: usize = 4 + 16 + 8 + 2 + 2 + 2 + 2 + 48; // 84 bytes
+const DIODE_CHUNK_SIZE: usize = 1024;
+
+#[derive(Clone, Debug)]
+struct DiodeHeader {
+    transfer_id: [u8; 16],
+    total_len: u64,
+    k_data: u16,
+    m_parity: u16,
+    chunk_idx: u16,
+    chunk_len: u16,
+    sha384: [u8; 48],
+}
+
+impl DiodeHeader {
+    fn encode(&self) -> [u8; DIODE_HEADER_LEN] {
+        let mut b = [0u8; DIODE_HEADER_LEN];
+        b[0..4].copy_from_slice(DIODE_MAGIC);
+        b[4..20].copy_from_slice(&self.transfer_id);
+        b[20..28].copy_from_slice(&self.total_len.to_be_bytes());
+        b[28..30].copy_from_slice(&self.k_data.to_be_bytes());
+        b[30..32].copy_from_slice(&self.m_parity.to_be_bytes());
+        b[32..34].copy_from_slice(&self.chunk_idx.to_be_bytes());
+        b[34..36].copy_from_slice(&self.chunk_len.to_be_bytes());
+        b[36..84].copy_from_slice(&self.sha384);
+        b
+    }
+
+    fn decode(b: &[u8]) -> Option<Self> {
+        if b.len() < DIODE_HEADER_LEN || &b[0..4] != DIODE_MAGIC {
+            return None;
+        }
+        let mut transfer_id = [0u8; 16];
+        transfer_id.copy_from_slice(&b[4..20]);
+        let total_len = u64::from_be_bytes(b[20..28].try_into().ok()?);
+        let k_data = u16::from_be_bytes(b[28..30].try_into().ok()?);
+        let m_parity = u16::from_be_bytes(b[30..32].try_into().ok()?);
+        let chunk_idx = u16::from_be_bytes(b[32..34].try_into().ok()?);
+        let chunk_len = u16::from_be_bytes(b[34..36].try_into().ok()?);
+        let mut sha384 = [0u8; 48];
+        sha384.copy_from_slice(&b[36..84]);
+
+        Some(Self {
+            transfer_id,
+            total_len,
+            k_data,
+            m_parity,
+            chunk_idx,
+            chunk_len,
+            sha384,
+        })
+    }
+}
+
+fn cmd_diode_send(args: &[String]) {
+    let (kb, key_id) = load_key_material(args);
+    let state = state_path(args);
+    let to: SocketAddr = get_flag(args, "--to")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
+    let path = get_flag(args, "--file").unwrap_or_else(|| usage());
+    let bytes = std::fs::read(&path).unwrap_or_else(|_| fail("file unreadable"));
+    if bytes.is_empty() {
+        drop(kb);
+        fail("empty file refused");
+    }
+    if bytes.len() > MAX_STREAM_BYTES {
+        drop(kb);
+        fail("file exceeds 16 MiB stream cap");
+    }
+
+    // SHA-384 root hash
+    let mut hasher = Sha384::new();
+    hasher.update(&bytes);
+    let digest: [u8; 48] = hasher.finalize().into();
+
+    let total_len = bytes.len() as u64;
+    let k = bytes.len().div_ceil(DIODE_CHUNK_SIZE);
+    if k > 200 {
+        drop(kb);
+        fail("file exceeds single-bundle diode capacity (max 200 chunks / 200 KiB per transfer)");
+    }
+
+    let parity_ratio: f64 = get_flag(args, "--parity-ratio")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.25);
+    let mut m = ((k as f64) * parity_ratio).ceil() as usize;
+    if m < 2 {
+        m = 2;
+    }
+    if k + m > 255 {
+        m = 255 - k;
+    }
+
+    // Pad chunks to uniform DIODE_CHUNK_SIZE
+    let mut data_chunks = vec![vec![0u8; DIODE_CHUNK_SIZE]; k];
+    for (i, slice) in bytes.chunks(DIODE_CHUNK_SIZE).enumerate() {
+        data_chunks[i][..slice.len()].copy_from_slice(slice);
+    }
+
+    // Cauchy-RS encoding
+    let crs = CauchyReedSolomon::new(k, m).unwrap_or_else(|e| fail(&e.to_string()));
+    let data_refs: Vec<&[u8]> = data_chunks.iter().map(|c| c.as_slice()).collect();
+    let parity_chunks = crs.encode(&data_refs).unwrap_or_else(|e| fail(&e.to_string()));
+
+    // Random transfer ID
+    let mut transfer_id = [0u8; 16];
+    if getrandom::fill(&mut transfer_id).is_err() {
+        fail("getrandom failed");
+    }
+
+    let n = (k + m) as u64;
+    let seq0 = reserve_send_seq(&state, &key_id, n);
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    let wire_total = rt.block_on(async {
+        let any = if to.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+        let ep = Endpoint::bind(any)
+            .await
+            .unwrap_or_else(|_| fail("bind failed"));
+        let mut total = 0usize;
+
+        for chunk_idx in 0..(k + m) {
+            let (is_data, payload_chunk) = if chunk_idx < k {
+                (true, &data_chunks[chunk_idx])
+            } else {
+                (false, &parity_chunks[chunk_idx - k])
+            };
+            let chunk_len = if is_data && chunk_idx == k - 1 {
+                let rem = (total_len as usize) % DIODE_CHUNK_SIZE;
+                if rem == 0 { DIODE_CHUNK_SIZE } else { rem }
+            } else {
+                DIODE_CHUNK_SIZE
+            };
+
+            let hdr = DiodeHeader {
+                transfer_id,
+                total_len,
+                k_data: k as u16,
+                m_parity: m as u16,
+                chunk_idx: chunk_idx as u16,
+                chunk_len: chunk_len as u16,
+                sha384: digest,
+            };
+
+            let mut chunk_packet = Vec::with_capacity(DIODE_HEADER_LEN + DIODE_CHUNK_SIZE);
+            chunk_packet.extend_from_slice(&hdr.encode());
+            chunk_packet.extend_from_slice(payload_chunk);
+
+            let frame = aead::seal(&key, seq0.wrapping_add(chunk_idx as u64), DIR_SEND, FTYPE_MSG, &chunk_packet)
+                .unwrap_or_else(|_| fail("seal failed"));
+            total += frame.len();
+            ep.send_raw(&frame, to)
+                .await
+                .unwrap_or_else(|_| fail("send failed"));
+
+            // Inter-chunk pacing delay (500us) for simplex transmission line stability
+            tokio::time::sleep(Duration::from_micros(500)).await;
+        }
+        total
+    });
+
+    println!(
+        "diode-sent transfer_id={} file={} bytes={} data_chunks={} parity_chunks={} total_chunks={} wire={}B sha384={}",
+        hex_of(&transfer_id), path, total_len, k, m, k + m, wire_total, hex_of(&digest)
+    );
+}
+
+fn cmd_diode_recv(args: &[String]) {
+    let (kb, key_id) = load_key_material(args);
+    let state = state_path(args);
+    let bind = get_flag(args, "--bind").unwrap_or_else(|| usage());
+    let out = get_flag(args, "--out").unwrap_or_else(|| usage());
+    let timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20000);
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
+
+    let (mut sf, mut window) = load_recv_window(&state, &key_id);
+    let send_preserve: u64 = {
+        sf.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
+        let mut buf = Vec::new();
+        sf.read_to_end(&mut buf).unwrap_or_else(|_| fail("state read failed"));
+        if buf.len() == STATE_LEN {
+            let mut arr = [0u8; STATE_LEN];
+            arr.copy_from_slice(&buf);
+            decode_state(&arr, &key_id).send_seq
+        } else {
+            0
+        }
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    struct DiodeTransferState {
+        total_len: u64,
+        k: usize,
+        m: usize,
+        sha384: [u8; 48],
+        chunks: HashMap<usize, Vec<u8>>,
+    }
+
+    let result = rt.block_on(async {
+        let mut ep = Endpoint::bind(&bind)
+            .await
+            .unwrap_or_else(|_| fail("bind failed"));
+        let mut transfers: HashMap<[u8; 16], DiodeTransferState> = HashMap::new();
+        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+
+        loop {
+            let wait = deadline.saturating_duration_since(std::time::Instant::now());
+            if wait.is_zero() {
+                break;
+            }
+            match ep.recv_raw(wait).await {
+                None => break,
+                Some(Err(_)) => {}
+                Some(Ok((bytes, _from))) => {
+                    let seq = match aead::peek_seq(&bytes) {
+                        Some(s) => s,
+                        None => {
+                            ep.note_auth_drop();
+                            continue;
+                        }
+                    };
+                    if !window.check(seq) {
+                        ep.note_auth_drop();
+                        continue;
+                    }
+                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes) else {
+                        ep.note_auth_drop();
+                        continue;
+                    };
+                    if seq2 != seq || ftype != FTYPE_MSG {
+                        ep.note_auth_drop();
+                        continue;
+                    }
+                    window.mark(seq2);
+                    persist_recv_window(&mut sf, &key_id, send_preserve, &window);
+
+                    let Some(hdr) = DiodeHeader::decode(&pt) else {
+                        continue;
+                    };
+                    if pt.len() < DIODE_HEADER_LEN + DIODE_CHUNK_SIZE {
+                        continue;
+                    }
+                    let chunk_payload = pt[DIODE_HEADER_LEN..DIODE_HEADER_LEN + DIODE_CHUNK_SIZE].to_vec();
+
+                    let entry = transfers.entry(hdr.transfer_id).or_insert_with(|| DiodeTransferState {
+                        total_len: hdr.total_len,
+                        k: hdr.k_data as usize,
+                        m: hdr.m_parity as usize,
+                        sha384: hdr.sha384,
+                        chunks: HashMap::new(),
+                    });
+
+                    entry.chunks.insert(hdr.chunk_idx as usize, chunk_payload);
+
+                    // Check if we have gathered K chunks
+                    if entry.chunks.len() >= entry.k {
+                        let k = entry.k;
+                        let m = entry.m;
+                        let total_len = entry.total_len as usize;
+                        let expected_sha384 = entry.sha384;
+                        let transfer_id = hdr.transfer_id;
+
+                        // Sort chunks by index
+                        let mut sorted_indices: Vec<usize> = entry.chunks.keys().copied().collect();
+                        sorted_indices.sort_unstable();
+
+                        let mut k_chunks: Vec<(usize, &[u8])> = Vec::with_capacity(k);
+                        for &idx in sorted_indices.iter().take(k) {
+                            k_chunks.push((idx, entry.chunks[&idx].as_slice()));
+                        }
+
+                        let crs = match CauchyReedSolomon::new(k, m) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+
+                        let recovered = match crs.decode(&k_chunks) {
+                            Ok(rec) => rec,
+                            Err(_) => continue,
+                        };
+
+                        let mut full_file = Vec::with_capacity(k * DIODE_CHUNK_SIZE);
+                        for chunk in recovered {
+                            full_file.extend_from_slice(&chunk);
+                        }
+                        if full_file.len() < total_len {
+                            continue;
+                        }
+                        full_file.truncate(total_len);
+
+                        // Verify SHA-384 root hash
+                        let mut hasher = Sha384::new();
+                        hasher.update(&full_file);
+                        let computed_digest: [u8; 48] = hasher.finalize().into();
+
+                        if computed_digest != expected_sha384 {
+                            eprintln!("diode-recv hash verification failed!");
+                            continue;
+                        }
+
+                        return Some((transfer_id, full_file, computed_digest, entry.chunks.len(), k + m));
+                    }
+                }
+            }
+        }
+        None
+    });
+
+    let Some((transfer_id, data, digest, chunks_got, total_chunks)) = result else {
+        fail("diode-recv timed out: insufficient chunks received or hash mismatch");
+    };
+
+    std::fs::write(&out, &data).unwrap_or_else(|_| fail("output unwritable"));
+    println!(
+        "diode-recv SUCCESS transfer_id={} out={} bytes={} received_chunks={}/{} sha384={}",
+        hex_of(&transfer_id), out, data.len(), chunks_got, total_chunks, hex_of(&digest)
+    );
+}
+
+fn cmd_stream_chaff(args: &[String]) {
+    reject_forbidden_cli(args);
+    let (kb, key_id) = load_key_material(args);
+    let state = state_path(args);
+    let to: SocketAddr = get_flag(args, "--to")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
+    let interval_ms: u64 = get_flag(args, "--interval-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
+        .unwrap_or(50);
+    let count: u64 = get_flag(args, "--count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
+        .unwrap_or(10);
+    let quantum: usize = get_flag(args, "--quantum")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)")))
+        .unwrap_or(1232);
+
+    if quantum != 256 && quantum != 512 && quantum != 1232 {
+        drop(kb);
+        fail("bad --quantum: must be 256, 512, or 1232");
+    }
+
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    let bind_addr = if to.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+    let mut scheduler = PacedScheduler::new(Duration::from_millis(interval_ms));
+
+    rt.block_on(async {
+        let ep = Endpoint::bind(bind_addr)
+            .await
+            .unwrap_or_else(|_| fail("bind failed"));
+
+        let mut emitted = 0u64;
+        while count == 0 || emitted < count {
+            scheduler.wait_next_tick();
+            let seq = reserve_send_seq(&state, &key_id, 1);
+            let frame = pacing::build_chaff_frame(&key, seq, quantum)
+                .unwrap_or_else(|_| fail("build chaff failed"));
+            if ep.send_raw(&frame, to).await.is_err() {
+                fail("chaff send failed");
+            }
+            emitted += 1;
+        }
+        println!(
+            "stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms"
+        );
+    });
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -660,6 +1092,9 @@ fn main() {
         "recv" => cmd_recv(&args[2..]),
         "send-file" => cmd_send_file(&args[2..]),
         "recv-file" => cmd_recv_file(&args[2..]),
+        "diode-send" => cmd_diode_send(&args[2..]),
+        "diode-recv" => cmd_diode_recv(&args[2..]),
+        "stream-chaff" => cmd_stream_chaff(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),
         _ => usage(),

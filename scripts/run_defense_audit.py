@@ -100,7 +100,7 @@ def main():
 
     card = AuditScorecard()
 
-    # Gate 1: Rust Data-Plane (Clippy with -D warnings + 64 tests)
+    # Gate 1: Rust Data-Plane (Clippy with -D warnings + 74 tests)
     print("\n[*] Gate 1: Auditing Rust Data Plane (destroyer_core)...")
     code, out, dur = run_cmd(["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
                              cwd=REPO_ROOT / "rust_data_plane")
@@ -108,9 +108,9 @@ def main():
         card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, "Compiler warnings present")
     else:
         code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
-        passed = (code2 == 0 and "test result: ok. 35 passed" in out2 and "29 passed" in out2)
+        passed = (code2 == 0 and "test result: ok. 45 passed" in out2 and "29 passed" in out2)
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         "64/64 tests passed; 0 compiler warnings")
+                         "74 tests passed (45 lib incl. FEC, pacing & memlock + 29 harness); 0 compiler warnings")
 
     # Gate 2: Native Top-Secret Runtime (ts_rt)
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")

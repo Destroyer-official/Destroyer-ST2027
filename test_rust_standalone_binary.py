@@ -300,6 +300,67 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("different key", r.stderr)
 
+    def test_diode_simplex_fec_transfer(self):
+        """Phase 2: Unidirectional Simplex Optical Data Diode transfer with Cauchy-RS FEC."""
+        import tempfile, time, hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port = _free_udp_port()
+            send_state = os.path.join(tmp, "diode_send.state")
+            recv_state = os.path.join(tmp, "diode_recv.state")
+
+            src = os.path.join(tmp, "secret_payload.dat")
+            dst = os.path.join(tmp, "recovered_payload.dat")
+
+            # Create a 5,000 byte test payload (spans 5 data chunks + parity)
+            payload = b"TOP-SECRET-SOVEREIGN-ORDER-2027:" + (b"A" * 4900) + b":TERMINATE"
+            with open(src, "wb") as f:
+                f.write(payload)
+            expected_sha384 = hashlib.sha384(payload).hexdigest()
+
+            recv = subprocess.Popen(
+                [str(BIN), "diode-recv", "--key-file", kf, "--state", recv_state,
+                 "--bind", f"127.0.0.1:{port}", "--out", dst, "--timeout-ms", "15000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cwd=str(CRATE))
+            try:
+                time.sleep(1.5)  # wait for bind
+                sent = _run("diode-send", "--key-file", kf, "--state", send_state,
+                            "--to", f"127.0.0.1:{port}", "--file", src,
+                            "--parity-ratio", "0.3")
+                self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
+                self.assertIn("diode-sent", sent.stdout)
+                out, err = recv.communicate(timeout=20)
+            finally:
+                if recv.poll() is None:
+                    recv.kill()
+                    recv.communicate()
+
+            self.assertEqual(recv.returncode, 0, f"diode-recv failed:\n{err[-1000:]}")
+            self.assertIn("diode-recv SUCCESS", out)
+            self.assertIn(expected_sha384, out)
+
+            # Verify file on disk matches 100%
+            self.assertTrue(os.path.exists(dst))
+            with open(dst, "rb") as f:
+                recovered = f.read()
+            self.assertEqual(recovered, payload)
+
+    def test_stream_chaff_constant_pacing(self):
+        """Phase 3: Constant-rate traffic invariance and synthetic chaff emission."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port = _free_udp_port()
+            send_state = os.path.join(tmp, "chaff_send.state")
+
+            res = _run("stream-chaff", "--key-file", kf, "--state", send_state,
+                       "--to", f"127.0.0.1:{port}", "--interval-ms", "10",
+                       "--count", "5", "--quantum", "1232")
+            self.assertEqual(res.returncode, 0, res.stderr[-500:])
+            self.assertIn("stream-chaff: emitted 5 frames wire=1232B interval=10ms", res.stdout)
+            self.assertEqual(os.path.getsize(send_state), 48)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,44 @@
+name: Kani Proofs (Linux, CBMC-backed)
+
+# Executes the 5 #[kani::proof] harnesses defined in
+# rust_data_plane/tests/kani_harness.rs under the real Kani + CBMC
+# toolchain (Linux-only upstream; hence a dedicated ubuntu job, not part
+# of the Windows-local master audit, which asserts defined-not-executed).
+# Fail-closed: any harness failure reds the job.
+
+on:
+  push:
+    branches: [ main, master, release/* ]
+    paths: [ 'rust_data_plane/**', '.github/workflows/kani-proofs.yml' ]
+  pull_request:
+    branches: [ main, master ]
+    paths: [ 'rust_data_plane/**', '.github/workflows/kani-proofs.yml' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kani:
+    name: Kani proof harnesses (bounded model checking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Kani verifier + CBMC
+        run: |
+          cargo install --locked kani-verifier
+          cargo kani setup
+
+      - name: Run Kani proof harnesses (destroyer_core)
+        working-directory: rust_data_plane
+        run: |
+          cargo kani
