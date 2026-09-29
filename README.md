@@ -13,7 +13,7 @@
 ### Document Metadata & Evaluation Boundary
 - **Technical Nomenclature:** Sovereign Transmit 2027 (`Destroyer-ST2027`)
 - **System Classification:** UNCLASSIFIED / DEFENSE TECHNICAL RECORD (All test fixtures and keys are explicitly synthetic).
-- **Target Operational Posture:** 2027 NSA Commercial National Security Algorithm (CNSA) Suite 2.0 Mandate, DoD Directive S-5210.41M Two-Person Integrity, IETF RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange, and seL4 Microkernel Enforced Execution.
+- **Target Operational Posture:** 2027 NSA Commercial National Security Algorithm (CNSA) Suite 2.0 Mandate, Cryptographic Dual-Person Authorization (DPA), IETF RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange, and seL4 Microkernel Enforced Execution.
 - **Physical vs Software Boundary:** User-space software acts strictly as a **fail-closed gatekeeper** (`TSRequiredError`). Software cannot independently certify physical physics; physical FIPS 140-3 Level 3/4 hardware tamper enclosures, TEMPEST SDIP-27/28/29 attenuation, physical optical unidirectional diodes, and Authorizing Official (AO) ATO certifications require physical facility accreditation and designated hardware.
 
 ---
@@ -22,7 +22,7 @@
 
 Modern peer-to-peer and client-server communication channels operating across adversarial public packet networks face two existential threats: contemporary high-rate signals intelligence (traffic analysis, timing correlation, deep packet inspection, and metadata harvesting) and the emergent cryptanalytic threat of quantum computers capable of Shor's and Grover's algorithms (Harvest-Now-Decrypt-Later).
 
-This repository presents the reference implementation, defense specifications, formal verification proofs, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates all deprecated public-key primitives (RSA, ECDH, ECDSA) and pre-standard post-quantum drafts in favor of pure **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). 
+This repository presents the reference implementation, defense specifications, formal verification proofs, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, NIST P-384 ECDH is retained strictly as the auxiliary classical leg within the standards-track IETF RFC 10024 hybrid key encapsulation mechanism (`SecP384r1MLKEM1024`). 
 
 The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing**, **constant-rate cell shaping (50ms interval)**, **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**, and **AES-256-CTR stream whitening**. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are modeled in **ProVerif 2.05** symbolic models (executed green by `test_proverif_st2027.py`); memory and frame properties are covered by Kani proof harnesses (execution requires the `cargo kani` + CBMC toolchain) and deterministic property doubles green under `cargo test`.
 
@@ -108,7 +108,7 @@ The security architecture is formally specified against a multidimensional threa
 |   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS resolution or Interface-Pinned Sovereign APN)    |
 |   ├── Constant-Rate (50ms tick) Constant-Size (1232B cell / 1280B IPv6 MTU) Traffic Shaping             |
 |   ├── Stream Whitening (AES-256-CTR Uniform Masking, zero cleartext magic bytes or length headers)      |
-|   └── Two-Person Integrity / DPO Pre-Transmit Ceremony (DoD S-5210.41M, 2.0s Dual Action Window)       |
+|   └── Cryptographic Dual-Person Authorization Pre-Transmit Co-Signing (ML-DSA-87 Dual Signatures)       |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 3] CRYPTOGRAPHY & PROTOCOL ARCHITECTURE (noise_pq.py, cnsa_purity.py, crypto_selftest.py)      |
 |   ├── Noise_XXhfs + ML-KEM-1024 + P-384 ECDH + ML-DSA-87 Protocol Handshake                             |
@@ -138,7 +138,7 @@ The security architecture is formally specified against a multidimensional threa
 - **Non-Exportable Hardware Key Storage:** Leverages Windows Cryptography Next Generation (CNG) `Microsoft Platform Crypto Provider` and PKCS#11 HSM middleware. Private signing keys are bound to physical TPM 2.0 silicon; keys are physically incapable of being exported or read into general-purpose RAM.
 - **Physical RED/BLACK Network Separation:** Validates physical network adapter assignments via `psutil`. Binds strictly to accredited RED (plaintext processing) or BLACK (ciphertext transport) interfaces. Binds to wildcard addresses (`0.0.0.0`, `::`) are explicitly rejected.
 - **TEMPEST & SCIF Facility Registry:** Evaluates host facility environmental records against NATO SDIP-27/3 (Level A equipment), SDIP-28/3 (Zone 0/1 facilities), and SDIP-29 separation distances.
-- **Active Multi-Trigger Zeroization Mesh:** Real-time tamper engine listening to debugger attachment (`CheckRemoteDebuggerPresent`), TPM PCR register deviation, heartbeat timeout, and authenticated ML-DSA-87 signed duress messages. Implements DoD 5220.22-M 3-pass overwrite procedures across all registered buffers.
+- **Active Multi-Trigger Zeroization Mesh:** Real-time tamper engine listening to debugger attachment (`CheckRemoteDebuggerPresent`), TPM PCR register deviation, heartbeat timeout, and authenticated ML-DSA-87 signed duress messages. Implements volatile in-memory zeroization via OS-level memory locking (`VirtualLock`/`mlock`) and compiler memory fences (`compiler_fence(SeqCst)`) across all registered buffers.
 
 ### Pillar 2: Operating System & Execution Runtime Layer
 - **Source Modules:** [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py), [`ts_rt/src/lib.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs), [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py)
@@ -156,10 +156,10 @@ The security architecture is formally specified against a multidimensional threa
 
 ### Pillar 4: Network Transport & Anonymity Layer
 - **Source Modules:** [`transport_anonymity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py), [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`rust_data_plane/src/net.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/net.rs)
-- **Mandatory Anonymous Overlay:** Direct un-encapsulated internet communication is prohibited. Traffic is routed exclusively through Tor v3 hidden services via authenticated SOCKS5 proxies with remote DNS resolution or over interface-pinned WireGuard / sovereign dark-fiber tunnels.
+- **Transport Architecture:** Direct UDP/IPv6 datagrams with 1232-byte constant-size cells (fitting the 1280-byte IPv6 minimum MTU without fragmentation) or Tor v3 onion routing over SOCKS5 TCP proxies.
 - **Constant-Rate / Constant-Size Traffic Shaping:** Emits exactly one 1232-byte frame every 50.0 ms (20 packets/sec). When real payload data is absent, cryptographically indistinguishable chaff cells (`0xFF` type tag) are emitted.
 - **Stream Whitening:** Every wire cell is masked with an AES-256-CTR keystream initialized from ephemeral session secrets, ensuring all packets appear as uniform pseudo-random noise with no cleartext magic headers.
-- **DoD Directive S-5210.41M Two-Person Integrity (DPO):** High-consequence command execution requires Dual-Person Operation. Two distinct cryptographic approvals signed with physical ML-DSA-87 tokens must be submitted within a 2.0-second synchronized action window.
+- **Cryptographic Dual-Person Authorization (DPA):** High-consequence command execution requires Dual-Person Operation. Two distinct cryptographic approvals signed with independent ML-DSA-87 tokens must be co-signed and validated before transmission.
 
 ### Pillar 5: Trust Infrastructure & Key Management Layer
 - **Source Modules:** [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py), [`scripts/witnessed_key_ceremony.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/witnessed_key_ceremony.py)
@@ -190,13 +190,13 @@ The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the d
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                        Padding to 1216 Bytes                  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                     Poly1305 / GCM Tag (16 Bytes)             |
+|                     AES-256-GCM Tag (16 Bytes)                |
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 ### Wire Field Definitions
-- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset. Validated against the 64-bit sliding window bitmap in native Rust ([rust_data_plane/src/replay.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs)).
+- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset with persistent monotonic counter synchronization. Validated read-only against the 64-bit sliding window bitmap in native Rust ([rust_data_plane/src/replay.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs)) prior to authentication, advancing strictly upon successful decryption (RFC 6479).
 - **Length (2 bytes, Big-Endian):** Length of the unpadded cleartext payload ($0 \le \text{Length} \le 1205$).
 - **Type (1 byte):** Protocol message discriminator:
   - `0x01`: Handshake Initiation / Key Exchange
@@ -206,7 +206,7 @@ The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the d
   - `0x05`: Attestation Evidence Envelope
   - `0x06`: Revocation Broadcast
   - `0xFF`: Chaff / Cover Traffic (Discarded silently by recipient)
-- **Encrypted Payload + Padding (1207 bytes):** Ciphertext produced by AES-256-GCM or ChaCha20-Poly1305. Nonce is derived from $\text{Sequence} \parallel \text{Direction}$. Unused bytes are filled with deterministic PKCS#7 or pseudo-random padding up to the 1216-byte boundary.
+- **Encrypted Payload + Padding (1207 bytes):** Ciphertext produced strictly by AES-256-GCM (NIST SP 800-38D). Nonce is derived from $\text{Sequence} \parallel \text{Direction}$ with monotonic counter safeguards. Unused bytes are filled with deterministic PKCS#7 or pseudo-random padding up to the 1216-byte boundary.
 - **Authentication Tag (16 bytes):** Authenticates the ciphertext alongside the Additional Authenticated Data (AAD):
   $$\text{AAD} = \text{Sequence} \parallel \text{Length} \parallel \text{Type}$$
 
@@ -409,7 +409,7 @@ The platform is backed by the full automated suite (Python suites plus 64 cargo-
 | **RFC 10024** | Hybrid Post-Quantum Key Exchange (`SecP384r1MLKEM1024`) | [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) | [`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) |
 | **FIPS 140-3 (design target, NOT lab-certified)** | Hardware Security, Self-Tests, Volatile Wiping | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) | [`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md) |
 | **NATO SDIP-27/28/29** | TEMPEST Equipment, SCIF Zoning, Spacing | [`ts_hw_layer.py:TEMPESTRegistry`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) | [`docs/hw_tpm_hsm_setup.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/hw_tpm_hsm_setup.md) |
-| **DoD S-5210.41M** | Nuclear Command & Two-Person Integrity (2.0s DPO) | [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`nc3_nuclear_command.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py) | [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md) |
+| **Two-Person Rule (TPA)** | Cryptographic Dual-Person Authorization co-signing | [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py) | [`compliance_reports/oscal_ssp_cnsa2.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_ssp_cnsa2.json) |
 | **IETF RATS (RFC 9334)** | Platform Attestation & Evidence Architecture | [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py) | [`compliance_reports/oscal_sar_cato.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_sar_cato.json) |
 | **Common Criteria EAL4+ (design target, NOT lab-certified)** | Network Device Protection Profile (NDcPP) | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) | [`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md) |
 | **CISA Zero Trust (design target, NOT maturity-certified)** | Zero Trust Architecture principles | System-wide fail-closed enforcement | Design target only: no level rating claimed, no ATO implied |
@@ -420,7 +420,7 @@ The platform is backed by the full automated suite (Python suites plus 64 cargo-
 
 ### 10.1 Environment Setup
 ```bash
-# Clone the private sovereign repository
+# Clone the sovereign repository
 git clone https://github.com/Destroyer-official/Destroyer-ST2027.git
 cd Destroyer-ST2027
 
@@ -476,18 +476,21 @@ python secure_transmit_2027.py send \
 
 ### 10.6 Standalone Zero-Python File Transmission (`secure-transmit`)
 ```bash
+# Provision atomic 48-byte session state file (STSTATE1 magic + AES key + monotonic counters):
+python scripts/provision_channel_state.py --out keys/channel_state.bin
+
 # Receiver Station:
 ./rust_data_plane/target/release/secure-transmit recv-file \
   --listen [::1]:9999 \
   --peer [::1]:9998 \
-  --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --key-file keys/channel_state.bin \
   --out downloads/target_file.dat
 
 # Transmitting Station:
 ./rust_data_plane/target/release/secure-transmit send-file \
   --target [::1]:9999 \
   --bind [::1]:9998 \
-  --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --key-file keys/channel_state.bin \
   --file high_consequence_order.bin
 ```
 
