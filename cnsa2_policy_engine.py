@@ -80,17 +80,27 @@ class CNSA2PolicyEngine:
     # Requirement 1.1: ML-KEM-1024 for key encapsulation
     APPROVED_KEM: FrozenSet[str] = frozenset({
         'ML-KEM-1024',                 # NIST FIPS 203 - Primary PQ KEM (Level 5)
-        'Classic-McEliece-8192128f',   # NIST Selected Code-Based KEM (Level 5)
-        'SecP521r1MLKEM1024',          # CNSA 2.0 Premier Hybrid (P-521 + ML-KEM-1024)
-        'X25519+ML-KEM-1024',          # Hybrid KEM (X25519 + ML-KEM-1024)
-        'X25519+ML-KEM-1024 (Hybrid)', # Hybrid KEM Alias
-        'X25519MLKEM1024',             # TLS 1.3 named group
+        # Classic McEliece was a NIST Round-4 candidate but was NOT selected
+        # (HQC selected Mar 2025, IR 8545; McEliece "no longer under
+        # consideration"). Kept for code-diversity research only — never in
+        # the session path, never presented as a standard.
+        'Classic-McEliece-8192128f',   # NIST Round-4 unselected (diversity only)
+        # Local composite labels below (NOT RFC 10024 groups, NOT CNSA-listed:
+        # RFC 10024 defines only X25519MLKEM768 / SecP256r1MLKEM768 /
+        # SecP384r1MLKEM1024; CNSA profiles mandate pure ML-KEM-1024).
+        'SecP521r1MLKEM1024',          # custom label; no such TLS group exists
+        'X25519+ML-KEM-1024',          # custom label; NOT X25519MLKEM768
+        'X25519+ML-KEM-1024 (Hybrid)', # custom label alias
+        'X25519MLKEM1024',             # custom label; NOT an RFC 10024 group
     })
 
     # CNSA 2.0 2027+ PROCUREMENT GATE FROZEN SETS (FIPS-finalized only)
     CNSA_2027_APPROVED_KEM: FrozenSet[str] = frozenset({
         'ML-KEM-1024',                 # NIST FIPS 203 - Finalized Primary PQ KEM
-        'SecP521r1MLKEM1024',          # CNSA 2.0 Premier Hybrid (P-521 + ML-KEM-1024)
+        # NOTE (corrected 2026-09-29): SecP521r1MLKEM1024 was removed here —
+        # no such RFC 10024 group exists, so it cannot satisfy a
+        # "FIPS-finalized only" gate. Outer hybrid groups, when needed, are
+        # the RFC 10024 SecP384r1MLKEM1024 / X25519MLKEM768 registrations.
     })
     
     # Requirement 1.2: ML-DSA-87 or SLH-DSA-256f for signatures
@@ -103,7 +113,7 @@ class CNSA2PolicyEngine:
     APPROVED_SIG: FrozenSet[str] = frozenset({
         'ML-DSA-87',        # NIST FIPS 204 - Primary PQ signature (Level 5) - FINALIZED AUG 2024
         'SLH-DSA-256f',     # NIST FIPS 205 - Stateless hash-based (Level 5) - FINALIZED AUG 2024
-        'FALCON-1024',      # NIST FIPS 206 - Draft status (FN-DSA); quarantined in 2027+ strict mode
+        'FALCON-1024',      # pre-standard Falcon (NOT FN-DSA); FIPS 206 draft track; quarantined in 2027+ strict mode
     })
 
     CNSA_2027_APPROVED_SIG: FrozenSet[str] = frozenset({
@@ -179,14 +189,14 @@ class CNSA2PolicyEngine:
     # Algorithm specifications with security properties
     ALGORITHM_SPECS: Dict[str, AlgorithmSpec] = {
         'ML-KEM-1024': AlgorithmSpec('ML-KEM-1024', AlgorithmCategory.KEM, 256, 'FIPS 203', True),
-        'Classic-McEliece-8192128f': AlgorithmSpec('Classic-McEliece-8192128f', AlgorithmCategory.KEM, 256, 'NIST Round 4', True),
-        'SecP521r1MLKEM1024': AlgorithmSpec('SecP521r1MLKEM1024', AlgorithmCategory.KEM, 256, 'CNSA 2.0 Hybrid', True),
-        'X25519+ML-KEM-1024': AlgorithmSpec('X25519+ML-KEM-1024', AlgorithmCategory.KEM, 256, 'CNSA 2.0 / RFC 10024 Hybrid', True),
-        'X25519+ML-KEM-1024 (Hybrid)': AlgorithmSpec('X25519+ML-KEM-1024 (Hybrid)', AlgorithmCategory.KEM, 256, 'CNSA 2.0 / RFC 10024 Hybrid', True),
-        'X25519MLKEM1024': AlgorithmSpec('X25519MLKEM1024', AlgorithmCategory.KEM, 256, 'CNSA 2.0 / TLS 1.3 Hybrid', True),
+        'Classic-McEliece-8192128f': AlgorithmSpec('Classic-McEliece-8192128f', AlgorithmCategory.KEM, 256, 'NIST Round-4 unselected (diversity only)', True),
+        'SecP521r1MLKEM1024': AlgorithmSpec('SecP521r1MLKEM1024', AlgorithmCategory.KEM, 256, 'custom label; NOT RFC 10024 / NOT CNSA', True),
+        'X25519+ML-KEM-1024': AlgorithmSpec('X25519+ML-KEM-1024', AlgorithmCategory.KEM, 256, 'custom label; NOT RFC 10024 / NOT CNSA', True),
+        'X25519+ML-KEM-1024 (Hybrid)': AlgorithmSpec('X25519+ML-KEM-1024 (Hybrid)', AlgorithmCategory.KEM, 256, 'custom label; NOT RFC 10024 / NOT CNSA', True),
+        'X25519MLKEM1024': AlgorithmSpec('X25519MLKEM1024', AlgorithmCategory.KEM, 256, 'custom label; NOT RFC 10024 / NOT CNSA', True),
         'ML-DSA-87': AlgorithmSpec('ML-DSA-87', AlgorithmCategory.SIGNATURE, 256, 'FIPS 204', True),
         'SLH-DSA-256f': AlgorithmSpec('SLH-DSA-256f', AlgorithmCategory.SIGNATURE, 256, 'FIPS 205', True),
-        'FALCON-1024': AlgorithmSpec('FALCON-1024', AlgorithmCategory.SIGNATURE, 256, 'FIPS 206', True),
+        'FALCON-1024': AlgorithmSpec('FALCON-1024', AlgorithmCategory.SIGNATURE, 256, 'pre-standard Falcon; NOT FN-DSA (FIPS 206 draft track)', True),
         'AES-256-GCM': AlgorithmSpec('AES-256-GCM', AlgorithmCategory.AEAD, 256, 'FIPS 197', False),
         'ChaCha20-Poly1305': AlgorithmSpec('ChaCha20-Poly1305', AlgorithmCategory.AEAD, 256, 'RFC 8439', False),
         'SHA-384': AlgorithmSpec('SHA-384', AlgorithmCategory.HASH, 192, 'FIPS 180-4', False),
@@ -243,7 +253,7 @@ class CNSA2PolicyEngine:
             if algorithm in ('X25519', 'Ed25519'):
                 raise SecurityPolicyViolation(
                     f"FORBIDDEN STANDALONE ALGORITHM REJECTED: {algorithm} provides sub-Level 5 (128 bits) security. "
-                    f"Must specify hybrid 'X25519+ML-KEM-1024' unit for CNSA 2.0 / NIST Level 5 compliance.",
+                    f"Use ML-KEM-1024 (pure) or an RFC 10024 hybrid group (X25519MLKEM768 / SecP384r1MLKEM1024) for Level 5.",
                     algorithm=algorithm,
                     operation="validate"
                 )

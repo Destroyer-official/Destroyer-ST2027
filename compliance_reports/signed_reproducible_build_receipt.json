@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-09-29T11:55:10.718538+00:00",
+  "timestamp_utc": "2026-09-29T11:56:07.072837+00:00",
   "verification_standard": "SLSA Level 3+ / NIST SP 800-161 / FIPS 140-3",
   "binaries": {
     "oqs.dll": {
@@ -31,8 +31,8 @@
       "sha3_512": "331e9f50434d425b4adacddc2e8b6bde340e62de6bb2dfbec95c9e4f4a11d9fe4780ec5a251b27d48d0932d30c59afa21e17ca698e46b961b1a7e6968a8a8d09"
     },
     "cnsa2_policy_engine.py": {
-      "size_bytes": 28004,
-      "sha3_512": "3197216c187256471239de95142d4750dc129d59ee90b5a920281839c90db367bda4159ca02593c1f59f22dbe602909405922fa6da3917530bdc4c7b36fcc6e8"
+      "size_bytes": 28904,
+      "sha3_512": "6faa6bd9868ed5c66d30bd637cb8dfe967e5054cbc5bd45148a7579f9c7d557ba2dde762d69b0ec8a426ce4ddbbf3af725fa295f117cdbeb813cbd683d1227b8"
     },
     "audit_logging_system.py": {
       "size_bytes": 40042,
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "3a939892f47cd7a613eb58706a23981bc034b20ac97b21d7540cdf5609cbe22ec3a91c42ad5bb2ddd03343de6730d7026d16300094841513f73b09ebaf8496a7",
+  "source_tree_merkle_root": "b105a6a6526b54f27e65153db3c04b09149cb912e4216a0a45e89ecde292e0657ade2cc07f0726e1e2edaa250c82e636c5dbbba4dad6bc42641b8ef54dd640c4",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "1f825b7aa5b3656ccf7627b3a9ae15b5af1ecbfb8a990db6cf3e6401fa32e516930d4768ab4f75089aace16eee2de21143db6ad06a57f1db7be0c2831aad6cc6",
