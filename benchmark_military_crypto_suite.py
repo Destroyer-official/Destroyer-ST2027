@@ -207,7 +207,7 @@ def benchmark_asymmetric_primitives(trials: int = 15):
         "CT/Sig Size (B)": len(hct)
     })
 
-    # --- 1.6 FALCON-1024 (FN-DSA) ---
+    # --- 1.6 FALCON-1024 (pre-standard; NOT FN-DSA) ---
     falcon = LibOQS_Falcon_1024()
     fpk, fsk = falcon.keygen()
     fsig = falcon.sign(fsk, test_msg)
@@ -227,7 +227,7 @@ def benchmark_asymmetric_primitives(trials: int = 15):
         verify_times.append((time.perf_counter() - t0) * 1000)
 
     results.append({
-        "Algorithm": "FALCON-1024 (FN-DSA)",
+        "Algorithm": "FALCON-1024 (pre-standard, NOT FN-DSA)",
         "Type": "NTRU Lattice Signature",
         "Security": "NIST Level 5 (256-bit PQ)",
         "Keygen (ms)": statistics.mean(keygen_times),

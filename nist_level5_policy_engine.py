@@ -362,7 +362,7 @@ class NISTLevel5PolicyEngine:
         if algorithm in self.FORBIDDEN_ALGORITHMS:
             msg = (
                 f"Algorithm {algorithm} provides only NIST Level 3 (128 bits) security and is FORBIDDEN alone. "
-                f"Must specify hybrid 'X25519+ML-KEM-1024' unit for NIST Level 5+ operations."
+                f"Use ML-KEM-1024 (pure) or an RFC 10024 hybrid group (X25519MLKEM768 / SecP384r1MLKEM1024) for Level 5+."
                 if algorithm == "X25519" else
                 f"Algorithm {algorithm} is forbidden (provides less than NIST Level 5 security)"
             )

@@ -118,7 +118,7 @@ def generate_cbom_data() -> dict:
                     "nistQuantumSecurityLevel": 5,
                     "classicalSecurityLevel": 256,
                     "quantumSecurity": "quantum-safe",
-                    "standards": ["FIPS 205", "NSA CNSA 2.0"],
+                    "standards": ["FIPS 205"],
                     "publicKeyLength": 64,
                     "secretKeyLength": 128,
                     "signatureLength": 49856,
@@ -129,8 +129,8 @@ def generate_cbom_data() -> dict:
         {
             "type": "cryptographic-asset",
             "name": "FALCON-1024",
-            "version": "FIPS 206 (FN-DSA IPD-Track)",
-            "description": "NIST Level 5 Fast Lattice Signature over NTRU lattices for compact low-bandwidth payloads",
+            "version": "pre-standard Falcon (NOT FN-DSA; FIPS 206 draft track only)",
+            "description": "NIST Level 5 Fast Lattice Signature over NTRU lattices for compact low-bandwidth payloads. Round-3 Falcon wire format is NOT byte-compatible with final FN-DSA; excluded as primary.",
             "cryptoProperties": {
                 "assetType": "algorithm",
                 "algorithmProperties": {
@@ -139,7 +139,7 @@ def generate_cbom_data() -> dict:
                     "nistQuantumSecurityLevel": 5,
                     "classicalSecurityLevel": 256,
                     "quantumSecurity": "quantum-safe",
-                    "standards": ["FIPS 206 Draft", "NIST PQC Standardization"],
+                    "standards": ["NIST PQC Round-3 candidate", "FIPS 206 draft track (excluded as primary)"],
                     "publicKeyLength": 1793,
                     "secretKeyLength": 2305,
                     "signatureLength": 1462,
