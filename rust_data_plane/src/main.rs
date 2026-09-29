@@ -137,8 +137,7 @@ fn load_key_material(args: &[String]) -> ([u8; 32], [u8; 16]) {
         // Zeroize the file buffer copy held by Rust String after parse.
         let z = Zeroizing::new(s.clone());
         s.zeroize();
-        let out = z.clone();
-        out
+        z
     } else {
         let mut s = String::new();
         std::io::stdin()
@@ -203,6 +202,7 @@ fn open_locked_state(path: &str) -> File {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(path)
         .unwrap_or_else(|_| fail("state file unopenable"));
     f.lock_exclusive().unwrap_or_else(|_| fail("state file lock failed"));
@@ -252,7 +252,7 @@ fn reserve_send_seq(path: &str, key_id: &[u8; 16], count: u64) -> u64 {
     let mut st = read_state_locked(&mut f, key_id);
     let start = st.send_seq;
     let end = start.checked_add(count).unwrap_or_else(|| fail("sequence exhausted — rekey required"));
-    if start == u64::MAX || end > u64::MAX || (end == 0 && count > 0) {
+    if start == u64::MAX || (end == 0 && count > 0) {
         fail("sequence exhausted — rekey required");
     }
     // Reserve [start, start+count): fail if range would wrap past MAX.
@@ -616,7 +616,7 @@ fn cmd_recv_file(args: &[String]) {
                     window.mark(seq2);
                     persist_recv_window(&mut sf, &key_id, send_preserve, &window);
                     // open_indexed returns true-plaintext (padding stripped).
-                    let plain: Vec<u8> = pt.into();
+                    let plain: Vec<u8> = pt;
                     got.push((seq2, plain));
                 }
             }

@@ -36,6 +36,12 @@ pub struct SecureEngine {
     is_initiator: bool,
 }
 
+impl Default for SecureEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[pymethods]
 impl SecureEngine {
     #[new]

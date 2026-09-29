@@ -60,6 +60,8 @@ pub struct EphemeralKeys {
     pub ml_ek: Vec<u8>,
 }
 
+pub type HybridEncapsResult = (Vec<u8>, Zeroizing<[u8; HYBRID_SS]>, [u8; 32]);
+
 impl EphemeralKeys {
     pub fn generate() -> Result<Self, KemError> {
         let x_secret = StaticSecret::from(os_random_32()?);
@@ -82,7 +84,7 @@ impl EphemeralKeys {
     pub fn encapsulate(
         peer_x_pub: &[u8; 32],
         peer_ml_ek: &[u8],
-    ) -> Result<(Vec<u8>, Zeroizing<[u8; HYBRID_SS]>, [u8; 32]), KemError> {
+    ) -> Result<HybridEncapsResult, KemError> {
         use ml_kem::Key;
         if peer_ml_ek.len() != MLKEM_PK {
             return Err(KemError::BadLength);

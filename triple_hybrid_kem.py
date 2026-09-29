@@ -91,15 +91,21 @@ class AlgorithmVersion(Enum):
 
 
 class KEMProfileMode(Enum):
-    """Profile modes for hybrid key encapsulation mechanism."""
-    CNSA_STRICT = "cnsa_strict"      # P-521 + ML-KEM-1024 (Default 2026 Sovereign Max Profile)
+    """Profile modes for hybrid key encapsulation mechanism.
+
+    NOTE (corrected 2026-09-29): member names containing "CNSA" are
+    HISTORICAL internal labels, NOT claims of CNSA 2.0 compliance — CNSA
+    2.0 lists ML-KEM-1024 + ML-DSA-87 and defines no P-521 hybrid profile.
+    Names/values are frozen (wire + config compat) and documented as custom.
+    """
+    CNSA_STRICT = "cnsa_strict"      # custom P-521 + ML-KEM-1024 two-leg profile (NOT a CNSA profile)
     MAX_DIVERSITY = "max_diversity"  # P-521 + ML-KEM-1024 + HQC-256 (Opt-in Agility Reserve)
     LEGACY_TRIPLE = "legacy_triple"  # ML-KEM-1024 + McEliece-8192128f + FrodoKEM-1344
 
 
 @dataclass
 class CNSAHybridKeyPair:
-    """Data class for CNSA 2.0 Sovereign Max hybrid keypair (P-521 + ML-KEM-1024)."""
+    """Data class for custom P-521 + ML-KEM-1024 hybrid keypair (NOT a CNSA profile; name frozen for compat)."""
     p521_pk: bytes       # P-521 public key (133 bytes)
     p521_sk: bytes       # P-521 secret key (66 bytes)
     mlkem_pk: bytes      # ML-KEM-1024 public key (1568 bytes)
@@ -109,7 +115,7 @@ class CNSAHybridKeyPair:
 
 @dataclass
 class CNSAHybridCiphertext:
-    """Data class for CNSA 2.0 Sovereign Max hybrid ciphertext."""
+    """Data class for custom P-521 + ML-KEM-1024 hybrid ciphertext (NOT a CNSA profile; name frozen for compat)."""
     p521_ct: bytes       # P-521 ephemeral public key (133 bytes)
     mlkem_ct: bytes      # ML-KEM-1024 ciphertext (1568 bytes)
     version: str = AlgorithmVersion.V1_0.value
@@ -140,8 +146,9 @@ class EC_P521_KEM:
     """
     Classical Elliptic Curve Key Encapsulation Mechanism using SECP521R1 (P-521).
 
-    Provides ~256-bit classical cryptographic security margin to fulfill CNSA 2.0
-    and BSI/ANSSI hybrid mandates alongside NIST Level 5 Post-Quantum KEMs.
+    Provides ~256-bit classical hedge alongside the NIST Level 5 ML-KEM-1024
+    leg. P-521 is NIST SP 800-56A — it is NOT part of CNSA 2.0 (corrected
+    2026-09-29; prior revision claimed CNSA/BSI mandates that do not exist).
 
     Parameters:
     - Curve: SECP521R1 (521-bit Weierstrass curve)
@@ -419,7 +426,8 @@ class TripleHybridKEM:
 
         Args:
             version: Algorithm configuration version for hot-swap support
-            mode: Profile mode (CNSA_STRICT default: P-521 + ML-KEM-1024,
+            mode: Profile mode (CNSA_STRICT default: P-521 + ML-KEM-1024 custom
+                  two-leg profile, NOT a CNSA profile; see KEMProfileMode note,
                   MAX_DIVERSITY: P-521 + ML-KEM-1024 + HQC-256,
                   LEGACY_TRIPLE: ML-KEM-1024 + McEliece + Frodo)
 
@@ -478,7 +486,7 @@ class TripleHybridKEM:
     def _init_algorithms(self):
         """Initialize KEM algorithms for the active mode."""
         try:
-            # Initialize P-521 classical ECDH leg (CNSA 2.0 / BSI hybrid requirement)
+            # Initialize P-521 classical ECDH leg (custom hedge; P-521 is not CNSA 2.0)
             self.p521 = EC_P521_KEM()
             logger.debug("EC_P521 initialized")
         except Exception as e:
@@ -965,7 +973,7 @@ class TripleHybridKEM:
                     'p521': {
                         'name': 'ECDH-P521',
                         'family': 'Elliptic Curve (Weierstrass)',
-                        'standard': 'NIST SP 800-56A / CNSA 2.0',
+                        'standard': 'NIST SP 800-56A (NOT CNSA 2.0)',
                         'pk_size': self.p521.pk_size,
                         'sk_size': self.p521.sk_size,
                         'ct_size': self.p521.ct_size
@@ -991,7 +999,7 @@ class TripleHybridKEM:
                     'p521': {
                         'name': 'ECDH-P521',
                         'family': 'Elliptic Curve (Weierstrass)',
-                        'standard': 'NIST SP 800-56A / CNSA 2.0',
+                        'standard': 'NIST SP 800-56A (NOT CNSA 2.0)',
                         'pk_size': self.p521.pk_size,
                         'sk_size': self.p521.sk_size,
                         'ct_size': self.p521.ct_size

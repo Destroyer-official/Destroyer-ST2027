@@ -475,7 +475,7 @@ Ran command: `git push origin main`
 
 ## Detailed Task Specifications
 
-### [ ] Task 1.1: Decouple Replay Check from Window Mutation in `secure_transmit_2027.py`
+### [x] Task 1.1: Decouple Replay Check from Window Mutation in `secure_transmit_2027.py` (COMPLETED & VERIFIED)
 - **Location:** [`secure_transmit_2027.py:553-640`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py#L553-L640)
 - **The Exploit:** An unauthenticated attacker sends a forged frame with `seq = 2**64 - 1` and invalid data. `check_and_mark` shifts the replay window to $2^{64}-1$ *before* decryption fails. When the next legitimate frame arrives with sequence 2, it is rejected as an ancient replay. A single packet permanently kills the session.
 - **Implementation:**
@@ -490,7 +490,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 1.2: Decouple Native Rust Replay Window in `ts_rt` and `ts_runtime.py`
+### [x] Task 1.2: Decouple Native Rust Replay Window in `ts_rt` and `ts_runtime.py` (COMPLETED & VERIFIED)
 - **Location:** [`ts_rt/src/lib.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs), [`ts_runtime.py:240-260`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py#L240-L260)
 - **Implementation:**
   1. In `ts_rt/src/lib.rs`, add separate C ABI exports:
@@ -501,7 +501,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 1.3: Eliminate Nonce Reuse in the Standalone Rust Binary (`secure-transmit`)
+### [x] Task 1.3: Eliminate Nonce Reuse in the Standalone Rust Binary (`secure-transmit`) (COMPLETED & VERIFIED)
 - **Location:** [`rust_data_plane/src/main.rs:105-140`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/main.rs#L105-L140)
 - **The Exploit:** `--seq` defaults to `1` on every run with static `--key`, repeating nonces under ChaCha20-Poly1305.
 - **Implementation:**
@@ -513,7 +513,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 1.4: Active Exploit Regression Battery
+### [x] Task 1.4: Active Exploit Regression Battery (COMPLETED & VERIFIED)
 - **Location:** Create [`test_exploit_regressions.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_exploit_regressions.py)
 - **Implementation:** Implement the exact test harness the external auditor executed:
   1. Transmit valid frame $F_1$.
@@ -523,7 +523,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 2.1: Handshake Unification (`secure_transmit_2027.py` vs `noise_pq.py`)
+### [x] Task 2.1: Handshake Unification (`secure_transmit_2027.py` vs `noise_pq.py`) (COMPLETED & VERIFIED)
 - **Location:** [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py), [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py)
 - **Problem:** `secure_transmit_2027.py` never imported `noise_pq.py` and implemented its own handshake.
 - **Implementation:** Import `Noise_XXhfs_Handshake` from `noise_pq.py` into `secure_transmit_2027.py` and execute the 3-message `Noise_XXhfs` exchange.
@@ -531,7 +531,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 2.2: Initiator Identity Exposure Resolution
+### [x] Task 2.2: Initiator Identity Exposure Resolution (COMPLETED & VERIFIED)
 - **Location:** [`secure_transmit_2027.py:377-380`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py#L377-L380)
 - **Problem:** Client identity public key `sig_pk` was transmitted in cleartext in `ClientHello` Message 1.
 - **Implementation:** In `Noise_XXhfs`, move initiator identity transmission to **Message 3**, encrypted under the cipher key derived from ephemeral key exchange.
@@ -539,13 +539,13 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 2.3: Continuous Post-Compromise Security (PCS) Ratchet
+### [x] Task 2.3: Continuous Post-Compromise Security (PCS) Ratchet (COMPLETED & VERIFIED)
 - **Location:** [`docs/ARCHITECTURE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/ARCHITECTURE.md), [`double_ratchet.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/double_ratchet.py)
 - **Implementation:** Document and enforce the Epoch KEM Ratchet (interleaving fresh ML-KEM-1024 public keys into the symmetric chain at regular message intervals).
 
 ---
 
-### [ ] Task 3.1: Cryptographically Sign AO Waivers with ML-DSA-87 Root Anchor
+### [x] Task 3.1: Cryptographically Sign AO Waivers with ML-DSA-87 Root Anchor (COMPLETED & VERIFIED)
 - **Location:** [`ts_runtime.py:467-485`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py#L467-L485)
 - **The Exploit:** `load_waiver` accepts plain unsigned JSON. Anyone who writes a JSON file satisfies the gate.
 - **Implementation:** Require waivers to contain a canonical JSON `payload` and an `ML-DSA-87` digital signature verified against the Root CA public key.
@@ -553,7 +553,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 3.2: Sign seL4 Microkernel & CMVP Attestation Records
+### [x] Task 3.2: Sign seL4 Microkernel & CMVP Attestation Records (COMPLETED & VERIFIED)
 - **Location:** [`ts_runtime.py:507-519`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py#L507-L519), [`ts_hw_layer.py:165-210`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py#L165-L210)
 - **Implementation:**
   1. Require `.sig` signature sidecars for `P2P_SEL4_RECORD` and CMVP provider records.
@@ -562,14 +562,14 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 3.3: OpenSSL FIPS Provider Cryptographic Context Enforcement
+### [x] Task 3.3: OpenSSL FIPS Provider Cryptographic Context Enforcement (COMPLETED & VERIFIED)
 - **Location:** [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py)
 - **Implementation:** Enforce that cryptographic handles (EVP_CIPHER_CTX) use the FIPS provider's property query `"?fips=yes"`.
 - **Verification Gate:** Direct C API verification test.
 
 ---
 
-### [ ] Task 3.4: Fail-Closed DLL Supply Chain Loading
+### [x] Task 3.4: Fail-Closed DLL Supply Chain Loading (COMPLETED & VERIFIED)
 - **Location:** [`liboqs_wrapper.py:198-236`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py#L198-L236)
 - **The Exploit:** If `dependency_security_verifier` fails to import, the wrapper prints a warning and loads `oqs.dll` anyway.
 - **Implementation:** Make `dependency_security_verifier` mandatory. Remove `try ... except ImportError`. If verification fails or cannot be executed, raise a fatal `ImportError` fail-closed.
@@ -577,14 +577,14 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 3.5: Embedded Pinned Root Keys
+### [x] Task 3.5: Embedded Pinned Root Keys (COMPLETED & VERIFIED)
 - **Location:** [`dependency_security_verifier.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/dependency_security_verifier.py)
 - **Implementation:** Hardcode trusted root hashes and Ed25519 signing keys directly into Python constants rather than loading `.pub` files from the current directory.
 - **Verification Gate:** Verify no `.pub` files are read from the local folder at runtime.
 
 ---
 
-### [ ] Task 4.1: Purge Unearned Accreditation Badges from `README.md`
+### [x] Task 4.1: Purge Unearned Accreditation Badges from `README.md` (COMPLETED & VERIFIED)
 - **Location:** [`README.md:1-25`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md#L1-L25)
 - **Implementation:** Replace Common Criteria EAL4+, FIPS 140-3 Level 3/4, and DoD Zero Trust Level 4 badges with honest engineering baselines:
   - `CNSA Suite 2.0 Engineering Baseline`
@@ -595,42 +595,42 @@ Ran command: `git push origin main`
 
 ---
 
-### [ ] Task 4.2: Accurate Formal Verification Attribution
+### [x] Task 4.2: Accurate Formal Verification Attribution (COMPLETED & VERIFIED)
 - **Location:** [`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`docs/formal/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/README.md)
 - **Implementation:** Accurately cite: *"5 bounded model checking formal proofs under `cargo kani`; 24 automated property-based invariant tests."*
 - **Verification Gate:** Documentation audit against `rust_data_plane/tests/kani_harness.rs`.
 
 ---
 
-### [ ] Task 4.3: Physical Boundary & Memory Disclosures
+### [x] Task 4.3: Physical Boundary & Memory Disclosures (COMPLETED & VERIFIED)
 - **Location:** [`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION.md)
 - **Implementation:** Explicitly document that Python immutable `bytes` cannot be wiped reliably and that Tor does not defend against a global passive adversary.
 - **Verification Gate:** Documentation audit.
 
 ---
 
-### [ ] Task 4.4: Hardware Test Mock Audit & Live Probe Decoupling
+### [x] Task 4.4: Hardware Test Mock Audit & Live Probe Decoupling (COMPLETED & VERIFIED)
 - **Location:** [`test_ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_ts_hw_layer.py)
 - **Implementation:** Clearly separate mock unit tests from live hardware integration tests.
 - **Verification Gate:** Test suite separation verified.
 
 ---
 
-### [ ] Task 5.1: Native Data-Plane Cipher Uniformity (AES-256-GCM Alignment)
+### [x] Task 5.1: Native Data-Plane Cipher Uniformity (AES-256-GCM Alignment) (COMPLETED & VERIFIED)
 - **Location:** [`rust_data_plane/src/aead.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/aead.rs), [`rust_data_plane/Cargo.toml`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/Cargo.toml)
 - **Implementation:** Replace ChaCha20-Poly1305 with AES-256-GCM in the native Rust data-plane, achieving 100% cryptographic purity across Python and Rust.
 - **Verification Gate:** `cargo test --manifest-path rust_data_plane/Cargo.toml` passing with AES-256-GCM vectors.
 
 ---
 
-### [ ] Task 5.2: Attack Surface Purge (Quarantine Sprawling Files)
+### [x] Task 5.2: Attack Surface Purge (Quarantine Sprawling Files) (COMPLETED & VERIFIED)
 - **Location:** Repository root
 - **Implementation:** Move experimental, non-core, and legacy files into `archive/experimental/` to keep the production core under 5,000 lines.
 - **Verification Gate:** Production file count audit.
 
 ---
 
-### [ ] Task 5.3: Unified Operator CLI & Automated Self-Test Harness
+### [x] Task 5.3: Unified Operator CLI & Automated Self-Test Harness (COMPLETED & VERIFIED)
 - **Location:** [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py)
 - **Implementation:** Single unified command `secure_transmit_2027.py selftest` that runs a 2-second local loopback verifying hardware, crypto, replay, and zeroization with clean status output.
 - **Verification Gate:** `python secure_transmit_2027.py selftest` returns exit code 0.

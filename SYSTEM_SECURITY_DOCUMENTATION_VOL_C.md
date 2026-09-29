@@ -7569,9 +7569,9 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ### class `KEMProfileMode` (triple_hybrid_kem.py:93) bases:Enum methods:0 — Profile modes for hybrid key encapsulation mechanism.
 
-### class `CNSAHybridKeyPair` (triple_hybrid_kem.py:101) methods:0 — Data class for CNSA 2.0 Sovereign Max hybrid keypair (P-521 + ML-KEM-1024).
+### class `CNSAHybridKeyPair` (triple_hybrid_kem.py:101) methods:0 — Data class for custom P-521 + ML-KEM-1024 hybrid keypair (NOT a CNSA profile; name frozen for compat).
 
-### class `CNSAHybridCiphertext` (triple_hybrid_kem.py:111) methods:0 — Data class for CNSA 2.0 Sovereign Max hybrid ciphertext.
+### class `CNSAHybridCiphertext` (triple_hybrid_kem.py:111) methods:0 — Data class for custom P-521 + ML-KEM-1024 hybrid ciphertext (NOT a CNSA profile; name frozen for compat).
 
 ### class `TripleHybridKeyPair` (triple_hybrid_kem.py:119) methods:0 — Data class for triple-hybrid keypair.
 

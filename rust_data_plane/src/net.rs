@@ -268,9 +268,8 @@ mod tests {
         let (mut rx, tx) = loopback_pair().await;
         let rx_addr = rx.local_addr().unwrap();
         let key = FrameKey::from_bytes([11u8; 32]);
-        let mut send_seq: u64 = 9000;
         let mut window = AntiReplayWindow::with_offset(8999);
-        for i in 0..50u64 {
+        for (send_seq, i) in (9000_u64..).zip(0..50u64) {
             let frame =
                 aead::seal(&key, send_seq, DIR_SEND, FTYPE_MSG, format!("pkt-{i}").as_bytes())
                     .unwrap();
@@ -288,7 +287,6 @@ mod tests {
             assert_eq!((t, &pt[..]), (FTYPE_MSG, format!("pkt-{i}").into_bytes().as_slice()));
             // Immediate replay of the same datagram must die at the window.
             assert!(!window.check_and_update(seq), "replay accepted");
-            send_seq += 1;
         }
         assert_eq!(rx.admitted, 50);
         assert_eq!(rx.drops, 0);

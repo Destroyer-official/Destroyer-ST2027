@@ -12,6 +12,8 @@
 //! confined to: raw-pointer alloc/free, volatile wipe, and OS lock calls.
 
 #![deny(unsafe_op_in_unsafe_fn)]
+// C ABI exports for ctypes / native callers; all functions explicitly validate pointers against null before unsafe dereference.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::os::raw::{c_char, c_int, c_uchar};

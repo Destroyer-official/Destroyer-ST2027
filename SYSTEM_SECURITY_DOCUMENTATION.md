@@ -63966,12 +63966,12 @@ Profile modes for hybrid key encapsulation mechanism.
 
 ### class `CNSAHybridKeyPair` (L101)
 
-Data class for CNSA 2.0 Sovereign Max hybrid keypair (P-521 + ML-KEM-1024).
+Data class for custom P-521 + ML-KEM-1024 hybrid keypair (NOT a CNSA profile; name frozen for compat).
 
 
 ### class `CNSAHybridCiphertext` (L111)
 
-Data class for CNSA 2.0 Sovereign Max hybrid ciphertext.
+Data class for custom P-521 + ML-KEM-1024 hybrid ciphertext (NOT a CNSA profile; name frozen for compat).
 
 
 ### class `TripleHybridKeyPair` (L119)

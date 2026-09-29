@@ -261,43 +261,19 @@ class NISTLevel5PolicyEngine:
             side_channel_resistant=True
         ),
 
-        # Hybrid Cryptography (NIST Level 5 - FIPS 203 + RFC 10024)
-        "X25519+ML-KEM-1024": AlgorithmSecurityProfile(
-            name="X25519+ML-KEM-1024",
+        # Hybrid Cryptography: ONLY the RFC 10024 (Aug 2026) Level-5 hybrid.
+        # (Corrected 2026-09-29: prior revision listed phantom groups
+        # X25519+ML-KEM-1024 / X25519MLKEM1024 / SecP521r1MLKEM1024, which do
+        # not exist. RFC 10024 registers exactly three hybrids; of those,
+        # only SecP384r1MLKEM1024 reaches Level 5 — X25519MLKEM768 and
+        # SecP256r1MLKEM768 are Level 3 (ML-KEM-768) and are therefore
+        # EXCLUDED from this Level-5 engine by design, not by omission.)
+        "SecP384r1MLKEM1024": AlgorithmSecurityProfile(
+            name="SecP384r1MLKEM1024",
             category="hybrid",
             security_bits=256,
             nist_level=5,
-            parameters={"classical": "X25519", "pq": "ML-KEM-1024", "fips": "203"},
-            test_vectors_validated=True,
-            constant_time=True,
-            side_channel_resistant=True
-        ),
-        "X25519+ML-KEM-1024 (Hybrid)": AlgorithmSecurityProfile(
-            name="X25519+ML-KEM-1024 (Hybrid)",
-            category="hybrid",
-            security_bits=256,
-            nist_level=5,
-            parameters={"classical": "X25519", "pq": "ML-KEM-1024", "fips": "203"},
-            test_vectors_validated=True,
-            constant_time=True,
-            side_channel_resistant=True
-        ),
-        "X25519MLKEM1024": AlgorithmSecurityProfile(
-            name="X25519MLKEM1024",
-            category="hybrid",
-            security_bits=256,
-            nist_level=5,
-            parameters={"classical": "X25519", "pq": "ML-KEM-1024", "fips": "203", "rfc": "TLS1.3-PQ"},
-            test_vectors_validated=True,
-            constant_time=True,
-            side_channel_resistant=True
-        ),
-        "SecP521r1MLKEM1024": AlgorithmSecurityProfile(
-            name="SecP521r1MLKEM1024",
-            category="hybrid",
-            security_bits=256,
-            nist_level=5,
-            parameters={"classical": "P-521", "pq": "ML-KEM-1024", "fips": "203"},
+            parameters={"classical": "P-384", "pq": "ML-KEM-1024", "fips": "203", "rfc": "10024", "codepoint": "0x11ED (4589)"},
             test_vectors_validated=True,
             constant_time=True,
             side_channel_resistant=True

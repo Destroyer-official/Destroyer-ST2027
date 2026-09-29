@@ -36,11 +36,7 @@ impl AntiReplayWindow {
             true
         } else {
             let diff = self.last_seq - seq;
-            if diff >= 64 || (self.bitmap & (1 << diff)) != 0 {
-                false
-            } else {
-                true
-            }
+            diff < 64 && (self.bitmap & (1 << diff)) == 0
         }
     }
 

@@ -20,6 +20,12 @@ pub struct StackFrameBuffer<const N: usize = NOSTD_MAX_FRAME_SIZE> {
     pub len: usize,
 }
 
+impl<const N: usize> Default for StackFrameBuffer<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> StackFrameBuffer<N> {
     pub const fn new() -> Self {
         Self {
@@ -61,6 +67,12 @@ impl<const N: usize> Drop for StackFrameBuffer<N> {
 pub struct StackSecretBuffer<const N: usize> {
     pub data: [u8; N],
     pub len: usize,
+}
+
+impl<const N: usize> Default for StackSecretBuffer<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> StackSecretBuffer<N> {

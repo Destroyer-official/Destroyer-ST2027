@@ -181,7 +181,7 @@ def generate_oscal_sar_data() -> Dict[str, Any]:
                         "title": "Continuous Cryptographic Algorithm Agility & NIST Round 4 Tracking",
                         "status": "ongoing",
                         "scheduled-completion": "2027-12-31T00:00:00Z",
-                        "description": "Continuous monitoring of finalized FIPS 206 (FN-DSA) and draft HQC standards for future inclusion.",
+                        "description": "Continuous monitoring of draft FIPS 206 (FN-DSA) and draft HQC standards for future inclusion.",
                         "risk-rating": "low"
                     },
                     {

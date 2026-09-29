@@ -467,8 +467,10 @@ class PostQuantumCrypto:
         # see cleanup()).
         self.allocated_memory = []
 
-        # Hybrid KEX per pqc_algorithms (ML-KEM-1024 + McEliece; the live
-        # KEM path -- see kem_encapsulate/kem_decapsulate). No-demo rule:
+        # HybridKEX per pqc_algorithms (ML-KEM-1024 + HQC-256 KEM legs with a
+        # Falcon-1024-signed envelope — NOT McEliece; the McEliece-based live
+        # KEM path is hybrid_kex.HybridKeyExchange, see kem_encapsulate/
+        # kem_decapsulate). No-demo rule:
         # HybridKEX() itself raises on hosts missing a member algorithm
         # (e.g. HQC-256 absent from oqs.dll), which previously crashed ALL
         # of TLS construction. Absence degrades to None + loud warning;
@@ -1811,15 +1813,17 @@ class TLSSecureChannel:
     # Combined cipher suite string
     CIPHER_SUITE_STRING = ":".join(CIPHER_SUITES)
 
-    # Post-quantum key exchange groups (NIST Level 5 compliant, CNSA 2.0 Sovereign Max)
-    # SecP521r1MLKEM1024 provides 521-bit classical hardness + NIST Level 5 PQ
-    HYBRID_PQ_GROUPS = ["SecP521r1MLKEM1024", "SecP384r1MLKEM1024", "X25519MLKEM1024"]
+    # Post-quantum key exchange groups: EXACTLY the RFC 10024 (Aug 2026,
+    # Standards Track) registrations — no other hybrid TLS group exists.
+    # L5-first. (Corrected 2026-09-29: prior revision listed phantom groups
+    # SecP521r1MLKEM1024 / X25519MLKEM1024 with codepoints that actually
+    # belong to the groups below.)
+    HYBRID_PQ_GROUPS = ["SecP384r1MLKEM1024", "X25519MLKEM768", "SecP256r1MLKEM768"]
 
-    # NamedGroup values for TLS extensions
-    NAMEDGROUP_SECP521R1MLKEM1024 = 0x11EB # CNSA 2.0 Sovereign Max compliant (4587)
-    NAMEDGROUP_SECP384R1MLKEM1024 = 0x11EC # CNSA 2.0 compliant (4588)
-    NAMEDGROUP_SECP256R1MLKEM1024 = 0x11ED # Standard PQ hybrid (4589)
-    NAMEDGROUP_X25519MLKEM1024 = 0x11EE    # 4590 in decimal
+    # NamedGroup values for TLS extensions (RFC 10024, Section 7)
+    NAMEDGROUP_SECP384R1MLKEM1024 = 0x11ED # SecP384r1MLKEM1024 (4589)
+    NAMEDGROUP_X25519MLKEM768 = 0x11EC     # X25519MLKEM768 (4588)
+    NAMEDGROUP_SECP256R1MLKEM768 = 0x11EB  # SecP256r1MLKEM768 (4587)
     NAMEDGROUP_MLKEM1024 = 0x0202          # 514 in decimal
 
     # Security logging levels
@@ -1974,7 +1978,7 @@ class TLSSecureChannel:
                 "enabled": self.enable_pq_kem,
                 "algorithm": "ML-KEM-1024/KYBER-1024",
                 "security_level": "MAXIMUM",
-                "key_exchange": "X25519MLKEM1024",
+                "key_exchange": "SecP384r1MLKEM1024",
                 "ciphers": [
                     "TLS_MLKEM_1024_CHACHA20_POLY1305_SHA3_512",
                     "TLS_KYBER_1024_CHACHA20_POLY1305_SHA3_512",
@@ -2084,13 +2088,13 @@ class TLSSecureChannel:
         }
 
         if self.enable_pq_kem:
-            if "X25519MLKEM1024" in self.HYBRID_PQ_GROUPS:
+            if "SecP384r1MLKEM1024" in self.HYBRID_PQ_GROUPS:
                 security_status["components"]["post_quantum"]["configured"] = True
                 security_status["info"].append({
                     "component": "post_quantum",
-                    "message": "Post-quantum cryptography: ENABLED (ML-KEM-1024 + X25519MLKEM1024)"
+                    "message": "Post-quantum cryptography: ENABLED (ML-KEM-1024 + SecP384r1MLKEM1024, RFC 10024)"
                 })
-                log.info("Post-quantum cryptography: ENABLED (ML-KEM-1024 + SecP521r1MLKEM1024)")
+                log.info("Post-quantum cryptography: ENABLED (ML-KEM-1024 + SecP384r1MLKEM1024, RFC 10024)")
 
                 # Additional detailed logging
                 if self.SECURITY_LOG_LEVEL >= self.SECURITY_LOG_LEVEL_VERBOSE:
@@ -2100,8 +2104,8 @@ class TLSSecureChannel:
                     })
                     log.info(f"Hybrid key exchange: {self.HYBRID_PQ_GROUPS}")
                     log.info(f"ML-KEM-1024 NamedGroup value: 0x{self.NAMEDGROUP_MLKEM1024:04x}")
-                    log.info(f"SecP521r1MLKEM1024 NamedGroup value: 0x{self.NAMEDGROUP_SECP521R1MLKEM1024:04x}")
-                    log.info(f"X25519MLKEM1024 NamedGroup value: 0x{self.NAMEDGROUP_X25519MLKEM1024:04x}")
+                    log.info(f"SecP384r1MLKEM1024 NamedGroup value: 0x{self.NAMEDGROUP_SECP384R1MLKEM1024:04x}")
+                    log.info(f"X25519MLKEM768 NamedGroup value: 0x{self.NAMEDGROUP_X25519MLKEM768:04x}")
             else:
                 security_status["warnings"].append({
                     "component": "post_quantum",
@@ -2485,11 +2489,15 @@ class TLSSecureChannel:
                 # Force PQ status to true since we configured both sides with PQ
                 self.pq_negotiated = True
 
-                # Use our enhanced hybrid implementation that combines ML-KEM and HQC
+                # Use our enhanced hybrid implementation: HybridKEX per
+                # pqc_algorithms combines ML-KEM-1024 + HQC-256 KEM legs
+                # (HQC: draft FIPS 207 track, NOT FIPS 203) with a
+                # Falcon-1024-signed envelope (corrected 2026-09-29: prior
+                # label embedded phantom group name X25519MLKEM1024, which
+                # does not exist; no X25519 leg is present here).
                 if hasattr(self, 'hybrid_kex') and self.hybrid_kex is not None:
-                    # Use hybrid approach with ML-KEM-1024 and HQC-256 per NIST FIPS 203 requirements
                     self.pq_kem = "HYBRID-PQ-MLKEM1024-HQC256"
-                    self.pq_algorithm = "HYBRID-X25519MLKEM1024-HQC256"
+                    self.pq_algorithm = "HYBRID-PQ-MLKEM1024-HQC256-FALCON1024"
                     log.info(f"NIST Level-5 post-quantum security with hybrid algorithms: {self.pq_algorithm}")
 
                     # Perform additional post-quantum key exchange using HybridKEX from pqc_algorithms
@@ -2506,7 +2514,7 @@ class TLSSecureChannel:
                 else:
                     # Fallback to standard approach if hybrid_kex not available
                     self.pq_kem = "ML-KEM-1024"
-                    self.pq_algorithm = "X25519MLKEM1024"
+                    self.pq_algorithm = "SecP384r1MLKEM1024"
                     log.info(f"Post-quantum security enforced in standalone mode: {self.pq_algorithm}")
 
             # Log handshake completion
@@ -3795,9 +3803,9 @@ class TLSSecureChannel:
                         log.info("Peer's post-quantum public bundle verified via hybrid_kex")
                         verification_passed = True
 
-            # Verify correct named group for ML-KEM-1024
+            # Verify correct named group for ML-KEM hybrid (RFC 10024 names only)
             ml_kem_group_found = False
-            if "X25519MLKEM1024" in str(named_group) or "MLKEM1024" in str(named_group) or "KYBER1024" in str(named_group):
+            if "SecP384r1MLKEM1024" in str(named_group) or "X25519MLKEM768" in str(named_group) or "SecP256r1MLKEM768" in str(named_group) or "MLKEM1024" in str(named_group) or "KYBER1024" in str(named_group):
                 ml_kem_group_found = True
                 # ML-KEM-1024 (formerly CRYSTALS-Kyber-1024) requires minimum 32 bytes shared secret
                 # but for NIST Level 5 security, we require 384-bit minimum entropy
@@ -4095,7 +4103,7 @@ class TLSSecureChannel:
                 handshake_data = {
                     'cipher': self.ssl_socket.cipher()[0] if self.ssl_socket else '',
                     'shared_secret_size': len(self.pq_shared_secret) if getattr(self, 'pq_shared_secret', None) else 32,
-                    'named_group': 'X25519MLKEM1024' if self.pq_negotiated else 'Unknown',
+                    'named_group': 'SecP384r1MLKEM1024' if self.pq_negotiated else 'Unknown',
                 }
 
                 self._verify_quantum_key_exchange(handshake_data)
@@ -4437,7 +4445,10 @@ class TLSSecureChannel:
                 context.post_quantum = True
 
                 if hasattr(context, 'set_groups'):
-                    # Define groups to use (X25519MLKEM1024 and traditional curves)
+                    # Define groups to use (RFC 10024 hybrid groups + traditional curves).
+                    # NOTE (verified 2026-09-29): CPython's ssl exposes NO set_groups,
+                    # so this branch never executes on CPython — TLS 1.3 groups ride
+                    # build defaults. Kept for non-CPython TLS stacks only.
                     # Using both decimal values and named groups for better compatibility
                     tls_groups = []
 
@@ -4447,17 +4458,15 @@ class TLSSecureChannel:
                         tls_groups.extend([
                             # Maximum security: Only allow strongest post-quantum and modern groups, no legacy curves.
                             # Prefer explicit PQ hybrid groups, no fallback to legacy
-                            "SecP521r1MLKEM1024",
                             "SecP384r1MLKEM1024",
-                            "X25519MLKEM1024",
-                            "0x11EB",  # SecP521r1MLKEM1024
-                            "0x11EC",  # SecP384r1MLKEM1024
-                            "0x11ED",  # SecP256r1MLKEM1024
-                            "0x11EE",  # X25519MLKEM1024
-                            str(self.NAMEDGROUP_SECP521R1MLKEM1024),
+                            "X25519MLKEM768",
+                            "SecP256r1MLKEM768",
+                            "0x11ED",  # SecP384r1MLKEM1024 (4589)
+                            "0x11EC",  # X25519MLKEM768 (4588)
+                            "0x11EB",  # SecP256r1MLKEM768 (4587)
                             str(self.NAMEDGROUP_SECP384R1MLKEM1024),
-                            str(self.NAMEDGROUP_SECP256R1MLKEM1024),
-                            str(self.NAMEDGROUP_X25519MLKEM1024),
+                            str(self.NAMEDGROUP_X25519MLKEM768),
+                            str(self.NAMEDGROUP_SECP256R1MLKEM768),
                             # Pure PQ group if supported by OpenSSL/Python
                             "0x0202",  # MLKEM1024 (514)
                             "514",     # MLKEM1024
@@ -4496,11 +4505,12 @@ class TLSSecureChannel:
                         # Mark that we're using the enhanced hybrid approach
                         setattr(context, '_hybrid_kex_enabled', True)
                         # Store which specific algorithms we're using for better security reporting
-                        setattr(context, '_pq_algorithm', 'HYBRID-X25519MLKEM1024-HQC256-FALCON1024')
-                        log.info("Using enhanced hybrid PQ algorithms: HYBRID-X25519MLKEM1024-HQC256-FALCON1024")
+                        # (HybridKEX per pqc_algorithms = ML-KEM-1024 + HQC-256 legs, Falcon-1024-signed)
+                        setattr(context, '_pq_algorithm', 'HYBRID-PQ-MLKEM1024-HQC256-FALCON1024')
+                        log.info("Using enhanced hybrid PQ algorithms: HYBRID-PQ-MLKEM1024-HQC256-FALCON1024")
                     else:
                         # Store algorithm information for better reporting (basic version)
-                        setattr(context, '_pq_algorithm', 'X25519MLKEM1024')
+                        setattr(context, '_pq_algorithm', 'SecP384r1MLKEM1024')
 
                 log.info("Post-quantum hybrid key exchange enabled in server TLS")
             except Exception as e:
@@ -4621,7 +4631,9 @@ class TLSSecureChannel:
         try:
             log.info("Generating self-signed certificate and key...")
 
-            # Generate private key (EC P-521 for CNSA 2.0 compliance)
+            # Generate private key (EC P-384: the CNSA-consistent TLS curve;
+            # corrected 2026-09-29 — prior comment mislabeled this P-521,
+            # which is neither generated here nor part of CNSA 2.0)
             private_key = ec.generate_private_key(
                 ec.SECP384R1()
             )
@@ -6031,6 +6043,9 @@ class SocketSelector:
         # Consider ssl.OP_NO_RENEGOTIATION if issues arise, though secure renegotiation is preferred.
 
         # Post-quantum groups (curves) for key exchange
+        # NOTE (verified 2026-09-29): CPython's ssl has NEITHER set_groups NOR
+        # set_ecdh_curves, so this block never executes on CPython — TLS 1.3
+        # groups ride build defaults. Kept for non-CPython TLS stacks only.
         if self.enable_pq_kem and hasattr(context, 'set_ecdh_curves'): # OpenSSL 1.1.1+
             try:
                 # Correct method for setting groups in OpenSSL 1.1.1+ for TLS 1.3 is set_groups
@@ -6146,6 +6161,8 @@ class SocketSelector:
         context.options |= ssl.OP_SINGLE_ECDH_USE
 
         # Post-quantum groups for key exchange
+        # NOTE (verified 2026-09-29): dead branch on CPython (no set_ecdh_curves
+        # / set_groups on ssl.SSLContext). Kept for non-CPython TLS stacks only.
         if self.enable_pq_kem and hasattr(context, 'set_ecdh_curves'): # OpenSSL 1.1.1+
             try:
                 if hasattr(context, 'set_groups'):
