@@ -65,8 +65,8 @@ fn usage() -> ! {
         "secure-transmit {VERSION} — standalone data-plane executor\n\
          \n\
          keygen [--out PATH]              print fresh 32B frame key (hex)\n\
-         kex-listen  --bind ADDR --out-key PATH [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
-         kex-connect --to ADDR --out-key PATH [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
+         kex-listen  --bind ADDR --out-key PATH [--psk HEX|--psk-file PATH] [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
+         kex-connect --to ADDR --out-key PATH [--psk HEX|--psk-file PATH] [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
          send   --key-file PATH|--key-stdin --state PATH --to ADDR --msg TEXT\n\
          recv   --key-file PATH|--key-stdin --state PATH --bind ADDR [--count N] [--timeout-ms MS]\n\
          send-file --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH\n\
@@ -86,9 +86,8 @@ fn usage() -> ! {
          \n\
          Security: --seq and --key HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Key NEVER\n\
-         appears in argv: provision via --key-file (0600) or --key-stdin.\n\
-         Key NEVER negotiates here: provision it from the audited PQ\n\
-         handshake (secure_transmit_2027.py) or offline ceremony."
+         appears in argv: provision via --key-file (0600), --key-stdin, or\n\
+         native quantum-resistant kex-listen/kex-connect with ML-KEM-1024 + X25519."
     );
     std::process::exit(2);
 }
@@ -544,6 +543,13 @@ fn cmd_selftest() {
     let k_init = kem::derive_session_key(&ss_init, b"selftest-kex");
     let k_resp = kem::derive_session_key(&ss_resp, b"selftest-kex");
     assert_eq!(k_init, k_resp);
+    let t_hash = [0x5Au8; 48];
+    let kt_init = kem::derive_session_key_transcript(&ss_init, None, &t_hash);
+    let kt_resp = kem::derive_session_key_transcript(&ss_resp, None, &t_hash);
+    assert_eq!(kt_init, kt_resp);
+    let tag_init = kem::compute_confirmation_tag(&kt_init, b"TEST", &t_hash);
+    let tag_resp = kem::compute_confirmation_tag(&kt_resp, b"TEST", &t_hash);
+    assert!(kem::constant_time_eq_32(&tag_init, &tag_resp));
     eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, mlkem-1024-kex ok");
 }
 
@@ -1109,13 +1115,23 @@ fn cmd_kex_listen(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
+    let psk_bytes = if let Some(hex) = get_flag(args, "--psk") {
+        let b = parse_key_hex(&hex);
+        Some(b)
+    } else if let Some(path) = get_flag(args, "--psk-file") {
+        let s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("psk file unreadable"));
+        let b = parse_key_hex(s.trim());
+        Some(b)
+    } else {
+        None
+    };
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
-    let key_hex = rt.block_on(async {
+    let (key_hex, sas) = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind(bind)
             .await
             .unwrap_or_else(|_| fail("kex-listen bind failed"));
@@ -1143,21 +1159,44 @@ fn cmd_kex_listen(args: &[String]) {
             // 4. Decapsulate hybrid shared secret
             let hybrid_ss = resp_keys.decapsulate(&eph_pub, ml_ct).map_err(|_| "decapsulate failed")?;
 
-            // 5. Derive symmetric frame key via HKDF-SHA384
-            let frame_key = kem::derive_session_key(&hybrid_ss, b"DESTROYER-ST2027-SESSION-KEY-AES256GCM");
+            // 5. Compute transcript hash over both bundles: SHA-384(resp_bundle || init_bundle)
+            let mut transcript_hasher = Sha384::new();
+            transcript_hasher.update(&bundle);
+            transcript_hasher.update(&init_bundle);
+            let transcript_hash: [u8; 48] = transcript_hasher.finalize().into();
+
+            // 6. Derive symmetric frame key bound to transcript (and optional PSK)
+            let frame_key = kem::derive_session_key_transcript(
+                &hybrid_ss,
+                psk_bytes.as_ref().map(|b| &b[..]),
+                &transcript_hash,
+            );
+
+            // 7. Mutual Key Confirmation tag exchange
+            let resp_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-RESPONDER-CONFIRM", &transcript_hash);
+            let init_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-INITIATOR-CONFIRM", &transcript_hash);
+
+            socket.write_all(&resp_tag).await.map_err(|_| "responder confirmation tag write failed")?;
+            let mut recv_init_tag = [0u8; 32];
+            socket.read_exact(&mut recv_init_tag).await.map_err(|_| "initiator confirmation tag read failed")?;
+            if !kem::constant_time_eq_32(&recv_init_tag, &init_tag) {
+                return Err("initiator confirmation tag mismatch (MITM detected)");
+            }
+
+            let sas = kem::compute_sas(&frame_key, &transcript_hash);
             let hex = hex_of(&frame_key);
-            Ok::<String, &'static str>(hex)
+            Ok::<(String, String), &'static str>((hex, sas))
         };
 
         match tokio::time::timeout(Duration::from_millis(timeout_ms), accept_fut).await {
-            Ok(Ok(hex)) => hex,
+            Ok(Ok(pair)) => pair,
             Ok(Err(e)) => fail(e),
             Err(_) => fail("kex-listen timed out waiting for peer"),
         }
     });
 
     write_key_file(&out, &key_hex);
-    println!("kex-listen SUCCESS: established ML-KEM-1024 + X25519 hybrid key -> {out}");
+    println!("kex-listen SUCCESS: authenticated ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out}");
 }
 
 fn cmd_kex_connect(args: &[String]) {
@@ -1170,13 +1209,23 @@ fn cmd_kex_connect(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
+    let psk_bytes = if let Some(hex) = get_flag(args, "--psk") {
+        let b = parse_key_hex(&hex);
+        Some(b)
+    } else if let Some(path) = get_flag(args, "--psk-file") {
+        let s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("psk file unreadable"));
+        let b = parse_key_hex(s.trim());
+        Some(b)
+    } else {
+        None
+    };
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
-    let key_hex = rt.block_on(async {
+    let (key_hex, sas) = rt.block_on(async {
         let connect_fut = async {
             let mut socket = tokio::net::TcpStream::connect(to)
                 .await
@@ -1200,21 +1249,45 @@ fn cmd_kex_connect(args: &[String]) {
             init_bundle.extend_from_slice(&ml_ct);
             socket.write_all(&init_bundle).await.map_err(|_| "initiator bundle write failed")?;
 
-            // 4. Derive symmetric frame key via HKDF-SHA384
-            let frame_key = kem::derive_session_key(&hybrid_ss, b"DESTROYER-ST2027-SESSION-KEY-AES256GCM");
+            // 4. Compute transcript hash over both bundles: SHA-384(resp_bundle || init_bundle)
+            let mut transcript_hasher = Sha384::new();
+            transcript_hasher.update(&resp_bundle);
+            transcript_hasher.update(&init_bundle);
+            let transcript_hash: [u8; 48] = transcript_hasher.finalize().into();
+
+            // 5. Derive symmetric frame key bound to transcript (and optional PSK)
+            let frame_key = kem::derive_session_key_transcript(
+                &hybrid_ss,
+                psk_bytes.as_ref().map(|b| &b[..]),
+                &transcript_hash,
+            );
+
+            // 6. Mutual Key Confirmation tag exchange
+            let resp_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-RESPONDER-CONFIRM", &transcript_hash);
+            let init_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-INITIATOR-CONFIRM", &transcript_hash);
+
+            let mut recv_resp_tag = [0u8; 32];
+            socket.read_exact(&mut recv_resp_tag).await.map_err(|_| "responder confirmation tag read failed")?;
+            if !kem::constant_time_eq_32(&recv_resp_tag, &resp_tag) {
+                return Err("responder confirmation tag mismatch (MITM detected)");
+            }
+
+            socket.write_all(&init_tag).await.map_err(|_| "initiator confirmation tag write failed")?;
+
+            let sas = kem::compute_sas(&frame_key, &transcript_hash);
             let hex = hex_of(&frame_key);
-            Ok::<String, &'static str>(hex)
+            Ok::<(String, String), &'static str>((hex, sas))
         };
 
         match tokio::time::timeout(Duration::from_millis(timeout_ms), connect_fut).await {
-            Ok(Ok(hex)) => hex,
+            Ok(Ok(pair)) => pair,
             Ok(Err(e)) => fail(e),
             Err(_) => fail("kex-connect timed out"),
         }
     });
 
     write_key_file(&out, &key_hex);
-    println!("kex-connect SUCCESS: established ML-KEM-1024 + X25519 hybrid key -> {out}");
+    println!("kex-connect SUCCESS: authenticated ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out}");
 }
 
 fn main() {

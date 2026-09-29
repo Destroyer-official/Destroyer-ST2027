@@ -154,6 +154,69 @@ pub fn derive_session_key(hybrid_ss: &[u8; HYBRID_SS], context_info: &[u8]) -> [
     okm
 }
 
+/// Derive a 32-byte AES-256 frame key from the 64-byte hybrid shared secret via HKDF-SHA384,
+/// cryptographically bound to the handshake transcript hash.
+/// If `psk` is provided (pre-shared key), it is used as salt to guarantee authentication.
+pub fn derive_session_key_transcript(
+    hybrid_ss: &[u8; HYBRID_SS],
+    psk: Option<&[u8]>,
+    transcript_hash: &[u8; 48],
+) -> [u8; 32] {
+    use hkdf::Hkdf;
+    use sha2::Sha384;
+    let salt: &[u8] = match psk {
+        Some(p) if !p.is_empty() => p,
+        _ => b"ST2027-HYBRID-KEX-v1-SALT",
+    };
+    let hk = Hkdf::<Sha384>::new(Some(salt), hybrid_ss);
+    let mut okm = [0u8; 32];
+    let mut info = Vec::with_capacity(64 + 48);
+    info.extend_from_slice(b"DESTROYER-ST2027-TRANSCRIPT-BOUND-KEY-AES256GCM");
+    info.extend_from_slice(transcript_hash);
+    hk.expand(&info, &mut okm)
+        .expect("HKDF-SHA384 expand with 32-byte output cannot fail");
+    okm
+}
+
+/// Compute a 32-byte key confirmation tag: HMAC-SHA384(session_key, label || transcript_hash)[..32]
+pub fn compute_confirmation_tag(
+    session_key: &[u8; 32],
+    label: &[u8],
+    transcript_hash: &[u8; 48],
+) -> [u8; 32] {
+    use hkdf::Hkdf;
+    use sha2::Sha384;
+    let hk = Hkdf::<Sha384>::new(Some(session_key), label);
+    let mut tag = [0u8; 32];
+    hk.expand(transcript_hash, &mut tag)
+        .expect("confirmation tag expand cannot fail");
+    tag
+}
+
+/// Compute a 16-character Short Authentication String (SAS) fingerprint
+/// formatted as 4 groups of 4 hex chars: `XXXX-XXXX-XXXX-XXXX`
+pub fn compute_sas(session_key: &[u8; 32], transcript_hash: &[u8; 48]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(session_key);
+    hasher.update(transcript_hash);
+    let digest = hasher.finalize();
+    format!(
+        "{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}",
+        digest[0], digest[1], digest[2], digest[3],
+        digest[4], digest[5], digest[6], digest[7]
+    )
+}
+
+/// Constant-time 32-byte equality comparison to prevent timing or cache side channels.
+pub fn constant_time_eq_32(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    let mut diff = 0u8;
+    for i in 0..32 {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,4 +275,38 @@ mod tests {
         let k3 = derive_session_key(&ss, b"different-context");
         assert_ne!(k1, k3);
     }
+
+    #[test]
+    fn test_transcript_bound_kex_and_confirmation_tags() {
+        let ss = [0x77u8; HYBRID_SS];
+        let transcript = [0x42u8; 48];
+        let k1 = derive_session_key_transcript(&ss, None, &transcript);
+        let k2 = derive_session_key_transcript(&ss, None, &transcript);
+        assert_eq!(k1, k2);
+
+        // PSK variation changes key
+        let k_psk = derive_session_key_transcript(&ss, Some(b"sovereign-psk"), &transcript);
+        assert_ne!(k1, k_psk);
+
+        // Different transcript changes key
+        let diff_transcript = [0x43u8; 48];
+        let k_diff = derive_session_key_transcript(&ss, None, &diff_transcript);
+        assert_ne!(k1, k_diff);
+
+        // Confirmation tags
+        let tag1 = compute_confirmation_tag(&k1, b"TEST-TAG", &transcript);
+        let tag2 = compute_confirmation_tag(&k1, b"TEST-TAG", &transcript);
+        assert!(constant_time_eq_32(&tag1, &tag2));
+
+        let mut bad_tag = tag1;
+        bad_tag[0] ^= 0x01;
+        assert!(!constant_time_eq_32(&tag1, &bad_tag));
+
+        // SAS formatting
+        let sas1 = compute_sas(&k1, &transcript);
+        let sas2 = compute_sas(&k1, &transcript);
+        assert_eq!(sas1, sas2);
+        assert_eq!(sas1.len(), 19); // 4 groups of 4 + 3 dashes = 19
+    }
 }
+

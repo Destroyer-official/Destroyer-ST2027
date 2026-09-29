@@ -393,6 +393,8 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertEqual(listener.returncode, 0, f"kex-listen failed:\n{err[-500:]}")
             self.assertTrue(os.path.exists(key_a))
             self.assertTrue(os.path.exists(key_b))
+            self.assertIn("SAS:", out)
+            self.assertIn("SAS:", connector.stdout)
 
             with open(key_a, "r") as f:
                 hex_a = f.read().strip()
@@ -424,6 +426,67 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertEqual(recv.returncode, 0, err_recv[-500:])
             self.assertIn("KEX-VERIFIED", out_recv)
 
+    def test_kex_with_psk_authentication(self):
+        """PSK-authenticated quantum-resistant key agreement (RFC 8773 / CNSA 2.0)."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            port = _free_tcp_port()
+            key_a = os.path.join(tmp, "responder_psk.key")
+            key_b = os.path.join(tmp, "initiator_psk.key")
+            psk_hex = "42" * 32
+
+            listener = subprocess.Popen(
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
+                 "--psk", psk_hex, "--timeout-ms", "15000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
+                                 "--psk", psk_hex, "--timeout-ms", "15000")
+                self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
+                out, err = listener.communicate(timeout=15)
+            finally:
+                if listener.poll() is None:
+                    listener.kill()
+                    listener.communicate()
+
+            self.assertEqual(listener.returncode, 0, f"kex-listen with PSK failed:\n{err[-500:]}")
+            with open(key_a, "r") as f:
+                hex_a = f.read().strip()
+            with open(key_b, "r") as f:
+                hex_b = f.read().strip()
+            self.assertEqual(hex_a, hex_b)
+
+    def test_kex_mitm_mismatched_psk_rejected(self):
+        """Active attacker with wrong PSK cannot complete key confirmation."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            port = _free_tcp_port()
+            key_a = os.path.join(tmp, "resp_fail.key")
+            key_b = os.path.join(tmp, "init_fail.key")
+
+            listener = subprocess.Popen(
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
+                 "--psk", "11" * 32, "--timeout-ms", "10000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
+                                 "--psk", "22" * 32, "--timeout-ms", "10000")
+                self.assertNotEqual(connector.returncode, 0)
+                self.assertIn("mismatch", connector.stderr)
+                out, err = listener.communicate(timeout=10)
+            finally:
+                if listener.poll() is None:
+                    listener.kill()
+                    listener.communicate()
+
+            self.assertNotEqual(listener.returncode, 0)
+            # Neither key file should be written on MITM/mismatch!
+            self.assertFalse(os.path.exists(key_a))
+            self.assertFalse(os.path.exists(key_b))
+
 
 if __name__ == "__main__":
     unittest.main()
+
