@@ -6,11 +6,16 @@ Proves the zero-Python data-plane executor end to end:
   3. Live loopback: recv <- send opens exactly the sealed payload.
   4. Wrong frame key: receiver admits the datagram but opens nothing
      (fail-closed timeout, exit 3) — key never negotiates in the binary.
+  5. Nonce discipline: seq NEVER comes from `--seq` (refused); repeated
+     `send` invocations advance a locked `--state` file monotonically
+     (NIST SP 800-38D uniqueness). Key NEVER appears in argv (`--key`
+     refused); provision via `--key-file` (0600) or `--key-stdin`.
 
 Scope boundary (see src/main.rs header): session-key provisioning (PQ
 handshake/PKI/ceremony) stays in the audited Python control plane.
 """
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -33,6 +38,30 @@ def _free_udp_port():
 def _run(*argv, timeout=60):
     return subprocess.run([str(BIN), *argv], capture_output=True, text=True,
                           timeout=timeout, cwd=str(CRATE))
+
+
+def _new_key_file(tmpdir):
+    """Run keygen, write hex to a 0600 key file. Returns (hex, keyfile)."""
+    import pathlib
+    r = _run("keygen")
+    assert r.returncode == 0, r.stderr[-500:]
+    hexkey = r.stdout.strip()
+    assert len(hexkey) == 64
+    int(hexkey, 16)
+    kf = os.path.join(tmpdir, "frame.key")
+    with open(kf, "w") as f:
+        f.write(hexkey + "\n")
+    try:
+        os.chmod(kf, 0o600)
+    except OSError:
+        pass
+    return hexkey, kf
+
+
+def _seq_of(sent):
+    m = re.search(r"sent seq=(\d+)", sent.stderr)
+    assert m, sent.stderr[-500:]
+    return int(m.group(1))
 
 
 class TestRustStandaloneBinary(unittest.TestCase):
@@ -61,65 +90,81 @@ class TestRustStandaloneBinary(unittest.TestCase):
         int(key, 16)  # raises unless hex
 
     def test_03_loopback_transfer_opens_exact_payload(self):
-        key = _run("keygen").stdout.strip()
-        port = _free_udp_port()
-        recv = subprocess.Popen(
-            [str(BIN), "recv", "--key", key, "--bind", f"127.0.0.1:{port}",
-             "--count", "1", "--timeout-ms", "15000"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            cwd=str(CRATE))
-        try:
-            import time
-            time.sleep(1.5)  # let recv bind first (fail-closed otherwise)
-            sent = _run("send", "--key", key, "--to", f"127.0.0.1:{port}",
-                        "--msg", "BINARY-PROOF-7741", "--seq", "4242")
-            self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
-            out, err = recv.communicate(timeout=30)
-        finally:
-            if recv.poll() is None:
-                recv.kill()
-                recv.communicate()
-        self.assertEqual(recv.returncode, 0, err[-1000:])
-        self.assertIn("seq=4242 BINARY-PROOF-7741", out)
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port = _free_udp_port()
+            recv_state = os.path.join(tmp, "recv.state")
+            send_state = os.path.join(tmp, "send.state")
+            recv = subprocess.Popen(
+                [str(BIN), "recv", "--key-file", kf, "--state", recv_state,
+                 "--bind", f"127.0.0.1:{port}",
+                 "--count", "1", "--timeout-ms", "15000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cwd=str(CRATE))
+            try:
+                import time
+                time.sleep(1.5)  # let recv bind first (fail-closed otherwise)
+                sent = _run("send", "--key-file", kf, "--state", send_state,
+                            "--to", f"127.0.0.1:{port}",
+                            "--msg", "BINARY-PROOF-7741")
+                self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
+                seq = _seq_of(sent)
+                out, err = recv.communicate(timeout=30)
+            finally:
+                if recv.poll() is None:
+                    recv.kill()
+                    recv.communicate()
+            self.assertEqual(recv.returncode, 0, err[-1000:])
+            self.assertIn(f"seq={seq} BINARY-PROOF-7741", out)
 
     def test_04_wrong_key_opens_nothing(self):
-        key = _run("keygen").stdout.strip()
-        wrong = "ab" * 32
-        self.assertNotEqual(key, wrong)
-        port = _free_udp_port()
-        recv = subprocess.Popen(
-            [str(BIN), "recv", "--key", wrong, "--bind", f"127.0.0.1:{port}",
-             "--count", "1", "--timeout-ms", "6000"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            cwd=str(CRATE))
-        try:
-            import time
-            time.sleep(1.5)
-            sent = _run("send", "--key", key, "--to", f"127.0.0.1:{port}",
-                        "--msg", "MUST-NOT-OPEN", "--seq", "7")
-            self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
-            out, err = recv.communicate(timeout=30)
-        finally:
-            if recv.poll() is None:
-                recv.kill()
-                recv.communicate()
-        self.assertEqual(recv.returncode, 3, err[-1000:])  # timeout, opened 0/1
-        self.assertNotIn("MUST-NOT-OPEN", out)
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            wrong = os.path.join(tmp, "wrong.key")
+            with open(wrong, "w") as f:
+                f.write("ab" * 32 + "\n")
+            port = _free_udp_port()
+            recv_state = os.path.join(tmp, "recv.state")
+            send_state = os.path.join(tmp, "send.state")
+            recv = subprocess.Popen(
+                [str(BIN), "recv", "--key-file", wrong, "--state", recv_state,
+                 "--bind", f"127.0.0.1:{port}",
+                 "--count", "1", "--timeout-ms", "6000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cwd=str(CRATE))
+            try:
+                import time
+                time.sleep(1.5)
+                sent = _run("send", "--key-file", kf, "--state", send_state,
+                            "--to", f"127.0.0.1:{port}",
+                            "--msg", "MUST-NOT-OPEN")
+                self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
+                out, err = recv.communicate(timeout=30)
+            finally:
+                if recv.poll() is None:
+                    recv.kill()
+                    recv.communicate()
+            self.assertEqual(recv.returncode, 3, err[-1000:])  # timeout, opened 0/1
+            self.assertNotIn("MUST-NOT-OPEN", out)
 
     def test_05_send_file_recv_file_roundtrip(self):
         import hashlib
         import tempfile
         payload = bytes(range(256)) * 14  # 3584B -> 3 chunks at 1205B
         self.assertEqual(len(payload), 3584)
-        key = _run("keygen").stdout.strip()
-        port = _free_udp_port()
         with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port = _free_udp_port()
             src = os.path.join(tmp, "in.bin")
             dst = os.path.join(tmp, "out.bin")
             with open(src, "wb") as f:
                 f.write(payload)
+            recv_state = os.path.join(tmp, "recv.state")
+            send_state = os.path.join(tmp, "send.state")
             recv = subprocess.Popen(
-                [str(BIN), "recv-file", "--key", key,
+                [str(BIN), "recv-file", "--key-file", kf, "--state", recv_state,
                  "--bind", f"127.0.0.1:{port}", "--out", dst,
                  "--count", "3", "--timeout-ms", "15000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -127,9 +172,8 @@ class TestRustStandaloneBinary(unittest.TestCase):
             try:
                 import time
                 time.sleep(1.5)
-                sent = _run("send-file", "--key", key,
-                            "--to", f"127.0.0.1:{port}", "--file", src,
-                            "--seq", "500")
+                sent = _run("send-file", "--key-file", kf, "--state", send_state,
+                            "--to", f"127.0.0.1:{port}", "--file", src)
                 self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
                 out, err = recv.communicate(timeout=40)
             finally:
@@ -144,16 +188,20 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
     def test_06_recv_file_wrong_key_writes_nothing(self):
         import tempfile
-        key = _run("keygen").stdout.strip()
-        wrong = "ab" * 32
-        port = _free_udp_port()
         with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            wrong = os.path.join(tmp, "wrong.key")
+            with open(wrong, "w") as f:
+                f.write("ab" * 32 + "\n")
+            port = _free_udp_port()
             src = os.path.join(tmp, "in.bin")
             dst = os.path.join(tmp, "out.bin")
             with open(src, "wb") as f:
                 f.write(b"X" * 64)
+            recv_state = os.path.join(tmp, "recv.state")
+            send_state = os.path.join(tmp, "send.state")
             recv = subprocess.Popen(
-                [str(BIN), "recv-file", "--key", wrong,
+                [str(BIN), "recv-file", "--key-file", wrong, "--state", recv_state,
                  "--bind", f"127.0.0.1:{port}", "--out", dst,
                  "--count", "1", "--timeout-ms", "6000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -161,9 +209,8 @@ class TestRustStandaloneBinary(unittest.TestCase):
             try:
                 import time
                 time.sleep(1.5)
-                sent = _run("send-file", "--key", key,
-                            "--to", f"127.0.0.1:{port}", "--file", src,
-                            "--seq", "9")
+                sent = _run("send-file", "--key-file", kf, "--state", send_state,
+                            "--to", f"127.0.0.1:{port}", "--file", src)
                 self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
                 out, err = recv.communicate(timeout=30)
             finally:
@@ -176,15 +223,17 @@ class TestRustStandaloneBinary(unittest.TestCase):
     def test_07_recv_file_short_count_refuses_partial(self):
         # Sender emits 1 chunk; receiver demands 2 -> timeout, exit 4, no file.
         import tempfile
-        key = _run("keygen").stdout.strip()
-        port = _free_udp_port()
         with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port = _free_udp_port()
             src = os.path.join(tmp, "in.bin")
             dst = os.path.join(tmp, "out.bin")
             with open(src, "wb") as f:
                 f.write(b"Y" * 64)
+            recv_state = os.path.join(tmp, "recv.state")
+            send_state = os.path.join(tmp, "send.state")
             recv = subprocess.Popen(
-                [str(BIN), "recv-file", "--key", key,
+                [str(BIN), "recv-file", "--key-file", kf, "--state", recv_state,
                  "--bind", f"127.0.0.1:{port}", "--out", dst,
                  "--count", "2", "--timeout-ms", "6000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -192,8 +241,8 @@ class TestRustStandaloneBinary(unittest.TestCase):
             try:
                 import time
                 time.sleep(1.5)
-                _run("send-file", "--key", key,
-                     "--to", f"127.0.0.1:{port}", "--file", src, "--seq", "3")
+                _run("send-file", "--key-file", kf, "--state", send_state,
+                     "--to", f"127.0.0.1:{port}", "--file", src)
                 out, err = recv.communicate(timeout=30)
             finally:
                 if recv.poll() is None:
@@ -201,6 +250,55 @@ class TestRustStandaloneBinary(unittest.TestCase):
                     recv.communicate()
             self.assertEqual(recv.returncode, 4, err[-1000:])
             self.assertFalse(os.path.exists(dst))
+
+    def test_08_seq_and_key_argv_refused(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            st = os.path.join(tmp, "s.bin")
+            port = _free_udp_port()
+            r1 = _run("send", "--key", "ab" * 32, "--state", st,
+                      "--to", f"127.0.0.1:{port}", "--msg", "x")
+            self.assertNotEqual(r1.returncode, 0)
+            self.assertIn("--key-file", r1.stderr)
+            r2 = _run("send", "--key-file", kf, "--state", st,
+                      "--to", f"127.0.0.1:{port}", "--msg", "x", "--seq", "1")
+            self.assertNotEqual(r2.returncode, 0)
+            self.assertIn("--state", r2.stderr)
+            r3 = _run("send", "--key-file", kf,
+                      "--to", f"127.0.0.1:{port}", "--msg", "x")
+            self.assertNotEqual(r3.returncode, 0)
+            self.assertIn("--state", r3.stderr)
+
+    def test_repeated_invocations_advance_monotonic_state(self):
+        """Verification gate Task 1.3: two `send` runs advance N -> N+1."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            st = os.path.join(tmp, "mono.state")
+            port = _free_udp_port()
+            s1 = _run("send", "--key-file", kf, "--state", st,
+                      "--to", f"127.0.0.1:{port}", "--msg", "first")
+            self.assertEqual(s1.returncode, 0, s1.stderr[-500:])
+            s2 = _run("send", "--key-file", kf, "--state", st,
+                      "--to", f"127.0.0.1:{port}", "--msg", "second")
+            self.assertEqual(s2.returncode, 0, s2.stderr[-500:])
+            n1, n2 = _seq_of(s1), _seq_of(s2)
+            self.assertEqual(n2, n1 + 1, f"non-monotonic: {n1} -> {n2}")
+            # No execution path allows duplicates: third run advances again.
+            s3 = _run("send", "--key-file", kf, "--state", st,
+                      "--to", f"127.0.0.1:{port}", "--msg", "third")
+            self.assertEqual(_seq_of(s3), n2 + 1)
+            # State file is exactly the 48-byte locked record.
+            self.assertEqual(os.path.getsize(st), 48)
+            # Mismatched key refused against the same state (key binding).
+            wrong = os.path.join(tmp, "wrong.key")
+            with open(wrong, "w") as f:
+                f.write("cd" * 32 + "\n")
+            r = _run("send", "--key-file", wrong, "--state", st,
+                     "--to", f"127.0.0.1:{port}", "--msg", "evil")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("different key", r.stderr)
 
 
 if __name__ == "__main__":

@@ -167,9 +167,10 @@ def _libcrypto_path() -> Optional[str]:
 def check_fips_provider() -> FipsStatus:
     """Probe the live OpenSSL for a loaded FIPS provider (REAL check).
 
-    Uses OSSL_PROVIDER_load(NULL, "fips") via ctypes against the libcrypto
-    backing this interpreter. Returns a status object; never raises.
-    A NULL handle means no FIPS provider is installed/available here.
+    Uses OSSL_PROVIDER_available(NULL, "fips") via ctypes against the
+    libcrypto backing this interpreter: a pure availability QUERY with no
+    load side effects (unlike OSSL_PROVIDER_load). Returns a status object;
+    never raises. 0 means no FIPS provider is installed/available here.
     """
     st = FipsStatus(openssl_version=ssl.OPENSSL_VERSION,
                     openssl_info=ssl.OPENSSL_VERSION_INFO,
@@ -184,32 +185,101 @@ def check_fips_provider() -> FipsStatus:
                 lib = ctypes.CDLL("libcrypto.so.3")
             except OSError:
                 return st
-        if not hasattr(lib, "OSSL_PROVIDER_load"):
+        if not hasattr(lib, "OSSL_PROVIDER_available"):
             return st
-        lib.OSSL_PROVIDER_load.restype = ctypes.c_void_p
-        lib.OSSL_PROVIDER_load.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-        handle = lib.OSSL_PROVIDER_load(None, b"fips")
-        st.provider_loaded = bool(handle)
+        lib.OSSL_PROVIDER_available.restype = ctypes.c_int
+        lib.OSSL_PROVIDER_available.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        st.provider_loaded = bool(lib.OSSL_PROVIDER_available(None, b"fips"))
     except Exception as e:  # probe only; verdicts are made by callers
         log.debug("fips probe failed: %r", e)
     return st
+
+
+def check_fips_cipher() -> Dict[str, Any]:
+    """Prove AES-256-GCM resolves to the FIPS provider (REAL C API check).
+
+    Fetches with the task-mandated "?fips=yes" property query, then reads
+    back the ACTUAL provider name via EVP_CIPHER_get0_provider /
+    OSSL_PROVIDER_get0_name and requires "fips". The name check is what
+    makes this enforcing: "?" marks the clause preferred-but-optional per
+    OpenSSL property(7), so a fetch alone could silently return the
+    default provider — we refuse unless the implementation IS fips.
+    (OSSL_PROVIDER-FIPS(7): "fips=yes" is mandatory for FIPS-approved
+    operation.) Never raises; callers fail closed on ok False.
+    """
+    try:
+        path = _libcrypto_path()
+        lib = ctypes.CDLL(path) if path and Path(str(path)).exists() else None
+        if lib is None:
+            try:
+                lib = ctypes.CDLL("libcrypto.so.3")
+            except OSError:
+                return {"ok": False, "reason": "libcrypto unloadable"}
+        for fn in ("EVP_CIPHER_fetch", "EVP_CIPHER_get0_provider",
+                   "OSSL_PROVIDER_get0_name", "EVP_CIPHER_free"):
+            if not hasattr(lib, fn):
+                return {"ok": False, "reason": f"C API {fn} absent"}
+        lib.EVP_CIPHER_fetch.restype = ctypes.c_void_p
+        lib.EVP_CIPHER_fetch.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
+                                         ctypes.c_char_p]
+        lib.EVP_CIPHER_get0_provider.restype = ctypes.c_void_p
+        lib.EVP_CIPHER_get0_provider.argtypes = [ctypes.c_void_p]
+        lib.OSSL_PROVIDER_get0_name.restype = ctypes.c_char_p
+        lib.OSSL_PROVIDER_get0_name.argtypes = [ctypes.c_void_p]
+        lib.EVP_CIPHER_free.restype = None
+        lib.EVP_CIPHER_free.argtypes = [ctypes.c_void_p]
+        cipher = lib.EVP_CIPHER_fetch(None, b"AES-256-GCM", b"?fips=yes")
+        if not cipher:
+            return {"ok": False,
+                    "reason": "AES-256-GCM unfetchable under ?fips=yes"}
+        try:
+            prov = lib.EVP_CIPHER_get0_provider(cipher)
+            name = lib.OSSL_PROVIDER_get0_name(prov) if prov else None
+        finally:
+            lib.EVP_CIPHER_free(cipher)
+        if isinstance(name, bytes):
+            name = name.decode("ascii", "replace")
+        if name == "fips":
+            return {"ok": True, "provider": name}
+        return {"ok": False,
+                "reason": f"AES-256-GCM resolved to provider {name!r}, not fips"}
+    except Exception as e:  # probe only; verdicts are made by callers
+        log.debug("fips cipher probe failed: %r", e)
+        return {"ok": False, "reason": f"cipher probe error: {e}"}
 
 
 def check_cmvp_record(record_path: Optional[Path] = None) -> Dict[str, Any]:
     """Validate the operator's CMVP record pinning the exact FIPS build.
 
     Record JSON: {"module", "version", "cmvp_cert", "valid_through"}.
-    The record is how an operator asserts "this deployment runs validated
-    build X under cert Y". An absent/expired/mismatched record fails closed
-    in TS mode. (Pinning the live provider build string itself requires the
-    operator's installed-provider inventory; the record is that inventory.)
+    Provenance: `<record>.sig` must hold the ML-DSA-87 signature (hex)
+    over the EXACT record file bytes, verifiable under the embedded
+    platform root (shared with ts_runtime AO/seL4 gates) — an unsigned
+    operator assertion authorizes nothing. An absent/expired/mismatched/
+    mis-signed record fails closed in TS mode. (Pinning the live provider
+    build string itself requires the operator's installed-provider
+    inventory; the signed record is that inventory.)
     """
     path = Path(record_path) if record_path else Path(
         os.environ.get("P2P_FIPS_RECORD", ""))
     if str(path) in ("", "."):
         return {"ok": False, "reason": "no CMVP record provisioned"}
     try:
-        rec = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+    except Exception as e:
+        return {"ok": False, "reason": f"unreadable CMVP record: {e}"}
+    try:
+        sig_hex = Path(str(path) + ".sig").read_text(encoding="utf-8")
+    except Exception:
+        return {"ok": False,
+                "reason": "CMVP attestation signature missing (provision <record>.sig)"}
+    try:
+        from ts_runtime import verify_platform_record_sig
+        verify_platform_record_sig(raw, sig_hex, "CMVP attestation")
+    except Exception as e:
+        return {"ok": False, "reason": f"CMVP signature invalid or unverified: {e}"}
+    try:
+        rec = json.loads(raw.decode("utf-8"))
     except Exception as e:
         return {"ok": False, "reason": f"unreadable CMVP record: {e}"}
     if not isinstance(rec, dict):
@@ -241,6 +311,11 @@ def require_fips_module(record_path: Optional[Path] = None) -> FipsStatus:
             "#4985 family on OpenSSL 3.5 LTS)")
     if st.openssl_info < FIPS_MIN_OPENSSL:
         raise TSRequiredError("OpenSSL series predates the validated provider family")
+    cipher = check_fips_cipher()
+    if not cipher.get("ok"):
+        raise TSRequiredError(
+            f"AES-256-GCM not served by the FIPS provider (?fips=yes): "
+            f"{cipher.get('reason')}")
     rec = check_cmvp_record(record_path)
     st.cmvp_record_ok = bool(rec.get("ok"))
     st.cmvp_record = rec.get("record", {})

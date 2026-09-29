@@ -1,12 +1,11 @@
 # Sovereign Post-Quantum Communications Architecture (ST2027)
 ## High-Assurance Zero-Trust Transport Protocol for National Security Systems over Untrusted Networks
 
-[![Classification: Unclassified / Defense Technical Baseline](https://img.shields.io/badge/Security_Baseline-DoD_Zero_Trust_Level_4-003366.svg)](docs/CONOPS_TACTICAL_DEPLOYMENT.md)
-[![Compliance: NSA CNSA Suite 2.0](https://img.shields.io/badge/Compliance-NSA_CNSA_Suite_2.0-800000.svg)](https://www.nsa.gov/Cybersecurity/Commercial-National-Security-Algorithm-Suite-2-0/)
+[![Posture: NSA CNSA Suite 2.0 Engineering Baseline](https://img.shields.io/badge/Posture-NSA_CNSA_Suite_2.0_Engineering_Baseline-800000.svg)](https://www.nsa.gov/Cybersecurity/Commercial-National-Security-Algorithm-Suite-2-0/)
 [![Cryptography: NIST FIPS 203 / 204 / 205](https://img.shields.io/badge/Cryptography-FIPS_203_%7C_204_%7C_205-006633.svg)](https://csrc.nist.gov/publications/detail/fips/203/final)
-[![Formal Verification: ProVerif 2.05](https://img.shields.io/badge/Formal_Verification-ProVerif_Applied_Pi--Calculus-4B0082.svg)](docs/formal/st2027_handshake.pv)
-[![Model Checking: Kani Rust Verifier](https://img.shields.io/badge/Model_Checking-Kani_CBMC_Verified-darkred.svg)](rust_data_plane/tests/kani_harness.rs)
-[![Test Suite: 227 Passed](https://img.shields.io/badge/Automated_Verification-227%2F227_Tests_Passing-brightgreen.svg)](test_secure_transmit_2027.py)
+[![Formal Verification: ProVerif 2.05](https://img.shields.io/badge/Formal_Verification-ProVerif_2.05_Symbolic_Model-4B0082.svg)](docs/formal/st2027_handshake.pv)
+[![Model Checking: Kani Proof Harnesses](https://img.shields.io/badge/Model_Checking-Kani_Proof_Harnesses_(Kani_Run_Required)-darkred.svg)](rust_data_plane/tests/kani_harness.rs)
+[![Evaluation Status: Pre-Evaluation Prototype / Research Baseline](https://img.shields.io/badge/Evaluation_Status-Pre--Evaluation_Baseline-lightgrey.svg)](docs/formal/README.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-gray.svg)](LICENSE)
 
 ---
@@ -25,7 +24,7 @@ Modern peer-to-peer and client-server communication channels operating across ad
 
 This repository presents the reference implementation, defense specifications, formal verification proofs, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates all deprecated public-key primitives (RSA, ECDH, ECDSA) and pre-standard post-quantum drafts in favor of pure **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). 
 
-The transport layer prevents statistical traffic analysis through mandatory **Tor v3 SOCKS5 onion routing**, **constant-rate cell shaping (50ms interval)**, **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**, and **AES-256-CTR stream whitening**. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Cryptographic invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are formally proven via **ProVerif 2.05** applied pi-calculus models and **Kani** bounded model checking harnesses.
+The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing**, **constant-rate cell shaping (50ms interval)**, **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**, and **AES-256-CTR stream whitening**. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are modeled in **ProVerif 2.05** symbolic models (executed green by `test_proverif_st2027.py`); memory and frame properties are covered by Kani proof harnesses (execution requires the `cargo kani` + CBMC toolchain) and deterministic property doubles green under `cargo test`.
 
 ---
 
@@ -56,6 +55,8 @@ To preserve complete engineering truth and auditability, this repository maintai
 ---
 
 ## 2. Threat Model & Security Posture
+
+**Evaluation boundary (read before citing):** This software is an engineering baseline designed to meet the technical specifications of CNSA 2.0. It has not undergone accredited laboratory evaluation (FIPS 140-3 CMVP / Common Criteria) and does not possess a government Authority to Operate (ATO).
 
 The security architecture is formally specified against a multidimensional threat matrix addressing physical, network, system, and algorithmic attack surfaces:
 
@@ -88,6 +89,7 @@ The security architecture is formally specified against a multidimensional threa
 4. **Host Platform & Physical Memory Adversary:**
    - *Threat:* Cold-boot memory attacks, unauthorized DMA reads via peripheral buses (Thunderbolt, FireWire), software debuggers, and physical tampering.
    - *Defense:* OS-level memory locking via `VirtualLock` / `mlock` preventing page swapping; volatile memory zeroization with compiler memory fences (`compiler_fence(SeqCst)`); real-time anti-DMA bus scanner refusing execution if Kernel DMA Protection is inactive; multi-trigger zeroization mesh ([ts_hw_layer.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py)).
+   - *Limitation (stated, not footnoted):* Python immutable `bytes` objects cannot be wiped deterministically due to runtime garbage collector copies. High-assurance operational deployments must execute via the standalone native Rust data-plane (`secure-transmit`).
 
 ---
 
@@ -227,12 +229,15 @@ Cryptographic protocols in ST2027 are mathematically proven using automated form
 |       └── Query not attacker(epoch_n_minus_1_key) under Epoch N   ==> PROVEN TRUE (Forward Secrecy)     |
 |       └── Query not attacker(epoch_n_plus_1_key) post-rekeying    ==> PROVEN TRUE (PCS Healing)         |
 +---------------------------------------------------------------------------------------------------------+
-| Kani Rust Bounded Model Checking Proofs (29 Harnesses in rust_data_plane/tests/kani_harness.rs):        |
-|   ├── kani_harness::property_doubles::nonce_domain_separation     ==> PROVEN (No nonce collisions)      |
-|   ├── kani_harness::property_doubles::replay_window_monotonic     ==> PROVEN (No replay bypass)         |
-|   ├── kani_harness::property_doubles::ct_eq_no_secret_branch       ==> PROVEN (Constant-time execution)  |
-|   ├── kani_harness::nostd_microcore::test_stack_secret_zeroize     ==> PROVEN (Zeroization on drop)      |
-|   └── kani_harness::property_doubles::max_stream_bytes_cap        ==> PROVEN (Buffer safety)            |
+| Kani Rust Bounded Model Checking: DEFINED harnesses + EXECUTED doubles (audited 2026-09-29):                         |
+|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (needs `cargo kani` + CBMC)      |
+|   ├── #[kani::proof] kani_nonce_domain_separation .................... DEFINED (needs `cargo kani` + CBMC)      |
+|   ├── #[kani::proof] kani_replay_window_monotonic .................... DEFINED (needs `cargo kani` + CBMC)      |
+|   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... DEFINED (needs `cargo kani` + CBMC)      |
+|   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. DEFINED (needs `cargo kani` + CBMC)      |
+|   ├── 7 property doubles green under `cargo test` (same properties, deterministic sweeps) .. EXECUTED GREEN    |
+|   └── NOTE: no Kani proof has been EXECUTED in this environment or CI (no Kani/CBMC toolchain installed).      |
+|       "PROVEN" applies to the ProVerif symbolic models above, not to these harnesses.                         |
 +---------------------------------------------------------------------------------------------------------+
 ```
 
@@ -275,7 +280,7 @@ Every document in this repository is cataloged below, providing complete technic
 - **[`docs/formal/st2027_handshake.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_handshake.pv):** Applied Pi-Calculus model proving secrecy and mutual authentication for `Noise_XXhfs`.
 - **[`docs/formal/st2027_pcs.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_pcs.pv):** Applied Pi-Calculus model proving Post-Compromise Security (PCS) self-healing across ratchet epochs.
 - **[`docs/formal/handshake_model.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/handshake_model.pv):** Baseline handshake structural verification model.
-- **[`rust_data_plane/tests/kani_harness.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/tests/kani_harness.rs):** 29 formal Kani bounded model checking proofs verifying zeroization, buffer bounds, and constant-time comparisons.
+- **[`rust_data_plane/tests/kani_harness.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/tests/kani_harness.rs):** 5 `#[kani::proof]` harnesses (defined; execution requires the Kani + CBMC toolchain) plus 7 deterministic property doubles green under `cargo test`; the 29-test harness binary additionally re-runs re-exported module unit tests.
 
 ### 6.4 Module-Level Technical Charters (`docs/modules/` — All 27 Modules)
 1. **[`docs/modules/ts_hw_layer.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/modules/ts_hw_layer.md):** Pillar 1 hardware layer, FIPS provider gate, TEMPEST registry, and zeroization mesh.
@@ -357,7 +362,7 @@ A zero-dependency Rust shared library (`ts_rt.dll` / `libts_rt.so`) linked via C
 
 ## 8. Empirical Verification & Automated Test Matrix
 
-The platform is backed by **227 automated tests** executing with 100% green pass rate, validating every component from low-level memory zeroization to full network loopback transfers.
+The platform is backed by the full automated suite (Python suites plus 64 cargo-test Rust tests: 35 library unit tests + 29-test harness binary) executing green, validating every component from low-level memory zeroization to full network loopback transfers. Fixed historical counts are not cited: the battery grows with the codebase; CI status is the source of truth.
 
 ```
 +---------------------------------------------------------------------------------------------------------+
@@ -365,7 +370,7 @@ The platform is backed by **227 automated tests** executing with 100% green pass
 +---------------------------------------------------------------------------------------------------------+
 | Battery 1: Unified 2027 Top-Secret Python Test Battery                                                  |
 | Command: pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py ...                 |
-| Status:  163 / 163 PASSED (Execution time: 57.05s)                                                      |
+| Status:  Python battery green (per-suite counts live in CI; fixed totals are not cited)                              |
 | Coverage:                                                                                               |
 |   ├── test_ts_hw_layer.py              (FIPS provider, TPM 2.0 CNG, RED/BLACK binds, zeroization)       |
 |   ├── test_ts_runtime.py               (seL4 microkernel gate, VBS/HVCI checks, anti-DMA bus scanner)    |
@@ -383,12 +388,12 @@ The platform is backed by **227 automated tests** executing with 100% green pass
 +---------------------------------------------------------------------------------------------------------+
 | Battery 2: Native Rust Data-Plane & Kani Model Checking Battery                                         |
 | Command: cargo test --manifest-path rust_data_plane/Cargo.toml                                          |
-| Status:  64 / 64 PASSED (35 Unit Tests + 29 Kani Formal Harnesses, Execution time: 22.59s)              |
+| Status:  Rust battery green: 35 library unit tests + 29-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
 | Coverage:                                                                                               |
 |   ├── Unit Tests (35 passed)           (AEAD vectors, chunking bounds, UDP token bucket, replay bitmap)  |
-|   └── Kani Harnesses (29 passed)       (Bounded model checking of constant-time math, zeroize-on-drop)   |
+|   └── Harness binary (29 passed)       (7 deterministic property doubles + re-exported module unit tests) |
 +---------------------------------------------------------------------------------------------------------+
-| TOTAL SUITE STATUS: 227 PASSED / 0 FAILED / 0 WARNINGS                                                  |
+| TOTAL SUITE STATUS: full automated battery green (CI is the source of truth; no fixed totals cited)           |
 +---------------------------------------------------------------------------------------------------------+
 ```
 
@@ -402,12 +407,12 @@ The platform is backed by **227 automated tests** executing with 100% green pass
 | **NIST FIPS 204** | Primary Post-Quantum Digital Signature (ML-DSA-87) | [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py), [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py) | [`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) |
 | **NSA CNSA Suite 2.0** | National Security Systems (NSS) 2027 Posture | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py) | [`compliance_reports/oscal_ssp_cnsa2.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_ssp_cnsa2.json) |
 | **RFC 10024** | Hybrid Post-Quantum Key Exchange (`SecP384r1MLKEM1024`) | [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) | [`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) |
-| **FIPS 140-3 Level 3/4** | Hardware Security, Self-Tests, Volatile Wiping | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) | [`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md) |
+| **FIPS 140-3 (design target, NOT lab-certified)** | Hardware Security, Self-Tests, Volatile Wiping | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) | [`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md) |
 | **NATO SDIP-27/28/29** | TEMPEST Equipment, SCIF Zoning, Spacing | [`ts_hw_layer.py:TEMPESTRegistry`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) | [`docs/hw_tpm_hsm_setup.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/hw_tpm_hsm_setup.md) |
 | **DoD S-5210.41M** | Nuclear Command & Two-Person Integrity (2.0s DPO) | [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py), [`nc3_nuclear_command.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py) | [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md) |
 | **IETF RATS (RFC 9334)** | Platform Attestation & Evidence Architecture | [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py) | [`compliance_reports/oscal_sar_cato.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_sar_cato.json) |
-| **Common Criteria EAL4+** | Network Device Protection Profile (NDcPP) | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) | [`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md) |
-| **CISA Zero Trust Model** | Zero Trust Architecture Maturity Level 4 | System-wide fail-closed enforcement | [`compliance_reports/zero_trust_assessment.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/zero_trust_assessment.json) |
+| **Common Criteria EAL4+ (design target, NOT lab-certified)** | Network Device Protection Profile (NDcPP) | [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py), [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) | [`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md) |
+| **CISA Zero Trust (design target, NOT maturity-certified)** | Zero Trust Architecture principles | System-wide fail-closed enforcement | Design target only: no level rating claimed, no ATO implied |
 
 ---
 

@@ -23,6 +23,7 @@
 //!   cargo kani                       # needs Kani; proves #[kani::proof] fns
 
 // Real sources, included by path (additive-only workaround for cdylib-only).
+#![allow(dead_code)]
 #[path = "../src/frame.rs"]
 mod frame;
 #[path = "../src/replay.rs"]

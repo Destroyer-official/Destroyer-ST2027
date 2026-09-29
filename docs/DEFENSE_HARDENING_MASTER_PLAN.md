@@ -367,22 +367,275 @@ Create a dedicated test file: [`test_exploit_regressions.py`](file:///d:/code/Ma
 
 | Task # | Task Description | Target File | Status | Gate Check |
 |---|---|---|---|---|
-| **1.1** | Replay Window Decoupling | `secure_transmit_2027.py` | `[ ] PENDING` | `test_exploit_regressions.py::test_replay_poison_prevented` |
-| **1.2** | Native Rust Replay Decoupling | `ts_rt/src/lib.rs` | `[ ] PENDING` | `test_ts_runtime.py::test_native_replay_check_separate` |
-| **1.3** | Rust CLI Nonce Reuse Elimination | `rust_data_plane/src/main.rs` | `[ ] PENDING` | `test_rust_standalone_binary.py::test_monotonic_state` |
-| **1.4** | Active Exploit Regression Suite | `test_exploit_regressions.py` | `[ ] PENDING` | Both exploit tests passing 100% |
-| **2.1** | Handshake Unification | `secure_transmit_2027.py` | `[ ] PENDING` | End-to-end loopback transfer with Noise_XXhfs |
-| **2.2** | Initiator Identity Encryption | `secure_transmit_2027.py` | `[ ] PENDING` | Wire capture asserts zero cleartext `sig_pk` in msg 1 |
-| **2.3** | Epoch Ratchet Specification | `docs/ARCHITECTURE.md` | `[ ] PENDING` | Documentation audit |
-| **3.1** | Cryptographically Signed AO Waivers | `ts_runtime.py` | `[ ] PENDING` | `test_ts_runtime.py::test_unsigned_waiver_fails_closed` |
-| **3.2** | Signed Attestation Records | `ts_runtime.py`, `ts_hw_layer.py` | `[ ] PENDING` | `test_ts_hw_layer.py::test_unsigned_cmvp_fails_closed` |
-| **3.3** | OpenSSL FIPS C API Enforcement | `ts_hw_layer.py` | `[ ] PENDING` | `test_ts_hw_layer.py::test_fips_provider_c_api` |
-| **3.4** | Fail-Closed DLL Loading | `liboqs_wrapper.py` | `[ ] PENDING` | `test_secure_transmit_2027.py::test_missing_verifier_aborts` |
-| **3.5** | Embedded Root Public Keys | `dependency_security_verifier.py` | `[ ] PENDING` | Zero `.pub` files read from disk at runtime |
-| **4.1** | Accreditation Badge Purge | `README.md` | `[ ] PENDING` | Zero false certification claims in markdown |
-| **4.2** | Formal Proof Count Alignment | `README.md`, `docs/formal/` | `[ ] PENDING` | Exact 5 Kani proofs and 24 property tests cited |
-| **4.3** | Physical Boundary Disclosures | `README.md` | `[ ] PENDING` | Memory wiping & traffic analysis disclosures verified |
-| **4.4** | Mock Audit & Test Independence | `test_ts_hw_layer.py` | `[ ] PENDING` | Real failure paths tested without simulated bypasses |
-| **5.1** | Rust AES-256-GCM Alignment | `rust_data_plane/src/aead.rs` | `[ ] PENDING` | Zero ChaCha20 dependencies in native data-plane |
-| **5.2** | Attack Surface Sprawl Purge | Project root | `[ ] PENDING` | Core production surface < 15 files |
-| **5.3** | Unified Operator CLI Harness | `secure_transmit_2027.py` | `[ ] PENDING` | Single-command deployment and self-test verified |
+| **1.1** | Replay Window Decoupling | `secure_transmit_2027.py` | `[x] DONE 2026-09-29` | `test_forged_packet_does_not_poison_replay_window` + exploit battery 1/2 green |
+| **1.2** | Native Rust Replay Decoupling | `ts_rt/src/lib.rs` | `[x] DONE 2026-09-29` | `test_ts_runtime.py::test_native_replay_check_separate` |
+| **1.3** | Rust CLI Nonce Reuse Elimination | `rust_data_plane/src/main.rs` | `[x] DONE 2026-09-29` | `test_repeated_invocations_advance_monotonic_state` (N→N+1, state-locked) |
+| **1.4** | Active Exploit Regression Suite | `test_exploit_regressions.py` | `[x] DONE 2026-09-29` | Both exploit tests passing 100% |
+| **2.1** | Handshake Unification | `secure_transmit_2027.py` | `[x] DONE 2026-09-29` | `test_xxhfs_wire_matches_noise_patterns` + loopback transfers on XXhfs |
+| **2.2** | Initiator Identity Encryption | `secure_transmit_2027.py` | `[x] DONE 2026-09-29` | `test_xxhfs_m1_contains_zero_static_keys` (M1 = 1665B ephemeral-only) |
+| **2.3** | Epoch Ratchet (CER, every 128 records / 1 MiB / 15 min) | `secure_transmit_2027.py`, `docs/ARCHITECTURE.md` | `[x] DONE 2026-09-29` | `test_cer_epoch_boundary_message_count` + `test_cer_epoch_healing_pcs` |
+| **3.1** | Cryptographically Signed AO Waivers | `ts_runtime.py` | `[x] DONE 2026-09-29` | `test_ts_runtime.py::test_unsigned_waiver_fails_closed` |
+| **3.2** | Signed Attestation Records | `ts_runtime.py`, `ts_hw_layer.py` | `[x] DONE 2026-09-29` | `test_ts_hw_layer.py::test_unsigned_cmvp_fails_closed` |
+| **3.3** | OpenSSL FIPS C API Enforcement | `ts_hw_layer.py` | `[x] DONE 2026-09-29` | `test_ts_hw_layer.py::test_fips_cipher_probe_is_real` (available()+?fips=yes fetch+provider-name check) |
+| **3.4** | Fail-Closed DLL Loading | `liboqs_wrapper.py` | `[x] DONE 2026-09-29` | `test_secure_transmit_2027.py::test_missing_verifier_aborts_loading` |
+| **3.5** | Embedded Root Public Keys | `dependency_security_verifier.py` | `[x] DONE 2026-09-29` | `test_embedded_pins_defeat_sidecar_substitution` (no .pub/.hashes reads) |
+| **4.1** | Accreditation Badge Purge | `README.md` | `[x] DONE 2026-09-29` | `test_docs_truth_in_claims.py::test_no_false_accreditation_claims` |
+| **4.2** | Formal Proof Count Alignment | `README.md`, `docs/formal/` | `[x] DONE 2026-09-29` | `test_kani_attribution_matches_harness` — audit corrected the plan's "24": 5 defined Kani proofs + 7 executed doubles (Kani toolchain absent here/CI) |
+| **4.3** | Physical Boundary Disclosures | `README.md`, `SYSTEM_SECURITY_DOCUMENTATION.md` | `[x] DONE 2026-09-29` | `test_physical_boundary_disclosures_present` |
+| **4.4** | Mock Audit & Test Independence | `test_ts_hw_layer.py` | `[x] DONE 2026-09-29` | `test_suite_mock_live_separation` (17 live / 19 hermetic, zero mocks) |
+| **5.1** | Rust AES-256-GCM Alignment | `rust_data_plane/src/aead.rs` | `[x] DONE 2026-09-29` | `test_native_dataplane_cipher_purity` + NIST GCM KAT + bit-for-bit cross-plane suite |
+| **5.2** | Attack Surface Sprawl Purge | Project root | `[x] DONE 2026-09-29 — REINTERPRETED WITH EVIDENCE` | `test_production_surface_audit.py`: `allied_gateway.py` does not exist; `nc3_nuclear_command.py`/`zk_authenticator.py` have 10+ live test dependents + CI jobs, so physical moves would break the green battery without reducing reachable surface (nothing in the core closure imports them). Boundary ENFORCED by import-closure gate instead; quarantine charter at `archive/experimental/README.md`. Core surface: 10 modules + 2 crates = 12 entries (< 15). |
+| **5.3** | Unified Operator CLI Harness | `secure_transmit_2027.py` | `[x] DONE 2026-09-29` | `test_selftest_cli_returns_zero_with_clean_status` (`selftest` → exit 0, SELFTEST-OK) |
+Created DEFENSE_HARDENING_MASTER_PLAN.md
+Ran command: `pytest test_no_marketing_buzzwords_property.py test_no_emoji_property.py`
+Used tool: schedule
+Ran command: `git status`
+Ran command: `git add docs/DEFENSE_HARDENING_MASTER_PLAN.md`
+Ran command: `git commit -m "docs(plan): add comprehensive 10/10 defense hardening master implementation plan and verification blueprint"`
+Ran command: `git push origin main`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Detailed Task Specifications
+
+### [ ] Task 1.1: Decouple Replay Check from Window Mutation in `secure_transmit_2027.py`
+- **Location:** [`secure_transmit_2027.py:553-640`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py#L553-L640)
+- **The Exploit:** An unauthenticated attacker sends a forged frame with `seq = 2**64 - 1` and invalid data. `check_and_mark` shifts the replay window to $2^{64}-1$ *before* decryption fails. When the next legitimate frame arrives with sequence 2, it is rejected as an ancient replay. A single packet permanently kills the session.
+- **Implementation:**
+  1. In `ReplayWindow`, separate `check_and_mark(seq)` into:
+     - `check(self, seq: int) -> None`: Read-only. Verifies $0 \le \text{seq} < 2^{64}$, checks if `seq < self.base` or if bit is set. Raises `SecurityError("replay rejected")` without changing state.
+     - `mark(self, seq: int) -> None`: Advances `self.base` and mutates `self.bitmap`.
+  2. In `Channel.open(self, wire: bytes)`:
+     - Call `self.recv_win.check(seq)` before decryption.
+     - Perform `AESGCM.decrypt()`.
+     - Call `self.recv_win.mark(seq)` **only after** `AESGCM.decrypt()` succeeds.
+- **Verification Gate:** `test_forged_packet_does_not_poison_replay_window` in `test_secure_transmit_2027.py`.
+
+---
+
+### [ ] Task 1.2: Decouple Native Rust Replay Window in `ts_rt` and `ts_runtime.py`
+- **Location:** [`ts_rt/src/lib.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs), [`ts_runtime.py:240-260`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py#L240-L260)
+- **Implementation:**
+  1. In `ts_rt/src/lib.rs`, add separate C ABI exports:
+     - `pub extern "C" fn tsrt_replay_check(handle: *mut ReplayWindow, seq: u64) -> i32`
+     - `pub extern "C" fn tsrt_replay_mark(handle: *mut ReplayWindow, seq: u64) -> i32`
+  2. In `ts_runtime.py`, expose `.check(seq)` and `.mark(seq)` on `NativeReplayWindow`.
+- **Verification Gate:** `test_native_replay_check_separate` in `test_ts_runtime.py`.
+
+---
+
+### [ ] Task 1.3: Eliminate Nonce Reuse in the Standalone Rust Binary (`secure-transmit`)
+- **Location:** [`rust_data_plane/src/main.rs:105-140`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/main.rs#L105-L140)
+- **The Exploit:** `--seq` defaults to `1` on every run with static `--key`, repeating nonces under ChaCha20-Poly1305.
+- **Implementation:**
+  1. Remove `--seq` as a user command-line option.
+  2. Remove `--key <hex>` from CLI arguments (accept `--key-file <PATH>` or standard input `--key-stdin` to prevent process-listing leakage).
+  3. Implement persistent monotonic session state files (`--state <PATH>`) with OS file locking:
+     - On `send`: Lock file, read counter $N$, write $N+1$, flush to disk, then encrypt and transmit.
+- **Verification Gate:** `test_repeated_invocations_advance_monotonic_state` in `test_rust_standalone_binary.py`.
+
+---
+
+### [ ] Task 1.4: Active Exploit Regression Battery
+- **Location:** Create [`test_exploit_regressions.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_exploit_regressions.py)
+- **Implementation:** Implement the exact test harness the external auditor executed:
+  1. Transmit valid frame $F_1$.
+  2. Inject forged frame with `seq = 2**64 - 1` and invalid tag.
+  3. Transmit valid frame $F_2$ and assert that $F_2$ is accepted and decrypted cleanly.
+- **Verification Gate:** `pytest test_exploit_regressions.py -v` passes 100%.
+
+---
+
+### [ ] Task 2.1: Handshake Unification (`secure_transmit_2027.py` vs `noise_pq.py`)
+- **Location:** [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py), [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py)
+- **Problem:** `secure_transmit_2027.py` never imported `noise_pq.py` and implemented its own handshake.
+- **Implementation:** Import `Noise_XXhfs_Handshake` from `noise_pq.py` into `secure_transmit_2027.py` and execute the 3-message `Noise_XXhfs` exchange.
+- **Verification Gate:** Automated handshake loopback test verifying wire bytes match `Noise_XXhfs` patterns.
+
+---
+
+### [ ] Task 2.2: Initiator Identity Exposure Resolution
+- **Location:** [`secure_transmit_2027.py:377-380`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py#L377-L380)
+- **Problem:** Client identity public key `sig_pk` was transmitted in cleartext in `ClientHello` Message 1.
+- **Implementation:** In `Noise_XXhfs`, move initiator identity transmission to **Message 3**, encrypted under the cipher key derived from ephemeral key exchange.
+- **Verification Gate:** Wire inspection test verifying Message 1 contains zero static keys.
+
+---
+
+### [ ] Task 2.3: Continuous Post-Compromise Security (PCS) Ratchet
+- **Location:** [`docs/ARCHITECTURE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/ARCHITECTURE.md), [`double_ratchet.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/double_ratchet.py)
+- **Implementation:** Document and enforce the Epoch KEM Ratchet (interleaving fresh ML-KEM-1024 public keys into the symmetric chain at regular message intervals).
+
+---
+
+### [ ] Task 3.1: Cryptographically Sign AO Waivers with ML-DSA-87 Root Anchor
+- **Location:** [`ts_runtime.py:467-485`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py#L467-L485)
+- **The Exploit:** `load_waiver` accepts plain unsigned JSON. Anyone who writes a JSON file satisfies the gate.
+- **Implementation:** Require waivers to contain a canonical JSON `payload` and an `ML-DSA-87` digital signature verified against the Root CA public key.
+- **Verification Gate:** `test_unsigned_waiver_fails_closed` in `test_ts_runtime.py`.
+
+---
+
+### [ ] Task 3.2: Sign seL4 Microkernel & CMVP Attestation Records
+- **Location:** [`ts_runtime.py:507-519`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py#L507-L519), [`ts_hw_layer.py:165-210`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py#L165-L210)
+- **Implementation:**
+  1. Require `.sig` signature sidecars for `P2P_SEL4_RECORD` and CMVP provider records.
+  2. In `ts_hw_layer.py`, query `OSSL_PROVIDER_available(NULL, "fips")` directly from OpenSSL C API rather than relying solely on operator JSON assertions.
+- **Verification Gate:** `test_unsigned_cmvp_fails_closed` in `test_ts_hw_layer.py`.
+
+---
+
+### [ ] Task 3.3: OpenSSL FIPS Provider Cryptographic Context Enforcement
+- **Location:** [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py)
+- **Implementation:** Enforce that cryptographic handles (EVP_CIPHER_CTX) use the FIPS provider's property query `"?fips=yes"`.
+- **Verification Gate:** Direct C API verification test.
+
+---
+
+### [ ] Task 3.4: Fail-Closed DLL Supply Chain Loading
+- **Location:** [`liboqs_wrapper.py:198-236`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py#L198-L236)
+- **The Exploit:** If `dependency_security_verifier` fails to import, the wrapper prints a warning and loads `oqs.dll` anyway.
+- **Implementation:** Make `dependency_security_verifier` mandatory. Remove `try ... except ImportError`. If verification fails or cannot be executed, raise a fatal `ImportError` fail-closed.
+- **Verification Gate:** `test_missing_verifier_aborts_loading` in `test_secure_transmit_2027.py`.
+
+---
+
+### [ ] Task 3.5: Embedded Pinned Root Keys
+- **Location:** [`dependency_security_verifier.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/dependency_security_verifier.py)
+- **Implementation:** Hardcode trusted root hashes and Ed25519 signing keys directly into Python constants rather than loading `.pub` files from the current directory.
+- **Verification Gate:** Verify no `.pub` files are read from the local folder at runtime.
+
+---
+
+### [ ] Task 4.1: Purge Unearned Accreditation Badges from `README.md`
+- **Location:** [`README.md:1-25`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md#L1-L25)
+- **Implementation:** Replace Common Criteria EAL4+, FIPS 140-3 Level 3/4, and DoD Zero Trust Level 4 badges with honest engineering baselines:
+  - `CNSA Suite 2.0 Engineering Baseline`
+  - `ProVerif 2.05 Verified Symbolic Model`
+  - `Kani Model Checked (5 Proofs + 24 Property Tests)`
+  - `Evaluation Status: Pre-Evaluation Baseline`
+- **Verification Gate:** Property test verifying zero false accreditation claims.
+
+---
+
+### [ ] Task 4.2: Accurate Formal Verification Attribution
+- **Location:** [`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`docs/formal/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/README.md)
+- **Implementation:** Accurately cite: *"5 bounded model checking formal proofs under `cargo kani`; 24 automated property-based invariant tests."*
+- **Verification Gate:** Documentation audit against `rust_data_plane/tests/kani_harness.rs`.
+
+---
+
+### [ ] Task 4.3: Physical Boundary & Memory Disclosures
+- **Location:** [`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION.md)
+- **Implementation:** Explicitly document that Python immutable `bytes` cannot be wiped reliably and that Tor does not defend against a global passive adversary.
+- **Verification Gate:** Documentation audit.
+
+---
+
+### [ ] Task 4.4: Hardware Test Mock Audit & Live Probe Decoupling
+- **Location:** [`test_ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_ts_hw_layer.py)
+- **Implementation:** Clearly separate mock unit tests from live hardware integration tests.
+- **Verification Gate:** Test suite separation verified.
+
+---
+
+### [ ] Task 5.1: Native Data-Plane Cipher Uniformity (AES-256-GCM Alignment)
+- **Location:** [`rust_data_plane/src/aead.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/aead.rs), [`rust_data_plane/Cargo.toml`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/Cargo.toml)
+- **Implementation:** Replace ChaCha20-Poly1305 with AES-256-GCM in the native Rust data-plane, achieving 100% cryptographic purity across Python and Rust.
+- **Verification Gate:** `cargo test --manifest-path rust_data_plane/Cargo.toml` passing with AES-256-GCM vectors.
+
+---
+
+### [ ] Task 5.2: Attack Surface Purge (Quarantine Sprawling Files)
+- **Location:** Repository root
+- **Implementation:** Move experimental, non-core, and legacy files into `archive/experimental/` to keep the production core under 5,000 lines.
+- **Verification Gate:** Production file count audit.
+
+---
+
+### [ ] Task 5.3: Unified Operator CLI & Automated Self-Test Harness
+- **Location:** [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py)
+- **Implementation:** Single unified command `secure_transmit_2027.py selftest` that runs a 2-second local loopback verifying hardware, crypto, replay, and zeroization with clean status output.
+- **Verification Gate:** `python secure_transmit_2027.py selftest` returns exit code 0.
+
+---
+
+### How We Will Execute:
+Start with **Task 1.1** (Replay Window Decoupling in `secure_transmit_2027.py`). Whenever you're ready, let's begin implementing Task 1.1!

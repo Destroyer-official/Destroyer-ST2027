@@ -16,7 +16,8 @@ name = "secure-transmit"
 path = "src/main.rs"
 
 [dependencies]
-chacha20poly1305 = { version = "0.11.0", features = ["alloc"] }
+aes-gcm = { version = "0.11.1", features = ["alloc", "aes"] }
+fs2 = "0.4.3"
 getrandom = "0.4.3"
 hkdf = "0.13.0"
 ml-kem = { version = "0.3.2", features = ["zeroize", "getrandom"] }
@@ -25,7 +26,7 @@ sha2 = "0.11.0"
 tokio = { version = "1.53.1", features = ["full"] }
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 zeroize = { version = "1.9.0", features = ["derive"] }
-# Further deps (tokio, chacha20poly1305, x25519-dalek, hkdf, sha2, zeroize,
+# Further deps (tokio, aes-gcm, x25519-dalek, hkdf, sha2, zeroize,
 # ml-kem) are added via `cargo add` at module-implementation time, then frozen
 # in Cargo.lock. Maturin packaging config lives in pyproject.toml.
 

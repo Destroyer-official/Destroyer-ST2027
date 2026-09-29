@@ -64,3 +64,37 @@ Signal PQXDH protocol, USENIX Security '24:
 CI enforcement: `adversarial-gates` in `.github/workflows/defense_ci.yml`
 runs `sh docs/formal/check.sh` (non-strict, advisory: SKIP exit 0 when
 ProVerif is missing). `--strict` is nightly-only and never runs on PR.
+
+## Kani inventory (audited against `rust_data_plane/tests/kani_harness.rs`)
+
+Five `#[kani::proof]` harnesses are DEFINED (exact names):
+
+```
+kani_frame_split_reassemble_roundtrip
+kani_nonce_domain_separation
+kani_replay_window_monotonic
+kani_max_stream_bytes_cap
+kani_nostd_frame_parse_never_panics
+```
+
+Execution requires the Kani + CBMC toolchain (`cargo kani`); Kani is
+installed neither in this environment nor in CI, so no Kani proof has
+been EXECUTED here — "defined" is the honest status word, never
+"proven". What DOES execute green under plain `cargo test` are the 7
+deterministic property doubles in `property_doubles` (same properties,
+bounded sweeps):
+
+```
+frame_split_reassemble_roundtrip_bounded
+nonce_domain_separation
+replay_window_monotonic_and_drops
+ct_eq_and_select_no_secret_branch
+max_stream_bytes_cap_enforced
+nostd_frame_parse_never_panics_property_sweep
+nostd_stack_secret_ct_eq_property_sweep
+```
+
+(`test_stack_secret_zeroize_on_drop` is a plain `cargo test` unit test
+in `nostd_microcore`, re-exported into the 29-test harness binary — not
+a Kani proof. The harness binary total of 29 includes 22 re-exported
+module unit tests alongside the 7 doubles.)

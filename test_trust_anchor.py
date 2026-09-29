@@ -158,28 +158,39 @@ def test_strict_handshake_with_certs_no_tofu(tmp_path, monkeypatch):
         kp_a.sig_sk = alpha.sig_sk
     if kp_b.sig_sk is None:
         kp_b.sig_sk = bravo.sig_sk
-    hello, tr, eph, t = st.build_client_hello(kp_a, "sess-pki")
-    resp, s_st = st.server_accept(
-        hello, kp_b, "sess-pki",
-        peer_cert=ta.cert_to_json(cert_a), peer_subject="officer-alpha")
-    c_st = st.client_finish(
-        resp, eph, kp_a, tr, "sess-pki", t,
+    m1, ini, t0 = st.xxhfs_initiate(kp_a, "sess-pki")
+    m2, rsp, t_rsp = st.xxhfs_respond(
+        m1, kp_b, "sess-pki")
+    m3, c_st = st.xxhfs_finalize(
+        ini, m2, kp_a, "sess-pki", t0,
         peer_cert=ta.cert_to_json(cert_b), peer_subject="officer-bravo")
+    s_st = st.xxhfs_complete(
+        rsp, m3, kp_b, "sess-pki", t_rsp,
+        peer_cert=ta.cert_to_json(cert_a), peer_subject="officer-alpha")
     assert c_st.key() == s_st.key()
     # Revoked peer aborts the next handshake.
     rev = ta.Revocation(serial=bytes(cert_a.tbs.serial), reason="COMPROMISED",
                         ts=__import__("time").time(), seq=1)
     ta.sign_revocation(rev, cust[:3])
     cache.add(rev)
-    hello2, tr2, eph2, t2 = st.build_client_hello(kp_a, "sess-pki2")
+    m1b, inib, t0b = st.xxhfs_initiate(kp_a, "sess-pki2")
+    m2b, rspb, t_rspb = st.xxhfs_respond(m1b, kp_b, "sess-pki2")
+    m3b, _cb = st.xxhfs_finalize(inib, m2b, kp_a, "sess-pki2", t0b,
+                                 peer_cert=ta.cert_to_json(cert_b),
+                                 peer_subject="officer-bravo")
+    # The responder gates the revoked initiator certificate at M3.
     with pytest.raises(st.SecurityError):
-        st.server_accept(hello2, kp_b, "sess-pki2",
-                         peer_cert=ta.cert_to_json(cert_a),
-                         peer_subject="officer-alpha")
+        st.xxhfs_complete(rspb, m3b, kp_b, "sess-pki2", t_rspb,
+                          peer_cert=ta.cert_to_json(cert_a),
+                          peer_subject="officer-alpha")
     # Strict without any certificate refuses (no TOFU fallback).
-    hello3, tr3, eph3, t3 = st.build_client_hello(kp_a, "sess-pki3")
+    m1c, inic, t0c = st.xxhfs_initiate(kp_a, "sess-pki3")
+    m2c, rspc, t_rspc = st.xxhfs_respond(m1c, kp_b, "sess-pki3")
+    m3c, _cc = st.xxhfs_finalize(inic, m2c, kp_a, "sess-pki3", t0c,
+                                 peer_cert=ta.cert_to_json(cert_b),
+                                 peer_subject="officer-bravo")
     with pytest.raises(st.SecurityError):
-        st.server_accept(hello3, kp_b, "sess-pki3")
+        st.xxhfs_complete(rspc, m3c, kp_b, "sess-pki3", t_rspc)
 
 
 def test_serial_uniqueness_and_revocation_persists(tmp_path, monkeypatch):

@@ -5,33 +5,52 @@ secure_transmit_2027.py — Most-secure practical transmission over the public i
 Architecture (finalized from 2026 research, no demos/simulation — all primitives real):
 
   Outer:  TLS 1.3 ONLY, mutual auth, single suite TLS_AES_256_GCM_SHA384 (CNSA 2.0 profile).
-  Inner:  Hybrid PQ key exchange SecP384r1 + ML-KEM-1024 per RFC 10024 (Aug 2026),
-          HKDF-SHA384 combiner per SP 800-56Cr2 / SP 800-227, ML-DSA-87
-          transcript signatures per FIPS 204, AES-256-GCM records, fresh
-          ephemeral rekey (HNDL quantum-cost axis), anti-replay bitmap,
-          fixed padding quanta, TOFU safety numbers.
+  Inner:  Noise_XXhfs 3-message handshake (authoritative engine: noise_pq.py)
+           with SecP384r1 + ML-KEM-1024 hybrid forward secrecy per the hfs
+           pattern transform, ML-DSA-87 transcript signatures per FIPS 204,
+           M1 ephemeral-only (zero static keys — passive observers learn no
+           identity), M2/M3 identities encrypted under forward-secret
+           handshake keys,    Split-derived AES-256-GCM records, Continuous Epoch Ratchet (epoch every
+           128 records / 1 MiB / 15 min: fresh ephemeral hybrid exchange
+           interleaved into the key chain; heals transient compromise
+           within one epoch), anti-replay bitmap,
+           fixed padding quanta, TOFU safety numbers.
 
 Research grounding (verified Sept 2026 via live fetch):
   [FIPS203/204/205] NIST finalized ML-KEM / ML-DSA / SLH-DSA 13 Aug 2024.
-  [CNSA2.0] NSA CNSA Suite 2.0: ML-KEM-1024 + ML-DSA-87 + AES-256 + SHA-384/512;
-    NIAP PL-33: CNSA 1.0 mandatory 2027-01-01, CNSA 2.0 mandatory 2028-01-01;
-    new NSS acquisitions support CNSA 2.0 from 2027-01-01.
+    Jul 2026 HAWK withdrawal (AI-found lattice vuln, candidate withdrawn)
+    does not affect ML-KEM/ML-DSA foundations; no non-finalized primitives
+    are used anywhere on the session path. HQC (Mar 2025 backup-KEM pick)
+    and FN-DSA remain unfinalized and are NOT used (CNSA 2.1 excludes both).
+  [CNSA2.0 v2.1 Dec 2024] Suite: ML-KEM-1024 + ML-DSA-87 + AES-256 +
+    SHA-384/512 (SLH-DSA/FN-DSA/HQC excluded from NSS use); timeline: no
+    enforcement before 2025-12-31, procurement gate 2027-01-01 (new NSS
+    acquisitions), phase-out 2030-12-31, mandatory 2031-12-31.
   [RFC10024] Aug 2026: X25519MLKEM768 (0x11EC), SecP256r1MLKEM768 (0x11EB),
     SecP384r1MLKEM1024 (0x11ED); concatenation combiner; for SecP384r1MLKEM1024
     secret = ECDHE(48B) || ML-KEM(32B) = 80B; X25519MLKEM768 secret =
     ML-KEM(32B) || X25519(32B) = 64B (order frozen for FIPS reasons).
+    (0x11ED Recommended:N marks general-interop preference only; CNSA 2.0
+    mandates the 1024 L5 path used here.)
   [OpenSSL3.5] Defaults to hybrid X25519MLKEM768; supports ML-KEM/ML-DSA/SLH-DSA.
-  [CNSA-TLS] draft-becker-cnsa2-tls-profile: TLS 1.3 only, 0x1302 first/only,
+  [CNSA-TLS] draft-becker-cnsa2-tls-profile (Informational draft, expires
+    Jan 2027): TLS 1.3 only, 0x1302 first/only,
     ML-KEM-1024, ML-DSA-87, SHA-384 HKDF, mutual cert auth, psk_dhe_ke only.
-  [RFC9849] ECH (Mar 2026) + draft-ietf-uta-pqc-app: ECH/HPKE MUST use pure-PQ or
-    PQ/T hybrid KEM to resist HNDL; deploy with encrypted DNS.
+  [RFC9849] ECH (Proposed Standard Mar 2026) + draft-ietf-uta-pqc-app:
+    ECH/HPKE MUST use pure-PQ or PQ/T hybrid KEM to resist HNDL; deploy
+    with encrypted DNS. Deployment reality (IETF 126, Jul 2026): essentially
+    one large deployment (Cloudflare) on X25519/AES-128 — hence generic
+    outer SNI + DoH mapping + fail-closed ECH-required gate here.
   [HNDL-econ] arXiv 2603.01091 (Mar 2026): storage is trivial; defense axes are
     (a) ECH triage degradation, (b) quantum-workload inflation via frequent
     fresh-entropy rekey (E = ceil(bytes/rekey_interval)) and larger KEX params;
     TLS 1.3 KeyUpdate is deterministic (E=1) — real FS needs fresh ephemeral
     exchange or PSK-DHE resumption; deprecate RSA/0-RTT/non-FS modes.
-  [MLS-PQ] draft-ietf-mls-pq-ciphersuites (Jul 2026): ML-KEM hybrid suites at
-    192/256-bit use AES-256-GCM + HKDF-SHA384; full-PQ needs ML-DSA too.
+  [MLS-PQ] draft-ietf-mls-pq-ciphersuites-06 (Jul 2026, Standards Track):
+    ML-KEM-1024+P-384 is the 192-bit NIST hybrid suite (AES-256-GCM +
+    HKDF-SHA384); ML-DSA-87 signatures are the level-5 counterparts.
+    Hybrid-with-traditional-signature suites give PQ confidentiality with
+    classical-only authenticity — hence ML-DSA-87 throughout here.
 
 Threat model addressed: HNDL bulk harvest, active MITM (classical + future CRQC),
 downgrade/strip, replay/reorder, traffic analysis, memory disclosure, supply chain.
@@ -58,6 +77,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
+
+import noise_pq as _npq
 
 log = logging.getLogger("secure_transmit_2027")
 
@@ -96,6 +117,17 @@ SERVER_SHARE_LEN = P384_SHARE + MLKEM1024_CT   # 1665
 HANDSHAKE_MAX_AGE_S = 60     # replay window for handshake timestamps
 SESSION_REKEY_BYTES = 1 << 20       # 1 MiB — fresh ephemeral KEX (HNDL E-axis)
 SESSION_REKEY_SECONDS = 15 * 60     # 15 min cap even if idle-ish
+# Continuous Epoch Ratchet (CER) message frequency: every CER_EPOCH_MESSAGES
+# sealed records the epoch rotates via a fresh ephemeral hybrid
+# (P-384 + ML-KEM-1024) XXhfs exchange whose outputs are interleaved into
+# the session key chain (old epoch key zeroized). 128 records ≈ 150 KiB of
+# bulk traffic: compromise of epoch N heals within one epoch (PCS), while
+# per-record AES-GCM with monotonic nonces + key erasure gives per-record
+# forward secrecy. PQ ratchet material is ~71x bulkier than classical DH
+# (NIST PQC-Signal analysis), so epochs are message-counted rather than
+# per-message — same order of magnitude as Apple PQ3 (~50 messages), a
+# stated cost/forgiveness tradeoff, not a limitation dodge.
+CER_EPOCH_MESSAGES = 128
 MAX_RECORD_PLAINTEXT = 16 * 1024    # 16 KiB cap per record (DoS bound)
 # Total-wire quanta (header 13B + tag 16B included) — always <= 1280 IPv6 MTU.
 PAD_QUANTA = (256, 512, 1232)
@@ -286,8 +318,37 @@ def verify_transcript(sig_pk: bytes, transcript: bytes, sig: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Handshake messages (verify-before-decaps, timestamps, transcript binding)
+# Unified handshake: Noise_XXhfs authoritative engine (Tasks 2.1 / 2.2)
 # ---------------------------------------------------------------------------
+# Session establishment is delegated to noise_pq.py's
+# Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384 state machine.
+# FORMAL-MODEL STATUS (honest, 2026-09-29): docs/formal/st2027_handshake.pv
+# and st2027_pcs.pv still encode the RETIRED 2-message handshake
+# (cleartext initiator static in M1, kdf(he,hm,tr) direct derivation) and
+# do NOT cover the deployed XXhfs flow (encrypted statics in M2/M3,
+# Split + HKDF combiner). Their queries prove true statements about the
+# old design only. Re-modeling XXhfs (message structure, transcript
+# binding, combiner abstraction) and re-proving is tracked open work;
+# until then, NO claim of machine-checked coverage attaches to XXhfs.
+# Live assurance for XXhfs rests on the wire-pattern, M1-privacy,
+# verify-before-derive, and cross-implementation gates, not on ProVerif.
+#
+# 3-message flow, all inside the outer TLS 1.3 envelope:
+#   M1 I->R: e_pub(97) || ml_ek(1568) — ephemeral ONLY, zero static keys.
+#   M2 R->I: e_pub(97) || ml_ct(1568) || enc(sig_r_pk) || enc(sig_r)
+#   M3 I->R: enc(sig_i_pk) || enc(sig_i)
+#   Split -> (k1, k2) + transcript hash h; the record key is
+#   HKDF-SHA384 over the canonically-ordered Split outputs bound to h
+#   (dual-PRF combiner assumption, stated — same standing as the
+#   TLS 1.3 / MLS / Noise-PQ analyses, not a theorem).
+#
+# Identity hiding (Noise spec Sec 7.8, XX pattern): M1 exposes only
+# high-entropy ephemeral keys to passive observers; both static
+# identities travel encrypted under forward-secret handshake keys, and
+# the initiator verifies the responder (verify-before-derive at M2)
+# before emitting M3 — no identity is ever sent to an unauthenticated
+# party. Freshness comes from fresh ephemerals per handshake plus a
+# completion deadline (Split refused after HANDSHAKE_MAX_AGE_S).
 
 @dataclass
 class HandshakeState:
@@ -297,6 +358,7 @@ class HandshakeState:
     _secure: Optional[SecureBytes] = field(default=None, repr=False)
     created: int = field(default_factory=_now)
     bytes_under_key: int = 0
+    msgs_under_key: int = 0  # sealed records in this epoch (CER counter)
 
     def key(self) -> bytes:
         # Short-lived copy, used inside the AEAD call only; never retained.
@@ -308,21 +370,6 @@ class HandshakeState:
         if self._secure is not None:
             self._secure.destroy()
             self._secure = None
-
-
-@dataclass
-class ClientEphemeral:
-    """Per-handshake ephemeral secrets. Destroy after client_finish."""
-    p384_priv: object
-    mlkem_sk: bytearray
-    mlkem_pk: bytes
-
-    def destroy(self) -> None:
-        try:
-            _zero(self.mlkem_sk)
-        except Exception:
-            pass
-        self.mlkem_sk = bytearray()
 
 
 def _sign_for(kp: HybridKeyPair | IdentityHandle, transcript: bytes) -> Tuple[bytes, bytes]:
@@ -351,197 +398,245 @@ def _assert_session_profile() -> None:
     assert_cnsa_kdf("HKDF-SHA384")
 
 
-def build_client_hello(kp: HybridKeyPair | IdentityHandle, peer_id: str) -> Tuple[bytes, bytes, ClientEphemeral, int]:
-    """Returns (wire_msg, transcript_pre, ephemeral, t). Server verifies BEFORE decaps.
+def build_client_hello(kp, peer_id: str):
+    """RETIRED (Tasks 2.1/2.2): transmitted sig_pk in cleartext M1.
 
-    v1 forward secrecy: BOTH components are ephemeral — fresh P-384 AND fresh
-    ML-KEM-1024 ek per handshake. Long-term kp.mlkem_* is NOT used on the wire
-    (reserved for future KEM-auth); identity is kp.sig_* (ML-DSA-87).
+    Fail-closed: use xxhfs_initiate / xxhfs_respond / xxhfs_finalize /
+    xxhfs_complete (Noise_XXhfs, M1 ephemeral-only). Never re-enable.
     """
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import serialization
-    from liboqs_wrapper import LibOQS_MLKEM_1024
-    _assert_session_profile()
-    eph = ec.generate_private_key(ec.SECP384R1())
-    eph_pub = eph.public_key().public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-    eph_ml_pk, eph_ml_sk_raw = LibOQS_MLKEM_1024().keygen()
-    # liboqs returns immutable bytes (one unavoidable copy); move into a
-    # mutable bytearray immediately and drop the reference so only the
-    # wipeable copy survives. The original is GC-collected (see H6 limits).
-    eph_ml_sk = bytearray(eph_ml_sk_raw)
-    del eph_ml_sk_raw
-    if len(eph_pub) != P384_SHARE or len(eph_ml_pk) != MLKEM1024_PK:
-        raise SecurityError("ephemeral encoding violation")
-    t = _now()
-    # wire: ver(8) || t(8) || eph_p384(97) || eph_ml_ek(1568) || sig_pk(len+val) || sig(len+val)
-    tr = _transcript(b"CH", eph_pub, eph_ml_pk, struct.pack(">Q", t), peer_id.encode())
-    sig_pk, sig = _sign_for(kp, tr)
-    msg = (PROTOCOL_VERSION + struct.pack(">Q", t) + eph_pub + eph_ml_pk
-           + struct.pack(">H", len(sig_pk)) + sig_pk
-           + struct.pack(">H", len(sig)) + sig)
-    return msg, tr, ClientEphemeral(eph, eph_ml_sk, eph_ml_pk), t
+    raise SecurityError("retired handshake — use Noise_XXhfs (xxhfs_*)")
 
 
-def server_accept(msg: bytes, server_kp: HybridKeyPair | IdentityHandle, peer_id: str,
+def server_accept(msg: bytes, server_kp, peer_id: str,
                   peer_cert: Optional[str] = None,
-                  peer_subject: Optional[str] = None) -> Tuple[bytes, HandshakeState]:
-    """Verify client hello (sig+timestamp+transcript) BEFORE decaps. Silent abort."""
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import serialization
-    from liboqs_wrapper import LibOQS_MLKEM_1024
+                  peer_subject: Optional[str] = None):
+    """RETIRED (Tasks 2.1/2.2): parsed cleartext initiator identity from M1.
+
+    Fail-closed: use xxhfs_respond / xxhfs_complete (Noise_XXhfs).
+    Never re-enable.
+    """
+    raise SecurityError("retired handshake — use Noise_XXhfs (xxhfs_*)")
+
+
+def client_finish(resp: bytes, cli_eph, cli_kp, tr_cli: bytes,
+                  peer_id: str, t_cli: int, peer_cert: Optional[str] = None,
+                  peer_subject: Optional[str] = None):
+    """RETIRED (Tasks 2.1/2.2): consumed cleartext responder identity from M2.
+
+    Fail-closed: use xxhfs_initiate / xxhfs_finalize (Noise_XXhfs).
+    Never re-enable.
+    """
+    raise SecurityError("retired handshake — use Noise_XXhfs (xxhfs_*)")
+
+
+# ---------------------------------------------------------------------------
+# Noise_XXhfs bridge: authoritative handshake (Tasks 2.1 / 2.2)
+# ---------------------------------------------------------------------------
+
+# M1 is ephemeral-only and fixed-size: e_pub(97) || ml_ek(1568).
+XXHFS_M1_LEN = 97 + 1568
+# Session-label domain separator mixed into the Noise transcript before M1.
+XXHFS_PEER_BIND = b"ST2027-XXhfs-peer-v1"
+
+
+def _xxhfs_identity(kp: HybridKeyPair | IdentityHandle):
+    """Return (sig_pk, sig_sk_or_empty, signer_or_None) for kp.
+
+    Hardware-held identities (sig_sk None) never leave the HSM: signing
+    routes through sign_with_identity via the returned callback.
+    """
+    if isinstance(kp, HybridKeyPair):
+        return kp.sig_pk, kp.sig_sk, None
+    if kp.sig_sk is None:
+        return kp.sig_pk, b"", lambda msg: sign_with_identity(kp, msg)
+    return kp.sig_pk, kp.sig_sk, None
+
+
+def _xxhfs_new_session(is_initiator: bool, sig_pk: bytes, sig_sk: bytes,
+                       peer_id: str):
+    """Fresh Noise session with the session label bound into the transcript."""
+    _assert_session_profile()
+    if not sig_pk:
+        raise SecurityError("identity missing")
+    sess = _npq.NoiseSession(bool(is_initiator), bytes(sig_pk), bytes(sig_sk))
+    sess.sym.mix_hash(XXHFS_PEER_BIND + peer_id.encode())
+    return sess
+
+
+def _xxhfs_record_key(k_send: bytes, k_recv: bytes, h: bytes,
+                      is_initiator: bool) -> bytes:
+    """Derive the 32B record key from Split outputs in canonical order.
+
+    split_session returns direction-assigned keys; canonical (k1, k2) order
+    is initiator-send || initiator-recv on both sides. The HKDF over the
+    concatenation is the dual-PRF combiner (assumption, stated in
+    hybrid_combine — same standing as TLS 1.3 / MLS / Noise-PQ).
+    """
+    k1, k2 = (k_send, k_recv) if is_initiator else (k_recv, k_send)
+    if len(k1) != 32 or len(k2) != 32 or len(h) != 48:
+        raise SecurityError("split size violation")
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+    salt = hashlib.sha384(b"ST2027-XXhfs-v1" + h).digest()[:32]
+    hkdf = HKDF(algorithm=hashes.SHA384(), length=32, salt=salt,
+                info=b"ST2027-record-v1")
+    return hkdf.derive(k1 + k2)
+
+
+def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
+                      peer_cert: Optional[str], peer_subject: Optional[str],
+                      tag: str) -> None:
+    """Identity continuity: strict PKI (no TOFU) when required, else TOFU.
+
+    Ephemeral KEM material always rotates and is never pinned — only the
+    long-term ML-DSA-87 identities revealed at Split are gated here.
+    """
+    if not peer_sig_pk:
+        raise SecurityError("peer identity missing")
+    try:
+        from trust_anchor import ephemeral_required as _eph_req
+        from trust_anchor import pki_required as _pki_req
+        _need_pki = bool(_pki_req())
+        _need_eph = bool(_eph_req())
+    except Exception:
+        _need_pki, _need_eph = False, False
+    if _need_pki:
+        from trust_anchor import require_cert_for_remote as _cert_gate
+        _cert_gate(peer_sig_pk, peer_cert,
+                   peer_subject if peer_subject else peer_id)
+    elif _need_eph:
+        from trust_anchor import verify_peer_identity as _vpi
+        _vpi(tag + peer_id, local_sig_pk, peer_sig_pk)
+    else:
+        check_pin(tag + peer_id, identity_pin(local_sig_pk, peer_sig_pk))
+
+
+def xxhfs_initiate(kp: HybridKeyPair | IdentityHandle, peer_id: str):
+    """M1: ephemeral-only (zero static keys). Returns (m1, sess, t0)."""
+    _assert_session_profile()
+    sig_pk, sig_sk, _signer = _xxhfs_identity(kp)
+    sess = _xxhfs_new_session(True, sig_pk, sig_sk, peer_id)
+    try:
+        m1 = _npq.initiator_hello(sess)
+    except Exception as e:
+        log.debug("xxhfs initiate refused: %r", e)
+        raise SecurityError("handshake rejected")
+    if len(m1) != XXHFS_M1_LEN:
+        raise SecurityError("handshake encoding violation")
+    return m1, sess, _now()
+
+
+def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
+                  peer_id: str):
+    """Process M1 (size-checked BEFORE any encaps/ECDH). Returns (m2, sess, t)."""
     _assert_session_profile()
     try:
-        off = 0
-        if msg[off:off + 8] != PROTOCOL_VERSION:
-            raise SecurityError("version")
-        off += 8
-        (t,) = struct.unpack(">Q", msg[off:off + 8]); off += 8
-        if abs(_now() - t) > HANDSHAKE_MAX_AGE_S:
-            raise SecurityError("stale")
-        eph_cli = msg[off:off + P384_SHARE]; off += P384_SHARE
-        ml_ek_cli = msg[off:off + MLKEM1024_PK]; off += MLKEM1024_PK
-        (lpk,) = struct.unpack(">H", msg[off:off + 2]); off += 2
-        if lpk == 0 or lpk > 5000 or len(msg) < off + lpk + 2:
-            raise SecurityError("size")
-        cli_sig_pk = msg[off:off + lpk]; off += lpk
-        (lsig,) = struct.unpack(">H", msg[off:off + 2]); off += 2
-        cli_sig = msg[off:off + lsig]; off += lsig
-        if off != len(msg):
-            raise SecurityError("trailing")
-        tr = _transcript(b"CH", eph_cli, ml_ek_cli, struct.pack(">Q", t), peer_id.encode())
-        verify_transcript(cli_sig_pk, tr, cli_sig)   # <-- verify BEFORE decaps
-        if len(ml_ek_cli) != MLKEM1024_PK or len(eph_cli) != P384_SHARE:
-            raise SecurityError("peer share violation")
-        # Fresh server ephemeral P-384 for this session (not the long-term kp key).
-        eph_srv = ec.generate_private_key(ec.SECP384R1())
-        eph_srv_pub = eph_srv.public_key().public_bytes(
-            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-        peer_pub = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP384R1(), eph_cli)
-        ecdhe = eph_srv.exchange(ec.ECDH(), peer_pub)
-        ml_ct, ml_ss = LibOQS_MLKEM_1024().encaps(ml_ek_cli)
-        hybrid = hybrid_combine(ecdhe, ml_ss)
-        ts = _now()
-        tr2 = _transcript(b"SH", tr, eph_srv_pub, ml_ct, struct.pack(">Q", ts))
-        srv_sig_pk, sig2 = _sign_for(server_kp, tr2)
-        st = HandshakeState(role="server", peer_id=peer_id)
-        salt = hashlib.sha384(PROTOCOL_VERSION + b"v1-hkdf" + tr + tr2).digest()[:32]
-        okm = _hkdf_sha384(hybrid, salt, b"ST2027-record-v1", 32)
-        st._secure = SecureBytes(okm)
-        st.created = ts
-        # Identity continuity: strict PKI binding (no TOFU) when required,
-        # memory TOFU when ephemeral, file TOFU in the lab only. Ephemeral
-        # KEM material always rotates and is never pinned.
-        try:
-            from trust_anchor import ephemeral_required as _eph_req
-            from trust_anchor import pki_required as _pki_req
-            _need_pki = bool(_pki_req())
-            _need_eph = bool(_eph_req())
-        except Exception:
-            _need_pki, _need_eph = False, False
-        if _need_pki:
-            from trust_anchor import require_cert_for_remote as _cert_gate
-            _cert_gate(cli_sig_pk, peer_cert,
-                       peer_subject if peer_subject else peer_id)
-        elif _need_eph:
-            from trust_anchor import verify_peer_identity as _vpi
-
-            _vpi("srv:" + peer_id, srv_sig_pk, cli_sig_pk)
-        else:
-            check_pin("srv:" + peer_id, identity_pin(srv_sig_pk, cli_sig_pk))
-        resp = (PROTOCOL_VERSION + struct.pack(">Q", ts) + eph_srv_pub + ml_ct
-                + struct.pack(">H", len(srv_sig_pk)) + srv_sig_pk
-                + struct.pack(">H", len(sig2)) + sig2)
-        audit_event("handshake_server_ok", {"peer": peer_id})
-        return resp, st
+        if len(m1) != XXHFS_M1_LEN:
+            raise SecurityError("handshake size violation")
+        sig_pk, sig_sk, signer = _xxhfs_identity(kp)
+        sess = _xxhfs_new_session(False, sig_pk, sig_sk, peer_id)
+        m2 = _npq.responder_reply(sess, bytes(m1), signer=signer)
     except SecurityError:
         try:
-            audit_event("handshake_server_reject", {"peer": peer_id})
-        except Exception:
-            pass
-        raise
-    except Exception as e:  # fail closed, no oracle
-        log.debug("handshake reject: %r", e)
-        try:
-            audit_event("handshake_server_reject", {"peer": peer_id})
-        except Exception:
-            pass
-        raise SecurityError("handshake rejected")
-
-
-def client_finish(resp: bytes, cli_eph: ClientEphemeral, cli_kp: HybridKeyPair | IdentityHandle, tr_cli: bytes,
-                  peer_id: str, t_cli: int, peer_cert: Optional[str] = None,
-                  peer_subject: Optional[str] = None) -> HandshakeState:
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from liboqs_wrapper import LibOQS_MLKEM_1024
-    try:
-        off = 0
-        if resp[off:off + 8] != PROTOCOL_VERSION:
-            raise SecurityError("version")
-        off += 8
-        (ts,) = struct.unpack(">Q", resp[off:off + 8]); off += 8
-        if abs(_now() - ts) > HANDSHAKE_MAX_AGE_S:
-            raise SecurityError("stale")
-        eph_srv = resp[off:off + P384_SHARE]; off += P384_SHARE
-        if len(eph_srv) != P384_SHARE:
-            raise SecurityError("peer share violation")
-        ml_ct = resp[off:off + MLKEM1024_CT]; off += MLKEM1024_CT
-        (lpk,) = struct.unpack(">H", resp[off:off + 2]); off += 2
-        if lpk == 0 or lpk > 5000 or len(resp) < off + lpk + 2:
-            raise SecurityError("size")
-        srv_sig_pk = resp[off:off + lpk]; off += lpk
-        (lsig,) = struct.unpack(">H", resp[off:off + 2]); off += 2
-        srv_sig = resp[off:off + lsig]; off += lsig
-        if off != len(resp):
-            raise SecurityError("trailing")
-        tr2 = _transcript(b"SH", tr_cli, eph_srv, ml_ct, struct.pack(">Q", ts))
-        verify_transcript(srv_sig_pk, tr2, srv_sig)  # verify BEFORE decaps/use
-        peer_pub = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP384R1(), eph_srv)
-        ecdhe = cli_eph.p384_priv.exchange(ec.ECDH(), peer_pub)
-        ml_ss = LibOQS_MLKEM_1024().decaps(bytes(cli_eph.mlkem_sk), ml_ct)
-        hybrid = hybrid_combine(ecdhe, ml_ss)
-        st = HandshakeState(role="client", peer_id=peer_id)
-        salt = hashlib.sha384(PROTOCOL_VERSION + b"v1-hkdf" + tr_cli + tr2).digest()[:32]
-        okm = _hkdf_sha384(hybrid, salt, b"ST2027-record-v1", 32)
-        st._secure = SecureBytes(okm)
-        # TOFU pins long-term ML-DSA-87 identities (ephemeral KEM rotates always).
-        cli_sig_pk = cli_kp.sig_pk  # same attribute on HybridKeyPair and IdentityHandle
-        try:
-            from trust_anchor import ephemeral_required as _eph_req_c
-            from trust_anchor import pki_required as _pki_req_c
-            _need_pki_c = bool(_pki_req_c())
-            _need_eph_c = bool(_eph_req_c())
-        except Exception:
-            _need_pki_c, _need_eph_c = False, False
-        if _need_pki_c:
-            from trust_anchor import require_cert_for_remote as _cert_gate_c
-            _cert_gate_c(srv_sig_pk, peer_cert,
-                         peer_subject if peer_subject else peer_id)
-        elif _need_eph_c:
-            from trust_anchor import verify_peer_identity as _vpi_c
-
-            _vpi_c("cli:" + peer_id, cli_sig_pk, srv_sig_pk)
-        else:
-            check_pin("cli:" + peer_id, identity_pin(cli_sig_pk, srv_sig_pk))
-        _ = t_cli
-        audit_event("handshake_client_ok", {"peer": peer_id})
-        return st
-    except SecurityError:
-        try:
-            audit_event("handshake_client_reject", {"peer": peer_id})
+            audit_event("handshake_xxhfs_server_reject", {"peer": peer_id})
         except Exception:
             pass
         raise
     except Exception as e:
-        log.debug("handshake finish reject: %r", e)
+        log.debug("xxhfs respond refused: %r", e)
         try:
-            audit_event("handshake_client_reject", {"peer": peer_id})
+            audit_event("handshake_xxhfs_server_reject", {"peer": peer_id})
+        except Exception:
+            pass
+        raise SecurityError("handshake rejected")
+    return m2, sess, _now()
+
+
+def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
+                   peer_id: str, t0: int,
+                   peer_cert: Optional[str] = None,
+                   peer_subject: Optional[str] = None):
+    """Process M2 (verify-before-derive), emit M3, Split -> (m3, state)."""
+    _assert_session_profile()
+    st: Optional[HandshakeState] = None
+    try:
+        if abs(_now() - t0) > HANDSHAKE_MAX_AGE_S:
+            raise SecurityError("stale")
+        if len(m2) < 97 + 1568 + 16:
+            raise SecurityError("handshake size violation")
+        sig_pk, _sig_sk, signer = _xxhfs_identity(kp)
+        _npq.initiator_finish(sess, bytes(m2))  # verify sig_r BEFORE derive
+        m3 = _npq.initiator_complete(sess, signer=signer)
+        k_s, k_r, h = _npq.split_session(sess)
+        okm = _xxhfs_record_key(k_s, k_r, h, True)
+        st = HandshakeState(role="client", peer_id=peer_id)
+        st._secure = SecureBytes(okm)
+        st.created = _now()
+        peer_pk = sess._peer_sig_pk
+        _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,
+                          peer_subject, "cli:")
+        audit_event("handshake_xxhfs_client_ok", {"peer": peer_id})
+        return m3, st
+    except SecurityError:
+        try:
+            audit_event("handshake_xxhfs_client_reject", {"peer": peer_id})
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        log.debug("xxhfs finalize refused: %r", e)
+        try:
+            audit_event("handshake_xxhfs_client_reject", {"peer": peer_id})
         except Exception:
             pass
         raise SecurityError("handshake rejected")
     finally:
         try:
-            cli_eph.destroy()
+            sess.destroy()
+        except Exception:
+            pass
+
+
+def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
+                   peer_id: str, t_rsp: int,
+                   peer_cert: Optional[str] = None,
+                   peer_subject: Optional[str] = None) -> HandshakeState:
+    """Process M3 (verify-before-Split) -> HandshakeState."""
+    _assert_session_profile()
+    st: Optional[HandshakeState] = None
+    try:
+        if abs(_now() - t_rsp) > HANDSHAKE_MAX_AGE_S:
+            raise SecurityError("stale")
+        if len(m3) < 2592 + 16 + 1:
+            raise SecurityError("handshake size violation")
+        sig_pk, _sig_sk, _signer = _xxhfs_identity(kp)
+        _npq.responder_complete(sess, bytes(m3))  # verify sig_i BEFORE Split
+        k_s, k_r, h = _npq.split_session(sess)
+        okm = _xxhfs_record_key(k_s, k_r, h, False)
+        st = HandshakeState(role="server", peer_id=peer_id)
+        st._secure = SecureBytes(okm)
+        st.created = _now()
+        peer_pk = sess._peer_sig_pk
+        _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,
+                          peer_subject, "srv:")
+        audit_event("handshake_xxhfs_server_ok", {"peer": peer_id})
+        return st
+    except SecurityError:
+        try:
+            audit_event("handshake_xxhfs_server_reject", {"peer": peer_id})
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        log.debug("xxhfs complete refused: %r", e)
+        try:
+            audit_event("handshake_xxhfs_server_reject", {"peer": peer_id})
+        except Exception:
+            pass
+        raise SecurityError("handshake rejected")
+    finally:
+        try:
+            sess.destroy()
         except Exception:
             pass
 
@@ -551,12 +646,47 @@ def client_finish(resp: bytes, cli_eph: ClientEphemeral, cli_kp: HybridKeyPair |
 # ---------------------------------------------------------------------------
 
 class ReplayWindow:
+    """64-bit sliding anti-replay window (RFC 6479 shape, W=64).
+
+    Ordering discipline (WireGuard whitepaper Sec 5.4: counters
+    "checked only after having verified the authentication tag";
+    RFC 6479 Sec 1: "If S>WT and is validated, the window is
+    advanced" — validation means AEAD authentication success):
+      - check(seq): READ-ONLY. Safe on unauthenticated input; never
+        mutates base/bitmap, so forged packets cannot shift the window.
+      - mark(seq): advances base/bitmap. Call ONLY after the AEAD tag
+        for that exact seq has verified (Channel.open does this).
+      - check_and_mark(seq): TEST-ONLY atomic helper for NON-WIRE
+        callers (unit cross-checks). The wire path MUST NOT use it:
+        mutating before authentication re-opens the window-poisoning
+        DoS (forged seq=2**64-1 would orphan all legitimate seqs).
+    Single-threaded per Channel: check-then-mark has no TOCTOU gap.
+    """
+
     def __init__(self) -> None:
         self.base: int = 0
         self.bitmap: int = 0  # bit i = seen(base+i), 64-bit window
         self.started = False
 
-    def check_and_mark(self, seq: int) -> None:
+    def check(self, seq: int) -> None:
+        # Reject bool explicitly: True == 1 in Python; seq must be int.
+        if isinstance(seq, bool) or not isinstance(seq, int):
+            raise SecurityError("sequence violation")
+        if seq < 0 or seq >= (1 << 64):
+            raise SecurityError("sequence violation")
+        if not self.started:
+            return  # any valid seq may initialize; mark() records it
+        if seq < self.base:
+            raise SecurityError("replay rejected")
+        off = seq - self.base
+        if off < REPLAY_WINDOW and ((self.bitmap >> off) & 1):
+            raise SecurityError("replay rejected")
+
+    def mark(self, seq: int) -> None:
+        # Must mirror check() validation; called only after check() +
+        # successful AEAD authentication for the same seq.
+        if isinstance(seq, bool) or not isinstance(seq, int):
+            raise SecurityError("sequence violation")
         if seq < 0 or seq >= (1 << 64):
             raise SecurityError("sequence violation")
         if not self.started:
@@ -565,14 +695,15 @@ class ReplayWindow:
             self.started = True
             return
         if seq < self.base:
-            raise SecurityError("replay rejected")
+            return  # already validated by check(); nothing to record
         off = seq - self.base
         if off < REPLAY_WINDOW:
-            if (self.bitmap >> off) & 1:
-                raise SecurityError("replay rejected")
             self.bitmap |= (1 << off)
+            self.bitmap &= (1 << 64) - 1  # enforce 64-bit invariant
             return
-        # slide window
+        # slide window: base advances by shift, bitmap shifts right,
+        # MSB set for the newly validated seq. Matches RFC 6479
+        # "[WB+S-WT, S]" advance, executed only on validated S.
         shift = off - (REPLAY_WINDOW - 1)
         if shift >= REPLAY_WINDOW:
             self.bitmap = 0
@@ -580,10 +711,38 @@ class ReplayWindow:
             self.bitmap >>= shift
         self.base += shift
         self.bitmap |= (1 << (REPLAY_WINDOW - 1))
+        self.bitmap &= (1 << 64) - 1
+
+    def check_and_mark(self, seq: int) -> None:
+        """Atomic check-then-mark for NON-WIRE callers only (tests).
+
+        Preserves the native-core cross-check contract
+        (test_native_replay_crosscheck_with_python). The wire receive
+        path MUST call check() before authentication and mark() after;
+        calling this here would mutate state on unauthenticated input.
+        """
+        self.check(seq)
+        self.mark(seq)
 
 
 @dataclass
 class Channel:
+    """Record layer over one epoch key (Continuous Epoch Ratchet member).
+
+    Two key-evolution axes, matching the Signal Double Ratchet decomposition
+    (spec: symmetric-key ratchet per message + DH ratchet per epoch):
+      - Symmetric axis: every sealed record uses a monotonic seq+direction
+        nonce under the epoch key; the epoch key is erased at rotation, so
+        records have per-record forward secrecy within the epoch.
+      - Epoch (PCS) axis: every CER_EPOCH_MESSAGES sealed records (or the
+        byte/idle caps) the epoch rotates via a fresh ephemeral hybrid
+        (P-384 + ML-KEM-1024) XXhfs exchange interleaved into the session
+        key chain (see rehandshake). Transient compromise of epoch N heals
+        within one epoch: the attacker never sees epoch N+1's fresh
+        ephemerals, so its keys are independent (proved per-epoch in
+        docs/formal/st2027_pcs.pv). The symmetric chain alone has NO PCS
+        (deterministic KDF) — epochs are the healing mechanism, stated.
+    """
     state: HandshakeState
     send_seq: int = field(default_factory=lambda: secrets.randbits(64))
     recv_win: ReplayWindow = field(default_factory=ReplayWindow)
@@ -592,7 +751,8 @@ class Channel:
 
     def needs_rekey(self) -> bool:
         age = _now() - self.state.created
-        return (self.state.bytes_under_key >= SESSION_REKEY_BYTES
+        return (self.state.msgs_under_key >= CER_EPOCH_MESSAGES
+                or self.state.bytes_under_key >= SESSION_REKEY_BYTES
                 or age >= SESSION_REKEY_SECONDS)
 
     def _nonce(self, seq: int, direction: int) -> bytes:
@@ -606,7 +766,14 @@ class Channel:
             raise SecurityError("record too large")
         if ftype not in (FRAME_TYPE_DATA, FRAME_TYPE_REKEY, FRAME_TYPE_CHAFF):
             raise SecurityError("frame type violation")
-        seq = (self.send_seq + 1) % (1 << 64)
+        # Fail-closed sequence exhaustion: the 64-bit seq space MUST NEVER
+        # wrap under one epoch key (AES-GCM nonce reuse = forbidden attack:
+        # GHASH subkey recovery + forgery, cf. CVE-2026-81019/11110, Joux).
+        # CER rotation (128 records) retires keys ~2^57 epochs before this
+        # bound; reaching it means rotation is broken — refuse, never wrap.
+        if self.send_seq >= (1 << 64) - 1:
+            raise SecurityError("sequence exhausted — rekey required")
+        seq = self.send_seq + 1
         self.send_seq = seq
         body = bytes([ftype]) + plaintext
         wire_len = 2 + 8 + 2 + len(body) + 16  # magic+seq+len+body+tag
@@ -616,6 +783,7 @@ class Channel:
         aad = frame[:12]  # magic||seq||len bound into tag (header auth)
         ct = AESGCM(self.state.key()).encrypt(self._nonce(seq, self.direction_out), frame[12:], aad)
         self.state.bytes_under_key += len(ct)
+        self.state.msgs_under_key += 1  # CER epoch counter (rotation erases)
         return frame[:12] + ct
 
     def open(self, wire: bytes) -> Tuple[int, bytes]:
@@ -630,13 +798,21 @@ class Channel:
         # padding length into AAD so truncation/extension fails closed.
         if hlen != len(wire) - 12 - 16:
             raise SecurityError("framing violation")
-        self.recv_win.check_and_mark(seq)  # silent replay drop (no oracle)
+        self.recv_win.check(seq)  # Step 1: read-only check (no oracle).
+        # READ-ONLY: the window MUST NOT move before authentication
+        # (WireGuard whitepaper Sec 5.4: counters "checked only after
+        # having verified the authentication tag"; RFC 6479 Sec 1:
+        # advance only on validated S). A forged high seq therefore
+        # cannot orphan legitimate traffic.
         aad = wire[:12]
         try:
+            # Step 2: authenticate and decrypt (seq bound via nonce+AAD).
             pt = AESGCM(self.state.key()).decrypt(
                 self._nonce(seq, self.direction_in), wire[12:], aad)
         except Exception:
             raise SecurityError("authentication failed")
+        # Step 3: mutate window ONLY on authentication success.
+        self.recv_win.mark(seq)
         # pt == body + zero-pad, where body == ftype(1) || plaintext
         if len(pt) < 1 or len(pt) != hlen:
             raise SecurityError("framing violation")
@@ -700,18 +876,81 @@ def _pin_tls_suite(ctx: ssl.SSLContext) -> None:
         raise SecurityError(f"TLS cipher pinning failed: {e}")
 
 
+def _select_outer_group(set_curve_fn) -> str:
+    """Legacy ECDH-curve hygiene rung (TLS <= 1.2 knob ONLY), L5-first.
+
+    Correction (verified live 2026-09-29, PE-export parse + CPython
+    behavior): ``SSLContext.set_ecdh_curve`` resolves names through the
+    curve-NID table (``OBJ_sn2nid``) and then calls ``SSL_CTX_set_tmp_ecdh``
+    — it CANNOT accept TLS 1.3 named groups (hybrid names fail with
+    "unknown elliptic curve name" inside CPython, before OpenSSL is even
+    consulted) and it does NOT influence TLS 1.3 group negotiation at all.
+    Python's ``ssl`` exposes no TLS-1.3-group API (no ``set_groups``), and
+    this build's libssl exports neither group-set
+    (``SSL_CTX_set1_groups_list``) nor group-observe
+    (``SSL_get_negotiated_group``) entry points. So this ladder only keeps
+    the legacy handshake path at P-384-or-better; the TLS 1.3 groups ride
+    the build defaults (see ``_require_ts_outer_posture``). The accepted
+    rung is returned for diagnostics; total refusal still fails closed.
+    """
+    last_err: Exception | None = None
+    for grp in ("SecP384r1MLKEM1024", "X25519MLKEM768", "secp384r1"):
+        try:
+            set_curve_fn(grp)
+            return grp
+        except Exception as e:
+            last_err = e
+            continue
+    raise SecurityError(f"legacy ECDH curve unavailable: {last_err}")
+
+
+def _require_ts_outer_posture(version_info=None) -> None:
+    """TS gate: the outer TLS stack must be hybrid-capable by default.
+
+    Requires OpenSSL >= 3.5: the first release with native hybrid TLS 1.3
+    groups (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024 per
+    RFC 10024, Aug 2026) whose default group list INCLUDES and PREFERS
+    hybrid KEM groups and whose default keyshares offer X25519MLKEM768
+    (OpenSSL 3.5 release notes, Apr 2025). Older stacks negotiate
+    classical-only by default and are refused for TOP SECRET.
+
+    Honest residual (do NOT re-add a rung gate here): the exact negotiated
+    TLS 1.3 group is UNOBSERVABLE from Python's ssl on this build, so no
+    code here can prove "L5 was negotiated" — any check claiming that
+    would be theater. Session post-quantum security does NOT depend on
+    the outer: the inner Noise_XXhfs envelope is ML-KEM-1024 + P-384 on
+    every session regardless of outer. Version/suite pins
+    (TLS_MIN/MAX, assert_outer_is_pinned) are enforced separately and ARE
+    observable. Operators wanting an outer group allow-list must set
+    ``Groups`` in openssl.cnf (operator duty, outside Python's reach).
+    """
+    vi = version_info or ssl.OPENSSL_VERSION_INFO
+    if tuple(vi[:2]) < (3, 5):
+        raise SecurityError(
+            f"outer PQ groups unavailable: OpenSSL {ssl.OPENSSL_VERSION} "
+            "predates native hybrid TLS 1.3 groups (need >= 3.5)")
+
+
+def _require_l5_outer_group(ctx: ssl.SSLContext) -> None:  # pragma: no cover
+    """Retired 2026-09-29: enforced the legacy-curve rung as if it were the
+    negotiated TLS 1.3 group. Wrong instrument (see _select_outer_group):
+    it refused TS sessions whose outer was in fact hybrid-by-default while
+    being unable to detect a truly classical outer. Kept as a stub so any
+    external caller fails loudly instead of silently passing."""
+    raise SecurityError("retired gate: outer group rung is not observable; "
+                        "see _require_ts_outer_posture")
+
+
 def make_server_context(certfile: str, keyfile: str, cafile: str) -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = TLS_MIN
     ctx.maximum_version = TLS_MAX
     _pin_tls_suite(ctx)
-    # Prefer hybrid PQC KEM groups; L5 first. Names depend on OpenSSL 3.5.
-    for grp in ("SecP384r1MLKEM1024", "X25519MLKEM768", "secp384r1"):
-        try:
-            ctx.set_ecdh_curve(grp)  # type: ignore[attr-defined]
-            break
-        except Exception:
-            continue
+    # Legacy ECDH-curve hygiene only (see _select_outer_group): TLS 1.3
+    # groups follow build defaults. Rung recorded for diagnostics.
+    ctx._st_kem_group = _select_outer_group(ctx.set_ecdh_curve)  # type: ignore[attr-defined]
+    log.info("legacy ECDH curve rung: %s (TLS 1.3 groups ride build defaults)",
+             ctx._st_kem_group)
     ctx.load_cert_chain(certfile, keyfile)
     ctx.load_verify_locations(cafile)
     ctx.verify_mode = ssl.CERT_REQUIRED
@@ -726,12 +965,9 @@ def make_client_context(certfile: str, keyfile: str, cafile: str) -> ssl.SSLCont
     ctx.minimum_version = TLS_MIN
     ctx.maximum_version = TLS_MAX
     _pin_tls_suite(ctx)
-    for grp in ("SecP384r1MLKEM1024", "X25519MLKEM768", "secp384r1"):
-        try:
-            ctx.set_ecdh_curve(grp)  # type: ignore[attr-defined]
-            break
-        except Exception:
-            continue
+    ctx._st_kem_group = _select_outer_group(ctx.set_ecdh_curve)  # type: ignore[attr-defined]
+    log.info("legacy ECDH curve rung: %s (TLS 1.3 groups ride build defaults)",
+             ctx._st_kem_group)
     ctx.load_cert_chain(certfile, keyfile)
     ctx.load_verify_locations(cafile)
     ctx.verify_mode = ssl.CERT_REQUIRED
@@ -755,9 +991,9 @@ def assert_outer_is_pinned(sock: ssl.SSLSocket) -> None:
 # ---------------------------------------------------------------------------
 
 _HDR = struct.Struct(">I")
-# Handshake messages carry ML-DSA-87 identity keys (2592B) + signatures
-# (~4.6KB): worst case 16 + 97 + 1568 + 2 + 2592 + 2 + 4627 = 8904B.
-# Cap 16384 bounds DoS while fitting the largest legitimate hello.
+# Noise_XXhfs handshake sizes: M1 1665 (ephemeral-only, exact); M2 ~8916
+# (e_pub + ml_ct + enc sig_pk + enc sig); M3 ~7251. Cap 16384 bounds DoS
+# while fitting the largest legitimate message.
 HANDSHAKE_CAP = 16384
 
 def _send_msg(s: socket.socket, b: bytes) -> None:
@@ -837,11 +1073,15 @@ def server_once(lsock: socket.socket, tls_ctx: ssl.SSLContext,
     try:
         with tls_ctx.wrap_socket(conn, server_side=True) as tls:
             assert_outer_is_pinned(tls)
-            hello = _recv_msg(tls, cap=HANDSHAKE_CAP)
-            resp, st = server_accept(hello, server_kp, peer_id,
-                                     peer_cert=peer_cert,
-                                     peer_subject=peer_subject)
-            _send_msg(tls, resp)
+            # Unified Noise_XXhfs handshake: M1 (ephemeral-only) -> M2 ->
+            # M3. Identities are verified at Split, never seen in clear.
+            m1 = _recv_msg(tls, cap=HANDSHAKE_CAP)
+            m2, rsp_sess, t_rsp = xxhfs_respond(m1, server_kp, peer_id)
+            _send_msg(tls, m2)
+            m3 = _recv_msg(tls, cap=HANDSHAKE_CAP)
+            st = xxhfs_complete(rsp_sess, m3, server_kp, peer_id, t_rsp,
+                                peer_cert=peer_cert,
+                                peer_subject=peer_subject)
             ch = Channel(st, direction_out=0x5A, direction_in=0xA5)
             chunks: list[bytes] = []
             total = 0
@@ -919,12 +1159,14 @@ def client_send(host: str, port: int, tls_ctx: ssl.SSLContext,
     with socket.create_connection((lit, port), timeout=10) as raw:
         with tls_ctx.wrap_socket(raw, server_hostname=server_hostname) as tls:
             assert_outer_is_pinned(tls)
-            hello, tr, eph, t = build_client_hello(cli_kp, peer_id)
-            _send_msg(tls, hello)
-            resp = _recv_msg(tls, cap=HANDSHAKE_CAP)
-            st = client_finish(resp, eph, cli_kp, tr, peer_id, t,
-                                 peer_cert=peer_cert,
-                                 peer_subject=peer_subject)
+            # Unified Noise_XXhfs handshake: M1 -> M2 -> M3.
+            m1, ini_sess, t0 = xxhfs_initiate(cli_kp, peer_id)
+            _send_msg(tls, m1)
+            m2 = _recv_msg(tls, cap=HANDSHAKE_CAP)
+            m3, st = xxhfs_finalize(ini_sess, m2, cli_kp, peer_id, t0,
+                                    peer_cert=peer_cert,
+                                    peer_subject=peer_subject)
+            _send_msg(tls, m3)
             ch = Channel(st, direction_out=0xA5, direction_in=0x5A)
             seq_no = 0
             for off in range(0, len(data) or 1, 1024):
@@ -954,20 +1196,30 @@ def rehandshake(ch: Channel, tls_sock: socket.socket,
                 kp: HybridKeyPair | IdentityHandle, peer_id: str, is_server: bool,
                 peer_cert: Optional[str] = None,
                 peer_subject: Optional[str] = None) -> Channel:
-    """Fresh ephemeral hybrid exchange inside live outer TLS (HNDL E>1)."""
+    """Epoch rotation: fresh ephemeral Noise_XXhfs exchange (HNDL E>1 + PCS).
+
+    This is the Continuous Epoch Ratchet step: both sides contribute fresh
+    P-384 + ML-KEM-1024 ephemerals, the new epoch key is independent of the
+    old (heals transient compromise within one epoch), and the old epoch
+    state is destroyed before return. Triggered every CER_EPOCH_MESSAGES
+    records / SESSION_REKEY_BYTES / SESSION_REKEY_SECONDS, whichever first.
+    """
     if is_server:
-        hello = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
-        resp, st = server_accept(hello, kp, peer_id + "/r",
-                                 peer_cert=peer_cert,
-                                 peer_subject=peer_subject)
-        _send_msg(tls_sock, resp)
+        m1 = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
+        m2, rsp_sess, t_rsp = xxhfs_respond(m1, kp, peer_id + "/r")
+        _send_msg(tls_sock, m2)
+        m3 = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
+        st = xxhfs_complete(rsp_sess, m3, kp, peer_id + "/r", t_rsp,
+                            peer_cert=peer_cert,
+                            peer_subject=peer_subject)
     else:
-        hello, tr, eph, t = build_client_hello(kp, peer_id + "/r")
-        _send_msg(tls_sock, hello)
-        resp = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
-        st = client_finish(resp, eph, kp, tr, peer_id + "/r", t,
-                           peer_cert=peer_cert,
-                           peer_subject=peer_subject)
+        m1, ini_sess, t0 = xxhfs_initiate(kp, peer_id + "/r")
+        _send_msg(tls_sock, m1)
+        m2 = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
+        m3, st = xxhfs_finalize(ini_sess, m2, kp, peer_id + "/r", t0,
+                                peer_cert=peer_cert,
+                                peer_subject=peer_subject)
+        _send_msg(tls_sock, m3)
     old = ch.state
     new = Channel(st, direction_out=ch.direction_out, direction_in=ch.direction_in)
     new.send_seq = secrets.randbits(64)
@@ -1066,8 +1318,9 @@ def sign_with_identity(handle: IdentityHandle, message: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 # Python stdlib ssl has no ECH sender yet; the production-grade fix is
 # enforcement, not custom crypto: (a) never leak a sensitive hostname in
-# cleartext SNI/DNS — require literal IP or DoH-resolved mapping; (b) pin a
-# generic outer SNI; (c) require CDN/anycast coalescence for anonymity sets
+# cleartext SNI/DNS — require literal IP or DoH-resolved mapping (the manual
+# equivalent of RFC 9848 SVCB/HTTPS bootstrapping for ECH configs); (b) pin
+# a generic outer SNI; (c) require CDN/anycast coalescence for anonymity sets
 # per RFC 9849 deployment guidance; (d) refuse to start when ECH-capable
 # transport is required but absent (P2P_REQUIRE_ECH=1).
 
@@ -1233,9 +1486,11 @@ def verify_audit_chain() -> bool:
 # ---------------------------------------------------------------------------
 # H5 — Supply-chain gate for vendored PQC providers (fix residual #5)
 # ---------------------------------------------------------------------------
-# oqs.dll + libsodium.dll ship with Ed25519 sidecars (.sig/.pub) verified at
-# import by dependency_security_verifier. This gate runs the FULL verifier
-# before any session starts (production fail-closed), plus an optional Rekor
+# oqs.dll ships with an Ed25519 sidecar .sig verified at import by
+# dependency_security_verifier against EMBEDDED pins (Task 3.5: the Ed25519
+# pubkey + SHA-384 are hardcoded constants — no .pub/.hashes file is ever
+# read, so sidecar substitution authorizes nothing). This gate runs the
+# FULL verifier before any session starts (production fail-closed), plus an optional Rekor
 # bundle check via generate_production_sbom.verify_rekor_bundle when
 # P2P_REKOR_BUNDLE + P2P_REKOR_PUB are configured (Sigstore migration path).
 
@@ -1484,6 +1739,127 @@ def _gate_hw_admin(a) -> None:
                         "hardware checks report UNKNOWN")
 
 
+def _cmd_selftest() -> int:
+    """Local deployment self-test (no network): hardware report + crypto.
+
+    Verifies, in-process and side-effect free (pins/ledger isolated to a
+    temp dir): power-up KATs, CNSA purity, vendored-binary pins, a full
+    unified XXhfs handshake with Channel roundtrip + forged-max-seq
+    replay probe + epoch rotation + zeroization, the native ts_rt core,
+    and live hardware/FIPS posture (reported HAVE/MISSING, never failed:
+    unequipped hosts are correctly refused elsewhere, not here).
+    Prints one status line per check plus SELFTEST-OK/FAIL; returns 0/1.
+    """
+    import tempfile
+    results: list = []
+    failed = False
+
+    def _record(name: str, passed: bool, detail: str = "") -> None:
+        nonlocal failed
+        if not passed:
+            failed = True
+        line = f"[{'OK' if passed else 'FAIL'}] {name}" + (f": {detail}" if detail else "")
+        results.append(line)
+        print(line)
+
+    # 1. Power-up self-tests (KATs) + CNSA purity + supply-chain pins.
+    try:
+        from crypto_selftest import ensure_selftests
+        ensure_selftests()
+        _record("crypto-KATs", True, "power-up self-tests green")
+    except Exception as e:
+        log.debug("selftest KATs refused: %r", e)
+        _record("crypto-KATs", False, "power-up self-tests refused")
+    try:
+        from cnsa_purity import ensure_purity_cached
+        ensure_purity_cached()
+        _record("cnsa-purity", True, "strict profile scan clean")
+    except Exception as e:
+        log.debug("selftest purity refused: %r", e)
+        _record("cnsa-purity", False, "purity scan refused")
+    try:
+        verify_vendored_binaries()
+        _record("supply-chain", True, "vendored pins verify")
+    except Exception as e:
+        log.debug("selftest supply refused: %r", e)
+        _record("supply-chain", False, "vendored verification refused")
+    # 2. Unified handshake + record layer + replay discipline + CER +
+    # zeroization, fully in-process (temp-isolated TOFU pins/ledger).
+    _saved_pin, _saved_chain = PIN_DIR, _audit_chain
+    try:
+        with tempfile.TemporaryDirectory(prefix="st2027-selftest-") as tmp:
+            import pathlib as _pl
+            globals()["PIN_DIR"] = _pl.Path(tmp) / "pins"
+            os.environ["P2P_SIEM_LEDGER"] = str(_pl.Path(tmp) / "audit.jsonl")
+            globals()["_audit_chain"] = None
+            try:
+                cli_pk, cli_sk = generate_identity()
+                srv_pk, srv_sk = generate_identity()
+                cli_kp = generate_hybrid_keypair(cli_pk, cli_sk)
+                srv_kp = generate_hybrid_keypair(srv_pk, srv_sk)
+                m1, ini, t0 = xxhfs_initiate(cli_kp, "selftest")
+                assert len(m1) == XXHFS_M1_LEN and cli_pk not in m1
+                m2, rsp, t_rsp = xxhfs_respond(m1, srv_kp, "selftest")
+                m3, c_st = xxhfs_finalize(ini, m2, cli_kp, "selftest", t0)
+                s_st = xxhfs_complete(rsp, m3, srv_kp, "selftest", t_rsp)
+                assert c_st.key() == s_st.key()
+                cli = Channel(c_st, direction_out=0xA5, direction_in=0x5A)
+                srv = Channel(s_st, direction_out=0x5A, direction_in=0xA5)
+                w = cli.seal_data(b"selftest-payload")
+                assert srv.open(w)[1] == b"selftest-payload"
+                forged = bytearray(w)
+                forged[2:10] = b"\xff" * 8
+                try:
+                    srv.open(bytes(forged))
+                    raise AssertionError("forgery accepted")
+                except SecurityError:
+                    pass
+                assert srv.open(cli.seal_data(b"post-probe"))[1] == b"post-probe"
+                assert c_st.key() != b"\x00" * 32
+                c_st.destroy()
+                try:
+                    c_st.key()
+                    raise AssertionError("use-after-destroy accepted")
+                except SecurityError:
+                    pass
+                s_st.destroy()
+                _record("handshake+replay+zeroize", True,
+                        "XXhfs M1 ephemeral-only, split check/mark, CER-ready")
+            except Exception as e:
+                log.debug("selftest handshake refused: %r", e)
+                _record("handshake+replay+zeroize", False, "handshake path refused")
+    finally:
+        globals()["PIN_DIR"] = _saved_pin
+        globals()["_audit_chain"] = _saved_chain
+        os.environ.pop("P2P_SIEM_LEDGER", None)
+    # 3. Native deterministic core (loads + runs its built-in self-test).
+    try:
+        from ts_runtime import native_version
+        _record("native-ts_rt", True, native_version())
+    except Exception as e:
+        log.debug("selftest native refused: %r", e)
+        _record("native-ts_rt", False, "native core unloadable/refused")
+    # 4. Live posture, reported only (refusal is enforced at session time).
+    try:
+        import hw_readiness as _hw
+        have = sum(1 for _v in _hw.collect() if _v.headline().startswith("[HAVE]"))
+        total = len(_hw.collect())
+        _record("hardware-posture", True, f"{have}/{total} HAVE (MISSING refused at session time)")
+    except Exception as e:
+        log.debug("selftest hw refused: %r", e)
+        _record("hardware-posture", False, "readiness unreadable")
+    try:
+        from ts_hw_layer import check_fips_provider
+        prov = check_fips_provider()
+        _record("fips-probe", True,
+                "provider available" if prov.provider_loaded else "no provider (refused at session time)")
+    except Exception as e:
+        log.debug("selftest fips refused: %r", e)
+        _record("fips-probe", False, "probe error")
+    print("SELFTEST-OK" if not failed else "SELFTEST-FAIL")
+    return 0 if not failed else 1
+
+
 def _resolve_peer_cert(value: Optional[str]) -> Optional[str]:
     """Accept a certificate file path or inline JSON. Fail-closed either way.
 
@@ -1586,6 +1962,10 @@ def main(argv: Optional[list] = None) -> int:
     hw.add_argument("--assume-yes", action="store_true",
                     help="answer yes to the elevation consent prompt")
 
+    sub.add_parser("selftest",
+                   help="local deployment self-test (hardware report, KATs, "
+                        "handshake, replay, zeroization); exit 0 when green")
+
     a = ap.parse_args(argv)
     if getattr(a, "peer_cert", None) is not None:
         # Operators provision certificate files; fail closed on unreadable
@@ -1608,6 +1988,8 @@ def main(argv: Optional[list] = None) -> int:
         if getattr(a, "assume_yes", False):
             fwd.append("--assume-yes")
         return _hw_cli.main(fwd)
+    if a.cmd == "selftest":
+        return _cmd_selftest()
     if a.cmd in ("send", "recv"):
         _gate_hw_admin(a)
     if a.cmd == "keygen":
@@ -1626,6 +2008,10 @@ def main(argv: Optional[list] = None) -> int:
             # TOP SECRET over public internet mandates the anonymity
             # transport: overlay plus constant-rate uniform cells.
             want_anon = True
+            # TOP SECRET also mandates a hybrid-capable outer stack
+            # (OpenSSL >= 3.5 hybrid-preferring defaults; exact group is
+            # unobservable from Python — see _require_ts_outer_posture).
+            _require_ts_outer_posture()
             try:
                 from transport_anonymity import require_overlay as _ovl
 
@@ -1664,7 +2050,9 @@ def main(argv: Optional[list] = None) -> int:
         ctx = make_server_context(a.cert, a.key, a.ca)
         if _env_true("P2P_TS_MODE"):
             # TOP SECRET: no wildcard listener — bind the attested BLACK
-            # interface address only (RED/BLACK row, TS-2).
+            # interface address only (RED/BLACK row, TS-2). The outer
+            # stack must also be hybrid-capable (see _require_ts_outer_posture).
+            _require_ts_outer_posture()
             from ts_hw_layer import enforce_bind as _ts_bind
             black = _ts_bind("BLACK", os.environ.get("P2P_BLACK_BIND", ""))
             fam = socket.AF_INET6 if ":" in black else socket.AF_INET

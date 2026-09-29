@@ -176,26 +176,40 @@ pub extern "C" fn tsrt_replay_new(start: u64) -> *mut TsrtReplay {
     Box::into_raw(r)
 }
 
-/// 1 = accept, 0 = replay/reorder reject, -1 = null handle.
-#[no_mangle]
-pub extern "C" fn tsrt_replay_check_mark(r: *mut TsrtReplay, seq: u64) -> c_int {
-    if r.is_null() {
-        return -1;
-    }
-    // SAFETY: handle came from `tsrt_replay_new`; single-owner discipline
-    // is the caller's contract (same as the Python implementation).
-    let st = unsafe { &mut *r };
+/// Read-only verdict: 1 = acceptable, 0 = replay/stale. Never mutates.
+/// MUST be called on unauthenticated input; state advances only via
+/// `tsrt_replay_mark` after AEAD authentication (RFC 6479: "If S>WT
+/// and is validated, the window is advanced"; WireGuard Sec 5.4:
+/// counters "checked only after having verified the authentication
+/// tag").
+#[inline]
+fn replay_check(st: &TsrtReplay, seq: u64) -> bool {
     if seq < st.base {
-        return 0;
+        return false;
     }
     let off = seq.wrapping_sub(st.base);
     if off < REPLAY_WINDOW {
         let bit = 1u64 << off;
         if st.bitmap & bit != 0 {
-            return 0;
+            return false;
         }
+    }
+    true
+}
+
+/// Advance window for a validated seq. Idempotent for duplicates and
+/// no-op for seq < base (unreachable when called after successful
+/// `replay_check` + AEAD auth; safe by construction).
+#[inline]
+fn replay_mark(st: &mut TsrtReplay, seq: u64) {
+    if seq < st.base {
+        return;
+    }
+    let off = seq.wrapping_sub(st.base);
+    if off < REPLAY_WINDOW {
+        let bit = 1u64 << off;
         st.bitmap |= bit;
-        return 1;
+        return;
     }
     let shift = off - (REPLAY_WINDOW - 1);
     if shift >= REPLAY_WINDOW {
@@ -205,6 +219,55 @@ pub extern "C" fn tsrt_replay_check_mark(r: *mut TsrtReplay, seq: u64) -> c_int 
     }
     st.base += shift;
     st.bitmap |= 1u64 << (REPLAY_WINDOW - 1);
+}
+
+/// 1 = accept (read-only, no state change), 0 = replay/reorder reject,
+/// -1 = null handle.
+#[no_mangle]
+pub extern "C" fn tsrt_replay_check(r: *const TsrtReplay, seq: u64) -> c_int {
+    if r.is_null() {
+        return -1;
+    }
+    // SAFETY: handle came from `tsrt_replay_new`; shared borrow performs
+    // no mutation, so calling on unauthenticated input is safe.
+    let st = unsafe { &*r };
+    if replay_check(st, seq) {
+        1
+    } else {
+        0
+    }
+}
+
+/// 1 = marked (or no-op for seq < base), -1 = null handle. Call ONLY
+/// after `tsrt_replay_check` accepted AND the AEAD tag for that exact
+/// seq verified.
+#[no_mangle]
+pub extern "C" fn tsrt_replay_mark(r: *mut TsrtReplay, seq: u64) -> c_int {
+    if r.is_null() {
+        return -1;
+    }
+    // SAFETY: handle came from `tsrt_replay_new`; single-owner discipline
+    // is the caller's contract (same as the Python implementation).
+    let st = unsafe { &mut *r };
+    replay_mark(st, seq);
+    1
+}
+
+/// 1 = accept, 0 = replay/reorder reject, -1 = null handle.
+/// Retained for backward compatibility (non-wire atomic helper / tests).
+/// Wire paths MUST use check-then-AEAD-then-mark instead.
+#[no_mangle]
+pub extern "C" fn tsrt_replay_check_mark(r: *mut TsrtReplay, seq: u64) -> c_int {
+    if r.is_null() {
+        return -1;
+    }
+    // SAFETY: handle came from `tsrt_replay_new`; single-owner discipline
+    // is the caller's contract (same as the Python implementation).
+    let st = unsafe { &mut *r };
+    if !replay_check(st, seq) {
+        return 0;
+    }
+    replay_mark(st, seq);
     1
 }
 
@@ -286,6 +349,58 @@ pub extern "C" fn tsrt_selftest() -> c_int {
             return 3;
         }
     }
+    // Step 3b: split check/mark decoupling — check is read-only, mark
+    // advances only after validation (window-poisoning defense).
+    let r2 = tsrt_replay_new(5000);
+    if r2.is_null() {
+        tsrt_replay_free(r);
+        return 3;
+    }
+    // 5000 seen at construction; 99999 unseen.
+    if tsrt_replay_check(r2, 99999) != 1 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    // Read-only: second check of same seq still accepts (not consumed).
+    if tsrt_replay_check(r2, 99999) != 1 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    // Window unmoved by checks: an in-window unseen seq still accepts.
+    if tsrt_replay_check(r2, 5001) != 1 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    if tsrt_replay_mark(r2, 99999) != 1 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    // After mark: consumed seq rejects, slid-past seq rejects.
+    if tsrt_replay_check(r2, 99999) != 0 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    if tsrt_replay_check(r2, 5001) != 0 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    if tsrt_replay_check(core::ptr::null(), 1) != -1 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    if tsrt_replay_mark(core::ptr::null_mut(), 1) != -1 {
+        tsrt_replay_free(r);
+        tsrt_replay_free(r2);
+        return 3;
+    }
+    tsrt_replay_free(r2);
     tsrt_replay_free(r);
     0
 }

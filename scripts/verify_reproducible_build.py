@@ -149,6 +149,50 @@ def run_reproducible_build_verification():
     results["source_tree_merkle_root"] = source_tree_merkle_root
     print(f"\n  [=] Core Modules Merkle Root: {source_tree_merkle_root[:24]}...")
 
+    # 2b. Hash-Manifest CI Gate: Critical Concurrent-Edit Files
+    # These 4 files are actively edited by multiple parties; any drift from
+    # the recorded manifest fails the build (detects unauthorized or
+    # uncoordinated changes in CI).
+    print("\n[*] Hash-Manifest CI Gate: Critical Concurrent-Edit Files...")
+    manifest_path = PROJECT_ROOT / "critical_modules.hashes"
+    if not manifest_path.exists():
+        print(f"  [-] FAIL: Missing hash manifest {manifest_path.name}")
+        all_passed = False
+    else:
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                expected = json.load(f)
+            gate_passed = True
+            results["critical_modules_manifest"] = {}
+            for name, exp in expected.items():
+                fpath = PROJECT_ROOT / name
+                if not fpath.exists():
+                    print(f"  [-] FAIL: Missing critical file {name}")
+                    gate_passed = False
+                    all_passed = False
+                    continue
+                actual = hash_file(fpath)
+                match = (
+                    actual["sha512"] == exp["sha512"] and
+                    actual["sha3_512"] == exp["sha3_512"] and
+                    actual["size_bytes"] == exp["size_bytes"]
+                )
+                results["critical_modules_manifest"][name] = {
+                    "expected_sha3_512": exp["sha3_512"],
+                    "actual_sha3_512": actual["sha3_512"],
+                    "matched": match
+                }
+                status = "MATCH" if match else "DRIFT"
+                if not match:
+                    gate_passed = False
+                    all_passed = False
+                print(f"  [{'+' if match else '-'}] {name}: {status} (sha3_512={actual['sha3_512'][:16]}...)")
+            if gate_passed:
+                print("  [+] All critical modules match manifest")
+        except Exception as e:
+            print(f"  [-] FAIL: Manifest verification error: {e}")
+            all_passed = False
+
     # 3. Verify SBOM Artifacts and Signatures
     print("\n[*] Verifying Software Bill of Materials (SBOM) Artifacts & Signatures...")
     cdx_path = reports_dir / "cyclonedx_sbom.json"

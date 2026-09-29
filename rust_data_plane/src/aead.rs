@@ -1,16 +1,16 @@
-//! Data-plane AEAD: ChaCha20-Poly1305 (RFC 8439) over framed packets.
+//! Data-plane AEAD: AES-256-GCM (CNSA 2.0 suite) over framed packets.
 //!
 //! Frame: `[seq: u64 BE | len: u16 BE | ftype: u8 | ciphertext | tag: 16B]`.
-//! The 16-byte Poly1305 tag covers header + ciphertext (AAD = header).
+//! The 16-byte GHASH tag covers header + ciphertext (AAD = header).
 //! Nonce discipline: `seq_BE(8) || dir(1) || 0x00(3)` — strictly monotonic
 //! per (key, direction); reuse is impossible while the replay window owns seq.
 //! Any tag failure ⇒ caller MUST drop silently (no reply, no log above debug).
 //!
 //! Keys are `ZeroizeOnDrop` and never cross the FFI boundary.
 
-use chacha20poly1305::{
-    aead::{Aead, KeyInit, Payload},
-    ChaCha20Poly1305, Key, Nonce,
+use aes_gcm::{
+    aead::{Aead, Key, KeyInit, Nonce, Payload},
+    Aes256Gcm,
 };
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -23,11 +23,11 @@ pub const DIR_RECV: u8 = 0x01;
 
 /// 256-bit frame key. Zeroized on drop.
 #[derive(Clone, ZeroizeOnDrop)]
-pub struct FrameKey(Key);
+pub struct FrameKey(Key<Aes256Gcm>);
 
 impl FrameKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        FrameKey(Key::from(bytes))
+        FrameKey(Key::<Aes256Gcm>::from(bytes))
     }
 
     /// Derive a frame key from a 32-byte ratchet secret via HKDF-SHA512.
@@ -39,7 +39,7 @@ impl FrameKey {
         let mut okm = [0u8; 32];
         hk.expand(info, &mut okm)
             .expect("HKDF-SHA512 expand with 32-byte output cannot fail");
-        let key = FrameKey(Key::from(okm));
+        let key = FrameKey(Key::<Aes256Gcm>::from(okm));
         okm.zeroize_inner();
         key
     }
@@ -57,11 +57,11 @@ impl ZeroizeInner for [u8; 32] {
 }
 
 /// Build the 12-byte nonce for (seq, direction). Never reuse under one key.
-pub fn make_nonce(seq: u64, dir: u8) -> Nonce {
+pub fn make_nonce(seq: u64, dir: u8) -> Nonce<Aes256Gcm> {
     let mut n = [0u8; 12];
     n[..8].copy_from_slice(&seq.to_be_bytes());
     n[8] = dir;
-    Nonce::from(n)
+    Nonce::<Aes256Gcm>::from(n)
 }
 
 /// Seal a payload into a complete wire frame (header + ct + tag).
@@ -71,9 +71,9 @@ pub fn seal(
     dir: u8,
     ftype: u8,
     plaintext: &[u8],
-) -> Result<Vec<u8>, chacha20poly1305::aead::Error> {
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
     debug_assert!(ftype == FTYPE_MSG || ftype == FTYPE_CHAFF);
-    let cipher = ChaCha20Poly1305::new(&key.0);
+    let cipher = Aes256Gcm::new(&key.0);
     let nonce = make_nonce(seq, dir);
     let mut header = [0u8; 11];
     header[..8].copy_from_slice(&seq.to_be_bytes());
@@ -102,9 +102,9 @@ pub fn seal_with_len(
     ftype: u8,
     true_len: u16,
     padded: &[u8],
-) -> Result<Vec<u8>, chacha20poly1305::aead::Error> {
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
     debug_assert!(ftype == FTYPE_MSG || ftype == FTYPE_CHAFF);
-    let cipher = ChaCha20Poly1305::new(&key.0);
+    let cipher = Aes256Gcm::new(&key.0);
     let nonce = make_nonce(seq, dir);
     let mut header = [0u8; 11];
     header[..8].copy_from_slice(&seq.to_be_bytes());
@@ -129,9 +129,23 @@ pub fn open(
     key: &FrameKey,
     dir: u8,
     frame: &[u8],
-) -> Result<(u8, Zeroizing<Vec<u8>>), chacha20poly1305::aead::Error> {
+) -> Result<(u8, Zeroizing<Vec<u8>>), aes_gcm::aead::Error> {
     let (_seq, ftype, pt) = open_indexed(key, dir, frame)?;
     Ok((ftype, Zeroizing::new(pt)))
+}
+
+/// Peek the sequence number from an unauthenticated wire frame.
+/// Returns None on truncated frames. The result MUST be treated as
+/// attacker-controlled: call `replay.check(seq)` (read-only), then
+/// `open_indexed` for authentication, then `replay.mark(seq)` only on
+/// success. Never trust the peeked value for anything else.
+pub fn peek_seq(frame: &[u8]) -> Option<u64> {
+    if frame.len() < 11 + 16 {
+        return None;
+    }
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&frame[..8]);
+    Some(u64::from_be_bytes(b))
 }
 
 /// Open + authenticate, returning (seq, ftype, true-plaintext).
@@ -140,8 +154,8 @@ pub fn open_indexed(
     key: &FrameKey,
     dir: u8,
     frame: &[u8],
-) -> Result<(u64, u8, Vec<u8>), chacha20poly1305::aead::Error> {
-    use chacha20poly1305::aead::Error as AeadError;
+) -> Result<(u64, u8, Vec<u8>), aes_gcm::aead::Error> {
+    use aes_gcm::aead::Error as AeadError;
     if frame.len() < 11 + 16 {
         return Err(AeadError);
     }
@@ -151,7 +165,7 @@ pub fn open_indexed(
     if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF {
         return Err(AeadError);
     }
-    let cipher = ChaCha20Poly1305::new(&key.0);
+    let cipher = Aes256Gcm::new(&key.0);
     let pt = cipher.decrypt(
         &make_nonce(seq, dir),
         Payload { msg: ct, aad: header },
@@ -172,36 +186,27 @@ mod tests {
     }
 
     #[test]
-    fn rfc8439_a1_vector_pins_backend() {
-        // RFC 8439 §2.8.2 test vector (key/nonce/plaintext/ciphertext+tag).
-        use chacha20poly1305::aead::Aead;
-        let key_bytes: [u8; 32] = hex_to_bytes(
-            "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
-        )
-        .try_into()
-        .unwrap();
-        let nonce_bytes: [u8; 12] = hex_to_bytes("070000004041424344454647")
-            .try_into()
-            .unwrap();
-        let key = Key::from(key_bytes);
-        let nonce = Nonce::from(nonce_bytes);
-        let plaintext = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
-        let aad = hex_to_bytes("50515253c0c1c2c3c4c5c6c7");
-        // RFC 8439 §2.8.2 vector, cross-generated with Python `cryptography`
-        // (independent implementation) — see temp rfc8439kat.py. Do NOT
-        // hand-edit: regenerate from the script on any doubt.
-        let expected = hex_to_bytes(
-            "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62\
-             d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ec\
-             d3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad67594558580\
-             8b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e2\
-             6a7e902ecbd0600691",
-        );
-        let cipher = ChaCha20Poly1305::new(&key);
+    fn nist_gcm_empty_vector_pins_backend() {
+        // NIST SP 800-38D test case 1 (all-zero key/nonce/plaintext/AAD):
+        // C empty, T as below. Expected value cross-verified with the
+        // independent Python `cryptography` (OpenSSL) implementation —
+        // never hand-trusted: a from-memory constant was caught wrong
+        // by this very test during the legacy-cipher migration.
+        use aes_gcm::aead::Aead;
+        let key = Key::<Aes256Gcm>::from([0u8; 32]);
+        let nonce = Nonce::<Aes256Gcm>::from([0u8; 12]);
+        let cipher = Aes256Gcm::new(&key);
         let ct = cipher
-            .encrypt(&nonce, Payload { msg: plaintext, aad: &aad })
+            .encrypt(&nonce, Payload { msg: b"", aad: b"" })
             .unwrap();
-        assert_eq!(ct, expected);
+        assert_eq!(
+            ct,
+            hex_to_bytes("530f8afbc74536b9a963b4f1c4cb738b")
+        );
+        let pt = cipher
+            .decrypt(&nonce, Payload { msg: &ct, aad: b"" })
+            .unwrap();
+        assert!(pt.is_empty());
     }
 
     #[test]

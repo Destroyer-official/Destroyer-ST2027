@@ -692,12 +692,13 @@ def anonymous_send(
 
         with tls_ctx.wrap_socket(raw, server_hostname=server_hostname) as tls:
             st.assert_outer_is_pinned(tls)
-            hello, tr, eph, t = st.build_client_hello(identity, peer_id)
-            st._send_msg(tls, hello)
-            resp = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
-            st_state = st.client_finish(resp, eph, identity, tr, peer_id, t,
-                                            peer_cert=peer_cert,
-                                            peer_subject=peer_subject)
+            m1, ini_sess, t0 = st.xxhfs_initiate(identity, peer_id)
+            st._send_msg(tls, m1)
+            m2 = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
+            m3, st_state = st.xxhfs_finalize(ini_sess, m2, identity, peer_id, t0,
+                                             peer_cert=peer_cert,
+                                             peer_subject=peer_subject)
+            st._send_msg(tls, m3)
             ch = st.Channel(st_state, direction_out=0xA5, direction_in=0x5A)
             # Nonce exchange inside the encrypted channel binds the
             # obfuscation key without an extra handshake on the wire.
@@ -710,9 +711,10 @@ def anonymous_send(
             both = nonce_here + nonce_peer if bytes(nonce_here) < bytes(
                 nonce_peer) else nonce_peer + nonce_here
             # Both ends derive from session key plus sorted nonces only.
-            # The client transcript `tr` is not shared with the server, so
-            # it must never enter the derivation (symmetry is load-bearing).
-            _ = tr
+            # No handshake transcript enters the derivation (the Noise
+            # transcript hash h is known to both sides post-Split, but the
+            # sorted nonces already bind this session; symmetry is
+            # load-bearing: both sides must derive identically).
             obfs = derive_obfs_key(bytes(st_state.key()), both)
             # Start-sequence exchange, also inside the channel.
             # Length-prefixed like every other pre-shaper frame, matching
@@ -843,11 +845,13 @@ def anonymous_recv(
     try:
         with tls_ctx.wrap_socket(conn, server_side=True) as tls:
             st.assert_outer_is_pinned(tls)
-            hello = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
-            resp, st_state = st.server_accept(hello, identity, peer_id,
-                                                  peer_cert=peer_cert,
-                                                  peer_subject=peer_subject)
-            st._send_msg(tls, resp)
+            m1 = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
+            m2, rsp_sess, t_rsp = st.xxhfs_respond(m1, identity, peer_id)
+            st._send_msg(tls, m2)
+            m3 = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
+            st_state = st.xxhfs_complete(rsp_sess, m3, identity, peer_id, t_rsp,
+                                         peer_cert=peer_cert,
+                                         peer_subject=peer_subject)
             ch = st.Channel(st_state, direction_out=0x5A,
                             direction_in=0xA5)
             peer_len = _st.unpack(">I", _recv_exact(tls, 4, 10.0))[0]

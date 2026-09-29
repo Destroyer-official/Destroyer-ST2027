@@ -212,8 +212,9 @@ def test_receiver_ack_is_data_not_cover(tmp_path, monkeypatch):
     st.PIN_DIR = tmp_path / "pins"
     sig_pk, sig_sk = st.generate_identity()
     kp = st.generate_hybrid_keypair(sig_pk, sig_sk)
-    hello, tr, eph, t = st.build_client_hello(kp, "peer-ack")
-    assert tr  # transcript exists but must NOT enter obfs derivation
+    m1, _ini, _t0 = st.xxhfs_initiate(kp, "peer-ack")
+    assert len(m1) == st.XXHFS_M1_LEN  # ephemeral-only M1, zero static keys
+    assert sig_pk not in m1
     ack = st.Channel
     assert st.FRAME_TYPE_DATA != st.FRAME_TYPE_CHAFF
 
@@ -231,11 +232,12 @@ def test_anonymous_data_phase_carries_channel_frames(tmp_path, monkeypatch):
     srv_sig_pk, srv_sig_sk = st.generate_identity()
     cli_kp = st.generate_hybrid_keypair(cli_sig_pk, cli_sig_sk)
     srv_kp = st.generate_hybrid_keypair(srv_sig_pk, srv_sig_sk)
-    hello, tr, eph, t = st.build_client_hello(cli_kp, "peer-anon")
-    resp, s_st = st.server_accept(hello, srv_kp, "peer-anon")
-    c_st = st.client_finish(resp, eph, cli_kp, tr, "peer-anon", t)
+    m1, ini, t0 = st.xxhfs_initiate(cli_kp, "peer-anon")
+    m2, rsp, t_rsp = st.xxhfs_respond(m1, srv_kp, "peer-anon")
+    m3, c_st = st.xxhfs_finalize(ini, m2, cli_kp, "peer-anon", t0)
+    s_st = st.xxhfs_complete(rsp, m3, srv_kp, "peer-anon", t_rsp)
     assert c_st.key() == s_st.key()
-    obfs = ta.derive_obfs_key(c_st.key(), tr)
+    obfs = ta.derive_obfs_key(c_st.key(), b"peer-anon")
     cli = st.Channel(c_st, direction_out=0xA5, direction_in=0x5A)
     srv = st.Channel(s_st, direction_out=0x5A, direction_in=0xA5)
     tx = ta.ShaperTx(obfs, direction=0xA5, start_seq=7000)

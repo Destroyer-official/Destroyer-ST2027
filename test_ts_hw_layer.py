@@ -26,6 +26,7 @@ def _clean_env(monkeypatch):
 
 
 # --- TS-1: FIPS provider gate ------------------------------------------------
+@pytest.mark.live
 def test_fips_probe_is_real_and_fail_closed_without_record(monkeypatch):
     _clean_env(monkeypatch)
     st = ts.check_fips_provider()
@@ -36,20 +37,89 @@ def test_fips_probe_is_real_and_fail_closed_without_record(monkeypatch):
         ts.require_fips_module()
 
 
-def test_cmvp_record_validation(tmp_path):
+@pytest.mark.hermetic
+def test_cmvp_record_validation(tmp_path, monkeypatch):
+    import ts_runtime as _rt
+    from liboqs_wrapper import LibOQS_MLDSA_87
+    pk, sk = LibOQS_MLDSA_87().keygen()
+    monkeypatch.setattr(_rt, "PLATFORM_ROOT_PK_HEX", pk.hex())
+
+    def _signed(record: dict, name: str) -> Path:
+        from liboqs_wrapper import LibOQS_MLDSA_87 as _S
+        raw = json.dumps(record).encode("utf-8")
+        p = tmp_path / name
+        p.write_bytes(raw)
+        (tmp_path / (name + ".sig")).write_text(
+            _S().sign(sk, raw).hex(), encoding="utf-8")
+        return p
+
     good = {"module": "OpenSSL FIPS Provider", "version": "3.1.2",
             "cmvp_cert": "4985", "valid_through": "2030-03-10"}
-    p = tmp_path / "fips.json"
-    p.write_text(json.dumps(good))
+    p = _signed(good, "fips.json")
     rec = ts.check_cmvp_record(p)
     assert rec["ok"] and rec["known_good"]
     bad = dict(good, valid_through="2020-01-01")
-    p.write_text(json.dumps(bad))
+    p.write_bytes(json.dumps(bad).encode("utf-8"))
+    (tmp_path / "fips.json.sig").write_text(
+        LibOQS_MLDSA_87().sign(sk, p.read_bytes()).hex(), encoding="utf-8")
     assert not ts.check_cmvp_record(p)["ok"]
     assert not ts.check_cmvp_record(tmp_path / "missing.json")["ok"]
 
 
+@pytest.mark.live
+def test_unsigned_cmvp_fails_closed(tmp_path, monkeypatch):
+    """Verification gate Task 3.2: unsigned CMVP records never authorize."""
+    import ts_runtime as _rt
+    from liboqs_wrapper import LibOQS_MLDSA_87
+    pk, sk = LibOQS_MLDSA_87().keygen()
+    monkeypatch.setattr(_rt, "PLATFORM_ROOT_PK_HEX", pk.hex())
+    good = {"module": "OpenSSL FIPS Provider", "version": "3.1.2",
+            "cmvp_cert": "4985", "valid_through": "2030-03-10"}
+    # Valid record, no sidecar: refused.
+    p = tmp_path / "nosig.json"
+    p.write_text(json.dumps(good), encoding="utf-8")
+    r = ts.check_cmvp_record(p)
+    assert not r["ok"] and "signature missing" in r["reason"]
+    # Valid record, stale signature over different bytes: refused.
+    q = tmp_path / "stale.json"
+    q.write_bytes(json.dumps(good).encode("utf-8"))
+    (tmp_path / "stale.json.sig").write_text(
+        LibOQS_MLDSA_87().sign(sk, b"other bytes").hex(), encoding="utf-8")
+    assert not ts.check_cmvp_record(q)["ok"]
+    # Wrong-key signature: refused.
+    evil_pk, evil_sk = LibOQS_MLDSA_87().keygen()
+    assert evil_pk != pk
+    w = tmp_path / "wrongkey.json"
+    w.write_bytes(json.dumps(good).encode("utf-8"))
+    (tmp_path / "wrongkey.json.sig").write_text(
+        LibOQS_MLDSA_87().sign(evil_sk, w.read_bytes()).hex(), encoding="utf-8")
+    assert not ts.check_cmvp_record(w)["ok"]
+    with pytest.raises(ts.TSRequiredError):
+        ts.require_fips_module(p)
+
+
+@pytest.mark.live
+def test_fips_cipher_probe_is_real(monkeypatch):
+    """Task 3.3 gate: ?fips=yes fetch resolves (or refuses) via live C API."""
+    _clean_env(monkeypatch)
+    res = ts.check_fips_cipher()
+    assert isinstance(res.get("ok"), bool)
+    assert "provider" in res or "reason" in res
+    # This dev box has no FIPS provider: the probe must report refusal,
+    # never raise, and the TS gate must refuse on top of it.
+    prov = ts.check_fips_provider()
+    if not prov.provider_loaded:
+        assert res["ok"] is False
+        with pytest.raises(ts.TSRequiredError):
+            ts.require_fips_module()
+    else:
+        # On a provisioned host the cipher MUST resolve to fips itself
+        # (the name check is what makes ?fips=yes enforcing).
+        assert res == {"ok": True, "provider": "fips"}
+
+
 # --- TS-1b: hardware custody --------------------------------------------------
+@pytest.mark.live
 def test_custody_probe_and_gate_are_honest(monkeypatch):
     _clean_env(monkeypatch)
     att = ts.probe_hardware_custody()
@@ -71,6 +141,7 @@ def _black_ip():
     return None, None
 
 
+@pytest.mark.live
 def test_red_black_valid_separation():
     black, _if = _black_ip()
     if black is None:
@@ -80,6 +151,7 @@ def test_red_black_valid_separation():
     assert rep["ok"] and rep["red_iface"] != rep["black_iface"]
 
 
+@pytest.mark.live
 def test_red_black_refusals():
     black, _if = _black_ip()
     with pytest.raises(ts.TSError):  # RED on external/wildcard
@@ -110,6 +182,7 @@ def _cert(**kw):
     return base
 
 
+@pytest.mark.hermetic
 def test_tempest_approval_and_level_mapping(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     reg = _write_tempest(tmp_path, [_cert()])
@@ -126,6 +199,7 @@ def test_tempest_approval_and_level_mapping(tmp_path, monkeypatch):
         ts.require_tempest_approval(0, "TOP SECRET", reg_b)
 
 
+@pytest.mark.hermetic
 def test_tempest_expiry_and_missing_refs_refused(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     reg = _write_tempest(tmp_path, [_cert(expires="2020-01-01")])
@@ -138,12 +212,14 @@ def test_tempest_expiry_and_missing_refs_refused(tmp_path, monkeypatch):
         ts.require_tempest_approval(1, "SECRET", tmp_path / "absent.json")
 
 
+@pytest.mark.hermetic
 def test_emission_hygiene_never_claims_shielding():
     notes = {n["id"]: n for n in ts.emission_hygiene()}
     assert notes["SHIELDING"]["status"] == "FACILITY-REQUIRED"
 
 
 # --- TS-4: zeroize mesh ---------------------------------------------------------
+@pytest.mark.hermetic
 def test_mesh_zeroizes_real_buffers_and_callbacks(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("TS_MESH_TEST_ARM", "1")
@@ -162,6 +238,7 @@ def test_mesh_zeroizes_real_buffers_and_callbacks(tmp_path, monkeypatch):
     assert rep["emergency_zeroization_audit"]["status"] == "SANITIZATION_COMPLETE"
 
 
+@pytest.mark.hermetic
 def test_test_injector_refused_in_production(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("P2P_PRODUCTION", "1")
@@ -175,6 +252,7 @@ def test_test_injector_refused_in_production(tmp_path, monkeypatch):
     assert not mesh.zeroized
 
 
+@pytest.mark.hermetic
 def test_tamper_order_verify_replay_and_forgery(monkeypatch):
     _clean_env(monkeypatch)
     from liboqs_wrapper import LibOQS_MLDSA_87
@@ -195,6 +273,7 @@ def test_tamper_order_verify_replay_and_forgery(monkeypatch):
         ts.verify_tamper_order(order2, pk2.hex())
 
 
+@pytest.mark.hermetic
 def test_heartbeat_loss_triggers_mesh(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("TS_MESH_TEST_ARM", "1")
@@ -221,6 +300,7 @@ def _dev(**kw):
     return base
 
 
+@pytest.mark.hermetic
 def test_diode_registry_gate(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     reg = _write_diode(tmp_path, [_dev()])
@@ -235,6 +315,7 @@ def test_diode_registry_gate(tmp_path, monkeypatch):
         ts.require_diode("DIODE-01", None)
 
 
+@pytest.mark.live
 def test_diode_simplex_transfer_loopback(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     from liboqs_wrapper import LibOQS_MLDSA_87
@@ -256,6 +337,7 @@ def test_diode_simplex_transfer_loopback(tmp_path, monkeypatch):
     assert isinstance(tx_id, bytes) and got.get("blob") == blob
 
 
+@pytest.mark.live
 def test_diode_send_via_identity_handle_and_prod_refusal(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     import secure_transmit_2027 as s
@@ -288,6 +370,7 @@ def test_diode_send_via_identity_handle_and_prod_refusal(tmp_path, monkeypatch):
         ts.diode_send(b"x", raw_sk, "kid-1", "127.0.0.1", port)
 
 
+@pytest.mark.hermetic
 def test_diode_tamper_and_wrong_key_refused(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     from liboqs_wrapper import LibOQS_MLDSA_87
@@ -303,6 +386,7 @@ def test_diode_tamper_and_wrong_key_refused(tmp_path, monkeypatch):
 
 
 # --- TPM PCR path ---------------------------------------------------------------
+@pytest.mark.live
 def test_tpm_pcr_read_unknown_on_tpm_less_box(monkeypatch):
     _clean_env(monkeypatch)
     r = ts.read_tpm_pcrs((0, 1))
@@ -315,6 +399,7 @@ def test_tpm_pcr_read_unknown_on_tpm_less_box(monkeypatch):
         ts.check_tpm_pcr({})
 
 
+@pytest.mark.live
 def test_mesh_pcr_poll_ignores_unknown(monkeypatch, tmp_path):
     _clean_env(monkeypatch)
     monkeypatch.setenv("TS_MESH_TEST_ARM", "1")
@@ -329,6 +414,7 @@ def test_mesh_pcr_poll_ignores_unknown(monkeypatch, tmp_path):
     assert not mesh.zeroized
 
 
+@pytest.mark.hermetic
 def test_unarmed_mesh_dispatch_refused(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     from emergency_anti_tamper import EmergencyZeroizationEngine
@@ -340,6 +426,7 @@ def test_unarmed_mesh_dispatch_refused(tmp_path, monkeypatch):
 
 
 # --- hardening: registries, nonces, params, roles --------------------------------
+@pytest.mark.hermetic
 def test_registry_shape_violations_refused(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     bad_list = tmp_path / "list.json"
@@ -366,6 +453,7 @@ def test_registry_shape_violations_refused(tmp_path, monkeypatch):
     assert not ts.check_cmvp_record(bad_list)["ok"]
 
 
+@pytest.mark.hermetic
 def test_tamper_order_nonce_cap_evicts_fifo(monkeypatch):
     _clean_env(monkeypatch)
     from liboqs_wrapper import LibOQS_MLDSA_87
@@ -395,6 +483,7 @@ def test_tamper_order_nonce_cap_evicts_fifo(monkeypatch):
     ts._ORDER_NONCE_FIFO.clear()
 
 
+@pytest.mark.hermetic
 def test_injector_refused_in_ts_mode(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("P2P_TS_MODE", "1")
@@ -408,6 +497,7 @@ def test_injector_refused_in_ts_mode(tmp_path, monkeypatch):
     assert not mesh.zeroized
 
 
+@pytest.mark.hermetic
 def test_register_buffer_rejects_immutable(tmp_path, monkeypatch):
     _clean_env(monkeypatch)
     from emergency_anti_tamper import EmergencyZeroizationEngine
@@ -417,11 +507,13 @@ def test_register_buffer_rejects_immutable(tmp_path, monkeypatch):
         mesh.register_buffer(b"immutable-bytes")
 
 
+@pytest.mark.hermetic
 def test_enforce_bind_unknown_role_refused():
     with pytest.raises(ts.TSError):
         ts.enforce_bind("GREEN", "127.0.0.1")
 
 
+@pytest.mark.hermetic
 def test_diode_parameter_violations():
     from liboqs_wrapper import LibOQS_MLDSA_87
     _, sk = LibOQS_MLDSA_87().keygen()
@@ -442,6 +534,7 @@ def test_diode_parameter_violations():
         ts.check_tpm_pcr("not-a-dict")
 
 
+@pytest.mark.hermetic
 def test_profile_from_env_strictness(monkeypatch):
     _clean_env(monkeypatch)
     monkeypatch.setenv("P2P_TS_ZONE", "5")
@@ -453,6 +546,7 @@ def test_profile_from_env_strictness(monkeypatch):
         ts.profile_from_env()
 
 
+@pytest.mark.live
 def test_red_black_nets_and_port_types():
     with pytest.raises(ts.TSError):
         ts.verify_red_black(ts.RedBlackConfig(
@@ -474,6 +568,7 @@ def test_red_black_nets_and_port_types():
         ts.verify_red_black(cfg)
 
 
+@pytest.mark.live
 def test_cli_recv_ts_mode_refused_without_hardware(monkeypatch, tmp_path):
     _clean_env(monkeypatch)
     monkeypatch.setenv("P2P_TS_MODE", "1")
@@ -484,6 +579,7 @@ def test_cli_recv_ts_mode_refused_without_hardware(monkeypatch, tmp_path):
                 "--label", "lab-cli-ts"])
 
 
+@pytest.mark.hermetic
 def test_ts_prefix_required_in_ts_mode_only(monkeypatch):
     _clean_env(monkeypatch)
     import secure_transmit_2027 as s
@@ -510,6 +606,7 @@ def _cng_or_skip():
     return cng_platform
 
 
+@pytest.mark.live
 def test_cng_tpm_roundtrip_with_non_export_proof():
     cng = _cng_or_skip()
     import hashlib as _hl
@@ -549,6 +646,7 @@ def test_cng_tpm_roundtrip_with_non_export_proof():
         cng.close_handle(h)
 
 
+@pytest.mark.live
 def test_cng_attest_and_labels():
     cng = _cng_or_skip()
     import hashlib as _hl
@@ -576,6 +674,7 @@ def test_cng_attest_and_labels():
         cng.close_handle(h)
 
 
+@pytest.mark.live
 def test_custody_tiers_honest_on_this_box(monkeypatch):
     _clean_env(monkeypatch)
     assert ts.probe_pqc_token() is None      # no PQC token present
@@ -592,12 +691,15 @@ def test_custody_tiers_honest_on_this_box(monkeypatch):
     assert "TPM device anchor" in str(ei.value) or "no hardware" in str(ei.value)
 
 
-# --- Aggregator + session hook --------------------------------------------------def test_ts_layer_fail_closed_without_provisioning(monkeypatch, tmp_path):
+# --- Aggregator + session hook --------------------------------------------------
+@pytest.mark.live
+def test_ts_layer_fail_closed_without_provisioning(monkeypatch, tmp_path):
     _clean_env(monkeypatch)
     with pytest.raises((ts.TSRequiredError, ts.TSError)):
         ts.require_ts_layer(ts.TSLayerProfile(zone=1))
 
 
+@pytest.mark.live
 def test_ts_mode_hook_blocks_session_without_hardware(monkeypatch, tmp_path):
     _clean_env(monkeypatch)
     import secure_transmit_2027 as s
@@ -607,3 +709,56 @@ def test_ts_mode_hook_blocks_session_without_hardware(monkeypatch, tmp_path):
     s.PIN_DIR = tmp_path / "pins"
     with pytest.raises(Exception):
         s._production_preflight("127.0.0.1", "cdn-front.example.net", 8888, "peerX")
+
+
+# --- Mock audit & live/hermetic separation gate (Task 4.4) --------------------
+# This suite uses NO standard-library mock-framework fakes: hermetic tests
+# run pure logic over synthetic tmp inputs (monkeypatch env only); live
+# tests probe real host state (libcrypto, TPM/CNG, NICs, loopback sockets)
+# and adapt with environment-aware refusal assertions. Every test carries
+# exactly one marker (@pytest.mark.live / @pytest.mark.hermetic); the gate
+# below enforces the separation mechanically (it scans for mock-framework
+# imports and mock-object constructors, then audits marker coverage).
+def test_suite_mock_live_separation():
+    """Verification gate Task 4.4: mock audit + marker separation."""
+    import ast
+    from pathlib import Path as _P
+    src = _P(__file__).read_text(encoding="utf-8")
+    # Needles constructed dynamically: a literal here would match itself.
+    _um = "unittest" + ".mock"
+    _fuim = "from " + "unittest" + " import " + "mock"
+    _mo = "Mock" + "("
+    _mmo = "MagicMock" + "("
+    assert _um not in src and _fuim not in src
+    assert _mo not in src and _mmo not in src
+    tree = ast.parse(src)
+    multi, unmarked = [], []
+    n_live = n_hermetic = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name.startswith("test_")):
+            continue
+        if node.name == "test_suite_mock_live_separation":
+            continue
+        marks = set()
+        for d in node.decorator_list:
+            f = d.func if isinstance(d, ast.Call) else d
+            parts = []
+            while isinstance(f, ast.Attribute):
+                parts.append(f.attr)
+                f = f.value
+            if parts and parts[-1] == "mark":
+                marks.add(parts[0])
+        has_live = "live" in marks
+        has_her = "hermetic" in marks
+        if has_live and has_her:
+            multi.append(node.name)
+        elif has_live:
+            n_live += 1
+        elif has_her:
+            n_hermetic += 1
+        else:
+            unmarked.append(node.name)
+    assert not multi, f"dual-marked: {multi}"
+    assert not unmarked, f"unmarked tests (separation violated): {unmarked}"
+    assert n_live >= 1 and n_hermetic >= 1

@@ -32,17 +32,17 @@ def _nonce(seq: int, direction: int = DIR_SEND) -> bytes:
 
 
 def _python_open(key: bytes, frame: bytes):
-    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     header, ct = frame[:11], frame[11:]
     seq = struct.unpack(">Q", header[:8])[0]
-    return ChaCha20Poly1305(key).decrypt(_nonce(seq), ct, header), header
+    return AESGCM(key).decrypt(_nonce(seq), ct, header), header
 
 
 def _python_seal(key: bytes, seq: int, ftype: int, padded: bytes,
                  true_len: int) -> bytes:
-    from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     header = struct.pack(">Q", seq) + struct.pack(">H", true_len) + bytes((ftype,))
-    ct = ChaCha20Poly1305(key).encrypt(_nonce(seq), bytes(padded), header)
+    ct = AESGCM(key).encrypt(_nonce(seq), bytes(padded), header)
     return header + ct
 
 

@@ -161,7 +161,7 @@ impl<const N: usize> Drop for StackSecretBuffer<N> {
 /// Zero-Allocation Stack Frame Header:
 /// `[seq: u64 (8B) | payload_len: u16 (2B) | frame_type: u8 (1B) | pad_len: u16 (2B) | flags: u8 (1B)]`
 pub const NOSTD_HEADER_LEN: usize = 8 + 2 + 1 + 2 + 1; // 14 bytes
-pub const NOSTD_TAG_LEN: usize = 16; // Poly1305 / GCM tag length
+pub const NOSTD_TAG_LEN: usize = 16; // GCM tag length
 pub const NOSTD_OVERHEAD: usize = NOSTD_HEADER_LEN + NOSTD_TAG_LEN; // 30 bytes
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

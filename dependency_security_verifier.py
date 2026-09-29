@@ -39,6 +39,25 @@ import secrets
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Pinned vendored-binary trust anchors (Task 3.5 — NO runtime .pub reads)
+# ---------------------------------------------------------------------------
+# ED25519 sidecar keys and SHA-384 hashes for CRITICAL vendored binaries are
+# hardcoded below. _verify_cryptographic_signature / _verify_file_integrity
+# MUST use these constants for pinned names and MUST NOT open {path}.pub or
+# {path}.hashes from the local directory (substitution of sidecar files then
+# authorizes nothing). Rotation (DLL rebuild): recompute SHA-384, re-run the
+# vendor signing ceremony, replace the constants, redeploy.
+# --- BEGIN AUTO VENDORED_PINS ---
+EMBEDDED_OQS_ED25519_PUBKEY_PEM = b"""
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAVMk9HFUCwRTtJyYooWxJnB6KIYY4pUnya7rW7z/Sa0E=
+-----END PUBLIC KEY-----
+"""
+EMBEDDED_OQS_SHA384 = "cb9e3cb47174f15f4b0fbb9bb51882ead65cfcac65cbbef92e76b97468005d3ce02fc9dc08513f9279043ae5e3ab8eb8"
+# --- END AUTO VENDORED_PINS ---
+
+
 class VerificationLevel(Enum):
     """Security verification levels for dependencies"""
     CRITICAL = "critical"      # Cryptographic libraries requiring signature verification
@@ -397,7 +416,14 @@ class DependencySecurityVerifier:
             return False
     
     def _verify_cryptographic_signature(self, name: str, path: str) -> bool:
-        """Verify cryptographic signature of dependency (FAIL-CLOSED)"""
+        """Verify cryptographic signature of dependency (FAIL-CLOSED)
+
+        Pinned CRITICAL binaries (oqs.dll / liboqs.dll) verify EXCLUSIVELY
+        against EMBEDDED_OQS_ED25519_PUBKEY_PEM: no {path}.pub file is ever
+        opened, so sidecar-key substitution authorizes nothing. The .sig
+        sidecar itself is still read (the signature must come from
+        somewhere) but only verifies under the embedded key.
+        """
         try:
             if not self.crypto_available:
                 logger.critical(f"FAIL-CLOSED: Cryptographic signature verification not available for {name} — rejecting")
@@ -408,12 +434,6 @@ class DependencySecurityVerifier:
             if not os.path.exists(signature_path):
                 logger.critical(f"FAIL-CLOSED: No signature file found for {name} at {signature_path} — rejecting")
                 return False  # FAIL-CLOSED: signature file is required
-
-            # Look for public key
-            public_key_path = f"{path}.pub"
-            if not os.path.exists(public_key_path):
-                logger.critical(f"FAIL-CLOSED: No public key found for {name} at {public_key_path} — rejecting")
-                return False  # FAIL-CLOSED: public key is required
 
             # Perform signature verification
             from cryptography.hazmat.primitives import hashes, serialization
@@ -427,10 +447,22 @@ class DependencySecurityVerifier:
             with open(signature_path, 'rb') as f:
                 signature = f.read()
 
-            # Read public key
-            with open(public_key_path, 'rb') as f:
-                public_key_data = f.read()
-                public_key = serialization.load_pem_public_key(public_key_data)
+            if name in ("oqs.dll", "liboqs.dll") and EMBEDDED_OQS_ED25519_PUBKEY_PEM.strip():
+                # Pinned path: embedded key ONLY — {path}.pub never opened.
+                public_key = serialization.load_pem_public_key(
+                    EMBEDDED_OQS_ED25519_PUBKEY_PEM)
+            else:
+                # Task 3.5, fail-closed: NO sidecar keys, ever. A {path}.pub
+                # file is attacker-writable local state; trusting it would
+                # let anyone mint verification. Names without an embedded
+                # pin cannot be signature-verified — refuse, never fall back
+                # to directory keying. (All reachable callers verify oqs
+                # names via the pinned path; this branch fires only for
+                # unprovisioned names, which must fail closed.)
+                logger.critical(
+                    f"FAIL-CLOSED: No embedded verification key for {name} — "
+                    f"refusing (sidecar .pub files are never trusted)")
+                return False
 
             # Verify using Ed25519 — NIST Level 5+ approved
             if isinstance(public_key, ed25519.Ed25519PublicKey):
@@ -447,8 +479,23 @@ class DependencySecurityVerifier:
 
     
     def _verify_file_integrity(self, name: str, path: str) -> bool:
-        """Verify file integrity using cryptographic hashes"""
+        """Verify file integrity using cryptographic hashes.
+
+        Pinned CRITICAL binaries verify EXCLUSIVELY against the embedded
+        SHA-384 constant (constant-time compare): no {path}.hashes file is
+        ever opened, so sidecar-hash substitution authorizes nothing, and
+        absence of a hash file refuses instead of passing.
+        """
         try:
+            if name in ("oqs.dll", "liboqs.dll") and EMBEDDED_OQS_SHA384.strip():
+                with open(path, 'rb') as f:
+                    file_content = f.read()
+                actual = hashlib.sha384(file_content).hexdigest()
+                if not hmac.compare_digest(actual, EMBEDDED_OQS_SHA384.strip()):
+                    logger.error(f"Hash mismatch for {name} (sha384 embedded pin)")
+                    return False
+                logger.info(f"File integrity verified for {name} (embedded sha384 pin)")
+                return True
             # Calculate multiple hashes for enhanced security
             hashes_calculated = {}
             
@@ -460,29 +507,16 @@ class DependencySecurityVerifier:
             hashes_calculated['sha512'] = hashlib.sha512(file_content).hexdigest()
             hashes_calculated['sha3_256'] = hashlib.sha3_256(file_content).hexdigest()
             
-            # Look for expected hashes file
-            hash_file_path = f"{path}.hashes"
-            if os.path.exists(hash_file_path):
-                try:
-                    with open(hash_file_path, 'r') as f:
-                        expected_hashes = json.load(f)
-                    
-                    # Verify each hash
-                    for hash_type, expected_hash in expected_hashes.items():
-                        if hash_type in hashes_calculated:
-                            if hashes_calculated[hash_type] != expected_hash:
-                                logger.error(f"Hash mismatch for {name} ({hash_type})")
-                                return False
-                    
-                    logger.info(f"File integrity verified for {name}")
-                    return True
-                    
-                except Exception as e:
-                    logger.warning(f"Could not verify hashes for {name}: {e}")
-            
-            # If no hash file, log the calculated hashes for future reference
+            # Task 3.5: sidecar {path}.hashes files are NEVER read — they are
+            # attacker-writable local state, and comparing against
+            # attacker-supplied "expected" values is not verification
+            # (a matching sidecar would false-pass tampered binaries).
+            # Unpinned names: record computed hashes for future pinning
+            # review and pass (same outcome as the no-sidecar case today).
+            # Pinned CRITICAL binaries take the embedded-constant branch
+            # above and never reach here.
             logger.info(f"Calculated hashes for {name}: {hashes_calculated}")
-            return True  # Pass if no expected hashes (would be configurable)
+            return True
             
         except Exception as e:
             logger.error(f"Integrity verification error for {name}: {e}")

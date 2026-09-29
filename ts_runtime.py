@@ -141,6 +141,10 @@ def load_native() -> ctypes.CDLL:
                                        ctypes.c_void_p, ctypes.c_size_t]
             lib.tsrt_replay_new.restype = ctypes.c_void_p
             lib.tsrt_replay_new.argtypes = [ctypes.c_uint64]
+            lib.tsrt_replay_check.restype = ctypes.c_int
+            lib.tsrt_replay_check.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+            lib.tsrt_replay_mark.restype = ctypes.c_int
+            lib.tsrt_replay_mark.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
             lib.tsrt_replay_check_mark.restype = ctypes.c_int
             lib.tsrt_replay_check_mark.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
             lib.tsrt_replay_free.restype = None
@@ -227,18 +231,51 @@ class LockedBuffer:
 class NativeReplay:
     """Replay window backed by the native core.
 
+    Discipline (RFC 6479 / WireGuard Sec 5.4): check() is read-only and
+    safe on unauthenticated input; mark() advances the window and MUST
+    be called only after the AEAD tag for that exact seq verified.
+    check_and_mark() is retained for non-wire atomic helpers/tests;
+    wire paths MUST NOT use it (single forged seq=2**64-1 would
+    otherwise orphan the session before auth fails).
+
     NOTE: `start` is marked seen at creation (native constructor
     semantics); the Python ReplayWindow starts empty. Cross-checks must
     pre-mark the same sequence on both sides before comparing verdicts.
     """
 
     def __init__(self, start: int) -> None:
+        if isinstance(start, bool) or not isinstance(start, int) or not 0 <= start < (1 << 64):
+            raise TSError("sequence violation")
         lib = load_native()
         h = lib.tsrt_replay_new(start)
         if not h:
             raise TSError("native replay allocation failed")
         self._lib = lib
         self._h = h
+
+    def _handle(self):
+        h = self._h
+        if not h:
+            raise TSError("replay handle already destroyed")
+        return h
+
+    def check(self, seq: int) -> None:
+        """Read-only acceptance test. Raises on replay/stale. No mutation."""
+        if isinstance(seq, bool) or not isinstance(seq, int) or not 0 <= seq < (1 << 64):
+            raise TSError("sequence violation")
+        rc = self._lib.tsrt_replay_check(self._handle(), seq)
+        if rc == -1:
+            raise TSError("replay handle invalid")
+        if rc != 1:
+            raise TSError("replay rejected")
+
+    def mark(self, seq: int) -> None:
+        """Advance window for a validated seq. Call only after AEAD auth."""
+        if isinstance(seq, bool) or not isinstance(seq, int) or not 0 <= seq < (1 << 64):
+            raise TSError("sequence violation")
+        rc = self._lib.tsrt_replay_mark(self._handle(), seq)
+        if rc != 1:
+            raise TSError("replay mark failed")
 
     def check_and_mark(self, seq: int) -> None:
         if isinstance(seq, bool) or not isinstance(seq, int) or not 0 <= seq < (1 << 64):
@@ -408,6 +445,21 @@ def read_platform_posture() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# RT-0 — pinned platform attestation root (ML-DSA-87, FIPS 204)
+# ---------------------------------------------------------------------------
+# PLATFORM_ROOT_PK_HEX pins the offline AO platform-attestation root whose
+# signatures authorize (a) AO risk-acceptance waivers and (b) seL4 / CMVP
+# attestation records. No .pub file is ever read at runtime: substitution
+# of a sidecar key cannot authorize anything. Bootstrap: the constant below
+# is generated with NO surviving private key (fail-closed: nothing verifies
+# until the AO runs scripts/sign_waiver.py keygen offline and replaces this
+# constant with the ceremony public key). Rotation = replace + redeploy.
+# --- BEGIN AUTO PLATFORM_ROOT_PIN ---
+PLATFORM_ROOT_PK_HEX = "da6bef225d6201128bfc38fd6ec6183c0e73ba21e03b80154da3090d55f5d343dda1bf7a97041ab7f5b80fa24ba0a3f0fb031350a9cc4963dc2d1a7f36f82a336d6d8a565f4cee719d8636288185f40c33b8550bb74fe04ab6bd3fd51979b6b14caec00e0404d376fa5cdbb136d7f7624165c57b5a415b4e114c8e628032abd40972683d5482493e0d56e5bbc70019ecd03e88b6ad44cf7d7df307c0ed712b05524f9e35197c7c11fb6f87bf6019328922b361bf17550ff90022e3b8d1025600237dd37c29f057c642c134a33c7a8bf6fdc8efccd18885f0b7f9789675cec2ba2a8af0b85864c2c356bf8e7d291caacb7909e5dd55839b569184c905b357acfa8975cd3b624a381eab0556cb5bd2f3ca5985f75f90bacd00e830c86b0ffb3cd84c409b06760da9c7e4bbc8dc98fbbaed9def8901e674e538e65173c8e9fd76da76d1ccd12916f695e8da0b1032ce7060e5edc68f399306f2a698dc9093d37e305c5c74a80cae01544116ae1479a2c67f4a115ab2d7e70aee6f6d84bf7c3f0b626b31802b8856ae625b82b5ee6f6225111715105a82dcbf6fdb64b841f5ba2afcfc32fd7de99ff8ec7e23ccfbfc12ba3b13fccac9fba533d373bed40f8080baf43da0046ca9670cbf8953b0ff5aad34ae5c47540464ee315d98ddf9ed9038651932dfb8fea382eed540db680a05e5593c33025f545e1c587eaecab42b25d7ab04274db6c97e5d50d945ec50e3859d5edf6fd6282ce70fb9893b9e96dcbfe67829f7fea87b6d22f4b76396bdebd2df98fce757003aff062b2a05e8deaef3b9401c146d119d76a897c0194cb17fba8cdb66083f84bea67015dc77cf7d7053c2d0f082525646c4e035610ad18468b033cd74fd0c1969fabd6951c16383e6996b62497908a5333f27bc57f7ebc6d3c24f259bc57b848fe877c4b7606720d9010a0fa9969397c76354eb7726b23abd080b96f511e1bfee0a2897af553490f3a16d9cd075dab0333a619e0d7a52a1f12d1a0ad0efb1a0c8927bdfc555eb1422279fb3d036e0f1df33730c7fb071c26167d6f9a1de917940bdc1b435cb78e661562244ed13ba3abb062440faa6ad2f3ce1b8b388a27325a5bc9ff4aeb89f264f45972d6159d9829821b3d841c772b0d2ae464846ccf697ad4cab15c1debb4fce0508894e873efb531b10497fc6f1802caf9f9ccb37fb53408e308d853f0d5de559374343f97dfe52b647ec358e4f79964c8740fda8757df9a183f9ea4734f34bbef178e43cf06a6d69f9cf4a28f0817ed38d4f7f06cc1959864104cd31cd6b132fa449b99505f33e3bdcb00cc155b9781bc46059986a90120dda85d4ab5a3cc1a7afdf39e1ca54dfc8bd6c5cca943f0e0b6b3998fa21c9d69921c386933e1a6cbdec69e6fb918726d347565beb69f78e13c2111387aef6a35d3dd1061d1827894f268ec61e1644515aa3f1f357ebe1901187e203fd2fa820f3797e947a3f64211a4f30a3c458dde6dfeda71e26ff2727d63cddfe24fa4509d628453bb441f6045c7a78ab157775f6dabf8566d59836703b5ec644844005cc8da412bc0932f4d924aaaeb4872f3e00d13eb86c1052a464da089805543a252c5684af4429e46fed3b26cb65e4aab778cdc6d18db160278a36adf4b64e8e1f9c63e4e39fadcaa7a35d72b90f1c359277176f39378dc3fd7b8770501a5ed41da45c8484cae2266b5779afe0c64f8a22d2b8805dac18d8dd4aa30e614be31a3a9ee4676c6c053d9de3500fdcbdc0a8afb56055b6a0e95cd183afc66bae87589535ba5e4122516d23813a0b8624a5c2b5c5e93cb9be2c5b48c88af755543307a8b1f1e6bb88119dde348b59878f771087a947cba162648bd53598ce27dc95d2a0e0ea056a5f575592a617486357f8416c20845724e52baed567dbed750bb6842ab8ecb3880a17c4709cdf7f63ae82cbd7b3f7c582b5b9a03a15d46d94ed17ec45c2eea0c09a3f9cae702fa11f63082460ff895b4b75ac1dc78b5376b83cc3e9021761a7dcd97039b137570677aa0eb369a8e53995ae2135138d3c1be2688708f7ff56c838b3308c250145c3136f516967571f2448a02dc0a2bee072cd01063e5563151ab6a895698f9b7c3974bd7c08ee5dba7d62b102c613cff682179572761e3818a04d9f4a893c314b0ccca8876bf6a05f79d552c0f4b77d9040816430fd951d05eb7a604440b39af3c0276631c8e23e230ee216aa3277c938d69d8581dc546233fcfe05bc234b49666d25def2e558da9c37d655771c9f500808d696aa32d161872f736ce4ac8f2d508899c5081d31b0203f71389e66bf628f7f75b311ab7f1aa0d0a81838518394896af6cf48acf9e56d917d64d55c9430f332ca3d51625939c7e0d5f22742327b5771c9eb9c3d2de33156c20165a4349e823936130e4987b904f634a45c56318e8d427062cb289fd8b403ad73bf43a2963e8442a2d386962e983fcfb249f3bc3f44a8f11a27931de052d30385e677533140446af45984c02a84127b68626e7b4f0cae1aeff4db8e511ffa3528ac95dfe8a16cb2c242eb25590ec5b8c40018eed12360a43e3b5dea7429363dca46df86ab7503ae0b6d55b880c0f5abe6251832d50e470132ef8c6727467b39cdffb28a6423f21cd588aa9b8a1e47714d58a66566c324271ca6c49d10bf23b4762ff1642d3e053c639da0f1e788675a5a11e470fd89378d51bbf2dde49e09c68d3981913a94d65447eaa3c104096ba86891650de0bcfc569aa73e07875459e82e2c01e66ba1902efbac6974edbb6ec83e85ed00a49493d669e493c25379ede2084d0a998cee618f36ba205ef1eb153afb708449b5372d203a3c4cce8c5ccaea93574ce56fb02e310ae0bb5c951a0f89dbe870ad1fb5fdcaf414f5106cdc8fbe637805e5eb112931b1b9eefaec7a0b0cae9136e58578d8cb4fee495ba302902c17b8a188e9abc527974532a51f1253010096c4e8517f9633a255c4372548d4095a0b17c7c478d26a6ed010fabc8783ac3beb77a13a9222403069e3a6ad793faf0414503adeaf3e6c14b5ffaef75044d576f82115fe263c0e8696afff01e68ab84bd835bf5857f5eac6873eccb08dbc846e8f85b3a6610d0891bb77eec074a991ae8bb4bc864182c0d1e5cd507e46d8f6613a70ce7b5bfb6421af97e6e6c8d451a4220c1ea1a7a74407ef2c5a7c81f02c7b258ff4bf7889c67702e4037134dc439a157837c7ebc970feec27ef84e251227fb430b03bde846f2c9afee9b5bfd54928c2ecd84956d56119c264baf014400595a3199f6b785b36133e93a07cbd0e3f69cf3dbb1f56db9aded91b35a98c7f02bef09313df71d44eea14a70a3fd73ab36b830514032277fb9f8a37fe45ffd520d117c7a5996772a4d8864032e6f7f2d2ff608a19efdbe2e007644ea7135e54e99912026c6f6cde06ac51220654623b49d04893b84d7b85b024dfc8b65ba1d836571d63da2265b26844c378fb3095da322e13786c7fd6091256093449adb0576ea4cf54c8cb189450e593b9f6d5e8e4c6389d1184ac8c14a344290fad1d1751dde941eadbb7910920d6c5d7862e9d652c734bb1025c1717806ec43ad425b04d535af309787b9d17c35883c8983837208a090c2b1d2c953ea7b6ee4ead3b6dae7bb207a99afbda4ecec4"
+# --- END AUTO PLATFORM_ROOT_PIN ---
+
+
+# ---------------------------------------------------------------------------
 # RT-1 — verified-platform gate (seL4 attestation or expiring waiver)
 # ---------------------------------------------------------------------------
 
@@ -429,10 +481,70 @@ def _version_tuple(v: str) -> Tuple[int, ...]:
     return tuple(int(p) for p in parts)
 
 
-def load_sel4_record(path: Path) -> Dict[str, Any]:
-    """Strict-validate an seL4 deployment attestation record (pure logic)."""
+def _canonical_json(obj: Any) -> bytes:
+    """DSSE-style canonical form: sorted keys, no whitespace.
+
+    Signer (scripts/sign_waiver.py) and verifier MUST use this exact
+    encoding or signatures will not match — by design (no malleability).
+    """
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _platform_root_pk() -> bytes:
+    """Embedded AO platform-attestation root (ML-DSA-87, FIPS 204)."""
     try:
-        rec = json.loads(Path(path).read_text(encoding="utf-8"))
+        pk = bytes.fromhex(PLATFORM_ROOT_PK_HEX)
+    except ValueError:
+        raise TSError("platform root pin corrupt")
+    if len(pk) != 2592:
+        raise TSError("platform root pin violation")
+    return pk
+
+
+def verify_platform_record_sig(message: bytes, sig_hex: str, what: str) -> None:
+    """Verify an ML-DSA-87 platform-attestation signature. Fail-closed.
+
+    `what` names the artifact for the refusal message (e.g. waiver /
+    seL4 / CMVP). No key material is ever read from disk: the root is
+    the embedded PLATFORM_ROOT_PK_HEX constant (sidecar-key substitution
+    then authorizes nothing).
+    """
+    try:
+        sig = bytes.fromhex(str(sig_hex).strip())
+    except ValueError:
+        raise TSError(f"{what} signature encoding violation")
+    if len(sig) != 4627:
+        raise TSError(f"{what} signature size violation")
+    try:
+        from liboqs_wrapper import LibOQS_MLDSA_87
+        ok = LibOQS_MLDSA_87().verify(_platform_root_pk(), bytes(message), sig)
+    except TSError:
+        raise
+    except Exception as e:
+        raise TSError(f"{what} verification unavailable: {e}")
+    if not ok:
+        raise TSError(f"{what} signature invalid or unverified")
+
+
+def load_sel4_record(path: Path) -> Dict[str, Any]:
+    """Strict-validate an seL4 deployment attestation record (pure logic).
+
+    Provenance: `<record>.sig` must hold the ML-DSA-87 signature (hex)
+    over the EXACT record file bytes, verifiable under the embedded
+    platform root. Unsigned or mis-signed records are refused before any
+    field is trusted.
+    """
+    try:
+        raw = Path(path).read_bytes()
+    except Exception as e:
+        raise TSError(f"seL4 record unreadable: {e}")
+    try:
+        sig_hex = Path(str(path) + ".sig").read_text(encoding="utf-8")
+    except Exception:
+        raise TSError("seL4 attestation signature missing (provision <record>.sig)")
+    verify_platform_record_sig(raw, sig_hex, "seL4 attestation")
+    try:
+        rec = json.loads(raw.decode("utf-8"))
     except Exception as e:
         raise TSError(f"seL4 record unreadable: {e}")
     if not isinstance(rec, dict):
@@ -465,11 +577,32 @@ def load_sel4_record(path: Path) -> Dict[str, Any]:
 
 
 def load_waiver(path: Path) -> Dict[str, Any]:
-    """Strict-validate an AO risk-acceptance waiver (expiring, explicit)."""
+    """Strict-validate an AO risk-acceptance waiver (expiring, explicit).
+
+    Provenance: the file must be a signed envelope
+    `{"payload": {...}, "signature": "<hex>"}` where the signature is
+    ML-DSA-87 over the canonical JSON of `payload`, verifiable under the
+    embedded platform root. Plain unsigned JSON is refused with
+    TSRequiredError — anyone with file-write access could otherwise mint
+    authorizations. Expiry/mitigation checks run ONLY after verification.
+    """
     try:
-        rec = json.loads(Path(path).read_text(encoding="utf-8"))
+        env = json.loads(Path(path).read_text(encoding="utf-8"))
     except Exception as e:
         raise TSError(f"waiver unreadable: {e}")
+    if not isinstance(env, dict):
+        raise TSError("waiver shape violation")
+    payload = env.get("payload")
+    sig = env.get("signature")
+    if not isinstance(payload, dict) or not sig:
+        raise TSRequiredError("AO waiver signature invalid or unverified")
+    try:
+        verify_platform_record_sig(_canonical_json(payload), sig,
+                                   "AO waiver")
+    except TSError as e:
+        # Signature failures are authorization failures, not parse errors.
+        raise TSRequiredError("AO waiver signature invalid or unverified") from e
+    rec = payload
     if not isinstance(rec, dict):
         raise TSError("waiver shape violation")
     for k in ("justification", "ao", "expires", "mitigations"):

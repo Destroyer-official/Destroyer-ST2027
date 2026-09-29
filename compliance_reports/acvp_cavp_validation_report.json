@@ -2,7 +2,7 @@
   "metadata": {
     "harness_name": "ACVP-CAVP-PQC-Validator",
     "version": "2028.1.0",
-    "timestamp_utc": "2026-09-28T16:52:48.269035+00:00",
+    "timestamp_utc": "2026-09-29T11:43:59.813570+00:00",
     "target_profile": "NSA-CNSA-2.0-STRICT",
     "nist_security_level": 5,
     "overall_status": "COMPLIANT"
@@ -11,7 +11,7 @@
     "total_tests": 13,
     "passed": 13,
     "failed": 0,
-    "duration_seconds": 0.259
+    "duration_seconds": 0.242
   },
   "algorithms_validated": [
     {
@@ -64,7 +64,7 @@
       "test_type": "KeyGen-AFT",
       "status": "PASS",
       "details": "pk=1568B, sk=3168B match NIST Level 5 FIPS 203 specs",
-      "duration_ms": 0.32
+      "duration_ms": 0.12
     },
     {
       "standard": "FIPS 203",
@@ -72,7 +72,7 @@
       "test_type": "EncapDecap-KAT",
       "status": "PASS",
       "details": "ct=1568B, ss=32B roundtrip verified",
-      "duration_ms": 0.34
+      "duration_ms": 0.24
     },
     {
       "standard": "FIPS 203",
@@ -80,7 +80,7 @@
       "test_type": "ImplicitRejection-KAT",
       "status": "PASS",
       "details": "Tampered ciphertext decapsulation rejected/diverged per FIPS 203 implicit rejection",
-      "duration_ms": 0.16
+      "duration_ms": 0.11
     },
     {
       "standard": "FIPS 204",
@@ -88,7 +88,7 @@
       "test_type": "KeyGen-AFT",
       "status": "PASS",
       "details": "pk=2592B, sk=4896B match NIST Level 5 FIPS 204 specs",
-      "duration_ms": 0.46
+      "duration_ms": 0.28
     },
     {
       "standard": "FIPS 204",
@@ -96,7 +96,7 @@
       "test_type": "SigGenVer-KAT",
       "status": "PASS",
       "details": "4 distinct vectors signed (sig=4627B) and verified successfully",
-      "duration_ms": 8.46
+      "duration_ms": 6.12
     },
     {
       "standard": "FIPS 204",
@@ -104,7 +104,7 @@
       "test_type": "TamperRejection-KAT",
       "status": "PASS",
       "details": "Bit-flipped signatures and message substitutions rejected fail-closed",
-      "duration_ms": 2.54
+      "duration_ms": 5.9
     },
     {
       "standard": "FIPS 205",
@@ -112,7 +112,7 @@
       "test_type": "KeyGen-AFT",
       "status": "PASS",
       "details": "pk=64B, sk=128B match NIST Level 5 FIPS 205 specs",
-      "duration_ms": 10.79
+      "duration_ms": 8.92
     },
     {
       "standard": "FIPS 205",
@@ -120,7 +120,7 @@
       "test_type": "SigGenVer-KAT",
       "status": "PASS",
       "details": "SLH-DSA-256f sig=49856B generated and verified successfully",
-      "duration_ms": 224.02
+      "duration_ms": 211.91
     },
     {
       "standard": "FIPS 205",
@@ -128,7 +128,7 @@
       "test_type": "TamperRejection-KAT",
       "status": "PASS",
       "details": "Tampered SLH-DSA signature rejected fail-closed",
-      "duration_ms": 4.85
+      "duration_ms": 4.76
     },
     {
       "standard": "FIPS 197 / SP 800-38D",
@@ -136,7 +136,7 @@
       "test_type": "CAVP-KAT",
       "status": "PASS",
       "details": "Byte-for-byte match with official NIST SP 800-38D Test Vector 15",
-      "duration_ms": 0.68
+      "duration_ms": 0.05
     },
     {
       "standard": "RFC 8439",
@@ -144,7 +144,7 @@
       "test_type": "RFC8439-KAT",
       "status": "PASS",
       "details": "Byte-for-byte match with official RFC 8439 Section 2.8.2 Vector",
-      "duration_ms": 0.04
+      "duration_ms": 0.02
     },
     {
       "standard": "FIPS 180-4 / 202",
@@ -152,7 +152,7 @@
       "test_type": "Hash-KAT",
       "status": "PASS",
       "details": "All standard FIPS 180-4 and FIPS 202 hash vectors verified exactly",
-      "duration_ms": 0.04
+      "duration_ms": 0.03
     },
     {
       "standard": "FIPS 140-3 ACVP",
@@ -160,7 +160,7 @@
       "test_type": "Monte-Carlo-MCT",
       "status": "PASS",
       "details": "1,000 iterated hashing and 100 AEAD chaining rounds verified without state divergence",
-      "duration_ms": 6.11
+      "duration_ms": 3.35
     }
   ]
 }

@@ -27,7 +27,45 @@ impl AntiReplayWindow {
         }
     }
 
+    /// Read-only acceptance test (RFC 6479 / WireGuard Sec 5.4).
+    /// Safe on unauthenticated input: never mutates. Returns true iff
+    /// `mark(seq)` would be permitted after AEAD authentication.
+    #[inline(always)]
+    pub fn check(&self, seq: u64) -> bool {
+        if seq > self.last_seq {
+            true
+        } else {
+            let diff = self.last_seq - seq;
+            if diff >= 64 || (self.bitmap & (1 << diff)) != 0 {
+                false
+            } else {
+                true
+            }
+        }
+    }
+
+    /// Advance window for a validated seq. Call ONLY after `check(seq)`
+    /// accepted AND the AEAD tag for that exact seq verified. Idempotent
+    /// for duplicates; no-op for behind-window (unreachable via check).
+    #[inline(always)]
+    pub fn mark(&mut self, seq: u64) {
+        if seq > self.last_seq {
+            let diff = seq - self.last_seq;
+            self.bitmap = if diff >= 64 { 0 } else { self.bitmap << diff };
+            self.bitmap |= 1;
+            self.last_seq = seq;
+        } else {
+            let diff = self.last_seq - seq;
+            if diff < 64 {
+                self.bitmap |= 1 << diff;
+            }
+        }
+    }
+
     /// Returns true = accept, false = replay/outside-window (drop silently).
+    /// Non-wire atomic helper retained for tests; wire paths MUST use
+    /// check()-then-AEAD-then-mark() so forged seq cannot shift state
+    /// before authentication.
     #[inline(always)]
     pub fn check_and_update(&mut self, seq: u64) -> bool {
         let accept = if seq > self.last_seq {
@@ -53,6 +91,29 @@ impl AntiReplayWindow {
 
     pub fn drop_count(&self) -> u64 {
         self.drops
+    }
+
+    /// Record a rejected packet for operational metrics. Called by wire
+    /// paths when read-only `check()` refuses BEFORE authentication
+    /// (obvious replay/stale), preserving `drop_count` semantics of the
+    /// legacy combined helper without mutating window state.
+    pub fn note_drop(&mut self) {
+        self.drops = self.drops.wrapping_add(1);
+    }
+
+    /// Export persistent recv-window state (last_seq, bitmap).
+    pub fn parts(&self) -> (u64, u64) {
+        (self.last_seq, self.bitmap)
+    }
+
+    /// Reconstruct from persistent state. Drops counter restarts at 0
+    /// (operational metric, not security state).
+    pub fn from_parts(last_seq: u64, bitmap: u64) -> Self {
+        AntiReplayWindow {
+            last_seq,
+            bitmap,
+            drops: 0,
+        }
     }
 }
 

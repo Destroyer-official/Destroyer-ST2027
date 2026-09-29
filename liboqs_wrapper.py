@@ -194,21 +194,20 @@ def _find_liboqs_path() -> Path:
 
 LIBOQS_DLL_PATH = _find_liboqs_path()
 
-# --- Optional: Import dependency security verification ---
-try:
-    from dependency_security_verifier import verify_liboqs_dll, DependencySecurityError
-    HAVE_DEPENDENCY_VERIFICATION = True
-except ImportError:
-    HAVE_DEPENDENCY_VERIFICATION = False
-    print("WARNING: Dependency security verification module not found or import failed.")
+# --- Mandatory dependency security verification (Task 3.4, fail-closed) ---
+# The verifier import is STRICTLY mandatory: there is no try/except fallback
+# and no HAVE_ flag. If the module is missing, unimportable, or blocked, this
+# import raises fatal ImportError and oqs.dll is NEVER loaded — a missing
+# guard must never silently become an unguarded load.
+from dependency_security_verifier import verify_liboqs_dll, DependencySecurityError
 
 if not LIBOQS_DLL_PATH.exists():
     raise ImportError(f"liboqs library not found at: {LIBOQS_DLL_PATH}. On Linux, install via 'sudo apt install liboqs-dev' or build liboqs.")
 else:
     print(f"Found liboqs library at: {LIBOQS_DLL_PATH}")
 
-# --- Verify DLL Security Before Loading (Windows only) ---
-if HAVE_DEPENDENCY_VERIFICATION and LIBOQS_DLL_PATH.suffix == '.dll':
+# --- Verify DLL Security Before Loading (Windows only, mandatory) ---
+if LIBOQS_DLL_PATH.suffix == '.dll':
     try:
         dll_name = LIBOQS_DLL_PATH.name  # Get filename (oqs.dll or liboqs.dll)
         print(f"Performing security verification of {dll_name}...")

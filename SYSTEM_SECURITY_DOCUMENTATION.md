@@ -469,6 +469,14 @@ ctypes-verified zeroization gates; DoD 5220.22-M shredding for files;
 Rust data-plane volatile-read constant-time compares with Kani harness
 + property doubles.
 
+Stated limits (not footnoted): Python immutable `bytes` objects cannot
+be wiped deterministically due to runtime garbage collector copies.
+High-assurance operational deployments must execute via the standalone
+native Rust data-plane (`secure-transmit`). Constant-rate traffic
+shaping (50ms interval) provides statistical masking against localized
+ISP/packet sniffers. It does not provide mathematical security against
+a global passive adversary with full autonomous network vantage points.
+
 ### 6.3 Supply chain (Tier-2 trade controls)
 
 - TUF-lite 4-role metadata (`root/timestamp/snapshot/targets` + sigs),

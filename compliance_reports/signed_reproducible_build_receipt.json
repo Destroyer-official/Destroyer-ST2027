@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-09-23T06:17:24.697116+00:00",
+  "timestamp_utc": "2026-09-29T11:55:10.718538+00:00",
   "verification_standard": "SLSA Level 3+ / NIST SP 800-161 / FIPS 140-3",
   "binaries": {
     "oqs.dll": {
@@ -27,32 +27,32 @@
   },
   "core_modules": {
     "platform_hsm_interface.py": {
-      "size_bytes": 514660,
-      "sha3_512": "606a67d116e56030fd3cb126834426fb8b4cde064a94cf6d4a96e13e55995154425ad847d1608b90f559fa5e31cb071910d71ed6a604f725e7bc7884e8b62f89"
+      "size_bytes": 504128,
+      "sha3_512": "331e9f50434d425b4adacddc2e8b6bde340e62de6bb2dfbec95c9e4f4a11d9fe4780ec5a251b27d48d0932d30c59afa21e17ca698e46b961b1a7e6968a8a8d09"
     },
     "cnsa2_policy_engine.py": {
       "size_bytes": 28004,
       "sha3_512": "3197216c187256471239de95142d4750dc129d59ee90b5a920281839c90db367bda4159ca02593c1f59f22dbe602909405922fa6da3917530bdc4c7b36fcc6e8"
     },
     "audit_logging_system.py": {
-      "size_bytes": 38904,
-      "sha3_512": "5c66019a03aa982ea4f2930939fbbd605f10341c53011aec6ab85b9b8af9a4b7f4f3ba8bc27026e3d6d225e7150ea1cb605dc529b828e76bdbeb113e3b67a7e6"
+      "size_bytes": 40042,
+      "sha3_512": "aacf4ab3624eecc2ae9b847e98c1ce6e7660145fd6f282185c193c8e1a2df0af7db0469339f114c3325aaf7b790333d82c2cd911c3234b2bb979063c2830fdb2"
     },
     "pqc_algorithms.py": {
-      "size_bytes": 347482,
-      "sha3_512": "8478bca4c5bdca0579f87ab19b644ddd36a093d94a643ec6bd1a22ed404b45538ae69171a7e9f481722978efce934859660baf261d0d7ccba393f96fb62b6417"
+      "size_bytes": 349217,
+      "sha3_512": "d5db3fdd7daf43caf7aec86bbd24e1eea0a6249def87b5ca134fb5d36fd403f00496554d88fc3178785985c162cfcd19123560cef29c851bab9fd6393d2144c3"
     },
     "metadata_resistance.py": {
-      "size_bytes": 34591,
-      "sha3_512": "d61f995209da4e93c7fef69bfa1c8ba21aaff5f5d84cb4715abf09f5cf2b9ec3d24070a55887fe599f46e86567af7b84a256eb5e18adbead976af8849d8e8a10"
+      "size_bytes": 34621,
+      "sha3_512": "98617b0790efcb4aa4a11fa414eb70136d70eb6b19d0e098da425bd380db6eb9b7cee66e9b6fb754c9fe07d6958bc0edfac01fbd9a168e5bcb926e3736c798cd"
     },
     "network_adversary_resistance.py": {
       "size_bytes": 59108,
       "sha3_512": "84b3d592aecf4c37694a4e23fd0ece91b5ed3d2c5cb60943bd765a589ccd40703c0cf4d6dedb3c91398abf31c3f3dadb5bb082dec812ef1c01d70caa11bc7fe2"
     },
-    "secure_p2p.py": {
-      "size_bytes": 694387,
-      "sha3_512": "5177c7577ff777172d56fa178bd4eb2da4f56f070bd7c55f451db9877d33e7466e2134207d8388783c1a5875f4cb6470a5b12c1a5d5156c8b60c57c51226ac00"
+    "archive/legacy_prototype/secure_p2p.py": {
+      "size_bytes": 699765,
+      "sha3_512": "3b466b9af3a2b330a0baec9ebcc5f6e8713ff7940b6de6d2a06ae861275b84c071db9360f10ad5005ef8d728fb699c1d3c58dddc67b72e59f29d293a1bd9e732"
     }
   },
   "sbom_status": {
@@ -65,5 +65,27 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "5662e8363f5677d582098928fc8ef4e730b43ab81f323e1fec1613ac5dc9253646c814ad601316f4a9d1a161e559b2b0a66bbaaabde04bcf3d00419b1295e710"
+  "source_tree_merkle_root": "3a939892f47cd7a613eb58706a23981bc034b20ac97b21d7540cdf5609cbe22ec3a91c42ad5bb2ddd03343de6730d7026d16300094841513f73b09ebaf8496a7",
+  "critical_modules_manifest": {
+    "secure_transmit_2027.py": {
+      "expected_sha3_512": "1f825b7aa5b3656ccf7627b3a9ae15b5af1ecbfb8a990db6cf3e6401fa32e516930d4768ab4f75089aace16eee2de21143db6ad06a57f1db7be0c2831aad6cc6",
+      "actual_sha3_512": "1f825b7aa5b3656ccf7627b3a9ae15b5af1ecbfb8a990db6cf3e6401fa32e516930d4768ab4f75089aace16eee2de21143db6ad06a57f1db7be0c2831aad6cc6",
+      "matched": true
+    },
+    "rust_data_plane/src/main.rs": {
+      "expected_sha3_512": "d3b8456de5339cb6d80c83055810f140f30cfc6866ca530ad7be06655c85fe2083386b6baabb77671383e4d6ea822275c65874d7aed704015723d287b3971ddf",
+      "actual_sha3_512": "d3b8456de5339cb6d80c83055810f140f30cfc6866ca530ad7be06655c85fe2083386b6baabb77671383e4d6ea822275c65874d7aed704015723d287b3971ddf",
+      "matched": true
+    },
+    "ts_runtime.py": {
+      "expected_sha3_512": "03ba12bb7c69fecc069a60196a997da0c988da3dc25b22e52a51a25bb86f6baf8144131fb4435137c1c1bd0dfdbf43dd088615c845b3f73499f2a6cbbf5ac621",
+      "actual_sha3_512": "03ba12bb7c69fecc069a60196a997da0c988da3dc25b22e52a51a25bb86f6baf8144131fb4435137c1c1bd0dfdbf43dd088615c845b3f73499f2a6cbbf5ac621",
+      "matched": true
+    },
+    "dependency_security_verifier.py": {
+      "expected_sha3_512": "bd59e1169ba069228411cb38a592fc1729a49d0ee30823b86b774ddc10db8cfe9c372133dad36bc0d4fdc85763022dc9e9c805d1873631a3c4422d7ce8b70604",
+      "actual_sha3_512": "bd59e1169ba069228411cb38a592fc1729a49d0ee30823b86b774ddc10db8cfe9c372133dad36bc0d4fdc85763022dc9e9c805d1873631a3c4422d7ce8b70604",
+      "matched": true
+    }
+  }
 }

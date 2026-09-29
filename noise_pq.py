@@ -1,27 +1,41 @@
 #!/usr/bin/env python3
 """
-noise_pq.py — Noise_XXhfs post-quantum handshake with ML-KEM-1024.
+noise_pq.py — Noise_XXhfs-style post-quantum handshake with ML-KEM-1024.
 
-Faithful implementation of the peer-reviewed Noise `hfs` (hybrid forward
-secrecy) pattern transform (noise_spec extensions/ext_hybrid_forward_secrecy):
-  XXhfs(s, rs):  -> e, f
-                 <- e, f, ee, ff, s, es
-                 -> s, se
-which the extension proves FULLY HYBRID (payloads from message 2 on are
-encrypted under ee+ff combined keys).
+Skeleton follows the Noise `hfs` (hybrid forward secrecy) extension:
+Perrin, "KEM-based Hybrid Forward Secrecy for Noise",
+github.com/noiseprotocol/noise_hfs_spec (noise_hfs.md, rev 1,
+2018-11-17, status unofficial/unstable — a draft extension, NOT a
+peer-reviewed result and NOT part of the Noise spec rev 34). Its tokens
+are `e1` (send KEM ek) and `ekem1` (send KEM ct, MixKey(ss)); its XXhfs
+pattern is:
+  XXhfs:  -> e, e1
+          <- e, ee, ekem1, s, es
+          -> s, se
+with KEM function mapping per spec sections 3-4 (GENERATE_KEM_KEYPAIR /
+GENERATE_KEM_CIPHERTEXT / KEM decaps; MixKey(kem_output)). The spec
+names NO concrete KEM (section 6 explicitly lists none) and contains
+NO security proofs — any claim that "the extension proves" this
+profile hybrid is FALSE. Peer-reviewed KEM-Noise results (PQNoise,
+Angel et al., CCS 2022, ePrint 2022/539) cover KEM-replacement Noise
+patterns generally, not this profile.
 
 Instantiation (profile Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384):
-  DH function ... P-384 ECDH (CNSA L5 hedge; spec examples use 25519/448).
-  hfs function .. ML-KEM-1024 (FIPS 203), KEM-shaped exactly like the
-    spec's NewHope example: GENERATE_KEYPAIR_F(empty) = keygen, send ek
-    (FLEN1 = 1568); GENERATE_KEYPAIR_F(ek) = encaps, send ct (FLEN2 =
-    1568); FF = decaps-or-stored ss (FFLEN = 32).
+  DH function ... P-384 ECDH (CNSA L5 hedge; spec-era examples use 25519/448).
+  hfs function .. ML-KEM-1024 (FIPS 203): initiator GENERATE_KEM_KEYPAIR,
+    send ek (1568); responder GENERATE_KEM_CIPHERTEXT, send ct (1568);
+    MixKey(ss) with ss 32 bytes. M1/M2 ek/ct travel in clear exactly as
+    the spec's M1/M2 placement (no key exists yet to encrypt them under).
   HASH .......... SHA-384. CIPHER ...... AES-256-GCM.
-  Static auth ... ML-DSA-87 signatures over the handshake hash (+sig
-    profile suffix): Noise DH statics cannot express signing keys, so
-    es/se tokens are REPLACED by sig_r/sig_i payloads (verify-before-
-    derive, mirroring ST2027). Session keys still mix ee+ff only; the
-    signatures authenticate the full transcript h (SIGMA-style).
+  Static auth ... CUSTOM SUBSTITUTION (not in the hfs extension): Noise DH
+    statics cannot express signing keys, so es/se tokens are REPLACED by
+    ML-DSA-87 signatures over the handshake hash (+sig profile suffix),
+    verify-before-derive, SIGMA-style. Session keys still mix ee+ss_kem
+    only. This substitution is UNPROVEN (no reduction to the hfs draft,
+    which has no proofs, nor to PQNoise, which keeps DH/KEM auth) and is
+    stated as an assumption; what IS proven by test is structural
+    agreement with the XXhfs message skeleton plus fail-closed
+    verify-before-derive on both sides.
   Combiner ...... HKDF-SHA384 over (ck, ikm) per Noise MixKey (dual-PRF
     combiner per Bindel et al. PQCrypto'19: dPRF = HKDF-Extract, PRF =
     HKDF-Expand with ciphertexts bound — here every transmitted blob is
@@ -250,7 +264,7 @@ def _take_ephemeral(sess: NoiseSession) -> bytes:
 
 
 def initiator_hello(sess: NoiseSession) -> bytes:
-    """M1: -> e, f. Preconditions: initiator, fresh session."""
+    """M1: -> e, e1. Preconditions: initiator, fresh session."""
     if not sess.is_initiator or sess._e_pub is not None:
         raise NoiseError("handshake state violation")
     e_pub = _take_ephemeral(sess)
@@ -260,8 +274,12 @@ def initiator_hello(sess: NoiseSession) -> bytes:
     return e_pub + ml_ek
 
 
-def responder_reply(sess: NoiseSession, m1: bytes) -> bytes:
-    """M2: <- e, f, ee, ff, s, es(sig). Verify nothing yet (nothing signed)."""
+def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
+    """M2: <- e, ee, ekem1, s, es(sig). Verify nothing yet (nothing signed).
+
+    signer: optional callable(msg)->sig for HSM-held identities. When None,
+    the session's software sig_sk signs (lab path).
+    """
     if sess.is_initiator or sess._e_pub is not None:
         raise NoiseError("handshake state violation")
     if len(m1) != P384_PUB + MLKEM_EK:
@@ -279,7 +297,8 @@ def responder_reply(sess: NoiseSession, m1: bytes) -> bytes:
     sess.sym.mix_key(_p384_dh(sess._e_priv, e_cli))   # ee
     sess.sym.mix_key(ml_ss)                            # ff
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)    # s (encrypted)
-    sig = _sign(sess.sig_sk, sess.sym.h)               # es->sig over h
+    h_for_sig = bytes(sess.sym.h)
+    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig)  # es->sig over h
     enc_sig = sess.sym.encrypt_and_hash(sig)
     return e_pub + ml_ct + enc_pk + enc_sig
 
@@ -307,13 +326,18 @@ def initiator_finish(sess: NoiseSession, m2: bytes) -> None:
     sess._peer_sig_pk = srv_pk
 
 
-def initiator_complete(sess: NoiseSession) -> bytes:
-    """M3: -> s, se(sig). Returns message; transport keys NOT yet split."""
+def initiator_complete(sess: NoiseSession, signer=None) -> bytes:
+    """M3: -> s, se(sig). Returns message; transport keys NOT yet split.
+
+    signer: optional callable(msg)->sig for HSM-held identities.
+    Exactly one M3 per session (handshake-cipher nonce reuse = forgery).
+    """
     if not sess.is_initiator or sess._peer_sig_pk is None \
             or sess._m3_done or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)
-    sig = _sign(sess.sig_sk, sess.sym.h)
+    h_for_sig = bytes(sess.sym.h)
+    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig)
     out = enc_pk + sess.sym.encrypt_and_hash(sig)
     sess._m3_done = True  # exactly one M3 per session (nonce reuse = forgery)
     return out
@@ -364,30 +388,51 @@ def transport_send(sess: NoiseSession, pt: bytes) -> bytes:
     return struct.pack(">Q", seq) + ct
 
 
+def _recv_check(sess: NoiseSession, seq: int) -> None:
+    """Read-only replay test. Safe on unauthenticated input; no mutation.
+
+    Mirrors secure_transmit_2027.Channel semantics (RFC 6479: advance
+    only on validated S; WireGuard: check only after verified tag).
+    """
+    if seq < 0 or seq >= (1 << 64):
+        raise NoiseError("sequence violation")
+    if not sess._recv_started:
+        return
+    if seq < sess._recv_win_base:
+        raise NoiseError("replay rejected")
+    off = seq - sess._recv_win_base
+    if off < 64 and ((sess._recv_win_bits >> off) & 1):
+        raise NoiseError("replay rejected")
+
+
+def _recv_mark(sess: NoiseSession, seq: int) -> None:
+    """Advance replay window. Call ONLY after the AEAD tag verified."""
+    if not sess._recv_started:
+        sess._recv_win_base, sess._recv_win_bits, sess._recv_started = seq, 1, True
+        return
+    if seq < sess._recv_win_base:
+        return  # validated by _recv_check; nothing to record
+    off = seq - sess._recv_win_base
+    if off < 64:
+        sess._recv_win_bits |= (1 << off)
+    else:
+        shift = off - 63
+        sess._recv_win_bits = 0 if shift >= 64 else (sess._recv_win_bits >> shift)
+        sess._recv_win_base += shift
+        sess._recv_win_bits |= (1 << 63)
+
+
 def transport_recv(sess: NoiseSession, wire: bytes) -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     if sess._k_recv is None or len(wire) < 8 + 1 + 16:
         raise NoiseError("transport framing violation")
     seq = struct.unpack(">Q", wire[:8])[0]
     direction = 0x5A if sess.is_initiator else 0xA5
-    # Bitmap replay window (mirror of Channel semantics).
-    if not sess._recv_started:
-        sess._recv_win_base, sess._recv_win_bits, sess._recv_started = seq, 1, True
-    else:
-        if seq < sess._recv_win_base:
-            raise NoiseError("replay rejected")
-        off = seq - sess._recv_win_base
-        if off < 64:
-            if (sess._recv_win_bits >> off) & 1:
-                raise NoiseError("replay rejected")
-            sess._recv_win_bits |= (1 << off)
-        else:
-            shift = off - 63
-            sess._recv_win_bits = 0 if shift >= 64 else (sess._recv_win_bits >> shift)
-            sess._recv_win_base += shift
-            sess._recv_win_bits |= (1 << 63)
+    _recv_check(sess, seq)  # Step 1: read-only (forged seq cannot shift)
     try:
-        return AESGCM(sess._k_recv).decrypt(
+        pt = AESGCM(sess._k_recv).decrypt(
             _transport_nonce(seq, direction), wire[8:], b"NPQ1")
     except Exception:
         raise NoiseError("transport authentication failed")
+    _recv_mark(sess, seq)  # Step 3: mutate ONLY on authentication success
+    return pt

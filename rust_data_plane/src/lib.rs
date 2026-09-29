@@ -132,19 +132,46 @@ impl SecureEngine {
     /// Open an inbound wire frame. Returns (ftype, payload-padded-bytes) or
     /// None when the frame must be dropped silently (bad tag / replay /
     /// behind-window). NEVER signal the peer on None.
+    ///
+    /// Split discipline (RFC 6479 / WireGuard Sec 5.4): read-only `check`
+    /// on the unauthenticated peeked seq, then AEAD authentication, then
+    /// `mark` ONLY on success. Forged seq never shifts state before auth.
     pub fn open_msg(&mut self, frame: Vec<u8>) -> Option<(u8, Vec<u8>)> {
         let key = self.key.as_ref()?;
-        let (seq, ftype, pt) = aead::open_indexed(key, self.recv_dir(), &frame).ok()?;
-        if !self.replay.check_and_update(seq) {
+        // Step 1: read-only check on unauthenticated header (no mutation).
+        let peeked = aead::peek_seq(&frame)?;
+        if !self.replay.check(peeked) {
+            self.replay.note_drop();
             return None;
         }
+        // Step 2: authenticate (seq bound via nonce + AAD header).
+        let (seq, ftype, pt) = aead::open_indexed(key, self.recv_dir(), &frame).ok()?;
+        if seq != peeked {
+            return None;
+        }
+        // Step 3: mutate window ONLY on authentication success.
+        self.replay.mark(seq);
         Some((ftype, pt))
     }
 
     /// Offer an inbound sequence number to the replay filter.
     /// Returns true = accept, false = drop silently (caller must not reply).
+    /// NON-WIRE atomic helper retained for tests; wire paths MUST use
+    /// `check_seq_readonly` then AEAD then `mark_seq` (see `open_msg`).
     pub fn check_seq(&mut self, seq: u64) -> bool {
         self.replay.check_and_update(seq)
+    }
+
+    /// Read-only acceptance test for unauthenticated input. No mutation.
+    /// Wire pre-filter: call this, then authenticate, then `mark_seq`.
+    pub fn check_seq_readonly(&self, seq: u64) -> bool {
+        self.replay.check(seq)
+    }
+
+    /// Advance window for a validated seq. Call ONLY after
+    /// `check_seq_readonly` accepted AND the AEAD tag verified.
+    pub fn mark_seq(&mut self, seq: u64) {
+        self.replay.mark(seq)
     }
 
     pub fn drop_count(&self) -> u64 {

@@ -78,7 +78,7 @@ The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`]
 ## 3. Operational Standards & Verification Traceability
 
 ### A. Automated Test Gates (100% Pass)
-The codebase is validated by **163 Python tests** and **64 Rust tests** (227 tests total) maintaining zero regressions:
+The codebase is validated by the full automated battery (Python suites plus 64 cargo-test Rust tests: 35 library unit tests + 29-test harness binary) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
 ```bash
 # Execute the unified 2027 Top-Secret test battery
 pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py \
