@@ -143,6 +143,17 @@ impl Drop for EphemeralKeys {
     }
 }
 
+/// Derive a 32-byte AES-256 frame key from the 64-byte hybrid shared secret via HKDF-SHA384.
+pub fn derive_session_key(hybrid_ss: &[u8; HYBRID_SS], context_info: &[u8]) -> [u8; 32] {
+    use hkdf::Hkdf;
+    use sha2::Sha384;
+    let hk = Hkdf::<Sha384>::new(Some(b"ST2027-HYBRID-KEX-v1-SALT"), hybrid_ss);
+    let mut okm = [0u8; 32];
+    hk.expand(context_info, &mut okm)
+        .expect("HKDF-SHA384 expand with 32-byte output cannot fail");
+    okm
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +201,15 @@ mod tests {
         // must NOT equal the initiator's. (FO transform property.)
         let ss_resp = resp.decapsulate(&eph_pub, &ml_ct).unwrap();
         assert_ne!(&ss_init[..], &ss_resp[..]);
+    }
+
+    #[test]
+    fn test_derive_session_key_deterministic_and_matches() {
+        let ss = [0x55u8; HYBRID_SS];
+        let k1 = derive_session_key(&ss, b"test-context");
+        let k2 = derive_session_key(&ss, b"test-context");
+        assert_eq!(k1, k2);
+        let k3 = derive_session_key(&ss, b"different-context");
+        assert_ne!(k1, k3);
     }
 }

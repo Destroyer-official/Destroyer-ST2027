@@ -34,6 +34,7 @@
 use destroyer_core::aead::{self, FrameKey, DIR_SEND};
 use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::frame::{self, FTYPE_MSG};
+use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler};
@@ -45,6 +46,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::{Zeroize, Zeroizing};
 
 const VERSION: &str = "0.2.0";
@@ -63,6 +65,8 @@ fn usage() -> ! {
         "secure-transmit {VERSION} — standalone data-plane executor\n\
          \n\
          keygen [--out PATH]              print fresh 32B frame key (hex)\n\
+         kex-listen  --bind ADDR --out-key PATH [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
+         kex-connect --to ADDR --out-key PATH [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
          send   --key-file PATH|--key-stdin --state PATH --to ADDR --msg TEXT\n\
          recv   --key-file PATH|--key-stdin --state PATH --bind ADDR [--count N] [--timeout-ms MS]\n\
          send-file --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH\n\
@@ -317,22 +321,7 @@ fn cmd_keygen(args: &[String]) {
     let hex = hex_of(&k);
     k.zeroize();
     if let Some(out) = get_flag(args, "--out") {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut f = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&out)
-                .unwrap_or_else(|_| fail("key out unwritable (must not exist)"));
-            f.write_all(hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
-            f.sync_all().unwrap_or_else(|_| fail("key out sync failed"));
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&out, hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
-        }
+        write_key_file(&out, &hex);
     } else {
         print!("{hex}");
     }
@@ -347,6 +336,26 @@ fn hex_of(b: &[u8]) -> String {
     }
     s.push('\n');
     s
+}
+
+fn write_key_file(out: &str, hex: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(out)
+            .unwrap_or_else(|_| fail("key out unwritable"));
+        f.write_all(hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
+        f.sync_all().unwrap_or_else(|_| fail("key out sync failed"));
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(out, hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
+    }
 }
 
 fn cmd_send(args: &[String]) {
@@ -526,7 +535,16 @@ fn cmd_selftest() {
     let (c_seq, c_type, _) = aead::open_indexed(&key, DIR_SEND, &chaff).expect("chaff open");
     assert_eq!(c_seq, 99);
     assert_eq!(c_type, frame::FTYPE_CHAFF);
-    eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, entropy ok");
+
+    // Hybrid KEM (ML-KEM-1024 + X25519) self-check
+    let resp = EphemeralKeys::generate().expect("kem keygen");
+    let (ml_ct, ss_init, eph_pub) = EphemeralKeys::encapsulate(&resp.x_public, &resp.ml_ek).expect("encaps");
+    let ss_resp = resp.decapsulate(&eph_pub, &ml_ct).expect("decaps");
+    assert_eq!(&ss_init[..], &ss_resp[..]);
+    let k_init = kem::derive_session_key(&ss_init, b"selftest-kex");
+    let k_resp = kem::derive_session_key(&ss_resp, b"selftest-kex");
+    assert_eq!(k_init, k_resp);
+    eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, mlkem-1024-kex ok");
 }
 
 fn cmd_send_file(args: &[String]) {
@@ -1081,6 +1099,124 @@ fn cmd_stream_chaff(args: &[String]) {
     });
 }
 
+fn cmd_kex_listen(args: &[String]) {
+    reject_forbidden_cli(args);
+    let bind: SocketAddr = get_flag(args, "--bind")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --bind ADDR (host:port)"));
+    let out = get_flag(args, "--out-key").unwrap_or_else(|| usage());
+    let timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+        .unwrap_or(30000);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    let key_hex = rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind(bind)
+            .await
+            .unwrap_or_else(|_| fail("kex-listen bind failed"));
+
+        let accept_fut = async {
+            let (mut socket, _peer) = listener.accept().await.map_err(|_| "accept failed")?;
+
+            // 1. Generate ephemeral hybrid keypair (X25519 + ML-KEM-1024)
+            let resp_keys = EphemeralKeys::generate().map_err(|_| "KEM key generation failed")?;
+
+            // 2. Transmit responder bundle: x_public (32) || ml_ek (MLKEM_PK)
+            let mut bundle = Vec::with_capacity(32 + MLKEM_PK);
+            bundle.extend_from_slice(&resp_keys.x_public);
+            bundle.extend_from_slice(&resp_keys.ml_ek);
+            socket.write_all(&bundle).await.map_err(|_| "bundle write failed")?;
+
+            // 3. Receive initiator bundle: eph_pub (32) || ml_ct (MLKEM_CT)
+            let mut init_bundle = vec![0u8; 32 + MLKEM_CT];
+            socket.read_exact(&mut init_bundle).await.map_err(|_| "initiator bundle read failed")?;
+
+            let mut eph_pub = [0u8; 32];
+            eph_pub.copy_from_slice(&init_bundle[..32]);
+            let ml_ct = &init_bundle[32..];
+
+            // 4. Decapsulate hybrid shared secret
+            let hybrid_ss = resp_keys.decapsulate(&eph_pub, ml_ct).map_err(|_| "decapsulate failed")?;
+
+            // 5. Derive symmetric frame key via HKDF-SHA384
+            let frame_key = kem::derive_session_key(&hybrid_ss, b"DESTROYER-ST2027-SESSION-KEY-AES256GCM");
+            let hex = hex_of(&frame_key);
+            Ok::<String, &'static str>(hex)
+        };
+
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), accept_fut).await {
+            Ok(Ok(hex)) => hex,
+            Ok(Err(e)) => fail(e),
+            Err(_) => fail("kex-listen timed out waiting for peer"),
+        }
+    });
+
+    write_key_file(&out, &key_hex);
+    println!("kex-listen SUCCESS: established ML-KEM-1024 + X25519 hybrid key -> {out}");
+}
+
+fn cmd_kex_connect(args: &[String]) {
+    reject_forbidden_cli(args);
+    let to: SocketAddr = get_flag(args, "--to")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
+    let out = get_flag(args, "--out-key").unwrap_or_else(|| usage());
+    let timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+        .unwrap_or(30000);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    let key_hex = rt.block_on(async {
+        let connect_fut = async {
+            let mut socket = tokio::net::TcpStream::connect(to)
+                .await
+                .map_err(|_| "connect failed")?;
+
+            // 1. Receive responder bundle: resp_x_pub (32) || resp_ml_ek (MLKEM_PK)
+            let mut resp_bundle = vec![0u8; 32 + MLKEM_PK];
+            socket.read_exact(&mut resp_bundle).await.map_err(|_| "bundle read failed")?;
+
+            let mut resp_x_pub = [0u8; 32];
+            resp_x_pub.copy_from_slice(&resp_bundle[..32]);
+            let resp_ml_ek = &resp_bundle[32..];
+
+            // 2. Encapsulate hybrid shared secret
+            let (ml_ct, hybrid_ss, eph_pub) = EphemeralKeys::encapsulate(&resp_x_pub, resp_ml_ek)
+                .map_err(|_| "encapsulate failed")?;
+
+            // 3. Transmit initiator bundle: eph_pub (32) || ml_ct (MLKEM_CT)
+            let mut init_bundle = Vec::with_capacity(32 + MLKEM_CT);
+            init_bundle.extend_from_slice(&eph_pub);
+            init_bundle.extend_from_slice(&ml_ct);
+            socket.write_all(&init_bundle).await.map_err(|_| "initiator bundle write failed")?;
+
+            // 4. Derive symmetric frame key via HKDF-SHA384
+            let frame_key = kem::derive_session_key(&hybrid_ss, b"DESTROYER-ST2027-SESSION-KEY-AES256GCM");
+            let hex = hex_of(&frame_key);
+            Ok::<String, &'static str>(hex)
+        };
+
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), connect_fut).await {
+            Ok(Ok(hex)) => hex,
+            Ok(Err(e)) => fail(e),
+            Err(_) => fail("kex-connect timed out"),
+        }
+    });
+
+    write_key_file(&out, &key_hex);
+    println!("kex-connect SUCCESS: established ML-KEM-1024 + X25519 hybrid key -> {out}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -1088,6 +1224,8 @@ fn main() {
     }
     match args[1].as_str() {
         "keygen" => cmd_keygen(&args[2..]),
+        "kex-listen" => cmd_kex_listen(&args[2..]),
+        "kex-connect" => cmd_kex_connect(&args[2..]),
         "send" => cmd_send(&args[2..]),
         "recv" => cmd_recv(&args[2..]),
         "send-file" => cmd_send_file(&args[2..]),

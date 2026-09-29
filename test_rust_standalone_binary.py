@@ -35,6 +35,14 @@ def _free_udp_port():
     return port
 
 
+def _free_tcp_port():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 def _run(*argv, timeout=60):
     return subprocess.run([str(BIN), *argv], capture_output=True, text=True,
                           timeout=timeout, cwd=str(CRATE))
@@ -360,6 +368,61 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertEqual(res.returncode, 0, res.stderr[-500:])
             self.assertIn("stream-chaff: emitted 5 frames wire=1232B interval=10ms", res.stdout)
             self.assertEqual(os.path.getsize(send_state), 48)
+
+    def test_kex_listen_connect_hybrid_establishment(self):
+        """Phase 1: Pure native post-quantum hybrid key exchange (ML-KEM-1024 + X25519)."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            port = _free_tcp_port()
+            key_a = os.path.join(tmp, "responder.key")
+            key_b = os.path.join(tmp, "initiator.key")
+
+            listener = subprocess.Popen(
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a, "--timeout-ms", "15000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b, "--timeout-ms", "15000")
+                self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
+                out, err = listener.communicate(timeout=15)
+            finally:
+                if listener.poll() is None:
+                    listener.kill()
+                    listener.communicate()
+
+            self.assertEqual(listener.returncode, 0, f"kex-listen failed:\n{err[-500:]}")
+            self.assertTrue(os.path.exists(key_a))
+            self.assertTrue(os.path.exists(key_b))
+
+            with open(key_a, "r") as f:
+                hex_a = f.read().strip()
+            with open(key_b, "r") as f:
+                hex_b = f.read().strip()
+
+            self.assertEqual(len(hex_a), 64)
+            self.assertEqual(len(hex_b), 64)
+            self.assertEqual(hex_a, hex_b, "Negotiated keys did not match!")
+
+            # Verify the negotiated key functions seamlessly for authenticated transmission
+            udp_port = _free_udp_port()
+            st_send = os.path.join(tmp, "kex_send.state")
+            st_recv = os.path.join(tmp, "kex_recv.state")
+
+            recv = subprocess.Popen(
+                [str(BIN), "recv", "--key-file", key_a, "--state", st_recv, "--bind", f"127.0.0.1:{udp_port}", "--count", "1"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                sent = _run("send", "--key-file", key_b, "--state", st_send, "--to", f"127.0.0.1:{udp_port}", "--msg", "KEX-VERIFIED")
+                self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
+                out_recv, err_recv = recv.communicate(timeout=10)
+            finally:
+                if recv.poll() is None:
+                    recv.kill()
+                    recv.communicate()
+
+            self.assertEqual(recv.returncode, 0, err_recv[-500:])
+            self.assertIn("KEX-VERIFIED", out_recv)
 
 
 if __name__ == "__main__":
