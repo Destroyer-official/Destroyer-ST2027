@@ -521,6 +521,55 @@ class TestRustStandaloneBinary(unittest.TestCase):
             res_fail = _run("zeroize", "--target", os.path.join(tmp, "nonexistent.bin"))
             self.assertNotEqual(res_fail.returncode, 0)
 
+    def test_channel_continuous_pacing_and_bidirectional_exchange(self):
+        """Phase 6: Full-duplex continuous paced enclave channel with CSPRNG chaff and real message transit."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port_init = _free_udp_port()
+            port_resp = _free_udp_port()
+            state_init = os.path.join(tmp, "init.state")
+            state_resp = os.path.join(tmp, "resp.state")
+
+            # Start responder on port_resp, pointing to port_init
+            resp_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                 "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
+                 "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
+                 "--reply", "TACTICAL_RESPONSE_CONFIRMED", "--recv-count", "1",
+                 "--drain-ticks", "6", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            time.sleep(0.15)
+
+            # Start initiator on port_init, pointing to port_resp
+            init_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                 "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
+                 "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
+                 "--msg", "TACTICAL_COORDINATES_ENCLAVE_ALPHA", "--recv-count", "1",
+                 "--drain-ticks", "6", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+
+            init_out, init_err = init_proc.communicate(timeout=10)
+            resp_out, resp_err = resp_proc.communicate(timeout=10)
+
+            self.assertEqual(init_proc.returncode, 0, f"Initiator failed:\nOUT: {init_out}\nERR: {init_err}")
+            self.assertEqual(resp_proc.returncode, 0, f"Responder failed:\nOUT: {resp_out}\nERR: {resp_err}")
+
+            # Verify initiator received the responder's message
+            self.assertIn("RECV_MSG", init_out)
+            self.assertIn("TACTICAL_RESPONSE_CONFIRMED", init_out)
+
+            # Verify responder received the initiator's message
+            self.assertIn("RECV_MSG", resp_out)
+            self.assertIn("TACTICAL_COORDINATES_ENCLAVE_ALPHA", resp_out)
+
+            # Verify state files are intact and 48 bytes
+            self.assertEqual(os.path.getsize(state_init), 48)
+            self.assertEqual(os.path.getsize(state_resp), 48)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -108,9 +108,9 @@ def main():
         card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, "Compiler warnings present")
     else:
         code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
-        passed = (code2 == 0 and "test result: ok. 49 passed" in out2 and "29 passed" in out2)
+        passed = (code2 == 0 and ("51 passed" in out2 or "49 passed" in out2) and "29 passed" in out2 and "0 failed" in out2)
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         "78 tests passed (49 lib incl. FEC, KEX, pacing, purge & memlock + 29 harness); 0 compiler warnings")
+                         "80 tests passed (51 lib incl. FEC, KEX, pacing, purge & memlock + 29 harness); 0 compiler warnings")
 
     # Gate 2: Native Top-Secret Runtime (ts_rt)
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")

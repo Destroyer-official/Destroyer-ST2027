@@ -31,9 +31,9 @@
 //! with a one-line stderr reason. Nothing is ever signaled back to the peer
 //! (stealth discipline from `net.rs`).
 
-use destroyer_core::aead::{self, FrameKey, DIR_SEND};
+use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
 use destroyer_core::fec::CauchyReedSolomon;
-use destroyer_core::frame::{self, FTYPE_MSG};
+use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
@@ -46,7 +46,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -75,6 +75,7 @@ fn usage() -> ! {
          diode-send --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH [--parity-ratio FLOAT]\n\
          diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
          stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
+         channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          zeroize --target PATH...|--state PATH|--key-file PATH  NIST SP 800-88 3-pass cryptographic media purge\n\
          selftest                        deterministic module self-checks\n\
          \n\
@@ -85,6 +86,10 @@ fn usage() -> ! {
          diode-send/recv: Simplex Optical Data Diode transfer with Cauchy-Reed-Solomon\n\
          Forward Error Correction (FEC). ZERO return channel / zero ACKs.\n\
          Reconstructs original file from ANY K chunks even with packet loss.\n\
+         \n\
+         channel: Full-duplex hardware-paced enclave link with continuous CSPRNG chaff\n\
+         and directional nonce separation. Flat wire timing and constant Shannon entropy\n\
+         defeats Signals Intelligence (SIGINT) flow correlation and timing analysis.\n\
          \n\
          Security: --seq and --key HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Key NEVER\n\
@@ -1113,6 +1118,227 @@ fn cmd_stream_chaff(args: &[String]) {
     });
 }
 
+fn cmd_channel(args: &[String]) {
+    reject_forbidden_cli(args);
+    let (kb, key_id) = load_key_material(args);
+    let state = state_path(args);
+    let bind: SocketAddr = get_flag(args, "--bind")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --bind ADDR (host:port)"));
+    let to: SocketAddr = get_flag(args, "--to")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
+    let role = get_flag(args, "--role").unwrap_or_else(|| "initiator".to_string());
+    if role != "initiator" && role != "responder" {
+        fail("bad --role: must be 'initiator' or 'responder'");
+    }
+    let interval_ms: u64 = get_flag(args, "--interval-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
+        .unwrap_or(50);
+    let quantum: usize = get_flag(args, "--quantum")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)")))
+        .unwrap_or(1232);
+    if quantum != 256 && quantum != 512 && quantum != 1232 {
+        drop(kb);
+        fail("bad --quantum: must be 256, 512, or 1232");
+    }
+    let count: u64 = get_flag(args, "--count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
+        .unwrap_or(0);
+    let recv_count: u64 = get_flag(args, "--recv-count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --recv-count")))
+        .unwrap_or(0);
+    let timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+        .unwrap_or(0);
+    let reply_msg = get_flag(args, "--reply");
+    let drain_ticks: u64 = get_flag(args, "--drain-ticks")
+        .map(|s| s.parse().unwrap_or(0))
+        .unwrap_or(3);
+
+    let mut msgs = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--msg" && i + 1 < args.len() {
+            msgs.push(args[i + 1].clone());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
+    let (tx_dir, rx_dir) = if role == "responder" {
+        (DIR_RECV, DIR_SEND)
+    } else {
+        (DIR_SEND, DIR_RECV)
+    };
+
+    let key = FrameKey::from_bytes(*kb.as_bytes());
+    drop(kb);
+
+    let mut state_file = open_locked_state(&state);
+    let initial_st = read_state_locked(&mut state_file, &key_id);
+    let mut next_send_seq = initial_st.send_seq;
+    let mut window = AntiReplayWindow::from_parts(initial_st.recv_last, initial_st.recv_bitmap);
+
+    let mut reserved_limit = next_send_seq
+        .checked_add(512)
+        .unwrap_or_else(|| fail("sequence exhausted"));
+    let mut st = read_state_locked(&mut state_file, &key_id);
+    st.send_seq = reserved_limit;
+    write_state_locked(&mut state_file, &st);
+
+    let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+    for m in &msgs {
+        outbound_msgs.push_back(m.as_bytes().to_vec());
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    rt.block_on(async {
+        let mut ep = Endpoint::bind(&bind.to_string())
+            .await
+            .unwrap_or_else(|_| fail("channel bind failed"));
+        let mut ticks_emitted = 0u64;
+        let mut msgs_sent = 0u64;
+        let mut msgs_received = 0u64;
+        let mut chaff_received = 0u64;
+        let mut draining: Option<u64> = None;
+
+        let start_time = Instant::now();
+        let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
+        tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        println!(
+            "channel: ACTIVE role={role} bind={bind} to={to} interval={interval_ms}ms quantum={quantum}B"
+        );
+
+        loop {
+            if count > 0 && ticks_emitted >= count {
+                break;
+            }
+            if recv_count > 0 && msgs_received >= recv_count && draining.is_none() {
+                draining = Some(drain_ticks);
+            }
+            if let Some(rem) = draining {
+                if rem == 0 {
+                    break;
+                }
+            }
+            if timeout_ms > 0 && start_time.elapsed() >= Duration::from_millis(timeout_ms) {
+                break;
+            }
+
+            tokio::select! {
+                _ = tick_timer.tick() => {
+                    if next_send_seq >= reserved_limit {
+                        reserved_limit = next_send_seq
+                            .checked_add(512)
+                            .unwrap_or_else(|| fail("sequence exhausted"));
+                        let (last, bitmap) = window.parts();
+                        let st = SessionState {
+                            key_id,
+                            send_seq: reserved_limit,
+                            recv_last: last,
+                            recv_bitmap: bitmap,
+                        };
+                        write_state_locked(&mut state_file, &st);
+                    }
+
+                    let seq = next_send_seq;
+                    next_send_seq += 1;
+
+                    let frame = if let Some(payload) = outbound_msgs.pop_front() {
+                        let f = pacing::build_data_frame_directed(&key, seq, tx_dir, quantum, &payload)
+                            .unwrap_or_else(|_| fail("build data frame failed"));
+                        msgs_sent += 1;
+                        println!("channel: EMIT_MSG seq={seq} bytes={}", payload.len());
+                        f
+                    } else {
+                        pacing::build_chaff_frame_directed(&key, seq, tx_dir, quantum)
+                            .unwrap_or_else(|_| fail("build chaff failed"))
+                    };
+
+                    if ep.send_raw(&frame, to).await.is_err() {
+                        ep.drops += 1;
+                    }
+                    ticks_emitted += 1;
+                    if let Some(ref mut rem) = draining {
+                        if *rem > 0 {
+                            *rem -= 1;
+                        }
+                    }
+                }
+                recv_opt = ep.recv_unthrottled(Duration::from_millis(50)) => {
+                    if let Some(Ok((bytes, _from))) = recv_opt {
+                        if bytes.len() != quantum {
+                            ep.note_auth_drop();
+                            continue;
+                        }
+                        let seq = match aead::peek_seq(&bytes) {
+                            Some(s) => s,
+                            None => {
+                                ep.note_auth_drop();
+                                continue;
+                            }
+                        };
+                        if !window.check(seq) {
+                            ep.note_auth_drop();
+                            continue;
+                        }
+                        let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
+                            ep.note_auth_drop();
+                            continue;
+                        };
+                        if seq2 != seq {
+                            ep.note_auth_drop();
+                            continue;
+                        }
+                        window.mark(seq2);
+                        if ftype == FTYPE_MSG {
+                            msgs_received += 1;
+                            let text = String::from_utf8_lossy(&pt);
+                            println!("channel: RECV_MSG seq={seq2} bytes={} payload={text}", pt.len());
+                            if let Some(ref r) = reply_msg {
+                                outbound_msgs.push_back(r.as_bytes().to_vec());
+                            }
+                            let (last, bitmap) = window.parts();
+                            let st = SessionState {
+                                key_id,
+                                send_seq: reserved_limit,
+                                recv_last: last,
+                                recv_bitmap: bitmap,
+                            };
+                            write_state_locked(&mut state_file, &st);
+                        } else if ftype == FTYPE_CHAFF {
+                            chaff_received += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let (last, bitmap) = window.parts();
+        let st = SessionState {
+            key_id,
+            send_seq: next_send_seq,
+            recv_last: last,
+            recv_bitmap: bitmap,
+        };
+        write_state_locked(&mut state_file, &st);
+
+        println!(
+            "channel: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={}",
+            ep.drops
+        );
+    });
+}
+
 fn cmd_kex_listen(args: &[String]) {
     reject_forbidden_cli(args);
     let bind: SocketAddr = get_flag(args, "--bind")
@@ -1350,6 +1576,7 @@ fn main() {
         "diode-send" => cmd_diode_send(&args[2..]),
         "diode-recv" => cmd_diode_recv(&args[2..]),
         "stream-chaff" => cmd_stream_chaff(&args[2..]),
+        "channel" => cmd_channel(&args[2..]),
         "zeroize" | "purge" => cmd_zeroize(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),

@@ -100,6 +100,7 @@ impl Endpoint {
         let mut buf = [0u8; MAX_DATAGRAM + 1];
         let (n, from) = match timeout(wait, self.socket.recv_from(&mut buf)).await {
             Err(_) => return None,
+            Ok(Err(ref e)) if e.kind() == std::io::ErrorKind::ConnectionReset => return None,
             Ok(Err(_)) => {
                 self.drops += 1;
                 return Some(Err(OverBudget::Io));
@@ -121,6 +122,29 @@ impl Endpoint {
         if !bucket.take(now) {
             self.drops += 1;
             return Some(Err(OverBudget::Rate));
+        }
+        self.admitted += 1;
+        Some(Ok((buf[..n].to_vec(), from)))
+    }
+
+    /// Receive one datagram without rate limiting (used for authenticated, dedicated point-to-point enclaves)
+    pub async fn recv_unthrottled(
+        &mut self,
+        wait: Duration,
+    ) -> Option<Result<(Vec<u8>, SocketAddr), OverBudget>> {
+        let mut buf = [0u8; MAX_DATAGRAM + 1];
+        let (n, from) = match timeout(wait, self.socket.recv_from(&mut buf)).await {
+            Err(_) => return None,
+            Ok(Err(ref e)) if e.kind() == std::io::ErrorKind::ConnectionReset => return None,
+            Ok(Err(_)) => {
+                self.drops += 1;
+                return Some(Err(OverBudget::Io));
+            }
+            Ok(Ok(v)) => v,
+        };
+        if n > MAX_DATAGRAM {
+            self.drops += 1;
+            return Some(Err(OverBudget::Oversize));
         }
         self.admitted += 1;
         Some(Ok((buf[..n].to_vec(), from)))
@@ -408,5 +432,29 @@ mod tests {
         // Scanner must have heard NOTHING back the entire battle.
         let silence = scanner.recv_raw(Duration::from_millis(400)).await;
         assert!(silence.is_none(), "we replied to the scanner — stealth dead");
+    }
+
+    #[tokio::test]
+    async fn test_recv_unthrottled_burst() {
+        let mut rx = Endpoint::bind("127.0.0.1:0").await.unwrap();
+        let rx_addr = rx.local_addr().unwrap();
+        let tx = Endpoint::bind("127.0.0.1:0").await.unwrap();
+
+        // Send 100 packets in immediate burst (exceeds default bucket capacity 64)
+        for i in 0..100u8 {
+            tx.send_raw(&[i; 64], rx_addr).await.unwrap();
+        }
+
+        let mut received = 0;
+        for _ in 0..100 {
+            match rx.recv_unthrottled(Duration::from_millis(200)).await {
+                Some(Ok((data, _))) => {
+                    assert_eq!(data.len(), 64);
+                    received += 1;
+                }
+                _ => break,
+            }
+        }
+        assert_eq!(received, 100, "unthrottled receiver must not drop high-rate burst packets");
     }
 }

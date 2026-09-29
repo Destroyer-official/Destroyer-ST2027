@@ -6,7 +6,7 @@
 //! chaff frames (FTYPE_CHAFF = 0xFF) are generated under the active AEAD key.
 
 use crate::aead::{self, FrameKey, DIR_SEND};
-use crate::frame::{quantize, FRAME_OVERHEAD, FTYPE_CHAFF};
+use crate::frame::{quantize, FRAME_OVERHEAD, FTYPE_CHAFF, FTYPE_MSG};
 use std::time::{Duration, Instant};
 
 /// Default wire quantum matching standard IPv6 non-fragmented datagram.
@@ -63,6 +63,16 @@ pub fn build_chaff_frame(
     seq: u64,
     quantum: usize,
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
+    build_chaff_frame_directed(key, seq, DIR_SEND, quantum)
+}
+
+/// Build a cryptographically indistinguishable synthetic chaff frame with directional separation.
+pub fn build_chaff_frame_directed(
+    key: &FrameKey,
+    seq: u64,
+    dir: u8,
+    quantum: usize,
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
     let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
     let payload_len = valid_quantum
         .checked_sub(FRAME_OVERHEAD)
@@ -71,7 +81,32 @@ pub fn build_chaff_frame(
     let mut payload = vec![0u8; payload_len];
     getrandom::fill(&mut payload).map_err(|_| aes_gcm::aead::Error)?;
 
-    let frame = aead::seal(key, seq, DIR_SEND, FTYPE_CHAFF, &payload)?;
+    let frame = aead::seal(key, seq, dir, FTYPE_CHAFF, &payload)?;
+    debug_assert_eq!(frame.len(), valid_quantum);
+    Ok(frame)
+}
+
+/// Build a quantum-padded message frame with CSPRNG filler to eliminate size side-channels.
+pub fn build_data_frame_directed(
+    key: &FrameKey,
+    seq: u64,
+    dir: u8,
+    quantum: usize,
+    payload: &[u8],
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
+    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
+    let max_payload_len = valid_quantum
+        .checked_sub(FRAME_OVERHEAD)
+        .ok_or(aes_gcm::aead::Error)?;
+    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
+        return Err(aes_gcm::aead::Error);
+    }
+    let mut padded = vec![0u8; max_payload_len];
+    padded[..payload.len()].copy_from_slice(payload);
+    if payload.len() < max_payload_len {
+        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
+    }
+    let frame = aead::seal_with_len(key, seq, dir, FTYPE_MSG, payload.len() as u16, &padded)?;
     debug_assert_eq!(frame.len(), valid_quantum);
     Ok(frame)
 }
@@ -99,7 +134,7 @@ pub fn calculate_shannon_entropy(data: &[u8]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aead::{self, DIR_SEND};
+    use crate::aead::{self, DIR_RECV, DIR_SEND};
     use crate::frame::FRAME_QUANTA;
 
     #[test]
@@ -126,6 +161,23 @@ mod tests {
                 aead::open_indexed(&key, DIR_SEND, &frame).expect("auth failed");
             assert_eq!(seq, 100);
             assert_eq!(ftype, FTYPE_CHAFF);
+        }
+    }
+
+    #[test]
+    fn test_data_frame_directed_quantization_and_auth() {
+        let key = FrameKey::from_bytes([0x43u8; 32]);
+        let secret_msg = b"TACTICAL_COORDINATES_TOP_SECRET";
+        for &quantum in &FRAME_QUANTA {
+            let frame = build_data_frame_directed(&key, 555, DIR_RECV, quantum, secret_msg)
+                .expect("build data frame failed");
+            assert_eq!(frame.len(), quantum);
+
+            let (seq, ftype, pt) =
+                aead::open_indexed(&key, DIR_RECV, &frame).expect("open failed");
+            assert_eq!(seq, 555);
+            assert_eq!(ftype, FTYPE_MSG);
+            assert_eq!(pt, secret_msg);
         }
     }
 
