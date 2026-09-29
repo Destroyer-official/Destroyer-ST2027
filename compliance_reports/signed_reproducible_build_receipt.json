@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-09-29T17:18:34.689318+00:00",
+  "timestamp_utc": "2026-09-29T17:29:02.993438+00:00",
   "verification_standard": "SLSA Level 3+ / NIST SP 800-161 / FIPS 140-3",
   "binaries": {
     "oqs.dll": {
@@ -73,8 +73,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "310fc1130aa3ea4066bdff12148c1b5b0524b18b263723165b944c6750a337a0a5d27e7918d8ca6aa08207e1ff7dd990c6b528633122e42cfcd4705a949aceb0",
-      "actual_sha3_512": "310fc1130aa3ea4066bdff12148c1b5b0524b18b263723165b944c6750a337a0a5d27e7918d8ca6aa08207e1ff7dd990c6b528633122e42cfcd4705a949aceb0",
+      "expected_sha3_512": "bac088cb9a20af8fe05359c46070b59ab49f284301d31815a3658eda99908b9b384418716b8e74b3f6f598cd24dace5167806ef758464fce599cc75ac037cef1",
+      "actual_sha3_512": "bac088cb9a20af8fe05359c46070b59ab49f284301d31815a3658eda99908b9b384418716b8e74b3f6f598cd24dace5167806ef758464fce599cc75ac037cef1",
       "matched": true
     },
     "ts_runtime.py": {

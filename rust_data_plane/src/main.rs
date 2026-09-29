@@ -1157,6 +1157,7 @@ fn cmd_channel(args: &[String]) {
     let drain_ticks: u64 = get_flag(args, "--drain-ticks")
         .map(|s| s.parse().unwrap_or(0))
         .unwrap_or(3);
+    let use_stdin = has_flag(args, "--stdin");
 
     let mut msgs = Vec::new();
     let mut i = 0;
@@ -1210,6 +1211,19 @@ fn cmd_channel(args: &[String]) {
         let mut chaff_received = 0u64;
         let mut draining: Option<u64> = None;
 
+        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(32);
+        if use_stdin {
+            tokio::spawn(async move {
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    if stdin_tx.send(line).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+
         let start_time = Instant::now();
         let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
         tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1235,6 +1249,17 @@ fn cmd_channel(args: &[String]) {
             }
 
             tokio::select! {
+                line_opt = stdin_rx.recv(), if use_stdin => {
+                    if let Some(line) = line_opt {
+                        let trimmed = line.trim();
+                        if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
+                            println!("channel: OPERATOR_REQUEST_ZEROIZE");
+                            break;
+                        } else if !trimmed.is_empty() {
+                            outbound_msgs.push_back(trimmed.as_bytes().to_vec());
+                        }
+                    }
+                }
                 _ = tick_timer.tick() => {
                     if next_send_seq >= reserved_limit {
                         reserved_limit = next_send_seq
