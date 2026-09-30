@@ -237,6 +237,24 @@ class TestTier4TacticalCommands(unittest.IsolatedAsyncioTestCase):
         # All 5000 nonces generated across 10 threads must be strictly distinct
         self.assertEqual(len(set(generated_nonces)), 5000)
 
+    async def test_eam_nuclear_command_dispatch(self):
+        """Test /eam and /nuclear command formatting and dispatch."""
+        # 1. Without directive
+        await self.cmd_processor.execute_command("/eam", ["/eam"])
+
+        # 2. With directive
+        directive = "DEFCON-1 AUTHORIZE STRATCOM STRIKE PACKAGE BRAVO"
+        await self.cmd_processor.execute_command("/eam", ["/eam", directive])
+
+    def test_zgdp_and_tpm_telemetry_commands(self):
+        """Test /zgdp and /attest command outputs."""
+        self.cmd_processor._show_zgdp_status(["/zgdp"])
+        self.cmd_processor._show_tpm_attestation()
+
+    async def test_cot_command_dispatch(self):
+        """Test /cot command dispatch."""
+        await self.cmd_processor.execute_command("/cot", ["/cot", "38.8719 -77.0563 PENTAGON_RECON"])
+
 
 if __name__ == "__main__":
     unittest.main()

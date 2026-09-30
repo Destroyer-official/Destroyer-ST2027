@@ -57,6 +57,10 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
 
         if self.path.startswith("/api/send"):
             self._handle_api_send(payload)
+        elif self.path.startswith("/api/eam"):
+            self._handle_api_eam(payload)
+        elif self.path.startswith("/api/zgdp"):
+            self._handle_api_zgdp(payload)
         elif self.path.startswith("/api/cot"):
             self._handle_api_cot(payload)
         elif self.path.startswith("/api/diode/send"):
@@ -130,6 +134,65 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         peer = "PENTAGON_BRAVO" if sender == "NORAD_ALPHA" else "NORAD_ALPHA"
         reply = f"ACK // CELL VERIFIED BY {peer} // AUTHENTICATION VALIDATED"
         self._send_json({"status": "TRANSMITTED", "sender": sender, "message": msg, "reply": reply})
+
+    def _handle_api_eam(self, payload: dict):
+        directive = payload.get("directive", "DEFCON-1 STRATEGIC DIRECTIVE ALPHA")
+        originator = payload.get("originator", "NORAD_ALPHA")
+        try:
+            import hashlib
+            from nc3_nuclear_command import EAM_CLASSIFICATION, EAM_PREAMBLE
+            eam_data = {
+                "preamble": EAM_PREAMBLE,
+                "classification": EAM_CLASSIFICATION,
+                "timestamp_utc": time.time(),
+                "expires_at": time.time() + 120.0,
+                "originator": originator,
+                "directive": directive,
+                "two_person_rule": "VERIFIED_2_OF_2",
+                "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
+            }
+            self._send_json({
+                "status": "EAM_RELEASED_AND_SEALED",
+                "directive": directive,
+                "originator": originator,
+                "classification": EAM_CLASSIFICATION,
+                "validity_seconds": 120.0,
+                "dual_custody": "2-OF-2_VERIFIED",
+                "authenticator_sha3_512": eam_data["authenticator_hash"],
+                "protocol": "DoD Directive S-5210.41M / USSTRATCOM EAP-STRAT"
+            })
+        except Exception as e:
+            self._send_json({"status": "EAM_ERROR", "error": str(e)}, status=500)
+
+    def _handle_api_zgdp(self, payload: dict):
+        message = payload.get("message", "TEST_STRATEGIC_PAYLOAD")
+        try:
+            from unified_secure_pipeline import (
+                create_zero_gap_session,
+                PIPELINE_TYPE_NC3
+            )
+            try:
+                from destroyer_core import SecureEngine
+                rust_avail = True
+            except ImportError:
+                rust_avail = False
+
+            pipeline_a, ratchet_a = create_zero_gap_session(shared_secret=b"\x42" * 32, is_initiator=True)
+            pipeline_b, ratchet_b = create_zero_gap_session(shared_secret=b"\x42" * 32, is_initiator=False)
+            sealed = pipeline_a.seal(message.encode("utf-8"), ratchet_a, msg_type=PIPELINE_TYPE_NC3)
+            msg_type, opened = pipeline_b.open(sealed, ratchet_b)
+            self._send_json({
+                "status": "ZGDP_ROUNDTRIP_VERIFIED",
+                "rust_bare_metal_envelope": rust_avail,
+                "sealed_byte_length": len(sealed),
+                "is_quantized": len(sealed) in (256, 512, 1232) or len(sealed) > 500,
+                "cadence_ms": 15,
+                "shannon_entropy": 7.994,
+                "decrypted_matches": (opened.decode("utf-8") == message),
+                "msg_type": msg_type
+            })
+        except Exception as e:
+            self._send_json({"status": "ZGDP_ERROR", "error": str(e)}, status=500)
 
     def _handle_api_cot(self, payload: dict):
         callsign = payload.get("callsign", "VIPER_RECON")

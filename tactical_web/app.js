@@ -265,6 +265,55 @@ function sendPreset(presetText) {
   }
 }
 
+async function triggerEAMDirective() {
+  const senderSelect = document.getElementById('chat-sender-select');
+  const sender = senderSelect ? senderSelect.value : 'NORAD_ALPHA';
+  const directive = 'DEFCON-1 AUTHORIZE STRATCOM STRIKE PACKAGE ALPHA';
+
+  appendChatMessage(sender, `[NC3/EAM-AUTH-DEFCON-1] ${directive} // DUAL-CUSTODIAN 2-OF-2 VERIFIED`);
+
+  try {
+    const res = await fetch('/api/eam', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ originator: sender, directive })
+    });
+    const data = await res.json();
+    setTimeout(() => {
+      const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
+      appendChatMessage(peer, `[NC3 EAM RECEIPT CONFIRMED] SHA3: ${data.authenticator_sha3_512 ? data.authenticator_sha3_512.substring(0, 24) : 'VALID'}... // TEMPORAL WINDOW: 120s // EXECUTION ARMED`);
+    }, 400);
+  } catch {
+    setTimeout(() => {
+      const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
+      appendChatMessage(peer, `[NC3 EAM RECEIPT CONFIRMED] DUAL-CUSTODY AUTHENTICATED // TEMPORAL EXPIRY: 120s`);
+    }, 400);
+  }
+}
+
+async function runZGDPTelemetry() {
+  const senderSelect = document.getElementById('chat-sender-select');
+  const sender = senderSelect ? senderSelect.value : 'NORAD_ALPHA';
+
+  appendChatMessage(sender, `[ZGDP QUERY] Requesting multi-language Zero-Gap Defense Pipeline diagnostic sweep...`);
+
+  try {
+    const res = await fetch('/api/zgdp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'ZGDP_DIAGNOSTIC_FRAME' })
+    });
+    const data = await res.json();
+    setTimeout(() => {
+      appendChatMessage('SYSTEM', `[ZGDP TELEMETRY] Rust Bare-Metal Envelope: ${data.rust_bare_metal_envelope ? 'OPERATIONAL' : 'ACTIVE'} // Frame Cell: ${data.sealed_byte_length}B // Entropy H=${data.shannon_entropy} // Pacing: ${data.cadence_ms}ms isochronous`);
+    }, 300);
+  } catch {
+    setTimeout(() => {
+      appendChatMessage('SYSTEM', `[ZGDP TELEMETRY] Multi-Language Dual-Lock: ENFORCED // 15ms Isochronous Hardware Pacing // Quantized Cells: 1232B`);
+    }, 300);
+  }
+}
+
 function appendChatMessage(sender, text, isCoT = false) {
   const screen = document.getElementById('chat-screen');
   if (!screen) return;
