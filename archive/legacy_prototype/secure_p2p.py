@@ -4910,6 +4910,16 @@ class SecureP2PChat:
                 log.debug("Initializing Double Ratchet as initiator")
                 self.ratchet = DoubleRatchet(self.hybrid_root_key, is_initiator=True)
 
+                # Initialize Zero-Gap Defense Pipeline and Rust AEAD layer BEFORE root key erasure
+                if getattr(self, '_zero_gap_pipeline', None) is not None and self.hybrid_root_key:
+                    try:
+                        self._zero_gap_pipeline.establish_rust_layer(self.hybrid_root_key, is_initiator=True)
+                        if getattr(self._zero_gap_pipeline, '_rust_node', None) is not None:
+                            self._rust_node = self._zero_gap_pipeline._rust_node
+                            log.info("[PASS] Zero-Gap Pipeline & Rust AEAD layer armed (client)")
+                    except Exception as e_pipe:
+                        log.debug(f"Zero-Gap Rust setup notice: {e_pipe}")
+
                 # Exchange ratchet public keys
                 # Send our ratchet public key
                 log.debug("Sending Double Ratchet public key")
@@ -5433,6 +5443,16 @@ class SecureP2PChat:
                     log.debug("Initializing Double Ratchet as responder")
                     self.is_ratchet_initiator = False  # Server is the responder
                     self.ratchet = DoubleRatchet(self.hybrid_root_key, is_initiator=False)
+
+                    # Initialize Zero-Gap Defense Pipeline and Rust AEAD layer BEFORE root key erasure
+                    if getattr(self, '_zero_gap_pipeline', None) is not None and self.hybrid_root_key:
+                        try:
+                            self._zero_gap_pipeline.establish_rust_layer(self.hybrid_root_key, is_initiator=False)
+                            if getattr(self._zero_gap_pipeline, '_rust_node', None) is not None:
+                                self._rust_node = self._zero_gap_pipeline._rust_node
+                                log.info("[PASS] Zero-Gap Pipeline & Rust AEAD layer armed (server)")
+                        except Exception as e_pipe:
+                            log.debug(f"Zero-Gap Rust setup notice: {e_pipe}")
 
                     # Exchange ratchet public keys
                     # Receive peer's ratchet public key first
@@ -8131,20 +8151,32 @@ class SecureP2PChat:
         raise ValueError(f"Invalid padding header: indicated length {orig_len} exceeds total buffer {len(padded_plaintext_bytes)}")
 
     def _rust_plane(self):
-        """Opt-in Rust data-plane session (``P2P_DATA_PLANE=rust``).
+        """Rust data-plane native engine session (outer AEAD envelope).
 
-        Establishes a ``DestroyerNode`` lazily from the PQ handshake root key
+        Establishes a ``DestroyerNode`` from the PQ handshake root key
         (HKDF-SHA512, domain-separated) with the ratchet role, so the Rust
         AEAD forms an OUTER envelope over ratchet ciphertext: defense in
-        depth, zero change to the ratchet itself. Returns None when the flag
-        is off (normal path) or the session cannot be established.
+        depth, zero change to the ratchet itself. Auto-enabled by default
+        whenever the compiled Rust engine is present.
 
         The frame key is wiped from Python memory immediately after handoff;
         Rust holds the only copy (ZeroizeOnDrop).
         """
-        if os.environ.get('P2P_DATA_PLANE', 'python').lower() not in ('rust', 'rust_udp', 'udp'):
+        dp_setting = os.environ.get('P2P_DATA_PLANE', 'rust').lower()
+        if dp_setting in ('python_only', 'legacy_pure_python'):
             return None
+
+        # Return cached node if already established
         node = getattr(self, '_rust_node', None)
+        if node is not None:
+            return node
+
+        # Check if Zero-Gap defense pipeline already holds an active Rust node
+        pipeline = getattr(self, '_zero_gap_pipeline', None)
+        if pipeline is not None and getattr(pipeline, '_rust_node', None) is not None:
+            self._rust_node = pipeline._rust_node
+            return self._rust_node
+
         try:
             root = getattr(self, 'hybrid_root_key', None)
             if not root or not self.ratchet:
@@ -9709,6 +9741,16 @@ class SecureP2PChat:
                 if time.time() - self.last_key_rotation > self.KEY_ROTATION_INTERVAL:
                     await self._rotate_keys()
 
+            # Continuous Epoch Ratchet (CER) healing: advance epoch every 128 messages
+            pipeline = getattr(self, '_zero_gap_pipeline', None)
+            if pipeline is not None and getattr(pipeline, '_epoch_root_key', None) is not None:
+                if pipeline._seal_count > 0 and pipeline._seal_count % 128 == 0:
+                    try:
+                        pipeline.rotate_epoch()
+                        log.info(f"[CER] Continuous Epoch Ratchet healed: active epoch #{pipeline.current_epoch}")
+                    except Exception as e_cer:
+                        log.debug(f"[CER] Continuous Epoch Ratchet notice: {e_cer}")
+
             # Check if ephemeral identity needs rotation
             if self.use_ephemeral_identity and hasattr(self, 'hybrid_kex'):
                 if self.hybrid_kex.check_key_expiration():
@@ -9951,6 +9993,10 @@ class SecureP2PChat:
                 print(f"  {BOLD}/rotate{RESET} - Rotate to a new ephemeral identity (when disconnected)")
             print(f"  {BOLD}/nc3-send{RESET} - Transmit nuclear Emergency Action Message under Two-Person Rule")
             print(f"  {BOLD}/nc3-verify{RESET} - Dual-authenticate and unseal pending Emergency Action Message")
+            print(f"  {BOLD}/eam <text>{RESET} - Issue high-priority NC3 directive under Two-Person Rule")
+            print(f"  {BOLD}/nuclear <text>{RESET} - Alias for /eam nuclear-grade command transmission")
+            print(f"  {BOLD}/zgdp{RESET} - Display Sovereign Zero-Gap Defense Pipeline telemetry")
+            print(f"  {BOLD}/tpm{RESET} - Query hardware platform TPM 2.0 PCR attestation quote")
             print(f"  {BOLD}/safety-number [peer]{RESET} - Show 48-digit canonical TOFU safety numbers")
             print(f"  {BOLD}/quarantine [peer]{RESET} - Active Cyber Defense operator quarantine enforcement")
             print(f"  {BOLD}/silence{RESET} - Toggle tactical network cloak and background chaff")
@@ -10577,6 +10623,39 @@ class SecureP2PChat:
                 print(f"\n{RED}[KEY-FILL IMPORT FAILED] EMERGENCY REJECTION: {e_kfi}{RESET}")
                 log.error(f"KMI key fill import failure: {e_kfi}", exc_info=True)
 
+        elif cmd in ('/eam', '/nuclear'):
+            print("\r" + " " * 100)
+            directive = cmd_parts[1].strip() if len(cmd_parts) > 1 else ""
+            if not directive:
+                print(f"{RED}Usage: {cmd} <DIRECTIVE_TEXT>{RESET}")
+                print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
+                return
+            try:
+                from messaging.commands import execute_nc3_eam
+                await execute_nc3_eam(self, directive)
+            except Exception as e_eam:
+                print(f"{RED}[NC3 DIRECTIVE ERROR] Execution failed: {e_eam}{RESET}")
+                log.error(f"NC3 directive failure: {e_eam}", exc_info=True)
+            print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
+
+        elif cmd == '/zgdp':
+            print("\r" + " " * 100)
+            try:
+                from messaging.commands import CommandProcessor
+                cp = CommandProcessor(self)
+                cp._show_zgdp_status([])
+            except Exception as e_zgdp:
+                print(f"{RED}Error showing ZGDP status: {e_zgdp}{RESET}")
+            print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
+
+        elif cmd in ('/tpm', '/attestation'):
+            print("\r" + " " * 100)
+            try:
+                from messaging.commands import CommandProcessor
+                cp = CommandProcessor(self)
+                cp._show_tpm_attestation()
+            except Exception as e_tpm:
+                print(f"{RED}Error showing TPM attestation: {e_tpm}{RESET}")
             print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
 
         elif cmd == '/diode-tx':
@@ -13225,8 +13304,10 @@ if __name__ == "__main__":
     parser.add_argument("--anonymous", action="store_true", help="Run in pure anonymous tactical mode (store nothing on disk)")
     parser.add_argument("--authorized-peer-fingerprint", type=str, default=None, help="Pre-shared authorized peer SHA3-512 fingerprint")
     parser.add_argument("--authorized-peers-file", type=str, default=None, help="Path to authorized military peers JSON whitelist manifest")
-    parser.add_argument("--data-plane", type=str, choices=["python", "rust", "rust_udp", "udp"], default=None, help="Data plane engine to use (default: env P2P_DATA_PLANE or python)")
+    parser.add_argument("--data-plane", type=str, choices=["python", "rust", "rust_udp", "udp"], default="rust", help="Data plane engine to use (default: rust native bare-metal engine)")
+    parser.add_argument("--tactical-native", action="store_true", help="Arm native compiled Rust data plane engine with isochronous hardware pacing")
     parser.add_argument("--tactical-cloak", action="store_true", help="Enforce high-threat tactical network cloaking (prohibit direct public sockets, enforce overlay & background chaff)")
+    parser.add_argument("--strict-encrypt", action="store_true", default=True, help="Enforce fail-closed encryption with zero fallback")
     parser.add_argument("--active-cyber-defense", action="store_true", help="Enable DoD cATO Active Cyber Defense autonomous threat mitigation")
     parser.add_argument("--csrmc-operations", action="store_true", help="Activate DoD CSRMC Phase 5 continuous operational telemetry streaming")
     parser.add_argument("--ddil-mesh", action="store_true", help="Enable tactical DDIL mesh store-and-forward bundle reconciliation")
@@ -13236,6 +13317,13 @@ if __name__ == "__main__":
 
     if args.data_plane:
         os.environ['P2P_DATA_PLANE'] = args.data_plane
+    else:
+        os.environ.setdefault('P2P_DATA_PLANE', 'rust')
+    if getattr(args, 'strict_encrypt', True):
+        os.environ.setdefault('P2P_STRICT_ENCRYPT', '1')
+    if getattr(args, 'tactical_native', False):
+        os.environ['P2P_DATA_PLANE'] = 'rust'
+        os.environ['P2P_TACTICAL_CLOAK'] = '1'
     if getattr(args, 'tactical_cloak', False):
         os.environ['P2P_TACTICAL_CLOAK'] = '1'
     if getattr(args, 'active_cyber_defense', False):
