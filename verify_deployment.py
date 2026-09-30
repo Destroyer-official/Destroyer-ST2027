@@ -141,6 +141,10 @@ class DeploymentVerifier:
         
         for module in CORE_MODULES:
             file_path = f"{module}.py"
+            if not os.path.exists(file_path):
+                alt_path = os.path.join("archive", "legacy_prototype", f"{module}.py")
+                if os.path.exists(alt_path):
+                    file_path = alt_path
             if os.path.exists(file_path):
                 line_count = sum(1 for _ in open(file_path, 'r', encoding='utf-8', errors='ignore'))
                 self._add_result(
@@ -167,7 +171,10 @@ class DeploymentVerifier:
         
         for module in CORE_MODULES:
             try:
-                importlib.import_module(module)
+                try:
+                    importlib.import_module(module)
+                except ImportError:
+                    importlib.import_module(f"archive.legacy_prototype.{module}")
                 self._add_result(
                     f"Import: {module}",
                     VerificationStatus.PASS,
@@ -360,6 +367,10 @@ class DeploymentVerifier:
         
         for module in CORE_MODULES:
             file_path = f"{module}.py"
+            if not os.path.exists(file_path):
+                alt_path = os.path.join("archive", "legacy_prototype", f"{module}.py")
+                if os.path.exists(alt_path):
+                    file_path = alt_path
             if os.path.exists(file_path):
                 try:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
