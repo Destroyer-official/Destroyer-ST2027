@@ -2211,6 +2211,17 @@ class SecureP2PChat:
         self.custodian_officer_2 = None
         self._cached_nc3_war_key = None
 
+        # Zero-Gap Defense Pipeline — chains all security layers into a single
+        # seal/open interface: Inner (PQ Ratchet) → Outer (Rust AEAD) → metadata
+        # padding. Replaces ad-hoc _rust_plane() bridge calls.
+        try:
+            from unified_secure_pipeline import UnifiedSecurePipeline
+            self._zero_gap_pipeline = UnifiedSecurePipeline()
+            log.info("[PASS] Zero-Gap Defense Pipeline initialized")
+        except ImportError:
+            self._zero_gap_pipeline = None
+            log.warning("unified_secure_pipeline not found — using legacy encryption path")
+
         # Initialize connection status and events
         self.is_connected = False
         self.is_connecting = False
@@ -8309,18 +8320,37 @@ class SecureP2PChat:
             # Convert message to bytes
             plaintext = message.encode('utf-8')
 
+            # --- ZERO-GAP DEFENSE PIPELINE (Phase 1) ---
+            # If the unified pipeline is available, seal through ALL layers
+            # in a single atomic operation: padding → ratchet → Rust AEAD.
+            pipeline = getattr(self, '_zero_gap_pipeline', None)
+            if pipeline is not None:
+                # Lazy-establish the Rust AEAD layer from the hybrid root key
+                root = getattr(self, 'hybrid_root_key', None)
+                if root and not pipeline.is_fully_armed:
+                    pipeline.establish_rust_layer(
+                        root, is_initiator=bool(getattr(self, 'is_ratchet_initiator', True)))
+
+                from unified_secure_pipeline import PipelineSecurityError
+                try:
+                    sealed = pipeline.seal(plaintext, self.ratchet)
+                    log.debug(f"[ENCRYPT] Zero-Gap seal: {len(plaintext)} → {len(sealed)} bytes "
+                              f"(layers: ratchet{'+ Rust AEAD' if pipeline.is_fully_armed else ''})")
+                    return sealed
+                except PipelineSecurityError as e:
+                    return _deny(f"[ENCRYPT] Zero-Gap pipeline seal failed: {e}", "critical")
+
+            # --- LEGACY PATH (fallback when pipeline module not installed) ---
             # Add random padding for traffic analysis protection
             padded_plaintext = self._add_random_padding(plaintext)
 
             # Encrypt using Double Ratchet protocol
-            # The Double Ratchet already provides forward secrecy and post-quantum security
-            log.debug(f"[ENCRYPT] Encrypting {len(padded_plaintext)} bytes with Double Ratchet")
+            log.debug(f"[ENCRYPT] Encrypting {len(padded_plaintext)} bytes with Double Ratchet (legacy path)")
             ciphertext = self.ratchet.encrypt(padded_plaintext)
 
             if ciphertext and len(ciphertext) > 0:
                 log.debug(f"[ENCRYPT] Encryption successful, ciphertext length: {len(ciphertext)} bytes")
                 # Opt-in outer envelope: Rust AEAD over ratchet ciphertext.
-                # Fail-closed when the flag demands it (never send unsealed).
                 if os.environ.get('P2P_DATA_PLANE', 'python').lower() in ('rust', 'rust_udp', 'udp'):
                     node = self._rust_plane()
                     if node is None:
@@ -8382,9 +8412,25 @@ class SecureP2PChat:
             raise SecurityError("Double Ratchet not initialized")
 
         try:
+            # --- ZERO-GAP DEFENSE PIPELINE (Phase 1) ---
+            # If the unified pipeline is available and the frame is pipeline-wrapped,
+            # open through ALL layers in reverse: Rust AEAD → ratchet → unpad.
+            pipeline = getattr(self, '_zero_gap_pipeline', None)
+            if pipeline is not None:
+                from unified_secure_pipeline import PipelineSecurityError, PIPELINE_MAGIC
+                # Check if this is a pipeline-wrapped frame
+                if encrypted_data[:2] == PIPELINE_MAGIC:
+                    try:
+                        msg_type, plaintext = pipeline.open(encrypted_data, self.ratchet)
+                        log.debug(f"[DECRYPT] Zero-Gap open: {len(encrypted_data)} → {len(plaintext)} bytes")
+                        return plaintext.decode('utf-8')
+                    except PipelineSecurityError as e:
+                        log.error(f"[DECRYPT] Zero-Gap pipeline open failed: {e}")
+                        raise SecurityError(f"Message decryption failed: {e}")
+
+            # --- LEGACY PATH (for frames without pipeline header) ---
             # Opt-in outer envelope first: if this is a Rust-sealed stream,
             # open it (replay-checked) to recover the ratchet ciphertext.
-            # Falls through to the legacy path for mixed-fleet peers.
             ratchet_input = encrypted_data
             if os.environ.get('P2P_DATA_PLANE', 'python').lower() in ('rust', 'rust_udp', 'udp'):
                 node = self._rust_plane()

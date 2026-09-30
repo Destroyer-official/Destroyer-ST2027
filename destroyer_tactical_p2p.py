@@ -14,6 +14,8 @@ import argparse
 import threading
 import tempfile
 import shutil
+import base64
+import json
 from pathlib import Path
 
 # Workspace resolution
@@ -74,6 +76,9 @@ class TacticalP2PNode:
         self.ticks_count = 0
         self.sent_msgs_count = 0
         self.recv_msgs_count = 0
+        self.zero_gap_pipeline = None
+        self.zero_gap_ratchet = None
+        self.zero_gap_enabled = True
 
     def negotiate_hybrid_kex(self, timeout_sec: int = 25) -> bool:
         """Step 1: Execute Post-Quantum ML-KEM-1024 + X25519 authenticated key exchange."""
@@ -121,6 +126,19 @@ class TacticalP2PNode:
         print(f"{GREEN}[{self.name} SUCCESS] Authenticated Session Key Derived!{RESET}")
         print(f"{BOLD}{MAGENTA}[{self.name} OOB SAS] Verification Code: [ {self.sas} ]{RESET}")
         print(f"{DIM}[{self.name}] Key secured at {self.key_path} (mode 0600){RESET}")
+
+        # Initialize Zero-Gap Multi-Layer Defense Pipeline from derived session key
+        try:
+            from unified_secure_pipeline import create_zero_gap_session
+            key_hex = Path(self.key_path).read_text().strip()
+            root_bytes = bytes.fromhex(key_hex)
+            self.zero_gap_pipeline, self.zero_gap_ratchet = create_zero_gap_session(
+                root_bytes, is_initiator=(self.role == "initiator")
+            )
+            print(f"{GREEN}[{self.name} ZERO-GAP] Multi-Layer Defense Pipeline Armed (Inner Ratchet + Outer AEAD + Pacing){RESET}")
+        except Exception as e:
+            print(f"{YELLOW}[{self.name} ZERO-GAP NOTICE] Pipeline optional fallback: {e}{RESET}")
+
         return True
 
     def start_enclave_channel(self, interval_ms: int = 20, quantum: int = 1232,
@@ -172,6 +190,25 @@ class TacticalP2PNode:
                 if "RECV_MSG" in line_str:
                     parts = line_str.split("payload=")
                     payload = parts[1] if len(parts) > 1 else ""
+
+                    # Check if payload is sealed with Zero-Gap Defense Pipeline
+                    if payload.startswith("ZGDP:") and self.zero_gap_pipeline and self.zero_gap_ratchet:
+                        try:
+                            raw_sealed = base64.b64decode(payload[5:])
+                            msg_type, plaintext = self.zero_gap_pipeline.open(raw_sealed, self.zero_gap_ratchet)
+                            msg_decoded = plaintext.decode("utf-8")
+                            with self._lock:
+                                self.received_messages.append(msg_decoded)
+                                self.recv_msgs_count += 1
+                            if msg_decoded.startswith("COT:"):
+                                cot_json = msg_decoded[4:]
+                                print(f"\n{BOLD}{YELLOW}[{self.name} ZERO-GAP COT BEACON RECEIVED]{RESET} {cot_json}\n[{self.name}] > ", end="", flush=True)
+                            else:
+                                print(f"\n{BOLD}{GREEN}[{self.name} INCOMING ZERO-GAP TACTICAL MESSAGE]{RESET} {BOLD}{msg_decoded}{RESET}\n[{self.name}] > ", end="", flush=True)
+                            continue
+                        except Exception as e:
+                            print(f"\n{BOLD}{RED}[{self.name} ZERO-GAP INTEGRITY ERROR] Message unseal failed: {e}{RESET}\n[{self.name}] > ", end="", flush=True)
+
                     with self._lock:
                         self.received_messages.append(payload)
                         self.recv_msgs_count += 1
@@ -196,6 +233,16 @@ class TacticalP2PNode:
     def send_chat_message(self, message: str):
         """Send an interactive chat message through the paced channel stdin."""
         if self.channel_proc and self.channel_proc.stdin:
+            if self.zero_gap_enabled and self.zero_gap_pipeline and self.zero_gap_ratchet:
+                try:
+                    sealed_bytes = self.zero_gap_pipeline.seal(message.encode("utf-8"), self.zero_gap_ratchet)
+                    wire_payload = "ZGDP:" + base64.b64encode(sealed_bytes).decode("ascii")
+                    self.channel_proc.stdin.write(wire_payload + "\n")
+                    self.channel_proc.stdin.flush()
+                    return
+                except Exception as e:
+                    print(f"{RED}[{self.name} ZERO-GAP ERROR] Seal failed, aborting send: {e}{RESET}")
+                    return
             self.channel_proc.stdin.write(message + "\n")
             self.channel_proc.stdin.flush()
 
@@ -309,6 +356,18 @@ class TacticalP2PNode:
                 self.diode_proc.wait(timeout=1)
             except Exception:
                 pass
+        if self.zero_gap_pipeline:
+            try:
+                self.zero_gap_pipeline.teardown()
+            except Exception:
+                pass
+            self.zero_gap_pipeline = None
+        if self.zero_gap_ratchet:
+            try:
+                self.zero_gap_ratchet.teardown()
+            except Exception:
+                pass
+            self.zero_gap_ratchet = None
 
 
 def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
