@@ -9997,6 +9997,8 @@ class SecureP2PChat:
             print(f"  {BOLD}/nuclear <text>{RESET} - Alias for /eam nuclear-grade command transmission")
             print(f"  {BOLD}/zgdp{RESET} - Display Sovereign Zero-Gap Defense Pipeline telemetry")
             print(f"  {BOLD}/tpm{RESET} - Query hardware platform TPM 2.0 PCR attestation quote")
+            print(f"  {BOLD}/channel <bind> <peer>{RESET} - Launch bare-metal isochronous 15ms Rust channel")
+            print(f"  {BOLD}/chaff <ip> <port>{RESET} - Stream flat CSPRNG wire chaff (H >= 7.95 b/B)")
             print(f"  {BOLD}/safety-number [peer]{RESET} - Show 48-digit canonical TOFU safety numbers")
             print(f"  {BOLD}/quarantine [peer]{RESET} - Active Cyber Defense operator quarantine enforcement")
             print(f"  {BOLD}/silence{RESET} - Toggle tactical network cloak and background chaff")
@@ -10655,7 +10657,87 @@ class SecureP2PChat:
                 cp = CommandProcessor(self)
                 cp._show_tpm_attestation()
             except Exception as e_tpm:
-                print(f"{RED}Error showing TPM attestation: {e_tpm}{RESET}")
+        elif cmd in ('/chaff', '/wire-camouflage'):
+            print("\r" + " " * 100)
+            tokens = (cmd_parts[1] if len(cmd_parts) > 1 else "").split()
+            if len(tokens) < 2:
+                print(f"{RED}Usage: /chaff <target_ip> <target_port> [interval_ms=15] [count=100]{RESET}")
+                print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
+                return
+            tgt_ip, tgt_port = tokens[0], int(tokens[1])
+            interval = int(tokens[2]) if len(tokens) > 2 else 15
+            count = int(tokens[3]) if len(tokens) > 3 else 100
+            try:
+                native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe")
+                if not os.path.exists(native_bin):
+                    native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit")
+                key_p = getattr(self, 'key_path', None) or os.path.join(self.base_dir, "session.key")
+                state_p = getattr(self, 'state_path', None) or os.path.join(self.base_dir, "monotonic.state")
+                if os.path.exists(native_bin) and os.path.exists(key_p):
+                    cmd_arr = [
+                        native_bin, "stream-chaff",
+                        "--key-file", key_p,
+                        "--state", state_p,
+                        "--to", f"{tgt_ip}:{tgt_port}",
+                        "--interval-ms", str(interval),
+                        "--count", str(count)
+                    ]
+                    subprocess.Popen(cmd_arr)
+                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Streaming {count} CSPRNG chaff frames at {interval}ms intervals to {tgt_ip}:{tgt_port}")
+                else:
+                    from destroyer_node import DestroyerNode
+                    node = getattr(self, '_rust_node', None) or DestroyerNode()
+                    node.bind_udp()
+                    for _ in range(count):
+                        node.send_udp_msg(b"", (tgt_ip, tgt_port), chaff=True)
+                        time.sleep(interval / 1000.0)
+                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Injected {count} CSPRNG chaff frames via native DestroyerNode to {tgt_ip}:{tgt_port}")
+            except Exception as e_chaff:
+                print(f"{RED}[CHAFF ERROR] {e_chaff}{RESET}")
+            print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
+
+        elif cmd == '/channel':
+            print("\r" + " " * 100)
+            tokens = (cmd_parts[1] if len(cmd_parts) > 1 else "").split()
+            if len(tokens) < 2:
+                print(f"{RED}Usage: /channel <bind_addr:port> <peer_addr:port> [role=initiator|responder]{RESET}")
+                print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
+                return
+            bind_ep, peer_ep = tokens[0], tokens[1]
+            role = tokens[2] if len(tokens) > 2 else ("initiator" if getattr(self, 'is_ratchet_initiator', True) else "responder")
+            try:
+                native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe")
+                if not os.path.exists(native_bin):
+                    native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit")
+                key_p = getattr(self, 'key_path', None) or os.path.join(self.base_dir, "session.key")
+                state_p = getattr(self, 'state_path', None) or os.path.join(self.base_dir, "monotonic.state")
+                if not os.path.exists(key_p):
+                    root = getattr(self, 'hybrid_root_key', None)
+                    if root:
+                        with open(key_p, "w") as f:
+                            f.write(bytes(root).hex())
+                if os.path.exists(native_bin) and os.path.exists(key_p):
+                    chan_cmd = [
+                        native_bin, "channel",
+                        "--key-file", key_p,
+                        "--state", state_p,
+                        "--bind", bind_ep,
+                        "--to", peer_ep,
+                        "--role", role,
+                        "--interval-ms", "15",
+                        "--quantum", "1232"
+                    ]
+                    proc = subprocess.Popen(chan_cmd)
+                    print(f"\n{BOLD}{GREEN}[FULL-DUPLEX RUST CHANNEL LAUNCHED (PID {proc.pid})]{RESET}")
+                    print(f"  Bind:        {bind_ep}")
+                    print(f"  Peer:        {peer_ep}")
+                    print(f"  Role:        {role.upper()}")
+                    print(f"  Clock:       15.0ms Isochronous Hardware Pacing")
+                    print(f"  Camouflage:  Continuous Flat CSPRNG Chaff (H >= 7.95 b/B)")
+                else:
+                    print(f"{YELLOW}[NOTICE] Key file or native binary required to spawn standalone channel.{RESET}")
+            except Exception as e_chan:
+                print(f"{RED}[CHANNEL ERROR] {e_chan}{RESET}")
             print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
 
         elif cmd == '/diode-tx':
