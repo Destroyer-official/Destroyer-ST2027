@@ -18,6 +18,7 @@ Unified single-command interface integrating:
 import os
 import sys
 import time
+import secrets
 import argparse
 import subprocess
 from pathlib import Path
@@ -204,6 +205,57 @@ def run_tactical_automated_drill():
     subprocess.run(cmd)
 
 
+def run_cjadc2_data_fabric_drill():
+    """Run DoD CJADC2 Phase 6 Tactical Data Fabric & MLS Cross-Domain Guard Drill."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Running DoD CJADC2 Phase 6 Tactical Data Fabric Mission Drill...{RESET}")
+    cmd = [sys.executable, str(ROOT / "run_phase6_cjadc2_data_fabric_drill.py")]
+    subprocess.run(cmd)
+
+
+def launch_dual_tactical_terminals():
+    """Spawn dual tactical military terminals in separate console windows."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Spawning Dual Military Tactical P2P Terminals (NORAD Alpha & Pentagon Bravo)...{RESET}")
+    if sys.platform == "win32":
+        launcher_bat = ROOT / "launch_tactical_terminals.bat"
+        if launcher_bat.exists():
+            subprocess.run([str(launcher_bat)], shell=True)
+            return
+    # Cross-platform fallback: spawn two processes
+    print(f"{YELLOW}Spawning Terminal 1 (NORAD Alpha)...{RESET}")
+    subprocess.Popen([sys.executable, str(ROOT / "destroyer_tactical_p2p.py"), "node",
+                      "--role", "responder", "--bind", "127.0.0.1", "--peer", "127.0.0.1",
+                      "--name", "NORAD_ALPHA"])
+    time.sleep(1.5)
+    print(f"{YELLOW}Spawning Terminal 2 (Pentagon Bravo)...{RESET}")
+    subprocess.Popen([sys.executable, str(ROOT / "destroyer_tactical_p2p.py"), "node",
+                      "--role", "initiator", "--bind", "127.0.0.1", "--peer", "127.0.0.1",
+                      "--name", "PENTAGON_BRAVO"])
+
+
+def inspect_tpm_quote():
+    """Inspect and attest platform hardware TPM 2.0 PCR state and cryptographically bound quote."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Querying Platform Hardware TPM 2.0 Security Posture...{RESET}")
+    try:
+        import tpm_quote
+        pcrs = tpm_quote.read_hardware_pcrs([0, 1, 2, 7, 11])
+        print(f"\n{BOLD}{GREEN}[TPM 2.0 HARDWARE PCR REGISTERS]{RESET}")
+        for pcr_num, val in pcrs.items():
+            print(f"  • PCR-{pcr_num:02d} : {val}")
+        pk, sk = tpm_quote.generate_ak_stub()
+        nonce = secrets.token_hex(16)
+        quote = tpm_quote.sign_quote(pcr=pcrs, nonce=nonce, kid="MIL-TPM-AK-01", sk=sk)
+        verified = tpm_quote.verify_quote(quote, expected_nonce=nonce, trusted_pubs=[pk])
+        status_v = f"{GREEN}[CRYPTO VERIFIED]{RESET}" if verified else f"{RED}[VERIFY FAILED]{RESET}"
+        print(f"\n{BOLD}{GREEN}[HARDWARE ATTESTATION QUOTE (ML-DSA-87 BOUND)]{RESET}")
+        print(f"  • Algorithm  : {quote.get('alg', 'ML-DSA-87')}")
+        print(f"  • Key ID     : {quote.get('kid')}")
+        print(f"  • Timestamp  : {quote.get('ts')}")
+        print(f"  • Nonce      : {quote.get('nonce')}")
+        print(f"  • Signature  : {quote.get('sig', '')[:48]}... {status_v}")
+    except Exception as e:
+        print(f"{YELLOW}[TPM 2.0 NOTICE] Hardware quote: {e}{RESET}")
+
+
 def run_emergency_zeroize():
     """Execute NIST SP 800-88 / DoD 5220.22-M 3-pass emergency zeroization."""
     print(f"\n{BOLD}{RED}================================================================================")
@@ -235,15 +287,18 @@ def interactive_menu_loop():
         print(f"  {GREEN}[2] Sovereign Tactical P2P Node (Hardware-Paced Military Enclave){RESET}")
         print(f"  {GREEN}[3] Full Interactive Operations Suite (5-Year Monolith + Zero-Gap Pipeline){RESET}")
         print(f"  {GREEN}[4] Simplex Optical Data Diode Air-Gap Transfer Station{RESET}")
-        print(f"  {CYAN}[5] Execute Automated Defense Master Audit (10/10 Cryptographic Gates){RESET}")
-        print(f"  {CYAN}[6] Run 50X Sovereign Defense Superiority Empirical Benchmark{RESET}")
-        print(f"  {CYAN}[7] Run Two-Terminal Automated Tactical Drill (NORAD vs Pentagon){RESET}")
-        print(f"  {RED}[8] Emergency Post-Session Zeroization (NIST SP 800-88 / DoD 5220.22-M){RESET}")
-        print(f"  {WHITE}[9] Exit Command Center{RESET}")
+        print(f"  {GREEN}[5] Spawn Dual Tactical Military Terminals Side-by-Side (NORAD vs Pentagon){RESET}")
+        print(f"  {CYAN}[6] Execute DoD CJADC2 Phase 6 Tactical Data Fabric & MLS Cross-Domain Drill{RESET}")
+        print(f"  {CYAN}[7] Execute Automated Defense Master Audit (10/10 Cryptographic Gates){RESET}")
+        print(f"  {CYAN}[8] Run 50X Sovereign Defense Superiority Empirical Benchmark{RESET}")
+        print(f"  {CYAN}[9] Run Two-Terminal Automated Tactical Drill (In-Process Demo){RESET}")
+        print(f"  {MAGENTA}[10] Inspect Platform Hardware TPM 2.0 PCR Attestation Quote{RESET}")
+        print(f"  {RED}[11] Emergency Post-Session Zeroization (NIST SP 800-88 / DoD 5220.22-M){RESET}")
+        print(f"  {WHITE}[12] Exit Command Center{RESET}")
         print("=" * 86)
 
         try:
-            choice = input(f"{BOLD}{YELLOW}Enter Option (1-9): {RESET}").strip()
+            choice = input(f"{BOLD}{YELLOW}Enter Option (1-12): {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting Command Center...")
             break
@@ -257,25 +312,31 @@ def interactive_menu_loop():
         elif choice == "4":
             launch_diode_station()
         elif choice == "5":
-            run_master_defense_audit()
+            launch_dual_tactical_terminals()
         elif choice == "6":
-            run_50x_superiority_benchmark()
+            run_cjadc2_data_fabric_drill()
         elif choice == "7":
-            run_tactical_automated_drill()
+            run_master_defense_audit()
         elif choice == "8":
+            run_50x_superiority_benchmark()
+        elif choice == "9":
+            run_tactical_automated_drill()
+        elif choice == "10":
+            inspect_tpm_quote()
+        elif choice == "11":
             run_emergency_zeroize()
-        elif choice in ("9", "q", "exit", "quit"):
+        elif choice in ("12", "q", "exit", "quit"):
             print(f"{GREEN}Session closed under zero-leak discipline.{RESET}")
             break
         else:
-            print(f"{RED}Invalid selection. Please choose 1-9.{RESET}")
+            print(f"{RED}Invalid selection. Please choose 1-12.{RESET}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Destroyer ST2027 Sovereign Military Command Center")
     parser.add_argument("mode", nargs="?", default="interactive",
                         choices=["interactive", "web", "tactical", "alpha", "bravo", "chat",
-                                 "audit", "benchmark", "drill", "zeroize"],
+                                 "audit", "benchmark", "drill", "cjadc2", "terminals", "tpm", "zeroize"],
                         help="Operating mode (default: interactive menu)")
     args = parser.parse_args()
 
@@ -293,9 +354,16 @@ def main():
         run_50x_superiority_benchmark()
     elif args.mode == "drill":
         run_tactical_automated_drill()
+    elif args.mode == "cjadc2":
+        run_cjadc2_data_fabric_drill()
+    elif args.mode == "terminals":
+        launch_dual_tactical_terminals()
+    elif args.mode == "tpm":
+        inspect_tpm_quote()
     elif args.mode == "zeroize":
         run_emergency_zeroize()
 
 
 if __name__ == "__main__":
     main()
+

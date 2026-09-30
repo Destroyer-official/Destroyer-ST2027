@@ -84,6 +84,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.exceptions import InvalidTag
 import time
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 from utils.helpers import is_env_true
 from zero_trust_engine import RBACPolicyEngine
 from data_models import SecurityRole, SecurityPermission
