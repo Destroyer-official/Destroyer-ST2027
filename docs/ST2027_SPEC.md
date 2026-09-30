@@ -212,6 +212,9 @@ hardware target, CMVP validation of the Rust core, AO authorization.
 
 ## 6. Roadmap (sequenced)
 
+Execution order lives in `docs/ST2027_IMPLEMENTATION_PLAN.md` (zero-gap doctrine, cost ledger,
+pillar mapping, phase acceptance criteria). Status deltas below.
+
 1. Release build of `secure-transmit` — DONE 2026-09-29 (406 KB, LTO, `panic=abort`).
    Static-CRT scoping remains: dynamic CRT confirmed in the release PE, so the bin-crate split
    (bin static, `cdylib` dynamic — dual-CRT hazard otherwise) is still pending. Mechanism verified

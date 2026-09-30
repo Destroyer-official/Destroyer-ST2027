@@ -103,6 +103,8 @@ if sys.platform == 'win32':
 # Pure Military Direct P2P Mode (Zero external cloud servers)
 DATABASE_AVAILABLE = False
 if os.environ.get("P2P_ENABLE_CLOUD_DISCOVERY", "0") == "1":
+    if is_env_true("P2P_PRODUCTION") or is_env_true("P2P_MILITARY_MODE") or is_env_true("P2P_TS_MODE"):
+        raise RuntimeError("SECURITY VIOLATION: External cloud discovery is strictly forbidden in sovereign military mode.")
     try:
         neon_path = os.path.join(os.path.dirname(__file__), 'notupload', 'fastapi-neon-ano')
         if neon_path not in sys.path:

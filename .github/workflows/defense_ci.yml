@@ -88,6 +88,26 @@ jobs:
         run: |
           cargo test --manifest-path rust_data_plane/Cargo.toml
 
+      - name: Release Build (LTO, panic-abort) + Binary Selftest + Loopback Smoke
+        # Proves the shipped artifact path: release profile compiles, the
+        # memlock probe locks, and a live UDP loopback round-trips through
+        # the LockedKey32 key path. Fail-closed on any step.
+        run: |
+          cargo build --release --manifest-path rust_data_plane/Cargo.toml
+          BIN=rust_data_plane/target/release/secure-transmit
+          test -x "$BIN"
+          "$BIN" selftest
+          KEYFILE=$(mktemp); STATE_A=$(mktemp -u); STATE_B=$(mktemp -u)
+          "$BIN" keygen | tr -d '[:space:]' > "$KEYFILE"
+          chmod 600 "$KEYFILE"
+          "$BIN" recv --key-file "$KEYFILE" --state "$STATE_B" --bind 127.0.0.1:18999 --count 1 --timeout-ms 15000 > recv.out 2>&1 &
+          RXPID=$!
+          sleep 2
+          "$BIN" send --key-file "$KEYFILE" --state "$STATE_A" --to 127.0.0.1:18999 --msg "CI-LOOPBACK-PROBE"
+          wait $RXPID
+          grep -q "CI-LOOPBACK-PROBE" recv.out
+          rm -f "$KEYFILE" recv.out "$STATE_A" "$STATE_B"
+
       - name: Build & Install Native Data-Plane Extension (destroyer_core)
         run: |
           pip install maturin

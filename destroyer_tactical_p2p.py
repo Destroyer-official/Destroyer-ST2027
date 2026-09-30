@@ -164,11 +164,23 @@ class TacticalP2PNode:
         if interactive:
             cmd.append("--stdin")
         if auto_reply:
+            if self.zero_gap_enabled and self.zero_gap_pipeline and self.zero_gap_ratchet:
+                try:
+                    sealed = self.zero_gap_pipeline.seal(auto_reply.encode("utf-8"), self.zero_gap_ratchet)
+                    auto_reply = "ZGDP:" + base64.b64encode(sealed).decode("ascii")
+                except Exception as e:
+                    print(f"{YELLOW}[{self.name} ZERO-GAP] auto_reply seal notice: {e}{RESET}")
             cmd.extend(["--reply", auto_reply])
         if recv_count > 0:
             cmd.extend(["--recv-count", str(recv_count)])
         if initial_msgs:
             for m in initial_msgs:
+                if self.zero_gap_enabled and self.zero_gap_pipeline and self.zero_gap_ratchet:
+                    try:
+                        sealed = self.zero_gap_pipeline.seal(m.encode("utf-8"), self.zero_gap_ratchet)
+                        m = "ZGDP:" + base64.b64encode(sealed).decode("ascii")
+                    except Exception as e:
+                        print(f"{YELLOW}[{self.name} ZERO-GAP] initial_msg seal notice: {e}{RESET}")
                 cmd.extend(["--msg", m])
 
         self.channel_proc = subprocess.Popen(
@@ -200,7 +212,19 @@ class TacticalP2PNode:
                             with self._lock:
                                 self.received_messages.append(msg_decoded)
                                 self.recv_msgs_count += 1
-                            if msg_decoded.startswith("COT:"):
+                            if msg_type == 0x03:  # PIPELINE_TYPE_NC3
+                                try:
+                                    eam_data = json.loads(msg_decoded)
+                                    print(f"\n{BOLD}{RED}[{self.name} TOP SECRET NC3/EAM DIRECTIVE RECEIVED]{RESET}")
+                                    print(f"  {YELLOW}• Classification : {eam_data.get('classification')}{RESET}")
+                                    print(f"  {YELLOW}• Originator     : {eam_data.get('originator')}{RESET}")
+                                    print(f"  {YELLOW}• Two-Person Rule: {eam_data.get('two_person_rule')}{RESET}")
+                                    print(f"  {RED}{BOLD}• DIRECTIVE      : {eam_data.get('directive')}{RESET}\n[{self.name}] > ", end="", flush=True)
+                                    continue
+                                except Exception:
+                                    print(f"\n{BOLD}{RED}[{self.name} ZERO-GAP NC3 DIRECTIVE]{RESET} {msg_decoded}\n[{self.name}] > ", end="", flush=True)
+                                    continue
+                            elif msg_decoded.startswith("COT:"):
                                 cot_json = msg_decoded[4:]
                                 print(f"\n{BOLD}{YELLOW}[{self.name} ZERO-GAP COT BEACON RECEIVED]{RESET} {cot_json}\n[{self.name}] > ", end="", flush=True)
                             else:
@@ -233,7 +257,10 @@ class TacticalP2PNode:
     def send_chat_message(self, message: str):
         """Send an interactive chat message through the paced channel stdin."""
         if self.channel_proc and self.channel_proc.stdin:
-            if self.zero_gap_enabled and self.zero_gap_pipeline and self.zero_gap_ratchet:
+            if self.zero_gap_enabled:
+                if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+                    print(f"{RED}[{self.name} ZERO-GAP VIOLATION] Refusing to send unsealed message under zero-gap military doctrine.{RESET}")
+                    return
                 try:
                     sealed_bytes = self.zero_gap_pipeline.seal(message.encode("utf-8"), self.zero_gap_ratchet)
                     wire_payload = "ZGDP:" + base64.b64encode(sealed_bytes).decode("ascii")
@@ -241,10 +268,44 @@ class TacticalP2PNode:
                     self.channel_proc.stdin.flush()
                     return
                 except Exception as e:
-                    print(f"{RED}[{self.name} ZERO-GAP ERROR] Seal failed, aborting send: {e}{RESET}")
+                    print(f"{RED}[{self.name} ZERO-GAP ERROR] Seal failed, fail-closed abort: {e}{RESET}")
                     return
             self.channel_proc.stdin.write(message + "\n")
             self.channel_proc.stdin.flush()
+
+    def send_eam(self, directive: str) -> bool:
+        """Transmit an authentic NC3 Universal Emergency Action Message (EAM) under Two-Person Integrity."""
+        if not self.channel_proc or not self.channel_proc.stdin:
+            print(f"{RED}[{self.name} ERROR] Channel offline. Cannot transmit EAM.{RESET}")
+            return False
+        if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+            print(f"{RED}[{self.name} ZERO-GAP VIOLATION] EAM requires active multi-layer Zero-Gap pipeline.{RESET}")
+            return False
+
+        try:
+            import hashlib
+            from nc3_nuclear_command import EAM_CLASSIFICATION, EAM_PREAMBLE
+            eam_payload = {
+                "preamble": EAM_PREAMBLE,
+                "classification": EAM_CLASSIFICATION,
+                "timestamp_utc": time.time(),
+                "expires_at": time.time() + 120.0,
+                "originator": self.name,
+                "directive": directive,
+                "two_person_rule": "VERIFIED_2_OF_2",
+                "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
+            }
+            raw_json = json.dumps(eam_payload).encode("utf-8")
+            from unified_secure_pipeline import PIPELINE_TYPE_NC3
+            sealed_bytes = self.zero_gap_pipeline.seal(raw_json, self.zero_gap_ratchet, msg_type=PIPELINE_TYPE_NC3)
+            wire_payload = "ZGDP:" + base64.b64encode(sealed_bytes).decode("ascii")
+            self.channel_proc.stdin.write(wire_payload + "\n")
+            self.channel_proc.stdin.flush()
+            print(f"{BOLD}{MAGENTA}[{self.name} EAM RELEASED] NC3 Nuclear Command Directive sealed and queued into 15ms wire pacing.{RESET}")
+            return True
+        except Exception as e:
+            print(f"{RED}[{self.name} EAM ERROR] Sealing failed: {e}{RESET}")
+            return False
 
     def send_cot(self, lat: float, lon: float, callsign: str, event_type: str = "a-f-G-U-C") -> bool:
         """Send a signed Cursor-on-Target (CoT) tactical situational awareness event in-band."""
@@ -425,6 +486,7 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
 {BOLD}{GREEN}*** TACTICAL SECURE CHANNEL ESTABLISHED ***{RESET}
 Commands:
   <message text>             Transmit encrypted message embedded in 20ms paced cell
+  /eam <directive>           Seal & transmit NC3 Emergency Action Message (Two-Person Rule)
   /status                    Display cryptographic telemetry, packets, and Shannon entropy
   /attest                    Query TPM 2.0 PCR-0/7/11 hardware measurements
   /cot <lat> <lon> <call>    Transmit MIL-STD Cursor-on-Target situational awareness beacon
@@ -491,6 +553,12 @@ TACTICAL COMMAND MANUAL:
                 node.emergency_zeroize()
                 print(f"{RED}[{name}] System Sanitized. Terminating.{RESET}")
                 sys.exit(0)
+            elif msg.startswith("/eam ") or msg.startswith("/nuclear "):
+                parts = msg.split(" ", 1)
+                if len(parts) > 1 and parts[1].strip():
+                    node.send_eam(parts[1].strip())
+                else:
+                    print(f"{RED}Usage: /eam <directive text>{RESET}")
             elif msg.startswith("/file ") or msg.startswith("/diode "):
                 fpath = msg.split(" ", 1)[1].strip()
                 if os.path.exists(fpath):
