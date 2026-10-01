@@ -7063,8 +7063,8 @@ class SecureP2PChat:
                         peer_id = (await self._async_input("Peer identity / IP (or press Enter for 'peer'): ")).strip() or "peer"
                         peer_fp = (await self._async_input("Peer fingerprint (64 or 128 hex chars): ")).strip()
                         import re as _re2
-                        if not (1 <= len(peer_id) <= 64 and _re2.fullmatch(r'[A-Za-z0-9_.:-]+', peer_id)):
-                            print(f"\033[91mInvalid peer_id (1-64 chars, alphanumeric/_/-/:).\033[0m")
+                        if not (1 <= len(peer_id) <= 128 and _re2.fullmatch(r'[A-Za-z0-9_.:-]+', peer_id)):
+                            print(f"\033[91mInvalid peer_id (1-128 chars, alphanumeric/_/-/:).\033[0m")
                         elif len(peer_fp) not in (64, 128) or not _re2.fullmatch(r'[0-9a-fA-F]+', peer_fp):
                             print(f"\033[91mInvalid fingerprint (64 or 128 hex characters required).\033[0m")
                         else:
@@ -7080,6 +7080,11 @@ class SecureP2PChat:
                             os.environ["P2P_AUTHORIZED_PEER_FINGERPRINT"] = clean_fp
                             if hasattr(self, 'ca_exchange') and self.ca_exchange:
                                 self.ca_exchange.add_authorized_fingerprint(clean_fp)
+                            # If peer_id itself is a 64 or 128 hex fingerprint (e.g. user entered both pairing and cert fingerprints), authorize it too
+                            if len(peer_id) in (64, 128) and _re2.fullmatch(r'[0-9a-fA-F]+', peer_id):
+                                self.authorized_peer_fingerprints.add(peer_id.lower())
+                                if hasattr(self, 'ca_exchange') and self.ca_exchange:
+                                    self.ca_exchange.add_authorized_fingerprint(peer_id.lower())
                             log_event(
                                 AuditEventType.CONFIGURATION_CHANGE,
                                 f"Operator authorized peer '{peer_id}' for TOFU pairing and CA exchange (menu).",
