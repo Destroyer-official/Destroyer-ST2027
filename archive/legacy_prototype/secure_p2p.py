@@ -4600,7 +4600,9 @@ class SecureP2PChat:
                 if not is_authorized and hasattr(self, 'ca_exchange') and self.ca_exchange:
                     if hasattr(self.ca_exchange, 'is_peer_authorized') and self.ca_exchange.is_peer_authorized(peer_id, fingerprint):
                         is_authorized = True
-                    elif hasattr(self.ca_exchange, 'authorized_fingerprints') and fingerprint in self.ca_exchange.authorized_fingerprints:
+                    elif hasattr(self.ca_exchange, 'authorized_peer_fingerprints') and clean_fp in self.ca_exchange.authorized_peer_fingerprints:
+                        is_authorized = True
+                    elif hasattr(self.ca_exchange, 'authorized_fingerprints') and clean_fp in self.ca_exchange.authorized_fingerprints:
                         is_authorized = True
 
                 verified_peers = getattr(self, 'verified_peers', set()) or set()
@@ -6423,6 +6425,12 @@ class SecureP2PChat:
                     if _pair_fp:
                         print(f"\033[96mYour pairing fingerprint [{_pair_id}]:\033[0m")
                         print(f"  {_pair_fp}")
+                    if hasattr(self, 'ca_exchange') and self.ca_exchange:
+                        if not getattr(self.ca_exchange, 'local_cert_fingerprint', None):
+                            self.ca_exchange.generate_self_signed()
+                        if self.ca_exchange.local_cert_fingerprint:
+                            print(f"\033[95mYour certificate fingerprint (for CA whitelist / Option 5):\033[0m")
+                            print(f"  {self.ca_exchange.local_cert_fingerprint}")
                 # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
                 except Exception:  # nosec: B110
                     pass
@@ -6557,6 +6565,11 @@ class SecureP2PChat:
                             self.ca_exchange.generate_self_signed()
                             log.info("Self-signed certificate generated for peer verification")
                             print(f"\033[92mCertificate generated successfully\033[0m")
+                            if hasattr(self, 'ca_exchange') and self.ca_exchange and self.ca_exchange.local_cert_fingerprint:
+                                print(f"\n{CYAN}--- Out-Of-Band (OOB) Authentication Info ---{RESET}")
+                                print(f"{GREEN}Station 1 Certificate Fingerprint (SHA3-512):{RESET}")
+                                print(f"  {MAGENTA}{self.ca_exchange.local_cert_fingerprint}{RESET}")
+                                print(f"{YELLOW}[ACTION REQUIRED FOR PUBLIC IPv6]: On Station 2, run Option 5 to authorize this fingerprint before connecting!{RESET}\n")
                         except Exception as e:
                             log.error(f"Failed to generate self-signed certificate: {e}")
                             print(f"\033[91mFailed to generate certificate: {e}\033[0m")
@@ -7044,24 +7057,33 @@ class SecureP2PChat:
                 # Authorize peer pairing (Option 5): OOB ceremony, pre-handshake.
                 elif choice == '5':
                     try:
-                        peer_id = (await self._async_input("Peer identity to authorize: ")).strip()
-                        peer_fp = (await self._async_input("Peer pairing fingerprint (128 hex): ")).strip()
+                        peer_id = (await self._async_input("Peer identity / IP (or press Enter for 'peer'): ")).strip() or "peer"
+                        peer_fp = (await self._async_input("Peer fingerprint (64 or 128 hex chars): ")).strip()
                         import re as _re2
-                        if not (1 <= len(peer_id) <= 64 and _re2.fullmatch(r'[A-Za-z0-9_-]+', peer_id)):
-                            print(f"\033[91mInvalid peer_id (1-64 chars, alphanumeric/_/-).\033[0m")
-                        elif len(peer_fp) != 128 or not _re2.fullmatch(r'[0-9a-fA-F]+', peer_fp):
-                            print(f"\033[91mInvalid fingerprint (exactly 128 hex chars required).\033[0m")
+                        if not (1 <= len(peer_id) <= 64 and _re2.fullmatch(r'[A-Za-z0-9_.:-]+', peer_id)):
+                            print(f"\033[91mInvalid peer_id (1-64 chars, alphanumeric/_/-/:).\033[0m")
+                        elif len(peer_fp) not in (64, 128) or not _re2.fullmatch(r'[0-9a-fA-F]+', peer_fp):
+                            print(f"\033[91mInvalid fingerprint (64 or 128 hex characters required).\033[0m")
                         else:
+                            clean_fp = peer_fp.lower()
                             if not hasattr(self, 'verified_peers') or self.verified_peers is None:
                                 self.verified_peers = set()
-                            self.verified_peers.add((peer_id, peer_fp.lower()))
+                            self.verified_peers.add((peer_id, clean_fp))
+                            self.verified_peers.add(("", clean_fp))
+                            if not hasattr(self, 'authorized_peer_fingerprints') or self.authorized_peer_fingerprints is None:
+                                self.authorized_peer_fingerprints = set()
+                            self.authorized_peer_fingerprints.add(clean_fp)
+                            self.authorized_peer_fingerprint = clean_fp
+                            os.environ["P2P_AUTHORIZED_PEER_FINGERPRINT"] = clean_fp
+                            if hasattr(self, 'ca_exchange') and self.ca_exchange:
+                                self.ca_exchange.add_authorized_fingerprint(clean_fp)
                             log_event(
                                 AuditEventType.CONFIGURATION_CHANGE,
-                                f"Operator authorized peer '{peer_id}' for TOFU pairing (menu).",
+                                f"Operator authorized peer '{peer_id}' for TOFU pairing and CA exchange (menu).",
                                 AuditSeverity.HIGH,
-                                {"peer_id": peer_id, "operator": self.local_username}
+                                {"peer_id": peer_id, "fingerprint": clean_fp, "operator": self.local_username}
                             )
-                            print(f"\033[92mPeer '{peer_id}' pre-authorized for pairing.\033[0m")
+                            print(f"\033[92m[PASS] Peer '{peer_id}' ({clean_fp[:16]}...) pre-authorized for pairing and certificate exchange.\033[0m")
                     except Exception as e_pair:
                         print(f"\033[91mPairing failed: {e_pair}\033[0m")
                         log.error(f"Menu pairing failed: {e_pair}")

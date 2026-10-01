@@ -743,7 +743,7 @@ class CAExchange:
             _add(x509.DNSName("invalid"))
         return sans
 
-    def generate_self_signed(self) -> Tuple[bytes, bytes]:
+    def generate_self_signed(self, force_regenerate: bool = False) -> Tuple[bytes, bytes]:
         """Generates a self-signed certificate and private key compliant with RFC 5280.
 
         Enforces NIST FIPS 204 Level 5 PQC (ML-DSA-87) for identity certificates.
@@ -754,6 +754,9 @@ class CAExchange:
         Returns:
             Tuple[bytes, bytes]: (private_key_pem, certificate_pem)
         """
+        if not force_regenerate and getattr(self, 'local_key_pem', None) and getattr(self, 'local_cert_pem', None):
+            return self.local_key_pem, self.local_cert_pem
+
         ca_logger.info("Generating self-signed certificate with enhanced security parameters...")
 
         if self.key_type.startswith("rsa"):
@@ -1376,8 +1379,16 @@ class CAExchange:
                     raise SecurityError(f"Certificate fingerprint mismatch. Expected {peer_fingerprint}, got {actual_fingerprint}")
 
                 # Zero-Trust Whitelist & Cryptographic TOFU Verification (Finding 1.1)
+                clean_fp = actual_fingerprint.lower()
                 if self.authorized_peer_fingerprints:
-                    if actual_fingerprint.lower() not in self.authorized_peer_fingerprints:
+                    matched = False
+                    for auth_fp in self.authorized_peer_fingerprints:
+                        clean_auth = str(auth_fp).strip().lower()
+                        if (len(clean_auth) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_auth)) or \
+                           (len(clean_auth) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_auth)):
+                            matched = True
+                            break
+                    if not matched:
                         ca_logger.critical(f"CRITICAL INTRUSION DETECTED: Peer certificate fingerprint {actual_fingerprint} NOT in authorized whitelist!")
                         raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {actual_fingerprint} is not in pre-authorized military whitelist.")
                     ca_logger.info(f"Peer certificate fingerprint {actual_fingerprint[:24]}... verified against authorized whitelist.")
@@ -1398,7 +1409,7 @@ class CAExchange:
                         )
                         if not is_loopback:
                             peer_pin_id = f"cert_tofu_{peer_host}"
-                            pin_status = check_pin(peer_pin_id, actual_fingerprint.lower())
+                            pin_status = check_pin(peer_pin_id, clean_fp)
                             if pin_status == 'CHANGED':
                                 ca_logger.critical(
                                     f"CRITICAL SECURITY ALERT: Certificate fingerprint for '{peer_host}' CHANGED from pinned value! "
@@ -1408,19 +1419,20 @@ class CAExchange:
                             elif pin_status == 'new':
                                 # Fail-closed gate: TOFU first-contact requires out-of-band verification or whitelist authorization (Findings 8 & 12)
                                 is_authorized = False
-                                clean_fp = actual_fingerprint.lower()
                                 auth_fps = getattr(self, 'authorized_peer_fingerprints', set()) or set()
                                 if len(clean_fp) in (64, 128) and all(c in "0123456789abcdef" for c in clean_fp):
                                     for auth_fp in auth_fps:
                                         if isinstance(auth_fp, str):
                                             clean_auth = auth_fp.strip().lower()
-                                            if len(clean_auth) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_auth):
+                                            if (len(clean_auth) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_auth)) or \
+                                               (len(clean_auth) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_auth)):
                                                 is_authorized = True
                                                 break
                                     env_fp = os.environ.get("P2P_AUTHORIZED_PEER_FINGERPRINT")
                                     if env_fp:
                                         clean_env = env_fp.strip().lower()
-                                        if len(clean_env) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_env):
+                                        if (len(clean_env) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_env)) or \
+                                           (len(clean_env) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_env)):
                                             is_authorized = True
 
                                 if not is_authorized:
@@ -1545,7 +1557,13 @@ class CAExchange:
             raise ValueError("Peer certificate not available. Exchange certificates first.")
 
         if self.authorized_peer_fingerprints and self.peer_cert_fingerprint:
-            if self.peer_cert_fingerprint.lower() not in self.authorized_peer_fingerprints:
+            clean_peer_fp = self.peer_cert_fingerprint.lower()
+            matched = any(
+                (len(str(auth_fp).strip().lower()) == len(clean_peer_fp) and hmac.compare_digest(clean_peer_fp, str(auth_fp).strip().lower())) or
+                (len(str(auth_fp).strip().lower()) == 64 and len(clean_peer_fp) == 128 and hmac.compare_digest(clean_peer_fp[:64], str(auth_fp).strip().lower()))
+                for auth_fp in self.authorized_peer_fingerprints
+            )
+            if not matched:
                 ca_logger.critical(f"TLS Server Context creation blocked: peer fingerprint {self.peer_cert_fingerprint} not in authorized whitelist!")
                 raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {self.peer_cert_fingerprint} is not in pre-authorized military whitelist.")
 
@@ -1660,7 +1678,13 @@ class CAExchange:
             raise ValueError("Peer certificate not available. Exchange certificates first.")
 
         if self.authorized_peer_fingerprints and self.peer_cert_fingerprint:
-            if self.peer_cert_fingerprint.lower() not in self.authorized_peer_fingerprints:
+            clean_peer_fp = self.peer_cert_fingerprint.lower()
+            matched = any(
+                (len(str(auth_fp).strip().lower()) == len(clean_peer_fp) and hmac.compare_digest(clean_peer_fp, str(auth_fp).strip().lower())) or
+                (len(str(auth_fp).strip().lower()) == 64 and len(clean_peer_fp) == 128 and hmac.compare_digest(clean_peer_fp[:64], str(auth_fp).strip().lower()))
+                for auth_fp in self.authorized_peer_fingerprints
+            )
+            if not matched:
                 ca_logger.critical(f"TLS Client Context creation blocked: peer fingerprint {self.peer_cert_fingerprint} not in authorized whitelist!")
                 raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {self.peer_cert_fingerprint} is not in pre-authorized military whitelist.")
 
