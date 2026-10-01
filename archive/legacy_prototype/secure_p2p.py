@@ -6118,6 +6118,9 @@ class SecureP2PChat:
 
                                 # Set the wrapped socket in tls_channel
                                 tls_channel.ssl_socket = ssl_socket
+                                if hasattr(self, 'ca_exchange') and self.ca_exchange and getattr(self.ca_exchange, 'peer_cert_fingerprint', None):
+                                    peer_fp = self.ca_exchange.peer_cert_fingerprint.lower()
+                                    tls_channel.certificate_pinning = {peer_ip: peer_fp, '*': peer_fp}
                                 log.info("Client socket wrapped successfully with certificate verification")
                             except Exception as e:
                                 log.error(f"Failed to wrap client socket with TLS certificate verification: {e}")
@@ -6795,6 +6798,9 @@ class SecureP2PChat:
 
                                     # Set the wrapped socket in tls_channel
                                     tls_channel.ssl_socket = ssl_socket
+                                    if hasattr(self, 'ca_exchange') and self.ca_exchange and getattr(self.ca_exchange, 'peer_cert_fingerprint', None):
+                                        peer_fp = self.ca_exchange.peer_cert_fingerprint.lower()
+                                        tls_channel.certificate_pinning = {client_ip: peer_fp, '*': peer_fp}
                                     log.info("Server socket wrapped successfully with certificate verification")
                                 except Exception as e:
                                     log.error(f"Failed to wrap server socket with TLS certificate verification: {e}")
@@ -7901,6 +7907,9 @@ class SecureP2PChat:
 
                     # Set the wrapped socket in tls_channel
                     tls_channel.ssl_socket = ssl_socket
+                    if hasattr(self, 'ca_exchange') and self.ca_exchange and getattr(self.ca_exchange, 'peer_cert_fingerprint', None):
+                        peer_fp = self.ca_exchange.peer_cert_fingerprint.lower()
+                        tls_channel.certificate_pinning = {str(client_address[0]): peer_fp, '*': peer_fp}
                     log.info("Server socket wrapped successfully with certificate verification")
                 except Exception as e:
                     log.error(f"Failed to wrap server socket with TLS certificate verification: {e}")
