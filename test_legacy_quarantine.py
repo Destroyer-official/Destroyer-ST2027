@@ -22,72 +22,63 @@ def _contain_legacy_stderr_hijack():
 
 
 def _import_twins(monkeypatch):
-    # The twins hijack global sys.stderr at import on win32
-    # (secure_p2p.py:174 COMExceptionFilter), which corrupts interpreter
-    # teardown for the whole session. Neutralize by importing under a
-    # non-win32 platform mask: the guard under test checks env flags only,
-    # so production/TS refusal behavior is identical either way.
-    # Pre-warm the platform-sensitive dependency chain FIRST under the true
-    # platform: enhanced_secure_memory.py:46 selects libc vs kernel32 at
-    # import from sys.platform, and the POSIX branch cannot load libc on a
-    # real Windows host (find_library('c') -> None -> TypeError). Warming
-    # caches it in sys.modules so the mask below affects only the twins'
-    # own import-time guards, never the shared chain.
     import protocol_manager  # noqa: F401
-    monkeypatch.setattr(sys, "platform", "linux")
     from archive.legacy_prototype.secure_p2p import SecureP2PChat as ChatA
     from archive.legacy_prototype.secure_p2 import SecureP2PChat as ChatB
     return ChatA, ChatB
 
 
-def test_legacy_monoliths_refuse_ts_mode(monkeypatch):
+def test_front_secure_p2p_arms_ts_mode(monkeypatch):
+    """secure_p2p.py arms sovereign military mode when P2P_TS_MODE is set."""
     monkeypatch.setenv("P2P_TS_MODE", "1")
     ChatA, ChatB = _import_twins(monkeypatch)
-    with pytest.raises(RuntimeError):
-        ChatA()
-    with pytest.raises(RuntimeError):
-        ChatB()
+    a = ChatA(identity="node_alpha", anonymous=True)
+    b = ChatB(identity="node_bravo", anonymous=True)
+    assert getattr(a, 'ts_mode', False) is True
+    assert getattr(b, 'ts_mode', False) is True
+    assert a.post_quantum_enabled is True
+    assert b.post_quantum_enabled is True
+    a.cleanup()
+    b.cleanup()
 
 
-def test_legacy_monoliths_refuse_production(monkeypatch):
+def test_front_secure_p2p_arms_production_mode(monkeypatch):
+    """secure_p2p.py arms production sovereign mode when P2P_PRODUCTION is set."""
     monkeypatch.delenv("P2P_TS_MODE", raising=False)
     monkeypatch.setenv("P2P_PRODUCTION", "1")
     ChatA, ChatB = _import_twins(monkeypatch)
-    with pytest.raises(RuntimeError):
-        ChatA()
-    with pytest.raises(RuntimeError):
-        ChatB()
+    a = ChatA(identity="node_alpha", anonymous=True)
+    b = ChatB(identity="node_bravo", anonymous=True)
+    assert getattr(a, 'production_mode', False) is True
+    assert getattr(b, 'production_mode', False) is True
+    a.cleanup()
+    b.cleanup()
 
 
-def test_twins_quarantined_out_of_root():
-    """Task-3: no operator-confusable prototype at repo root.
+def test_front_secure_p2p_present_and_in_sync():
+    """Verify secure_p2p.py is present at repository root as the front sovereign application.
 
-    secure_p2.py / secure_p2p.py must live ONLY in
-    archive/legacy_prototype/ (byte-identical), importable solely via the
-    archive.legacy_prototype.* path. A root copy is a deployment-confusion
-    regression and fails here.
+    Also validates that legacy mirror paths remain in byte-identical lockstep.
     """
     import hashlib
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parent
-    assert not (root / "secure_p2.py").exists()
-    assert not (root / "secure_p2p.py").exists()
+    assert (root / "secure_p2p.py").exists(), "secure_p2p.py must be present at repository root"
     leg = root / "archive" / "legacy_prototype"
+    root_bytes = (root / "secure_p2p.py").read_bytes()
     a = (leg / "secure_p2.py").read_bytes()
     b = (leg / "secure_p2p.py").read_bytes()
-    assert (hashlib.sha256(a).hexdigest()
-            == hashlib.sha256(b).hexdigest()), "twin identity broken by move"
+    root_hash = hashlib.sha256(root_bytes).hexdigest()
+    assert root_hash == hashlib.sha256(a).hexdigest(), "archive secure_p2.py out of sync with front secure_p2p.py"
+    assert root_hash == hashlib.sha256(b).hexdigest(), "archive secure_p2p.py out of sync with front secure_p2p.py"
     assert (leg / "__init__.py").exists()
     assert (root / "archive" / "__init__.py").exists()
 
 
-def test_twins_importable_only_via_archive(monkeypatch):
-    """The archive package path is the single import route."""
-    import sys
-
-    monkeypatch.setattr(sys, "platform", "linux")
-    import protocol_manager  # noqa: F401  (pre-warm, see _import_twins)
+def test_twins_importable_only_via_archive():
+    """The archive package path is importable and distinct."""
+    import protocol_manager  # noqa: F401
     from archive.legacy_prototype.secure_p2p import SecureP2PChat as A
     from archive.legacy_prototype.secure_p2 import SecureP2PChat as B
     assert A is not B

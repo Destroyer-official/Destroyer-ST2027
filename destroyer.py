@@ -124,9 +124,12 @@ def launch_tactical_node(role: str = "interactive"):
 def launch_interactive_chat():
     """Launch the 5-Year Comprehensive Monolith armed with Zero-Gap Pipeline."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Launching Interactive Operations Suite (Zero-Gap Multi-Layer Mode)...{RESET}")
-    target = ROOT / "archive" / "legacy_prototype" / "secure_p2.py"
+    target = ROOT / "secure_p2p.py"
+    if not target.exists():
+        target = ROOT / "archive" / "legacy_prototype" / "secure_p2.py"
     cmd = [sys.executable, str(target), "--data-plane", "rust", "--tactical-cloak"]
     subprocess.run(cmd)
+
 
 
 def launch_diode_station():
