@@ -1306,6 +1306,9 @@ class CAExchange:
                     'has_ocsp': ocsp_response is not None,
                     'ocsp_len': len(ocsp_data) if ocsp_response else 0
                 }
+                local_pair_fp = getattr(self, 'local_pairing_fingerprint', None)
+                if local_pair_fp:
+                    metadata['pairing_fingerprint'] = str(local_pair_fp).strip().lower()
 
                 if self.enable_hpkp:
                     hpkp_pin = self.generate_hpkp_pin(self.local_cert_pem)
@@ -1338,6 +1341,9 @@ class CAExchange:
                     has_ocsp = metadata.get('has_ocsp', False)
                     ocsp_len = metadata.get('ocsp_len', 0)
                     hpkp_pin = metadata.get('hpkp_pin')
+                    peer_pairing_fp = metadata.get('pairing_fingerprint')
+                    if peer_pairing_fp:
+                        self.peer_pairing_fingerprint = str(peer_pairing_fp).strip().lower()
 
                     if not peer_fingerprint:
                         raise SecurityError("Peer metadata is missing fingerprint")
@@ -1380,6 +1386,7 @@ class CAExchange:
 
                 # Zero-Trust Whitelist & Cryptographic TOFU Verification (Finding 1.1)
                 clean_fp = actual_fingerprint.lower()
+                clean_peer_pair = str(peer_pairing_fp).strip().lower() if peer_pairing_fp else None
                 if self.authorized_peer_fingerprints:
                     matched = False
                     for auth_fp in self.authorized_peer_fingerprints:
@@ -1388,10 +1395,17 @@ class CAExchange:
                            (len(clean_auth) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_auth)):
                             matched = True
                             break
+                        if clean_peer_pair and ((len(clean_auth) == len(clean_peer_pair) and hmac.compare_digest(clean_peer_pair, clean_auth)) or \
+                           (len(clean_auth) == 64 and len(clean_peer_pair) == 128 and hmac.compare_digest(clean_peer_pair[:64], clean_auth))):
+                            matched = True
+                            break
                     if not matched:
-                        ca_logger.critical(f"CRITICAL INTRUSION DETECTED: Peer certificate fingerprint {actual_fingerprint} NOT in authorized whitelist!")
+                        ca_logger.critical(f"CRITICAL INTRUSION DETECTED: Peer certificate fingerprint {actual_fingerprint} (pairing: {clean_peer_pair}) NOT in authorized whitelist!")
                         raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {actual_fingerprint} is not in pre-authorized military whitelist.")
                     ca_logger.info(f"Peer certificate fingerprint {actual_fingerprint[:24]}... verified against authorized whitelist.")
+                    self.authorized_peer_fingerprints.add(clean_fp)
+                    if clean_peer_pair:
+                        self.authorized_peer_fingerprints.add(clean_peer_pair)
                 else:
                     # Enforce cryptographic TOFU (Trust-On-First-Use) pin store to prevent MITM substitution
                     try:
@@ -1428,11 +1442,18 @@ class CAExchange:
                                                (len(clean_auth) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_auth)):
                                                 is_authorized = True
                                                 break
+                                            if clean_peer_pair and ((len(clean_auth) == len(clean_peer_pair) and hmac.compare_digest(clean_peer_pair, clean_auth)) or \
+                                               (len(clean_auth) == 64 and len(clean_peer_pair) == 128 and hmac.compare_digest(clean_peer_pair[:64], clean_auth))):
+                                                is_authorized = True
+                                                break
                                     env_fp = os.environ.get("P2P_AUTHORIZED_PEER_FINGERPRINT")
                                     if env_fp:
                                         clean_env = env_fp.strip().lower()
                                         if (len(clean_env) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_env)) or \
                                            (len(clean_env) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_env)):
+                                            is_authorized = True
+                                        if clean_peer_pair and ((len(clean_env) == len(clean_peer_pair) and hmac.compare_digest(clean_peer_pair, clean_env)) or \
+                                           (len(clean_env) == 64 and len(clean_peer_pair) == 128 and hmac.compare_digest(clean_peer_pair[:64], clean_env))):
                                             is_authorized = True
 
                                 if not is_authorized:
@@ -1443,6 +1464,9 @@ class CAExchange:
                                     raise SecurityError(
                                         f"Certificate TOFU first-contact rejected for '{peer_host}': requires out-of-band whitelist pre-authorization."
                                     )
+                                self.authorized_peer_fingerprints.add(clean_fp)
+                                if clean_peer_pair:
+                                    self.authorized_peer_fingerprints.add(clean_peer_pair)
 
                                 ca_logger.warning(f"TOFU: First contact certificate pinned for '{peer_host}': {actual_fingerprint[:24]}...")
                                 store_pin(peer_pin_id, actual_fingerprint.lower())

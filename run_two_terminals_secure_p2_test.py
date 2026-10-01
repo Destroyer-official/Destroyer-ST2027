@@ -220,55 +220,66 @@ def run_test():
     import re as _re
 
     def _extract_pairing(lines):
-        peer_id, fp = None, None
-        for ln in lines:
+        peer_id, pair_fp, cert_fp = None, None, None
+        for i, ln in enumerate(lines):
             m = _re.search(r"Your pairing fingerprint \[(.+?)\]:", ln)
             if m:
                 peer_id = m.group(1).strip()
-            m = _re.search(r"^\s*([0-9a-fA-F]{128})\s*$", ln)
-            if m:
-                fp = m.group(1).lower()
-        return peer_id, fp
+                for next_ln in lines[i+1:i+6]:
+                    m2 = _re.search(r"^\s*([0-9a-fA-F]{128})\s*$", next_ln)
+                    if m2:
+                        pair_fp = m2.group(1).lower()
+                        break
+            if "Your certificate fingerprint" in ln:
+                for next_ln in lines[i+1:i+6]:
+                    m2 = _re.search(r"^\s*([0-9a-fA-F]{128})\s*$", next_ln)
+                    if m2:
+                        cert_fp = m2.group(1).lower()
+                        break
+        return peer_id, pair_fp, cert_fp
 
     def _wait_pairing(lines, timeout=60):
         t0 = time.time()
         while time.time() - t0 < timeout:
-            peer_id, fp = _extract_pairing(lines)
-            if peer_id and fp:
-                return peer_id, fp
+            peer_id, pair_fp, cert_fp = _extract_pairing(lines)
+            if peer_id and (pair_fp or cert_fp):
+                return peer_id, pair_fp, cert_fp
             time.sleep(0.5)
-        return None, None
+        return None, None, None
 
     print(f"\n[ORCHESTRATOR] {CYAN}Performing OOB pairing ceremony...{RESET}")
-    alpha_id, alpha_fp = _wait_pairing(alpha_lines)
-    bravo_id, bravo_fp = _wait_pairing(bravo_lines)
-    if not (alpha_id and alpha_fp and bravo_id and bravo_fp):
+    alpha_id, alpha_pair_fp, alpha_cert_fp = _wait_pairing(alpha_lines)
+    bravo_id, bravo_pair_fp, bravo_cert_fp = _wait_pairing(bravo_lines)
+    if not (alpha_id and (alpha_pair_fp or alpha_cert_fp) and bravo_id and (bravo_pair_fp or bravo_cert_fp)):
         bravo_proc.kill()
         alpha_proc.kill()
         raise RuntimeError("Pairing ceremony failed: fingerprints not advertised")
-    print(f"[ORCHESTRATOR] Alpha [{alpha_id}]: {alpha_fp[:24]}...")
-    print(f"[ORCHESTRATOR] Bravo [{bravo_id}]: {bravo_fp[:24]}...")
+    print(f"[ORCHESTRATOR] Alpha [{alpha_id}]: Pair={str(alpha_pair_fp)[:16]}... Cert={str(alpha_cert_fp)[:16]}...")
+    print(f"[ORCHESTRATOR] Bravo [{bravo_id}]: Pair={str(bravo_pair_fp)[:16]}... Cert={str(bravo_cert_fp)[:16]}...")
 
-    # Alpha authorizes Bravo, Bravo authorizes Alpha (menu Option 5)
-    alpha_proc.stdin.write("5\n")
-    alpha_proc.stdin.flush()
-    time.sleep(0.5)
-    alpha_proc.stdin.write(f"{bravo_id}\n")
-    alpha_proc.stdin.flush()
-    time.sleep(0.5)
-    alpha_proc.stdin.write(f"{bravo_fp}\n")
-    alpha_proc.stdin.flush()
-    time.sleep(1.0)
+    # Alpha authorizes Bravo (Option 5 for cert and pairing fingerprints)
+    for b_fp in filter(None, [bravo_cert_fp, bravo_pair_fp]):
+        alpha_proc.stdin.write("5\n")
+        alpha_proc.stdin.flush()
+        time.sleep(0.5)
+        alpha_proc.stdin.write(f"{bravo_id}\n")
+        alpha_proc.stdin.flush()
+        time.sleep(0.5)
+        alpha_proc.stdin.write(f"{b_fp}\n")
+        alpha_proc.stdin.flush()
+        time.sleep(0.5)
 
-    bravo_proc.stdin.write("5\n")
-    bravo_proc.stdin.flush()
-    time.sleep(0.5)
-    bravo_proc.stdin.write(f"{alpha_id}\n")
-    bravo_proc.stdin.flush()
-    time.sleep(0.5)
-    bravo_proc.stdin.write(f"{alpha_fp}\n")
-    bravo_proc.stdin.flush()
-    time.sleep(1.0)
+    # Bravo authorizes Alpha (Option 5 for cert and pairing fingerprints)
+    for a_fp in filter(None, [alpha_cert_fp, alpha_pair_fp]):
+        bravo_proc.stdin.write("5\n")
+        bravo_proc.stdin.flush()
+        time.sleep(0.5)
+        bravo_proc.stdin.write(f"{alpha_id}\n")
+        bravo_proc.stdin.flush()
+        time.sleep(0.5)
+        bravo_proc.stdin.write(f"{a_fp}\n")
+        bravo_proc.stdin.flush()
+        time.sleep(0.5)
     print(f"[ORCHESTRATOR] {GREEN}Mutual pairing complete (both directions pre-authorized).{RESET}")
 
     # Select Option 1: Wait for incoming secure connection (Server Mode)

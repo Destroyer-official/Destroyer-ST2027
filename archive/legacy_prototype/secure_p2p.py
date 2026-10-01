@@ -53,11 +53,10 @@ if 'P2P_FAST_INIT' not in os.environ:
     os.environ['P2P_FAST_INIT'] = '1'
 
 # Preload the Rust data plane BEFORE binary signature policy mitigation locks
-if os.environ.get('P2P_DATA_PLANE', 'python').lower() in ('rust', 'rust_udp', 'udp'):
-    try:
-        import destroyer_core  # noqa: F401
-    except ImportError:
-        pass
+try:
+    import destroyer_core  # noqa: F401
+except (ImportError, OSError):
+    pass
 
 import asyncio
 import logging
@@ -4506,7 +4505,10 @@ class SecureP2PChat:
             if not bundle:
                 return None, None
             from ui.safety_numbers import fingerprint_bundle
-            return bundle.get('identity'), fingerprint_bundle(bundle)
+            pair_id, pair_fp = bundle.get('identity'), fingerprint_bundle(bundle)
+            if pair_fp and hasattr(self, 'ca_exchange') and self.ca_exchange:
+                self.ca_exchange.local_pairing_fingerprint = pair_fp
+            return pair_id, pair_fp
         except Exception as e:
             log.debug(f"Pairing identity unavailable: {e}")
             return None, None
