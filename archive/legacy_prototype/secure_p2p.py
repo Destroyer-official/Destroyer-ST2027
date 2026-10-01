@@ -4601,6 +4601,19 @@ class SecureP2PChat:
                                 break
 
                 if not is_authorized and hasattr(self, 'ca_exchange') and self.ca_exchange:
+                    peer_cert_fp = getattr(self.ca_exchange, 'peer_cert_fingerprint', None)
+                    if peer_cert_fp and getattr(self, 'security_verified', {}).get('cert_exchange'):
+                        clean_cert_fp = peer_cert_fp.lower()
+                        auth_cert_fps = set(getattr(self.ca_exchange, 'authorized_peer_fingerprints', set()) or set())
+                        auth_cert_fps.update(getattr(self.ca_exchange, 'authorized_fingerprints', set()) or set())
+                        auth_cert_fps.update(authorized_fps)
+                        for ac_fp in auth_cert_fps:
+                            if isinstance(ac_fp, str):
+                                clean_ac = ac_fp.strip().lower()
+                                if (len(clean_ac) == len(clean_cert_fp) and hmac.compare_digest(clean_cert_fp, clean_ac)) or \
+                                   (len(clean_ac) == 64 and len(clean_cert_fp) == 128 and hmac.compare_digest(clean_cert_fp[:64], clean_ac)):
+                                    is_authorized = True
+                                    break
                     if hasattr(self.ca_exchange, 'is_peer_authorized') and self.ca_exchange.is_peer_authorized(peer_id, fingerprint):
                         is_authorized = True
                     elif hasattr(self.ca_exchange, 'authorized_peer_fingerprints') and clean_fp in self.ca_exchange.authorized_peer_fingerprints:
