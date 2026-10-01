@@ -2225,8 +2225,11 @@ class SecureP2PChat:
         # Quarantine: the audit DB is anchored to THIS file's home
         # (archive/legacy_prototype), never the process CWD, so quarantined
         # runs cannot re-pollute the repo root with runtime state.
+        _audit_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        os.makedirs(_audit_dir, exist_ok=True)
         self.audit_logger = initialize_audit_system(os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
+            "logs",
             "secure_p2p_audit.db"))
         self.audit_logger.log_event(AuditEventType.SYSTEM_STARTUP, "SecureP2PChat instance initialized.", AuditSeverity.LOW)
 
