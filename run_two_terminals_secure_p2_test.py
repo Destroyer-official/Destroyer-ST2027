@@ -314,14 +314,21 @@ def run_test():
     print(f"[ORCHESTRATOR] {GREEN}Base Alpha listening on :50007 confirmed.{RESET}")
     time.sleep(1)
 
-    # Select Option 2: Connect to peer by IP/Port (Direct P2P Client Mode)
-    # Peer IP: 127.0.0.1, Peer Port: 50007
-    print(f"\n[ORCHESTRATOR] {GREEN}Base Bravo connecting to Base Alpha at 127.0.0.1:50007 (Option 2)...{RESET}")
+    # Select Option 2: Connect to peer by IP/Port (Direct P2P Client Mode via Public IPv6)
+    target_ip = "2409:4091:10a2:7a01:3dcc:e752:631c:78ba"
+    import socket as _socket, psutil as _psutil
+    for _iface, _addrs in _psutil.net_if_addrs().items():
+        for _a in _addrs:
+            if _a.family == _socket.AF_INET6 and not _a.address.startswith(('fe80', '::1', 'fc', 'fd')):
+                target_ip = _a.address.split('%')[0]
+                break
+
+    print(f"\n[ORCHESTRATOR] {GREEN}Base Bravo connecting to Base Alpha at [{target_ip}]:50007 via Public IPv6 (Option 2)...{RESET}")
     time.sleep(1)
     bravo_proc.stdin.write("2\n")
     bravo_proc.stdin.flush()
     time.sleep(0.5)
-    bravo_proc.stdin.write("127.0.0.1\n")
+    bravo_proc.stdin.write(f"{target_ip}\n")
     bravo_proc.stdin.flush()
     time.sleep(0.5)
     bravo_proc.stdin.write("50007\n")
