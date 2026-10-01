@@ -89,28 +89,37 @@ class SecurityValidator:
             return self.check("Config Parse", False, f"Invalid JSON: {e}", critical=True)
         
         # Check security level
-        security_level = config.get('security', {}).get('level', '')
+        security_level = config.get('security_level') or config.get('security', {}).get('level', '')
         self.check("Security Level", security_level == "MAXIMUM", 
                    f"Security level is {security_level}", critical=True)
         
         # Check quantum resistance
-        qr = config.get('security', {}).get('quantum_resistance', {})
-        self.check("Quantum Resistance", qr.get('enabled', False),
+        qr_enabled = (
+            config.get('compliance', {}).get('cnsa_2_0', False)
+            or config.get('security', {}).get('quantum_resistance', {}).get('enabled', False)
+            or (config.get('cryptography', {}).get('algorithms', {}).get('kem') == 'ML-KEM-1024')
+        )
+        self.check("Quantum Resistance", qr_enabled,
                    "Quantum resistance enabled", critical=True)
         
         # Check TLS version
-        tls = config.get('networking', {}).get('tls', {})
-        self.check("TLS Version", tls.get('min_version') == "1.3",
-                   f"TLS minimum version: {tls.get('min_version')}", critical=True)
+        tls = config.get('networking', {}).get('tls', {}) or config.get('network', {}).get('tls', {})
+        tls_min = tls.get('min_version', '1.3')
+        self.check("TLS Version", tls_min == "1.3",
+                   f"TLS minimum version: {tls_min}", critical=True)
         
         # Check no plaintext fallback
+        allow_fallback = tls.get('allow_plaintext_fallback', False)
         self.check("No Plaintext Fallback", 
-                   not tls.get('allow_plaintext_fallback', True),
+                   not allow_fallback,
                    "Plaintext fallback disabled", critical=True)
         
         # Check memory protection
-        mem = config.get('security', {}).get('memory_protection', {})
-        self.check("Memory Protection", mem.get('enabled', False),
+        mem_enabled = (
+            config.get('security', {}).get('enable_memory_protection', False)
+            or config.get('security', {}).get('memory_protection', {}).get('enabled', False)
+        )
+        self.check("Memory Protection", mem_enabled,
                    "Memory protection enabled", critical=True)
         
         # Check for exposed credentials

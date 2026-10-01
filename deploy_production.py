@@ -37,6 +37,7 @@ class ProductionDeployer:
     ]
     
     REQUIRED_FILES = [
+        'secure_p2p.py',
         'archive/legacy_prototype/secure_p2p.py',
         'pqc_algorithms.py',
         'military_security_enforcement.py',

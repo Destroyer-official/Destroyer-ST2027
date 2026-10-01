@@ -149,6 +149,7 @@ ts_rt/target/
 # Deployment Hygiene (H31) - never commit generated artifacts
 # =============================================================================
 config_backup/
+config_backup_*.json
 deployment_report*
 *.worm
 archive/artifacts/*.tar.gz

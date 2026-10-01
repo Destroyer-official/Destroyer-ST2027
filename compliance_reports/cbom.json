@@ -1,6 +1,6 @@
 {
   "cbom_version": "1.0",
-  "generated_utc": "2026-09-22T05:11:58.012267+00:00",
+  "generated_utc": "2026-10-01T12:34:38.138337+00:00",
   "policy_basis": "CNSA 2.0 Jan-2027 procurement gate (ML-KEM-1024 + ML-DSA-87 mandatory); FIPS 203/204/205 final; FIPS 206 draft excluded as primary; IR 8610 candidates + HashML-DSA never authorized",
   "components": [
     {

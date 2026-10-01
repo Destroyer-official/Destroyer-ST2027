@@ -5,7 +5,7 @@
   "name": "secure_p2p-sbom",
   "documentNamespace": "https://example.com/sbom/secure_p2p/2.0.0-CNSA2-2027",
   "creationInfo": {
-    "created": "2026-09-22T05:11:57.842158+00:00",
+    "created": "2026-10-01T12:34:38.003886+00:00",
     "creators": [
       "Tool: supply_chain_security.py",
       "Organization: Secure P2P Project"
