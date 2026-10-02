@@ -12,6 +12,10 @@ Every behavior stated in this documentation tree maps to verified source code (`
 docs/
 ├── ARCHITECTURE.md                          # Master system thesis, threat models, 2027 vs legacy stacks
 ├── README.md                                # This document index & cross-reference guide
+├── SYSTEM_SECURITY_DOCUMENTATION.md         # Master Engineering Record & Tier 0-7 Architecture (Vol A)
+├── SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md   # AST Mechanical Logic Flows & Parameter Catalog (Vol C)
+├── security_audit_report.md                 # Defensive Security Audit & 63-Finding Remediation Matrix
+├── OPEN_INTERNET_HARDENING_PLAN.md          # Sovereign Direct IPv6 P2P Transport & Hardening Blueprint
 ├── CONOPS_TACTICAL_DEPLOYMENT.md            # Tactical concept of operations in DDIL environments
 ├── FIPS_140_3_SECURITY_POLICY.md            # FIPS 140-3 Cryptographic Module Security Policy (CMSP target)
 ├── NIAP_COMMON_CRITERIA_SECURITY_TARGET.md  # NIAP NDcPP / Common Criteria EAL4+ Security Target (target)

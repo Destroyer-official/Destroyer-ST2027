@@ -21,7 +21,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-SYSVOL = (ROOT / "SYSTEM_SECURITY_DOCUMENTATION.md").read_text(encoding="utf-8")
+_sysvol_path = ROOT / "docs" / "SYSTEM_SECURITY_DOCUMENTATION.md"
+if not _sysvol_path.exists():
+    _sysvol_path = ROOT / "SYSTEM_SECURITY_DOCUMENTATION.md"
+SYSVOL = _sysvol_path.read_text(encoding="utf-8")
 FORMAL_README = (ROOT / "docs" / "formal" / "README.md").read_text(encoding="utf-8")
 KANI_SRC = (ROOT / "rust_data_plane" / "tests" / "kani_harness.rs").read_text(
     encoding="utf-8")

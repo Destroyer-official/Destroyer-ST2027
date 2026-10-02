@@ -250,14 +250,14 @@ Cryptographic protocols in ST2027 are mathematically proven using automated form
 
 Every document in this repository is cataloged below, providing complete technical descriptions, operational roles, and direct hyperlinks.
 
-### 6.1 Master Security Volumes & Independent Audit
-- **[`SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION.md) (Volume A — 74,907 lines):**
+### 6.1 Master Security Volumes & Independent Audit (`docs/`)
+- **[`docs/SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/SYSTEM_SECURITY_DOCUMENTATION.md) (Volume A — 74,907 lines):**
   The master engineering record. Details Tier 0 through Tier 7 architectures, mathematical formulations of post-quantum primitives, pairwise and group sequence diagrams, the fail-closed policy catalog (§9), wire formats (§10), reproduction commands (§11), and the non-claims register (§12).
-- **[`SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md) (Volume C — 12,368 lines):**
+- **[`docs/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md) (Volume C — 12,368 lines):**
   AST-derived mechanical logic flows for every function in the active codebase, algorithmic proof sketches, wire format specifications, the complete environment variable and error catalog, non-technical operator manual, and test-to-tier traceability.
-- **[`security_audit_report.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/security_audit_report.md) (Defensive Security Audit — 452 lines):**
+- **[`docs/security_audit_report.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/security_audit_report.md) (Defensive Security Audit — 452 lines):**
   Comprehensive defensive audit report detailing threat assessments, vulnerability classifications, and verified remediation proofs across cryptography, authentication, framing, memory safety, and supply chain.
-- **[`OPEN_INTERNET_HARDENING_PLAN.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/OPEN_INTERNET_HARDENING_PLAN.md) (Sovereign Transport Plan — 230 lines):**
+- **[`docs/OPEN_INTERNET_HARDENING_PLAN.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/OPEN_INTERNET_HARDENING_PLAN.md) (Sovereign Transport Plan — 230 lines):**
   Strategic hardening blueprint for direct peer-to-peer sovereign communications across public IPv6 networks without intermediate relays, detailing cell quantization, stream whitening, and black-hole packet filtering.
 
 ### 6.2 Tactical Specifications, CONOPS & Runbooks (`docs/`)
