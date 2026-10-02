@@ -211,7 +211,7 @@ def run_tactical_automated_drill():
 def run_cjadc2_data_fabric_drill():
     """Run DoD CJADC2 Phase 6 Tactical Data Fabric & MLS Cross-Domain Guard Drill."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Running DoD CJADC2 Phase 6 Tactical Data Fabric Mission Drill...{RESET}")
-    cmd = [sys.executable, str(ROOT / "run_phase6_cjadc2_data_fabric_drill.py")]
+    cmd = [sys.executable, str(ROOT / "scripts" / "run_phase6_cjadc2_data_fabric_drill.py")]
     subprocess.run(cmd)
 
 

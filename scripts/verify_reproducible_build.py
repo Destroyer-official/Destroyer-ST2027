@@ -128,7 +128,7 @@ def run_reproducible_build_verification():
         "pqc_algorithms.py",
         "metadata_resistance.py",
         "network_adversary_resistance.py",
-        "archive/legacy_prototype/secure_p2p.py"
+        "secure_p2p.py"
     ]
     merkle_hasher = hashlib.sha512()
     for mod_name in critical_modules:

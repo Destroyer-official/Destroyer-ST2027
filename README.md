@@ -330,11 +330,7 @@ Every document in this repository is cataloged below, providing complete technic
 - **[`scripts/cavp_algorithm_validator.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/cavp_algorithm_validator.py):** NIST CAVP/ACVP test vector runner.
 - **[`scripts/sign_boot_config.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/sign_boot_config.py):** Boot configuration and policy signature utility.
 - **[`scripts/verify_reproducible_build.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_reproducible_build.py):** Binary hash reproducibility validator for native Rust and C artifacts.
-
-### 6.7 Quarantined Legacy Prototypes (`archive/`)
-- **[`archive/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/README.md):** Quarantined archive governance and boundary policy.
-- **[`archive/legacy_prototype/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/README.md):** Isolation charter for the 13,000-line legacy testbed ([`secure_p2.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/secure_p2.py) and [`secure_p2p.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/secure_p2p.py)).
-- **[`archive/taskdocs/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/taskdocs/):** Historical task tracking, milestone logs, and audit verification records.
+- **[`scripts/run_defense_audit.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/run_defense_audit.py):** Master defense hardening assurance harness (10/10 cryptographic gates).
 
 ---
 

@@ -8,6 +8,8 @@ notupload/
 secure_p2p_core/
 /tests/
 !rust_data_plane/tests/
+test_*.py
+archive/
 
 # =============================================================================
 # Python

@@ -135,9 +135,14 @@ def main():
         dur = (time.perf_counter() - t0) * 1000
         card.record_gate("3.1", "CNSA Suite 2.0 KATs & Algorithm Purity", False, dur, str(e))
 
+    def resolve_test_path(test_name: str) -> str:
+        if (REPO_ROOT / "tests" / test_name).exists():
+            return f"tests/{test_name}"
+        return test_name
+
     # Gate 4: Symbolic Formal Verification (ProVerif 2.05)
     print("\n[*] Gate 4: Auditing Symbolic Formal Verification Models...")
-    code, out, dur = run_cmd([sys.executable, "-m", "pytest", "test_proverif_st2027.py", "-q"])
+    code, out, dur = run_cmd([sys.executable, "-m", "pytest", resolve_test_path("test_proverif_st2027.py"), "-q"])
     passed = (code == 0)
     card.record_gate("4.1", "ProVerif 2.05 Symbolic Handshake & PCS Proofs", passed, dur,
                      "2/2 models proven; inj-event & secrecy conclude TRUE")
@@ -146,8 +151,8 @@ def main():
     print("\n[*] Gate 5: Executing Active Exploit Regression Battery...")
     code, out, dur = run_cmd([
         sys.executable, "-m", "pytest",
-        "test_exploit_regressions.py",
-        "test_exploit_nonce_state.py",
+        resolve_test_path("test_exploit_regressions.py"),
+        resolve_test_path("test_exploit_nonce_state.py"),
         "-q"
     ])
     passed = (code == 0)
@@ -158,7 +163,7 @@ def main():
     print("\n[*] Gate 6: Auditing Platform Gating & Attestation Controls...")
     code, out, dur = run_cmd([
         sys.executable, "-m", "pytest",
-        "test_ts_runtime.py",
+        resolve_test_path("test_ts_runtime.py"),
         "-k", "unsigned_waiver or unsigned_sel4 or sign_waiver",
         "-q"
     ])
@@ -177,9 +182,9 @@ def main():
     print("\n[*] Gate 8: Auditing Documentation Truth & Linguistic Hygiene...")
     code, out, dur = run_cmd([
         sys.executable, "-m", "pytest",
-        "test_docs_truth_in_claims.py",
-        "test_no_marketing_buzzwords_property.py",
-        "test_no_emoji_property.py",
+        resolve_test_path("test_docs_truth_in_claims.py"),
+        resolve_test_path("test_no_marketing_buzzwords_property.py"),
+        resolve_test_path("test_no_emoji_property.py"),
         "-q"
     ])
     passed = (code == 0)

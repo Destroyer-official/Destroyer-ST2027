@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-02T16:48:33.234719+00:00",
+  "timestamp_utc": "2026-10-02T17:16:41.492356+00:00",
   "verification_standard": "SLSA Level 3+ / NIST SP 800-161 / FIPS 140-3",
   "binaries": {
     "oqs.dll": {
@@ -50,9 +50,9 @@
       "size_bytes": 59108,
       "sha3_512": "84b3d592aecf4c37694a4e23fd0ece91b5ed3d2c5cb60943bd765a589ccd40703c0cf4d6dedb3c91398abf31c3f3dadb5bb082dec812ef1c01d70caa11bc7fe2"
     },
-    "archive/legacy_prototype/secure_p2p.py": {
-      "size_bytes": 776160,
-      "sha3_512": "af6e20779d55437c746ce215dc6c91296a58746230b2102e27a14a40921886bbc6d13bd83cd08b6d56db4d6925f1e6dce491e55c9daf91f9e01dfe3dc2db7dec"
+    "secure_p2p.py": {
+      "size_bytes": 783705,
+      "sha3_512": "bc29df635d039066ec9e3346472388b8cedc06833914b9c9572a13d7d50daec9836d6d3632246fc67058a02c60d1140f8ba0a35dcb48066485223cf2e33df8e8"
     }
   },
   "sbom_status": {
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "8717fd6b0c3600141b5f8a48595442c4cb6bac3608d583ae31ab79e7466ed866847e4c3e5bec6ab3ae166318233d2c8b13a19044c301aa0e125b07d6eb38f00c",
+  "source_tree_merkle_root": "9f6491a98d0f1cf93f5a54b2c01e59e7677bfc0f9c9a7186c37a8d977b1d7d7aeace737ca8ea21f7a48b61516c495ae86b7872fee542b75bd7c946ee153111e5",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "8ddace6a428cc5f2c09b0019b2eeff4b911014789d46f0d7ea0314fb2f836f1dd255e3f9eb93058623bb9e6154b7f8f20342bf2ee315c9b7d25e1673259c603c",
