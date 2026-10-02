@@ -63,12 +63,23 @@ Located at `docs/formal/st2027_handshake.pv` and `docs/formal/st2027_pcs.pv`. Ve
 - **Query 4 (Post-Compromise Security):** State compromised at Phase 0, healed by Phase 2 $\implies$ **RESULT: true** (Attacker unable to decrypt messages in Phase 2 despite Phase 0 compromise).
 
 ### 4.2 Kani Bounded Model Checking Proofs
-Located at `rust_data_plane/tests/kani_harness.rs`. The 5 machine-checked proofs are:
-1. `kani_harness::property_doubles::nonce_domain_separation`: Nonces in `DIR_SEND` and `DIR_RECV` never intersect across any $0 \le \text{seq} < 2^{64}$.
-2. `kani_harness::property_doubles::replay_window_monotonic_and_drops`: Sliding window invariant preserves all valid sequence numbers within 64-bit bitmap and drops ancient/duplicate packets.
-3. `kani_harness::property_doubles::ct_eq_and_select_no_secret_branch`: Constant-time comparisons contain zero secret-dependent branches.
-4. `kani_harness::nostd_microcore::test_stack_secret_zeroize_on_drop`: Stack secret buffers execute volatile zeroization immediately upon going out of scope.
-5. `kani_harness::property_doubles::max_stream_bytes_cap_enforced`: Stream length bounds strictly rejected above 16 MiB.
+Located at `rust_data_plane/tests/kani_harness.rs`. Five `#[kani::proof]` harnesses are defined (execution requires the `cargo kani` + CBMC toolchain):
+1. `kani_frame_split_reassemble_roundtrip`: Bounded chunking and reassembly across frame boundaries.
+2. `kani_nonce_domain_separation`: Nonces in `DIR_SEND` and `DIR_RECV` never intersect across any $0 \le \text{seq} < 2^{64}$.
+3. `kani_replay_window_monotonic`: Sliding window invariant preserves all valid sequence numbers within 64-bit bitmap and drops ancient/duplicate packets.
+4. `kani_max_stream_bytes_cap`: Stream length bounds strictly rejected above 16 MiB.
+5. `kani_nostd_frame_parse_never_panics`: Core packet parsing is panic-free on arbitrary untrusted inputs.
+
+Seven deterministic property doubles in `property_doubles` execute green under standard `cargo test`:
+- `frame_split_reassemble_roundtrip_bounded`
+- `nonce_domain_separation`
+- `replay_window_monotonic_and_drops`
+- `ct_eq_and_select_no_secret_branch`
+- `max_stream_bytes_cap_enforced`
+- `nostd_frame_parse_never_panics_property_sweep`
+- `nostd_stack_secret_ct_eq_property_sweep`
+
+(Note: `test_stack_secret_zeroize_on_drop` is a unit test in `nostd_microcore`, re-exported into the harness binary; not a Kani proof.)
 
 ---
 

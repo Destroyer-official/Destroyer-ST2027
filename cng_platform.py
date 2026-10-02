@@ -31,7 +31,7 @@ import ctypes
 import hashlib
 from typing import Optional, Tuple
 
-wintypes = ctypes.wintypes
+from ctypes import wintypes
 
 
 class CngError(Exception):

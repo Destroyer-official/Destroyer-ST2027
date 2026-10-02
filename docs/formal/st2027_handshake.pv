@@ -1,61 +1,74 @@
 (* st2027_handshake.pv -- Machine-checked model of the DEPLOYED
- * secure_transmit_2027.py v1 handshake + record layer.
+ * Noise_XXhfs handshake (secure_transmit_2027.py xxhfs_* bridge over
+ * noise_pq.py) + record layer.
  *
  * Faithful mapping (anything else is documented below, not hidden):
- *   Client ephemeral P-384 eC ............ new eC:skey / pk(eC)
- *   Client ephemeral ML-KEM-1024 ek ...... new dkC:skey / mlkem_pk(dkC)
- *   Client timestamp t ................... new t:nonce (60 s window
- *     abstracted as freshness; wall-clock replay policy is out of scope
- *     for the symbolic model and enforced in code + tests)
- *   ML-DSA-87 identity signatures ........ mldsa_sign/verify (EUF-CMA)
- *   Server verify-BEFORE-decaps .......... process order: the `if verify`
- *     guard textually precedes ANY use of mlkem_open (decaps). A model
- *     that decapsulated first would be a DIFFERENT (broken) protocol.
- *   ECDHE P-384 .......................... ecdh equation (CDH abstraction)
- *   ML-KEM-1024 .......................... IND-CCA KEM abstraction
+ *   M1 ephemeral P-384 eC ............ new eC:skey / pk(eC)
+ *   M1 ephemeral ML-KEM-1024 ek ...... new dkC:skey / mlkem_pk(dkC)
+ *   M1 carries NO static keys ........ (identity-privacy query 5 below;
+ *     passive observers learn only fresh ephemerals)
+ *   M2 responder static pkS .......... AEAD under ck1 = kdf(ee, ff, h1),
+ *     ML-DSA-87 identity signatures .. mldsa_sign/verify (EUF-CMA)
+ *   M2/M3 verify-BEFORE-derive ....... process order: each side verifies
+ *     the peer transcript signature before Split/transport use. A model
+ *     that derived first would be a DIFFERENT (broken) protocol.
+ *   Responder M3 processing .......... decrypt + verify sigC BEFORE Split
+ *   ECDHE P-384 ...................... ecdh equation (CDH abstraction)
+ *   ML-KEM-1024 ...................... IND-CCA KEM abstraction
  *     (correctness equation only; no decryption oracle beyond decaps)
- *   Hybrid secret ........................ ECDHE(48B) || ML-ss(32B),
- *     combined by kdf/dual-PRF combiner per Bindel et al. (modeled as
- *     one-way constructor: secure if EITHER input is secret). Modeling
- *     note: this abstracts HKDF-SHA384 as dual-PRF-secure, which is an
- *     ASSUMPTION shared with TLS 1.3/MLS/Noise-PQ — HKDF was never proven
- *     dual-PRF in general (eprint 2022/065), though sufficient
- *     fixed-length-input conditions exist. Our inputs are fixed-length
- *     and ciphertexts are bound via the transcript salt, matching the
- *     analyzed dualPRF shape (dPRF = extract, PRF = expand). The one-way
- *     constructor is strictly stronger than dual-PRF and is standard
- *     practice for symbolic analysis; it does not prove the assumption.
- *   HKDF salt binds full transcript .... kdf(vertical bar, transcript tuple)
- *   AES-256-GCM records ................ aead_enc/dec reduc (INT-CTXT +
+ *   Hybrid + Split combiner .......... kdf(ee, ff, full-transcript):
+ *     session key binds BOTH shared secrets AND every wire blob
+ *     (ek/ct/ciphertexts), i.e. the KEM-binding property the PQXDH
+ *     analyses (Fiedler-Gunther, BJKS) require. Modeled as a one-way
+ *     constructor: secure if EITHER input is secret. Modeling note: this
+ *     abstracts HKDF-SHA384 as dual-PRF-secure, which is an ASSUMPTION
+ *     shared with TLS 1.3/MLS/Noise-PQ — HKDF was never proven dual-PRF
+ *     in general (eprint 2022/065), though sufficient fixed-length-input
+ *     conditions exist. Our inputs are fixed-length and ciphertexts are
+ *     bound via the transcript, matching the analyzed dualPRF shape
+ *     (dPRF = extract, PRF = expand). The one-way constructor is strictly
+ *     stronger than dual-PRF and is standard practice for symbolic
+ *     analysis; it does not prove the assumption.
+ *   Peer-label binding ................ both sides MixHash the session
+ *     label before M1 (modeled by folding peerid into h1)
+ *   Handshake cipher nonces .......... deterministic counters 0..3 in
+ *     code; modeled as distinct public constants (uniqueness, not
+ *     secrecy, is the load-bearing property and holds by construction)
+ *   Completion deadline .............. wall-clock policy, out of scope
+ *     for the symbolic model, enforced in code + tests
+ *   AES-256-GCM records .............. aead_enc/dec reduc (INT-CTXT +
  *     IND-CPA abstraction), seq nonces, replay bitmap as `table seen`
- *   Nonce discipline .................... NOT modeled: AES-GCM fails
+ *   Nonce discipline ................. NOT modeled: AES-GCM fails
  *     catastrophically on nonce reuse, which the symbolic AEAD
  *     abstraction cannot express. Enforced in code instead — monotonic
- *     seq-derived nonces, single use per (key, nonce), fresh ephemeral
- *     rekey at 1 MiB / 15 min, fail-closed exhaustion bound — and covered
- *     by unit tests (replay/tamper/kat), not by this proof.
- *   Digest trailer ...................... receiver checks d = sha384(msg)
+ *     seq-derived nonces, single use per (key, nonce), CER epoch rotation
+ *     at 128 records / 1 MiB / 15 min, fail-closed exhaustion bound — and
+ *     covered by unit tests (replay/tamper/kat), not by this proof.
+ *   Digest trailer ................... receiver checks d = sha384(msg)
  *     before emitting RRecv (truncation detectable by construction)
- *   TOFU pins ........................... client starts with pinned pkS.
+ *   TOFU pins ........................ client starts with pinned pkS.
  *     Scoping (read before citing): agreement queries are conditioned on
  *     the HONEST peer key pk(sksC)/pk(sksS). A first-contact session with
  *     a rogue key is TOFU-inherent and out of scope for agreement — but
  *     IN scope for secrecy (the attacker still cannot derive k without
  *     breaking KEM/ECDH, so query 1 covers rogue sessions too). The code
- *     additionally aborts on pin change (check_pin) and verifies
- *     signatures before any decapsulation; the server's pin check gates
- *     its M2 response, which the model abstracts as always-respond-then-
- *     require-valid-first-record (strictly harder for the attacker to
- *     satisfy than aborting early).
- *   Outer TLS 1.3 envelope .............. NOT modeled (defense in depth
+ *     additionally aborts on pin change (check_pin); pin checks gate
+ *     Split on both sides (client at M2, server at M3).
+ *   Outer TLS 1.3 envelope ........... NOT modeled (defense in depth
  *     around the analyzed inner protocol; inner proven standalone)
- *   Sizes/padding ........................ abstracted (symbolic tuples are
+ *   Sizes/padding .................... abstracted (symbolic tuples are
  *     injective by construction; length checks enforced in code + tests)
  *
  * Proven here: payload secrecy vs active Dolev-Yao attacker, mutual
- * injective agreement on (session key, full transcript), forward secrecy
- * under post-session long-term key compromise (phases), and
- * no-forgery/no-replay acceptance on the record layer.
+ * injective agreement on (session key, full transcript), initiator
+ * identity privacy against passive AND active attackers (M1 carries no
+ * static keys; M3 is emitted only after the responder authenticates),
+ * forward secrecy under post-session long-term key compromise (phases),
+ * and no-forgery/no-replay acceptance on the record layer.
+ *
+ * Honest limitation (stated): responder-identity privacy against ACTIVE
+ * attackers is NOT claimed (inherent to XX: an active initiator completes
+ * M2 and decrypts it). Only the initiator-privacy query is asserted.
  *)
 
 free net: channel.
@@ -97,8 +110,23 @@ reduc forall k:key, n:nonce, p:bitstring, aad:bitstring;
 
 fun sha384(bitstring): bitstring.
 
+(* Identity ciphertexts: typed destructor so decrypted static keys keep
+ * type pkey (plain aead_dec returns bitstring). Same INT-CTXT/IND-CPA
+ * idealization as above, restricted to identity payloads. *)
+fun id_enc(key, nonce, pkey, bitstring): bitstring.
+fun id_dec(key, nonce, bitstring, bitstring): pkey
+reduc forall k:key, n:nonce, pkx:pkey, aad:bitstring;
+  id_dec(k, n, id_enc(k, n, pkx, aad), aad) = pkx.
+
+(* Handshake cipher nonces: distinct public constants (uniqueness only). *)
+free n1:nonce.
+free n2:nonce.
+free n3:nonce.
+free n4:nonce.
+
 (* --- Events --- *)
 event C_Accepts(key, bitstring).
+event C_VerifiedM2(bitstring).
 event S_SentM2(bitstring).
 event S_Accepts(key, bitstring, pkey).
 event C_Sends(key, nonce, bitstring).
@@ -109,22 +137,36 @@ event R_Receives(key, nonce, bitstring, pkey).
 table seen(key, nonce).
 
 free secret_payload: bitstring [private].
+free peerid: bitstring.
 
-(* === CLIENT (initiator): ephemeral P-384 + ephemeral ML-KEM ek === *)
+(* Long-term keys: top-level private frees so queries may name them.
+ * sksC2 (privacy principal) is NEVER published, not even in phase 1. *)
+free sksC: skey [private].
+free sksS: skey [private].
+
+(* === CLIENT (initiator): M1 ephemeral-only, M2 verify, M3, Split === *)
 let Client(sksC:skey, pkS:pkey) =
   new eC:skey;
   new dkC:skey;
-  new t:nonce;
-  let m1 = (pk(eC), mlkem_pk(dkC), t, pk(sksC),
-            mldsa_sign(sksC, (pk(eC), mlkem_pk(dkC), t))) in
-  out(net, m1);
+  let h1 = (peerid, pk(eC), mlkem_pk(dkC)) in
+  out(net, (pk(eC), mlkem_pk(dkC)));
   in(net, m2:bitstring);
-  let (eS:pkey, ct:bitstring, ts:nonce, sigS:bitstring) = m2 in
-  (* VERIFY server transcript signature BEFORE any decapsulation/use. *)
-  if mldsa_verify(pkS, (pk(eC), mlkem_pk(dkC), t, eS, ct, ts), sigS) = true then
+  let (eS:pkey, ct:bitstring, cpk:bitstring, csig:bitstring) = m2 in
   let he = ecdh(eC, eS) in
   let hm = mlkem_open(dkC, ct) in
-  let tr = (pk(eC), mlkem_pk(dkC), t, eS, ct, ts) in
+  let ck1 = kdf(he, hm, (h1, eS, ct)) in
+  let aad1 = (h1, eS, ct) in
+  let pkSv:pkey = id_dec(ck1, n1, cpk, aad1) in
+  let sigSv:bitstring = aead_dec(ck1, n2, csig, (aad1, cpk)) in
+  (* VERIFY responder transcript signature BEFORE derive/Split/M3. *)
+  if mldsa_verify(pkSv, (h1, eS, ct, cpk), sigSv) = true then
+  if pkSv = pkS then
+  event C_VerifiedM2((h1, eS, ct));
+  let cpkI = id_enc(ck1, n3, pk(sksC), (aad1, cpk, csig)) in
+  let sigC = mldsa_sign(sksC, (h1, eS, ct, cpk, csig, cpkI)) in
+  let csigI = aead_enc(ck1, n4, sigC, (aad1, cpk, csig, cpkI)) in
+  out(net, (cpkI, csigI));
+  let tr = (h1, eS, ct, cpk, csig, cpkI, csigI) in
   let k = kdf(he, hm, tr) in
   event C_Accepts(k, tr);
   (* Record layer: single payload + digest trailer, fresh seq sent CLEAR
@@ -140,22 +182,32 @@ let Client(sksC:skey, pkS:pkey) =
   event C_Sends(k, seq, secret_payload);
   out(net, (seq, aead_enc(k, seq, (secret_payload, d), (seq, tr)))).
 
-(* === SERVER (responder): verify-then-decaps, ephemeral P-384 === *)
+(* === SERVER (responder): M2 with encrypted identity, M3 verify, Split === *)
 let Server(sksS:skey) =
   in(net, m1:bitstring);
-  let (eC:pkey, ekC:pkey, t:nonce, pkC:pkey, sigC:bitstring) = m1 in
-  (* VERIFY client hello BEFORE decapsulation (fail-closed order). *)
-  if mldsa_verify(pkC, (eC, ekC, t), sigC) = true then
+  let (eC:pkey, ekC:pkey) = m1 in
   new eS:skey;
   new r:nonce;
-  new ts:nonce;
   let ct = mlkem_ct(ekC, r) in
   let he = ecdh(eS, eC) in
   let hm = mlkem_ss(ekC, r) in
-  let tr = (eC, ekC, t, pk(eS), ct, ts) in
+  let h1 = (peerid, eC, ekC) in
+  let ck1 = kdf(he, hm, (h1, pk(eS), ct)) in
+  let aad1 = (h1, pk(eS), ct) in
+  let cpk = id_enc(ck1, n1, pk(sksS), aad1) in
+  let sigS = mldsa_sign(sksS, (h1, pk(eS), ct, cpk)) in
+  let csig = aead_enc(ck1, n2, sigS, (aad1, cpk)) in
+  event S_SentM2((h1, pk(eS), ct));
+  out(net, (pk(eS), ct, cpk, csig));
+  in(net, m3:bitstring);
+  let (cpkI:bitstring, csigI:bitstring) = m3 in
+  let aad2 = (aad1, cpk, csig) in
+  let pkCv:pkey = id_dec(ck1, n3, cpkI, aad2) in
+  let sigCv:bitstring = aead_dec(ck1, n4, csigI, (aad2, cpkI)) in
+  (* VERIFY initiator transcript signature BEFORE Split/transport. *)
+  if mldsa_verify(pkCv, (h1, pk(eS), ct, cpk, csig, cpkI), sigCv) = true then
+  let tr = (h1, pk(eS), ct, cpk, csig, cpkI, csigI) in
   let k = kdf(he, hm, tr) in
-  event S_SentM2(tr);
-  out(net, (pk(eS), ct, ts, mldsa_sign(sksS, (eC, ekC, t, pk(eS), ct, ts))));
   (* Server "accepts" (emits S_Accepts) only after a valid first record:
    * the peer proved knowledge of k. This mirrors the deployed code,
    * where the digest-verified first record is the key confirmation. *)
@@ -166,8 +218,32 @@ let Server(sksS:skey) =
     0
   else
     (insert seen(k, seq);
-     event R_Receives(k, seq, msg, pkC);
-     event S_Accepts(k, tr, pkC)).
+     event R_Receives(k, seq, msg, pkCv);
+     event S_Accepts(k, tr, pkCv)).
+
+(* === Privacy principal: honest initiator whose long-term key is NEVER
+ * compromised (not even in phase 1). Asserts M1/M3 leak no identity. === *)
+free sksC2: skey [private].
+
+let ClientPriv() =
+  new eC:skey;
+  new dkC:skey;
+  let h1 = (peerid, pk(eC), mlkem_pk(dkC)) in
+  out(net, (pk(eC), mlkem_pk(dkC)));
+  in(net, m2:bitstring);
+  let (eS:pkey, ct:bitstring, cpk:bitstring, csig:bitstring) = m2 in
+  let he = ecdh(eC, eS) in
+  let hm = mlkem_open(dkC, ct) in
+  let ck1 = kdf(he, hm, (h1, eS, ct)) in
+  let aad1 = (h1, eS, ct) in
+  let pkSv:pkey = id_dec(ck1, n1, cpk, aad1) in
+  let sigSv:bitstring = aead_dec(ck1, n2, csig, (aad1, cpk)) in
+  if mldsa_verify(pkSv, (h1, eS, ct, cpk), sigSv) = true then
+  if pkSv = pk(sksS) then
+  let cpkI = id_enc(ck1, n3, pk(sksC2), (aad1, cpk, csig)) in
+  let sigC = mldsa_sign(sksC2, (h1, eS, ct, cpk, csig, cpkI)) in
+  let csigI = aead_enc(ck1, n4, sigC, (aad1, cpk, csig, cpkI)) in
+  out(net, (cpkI, csigI)).
 
 (* === Security queries === *)
 (* 1. Payload secrecy vs active attacker (incl. phase-1 FS below). *)
@@ -180,25 +256,30 @@ query attacker(secret_payload).
 query k:key, tr:bitstring;
   inj-event(S_Accepts(k, tr, pk(sksC))) ==> inj-event(C_Accepts(k, tr)).
 
-(* 3. Client authenticates server (non-injective): a client completion
- * implies the real server emitted the matching M2 transcript. (Injective
+(* 3. Client authenticates responder M2 (non-injective): verifying M2
+ * implies the real server emitted the matching prefix. (Injective
  * would demand the server also complete, which packet drops can deny —
  * a liveness artifact, not a security flaw.)
  *)
-query k:key, tr:bitstring;
-  event(C_Accepts(k, tr)) ==> event(S_SentM2(tr)).
+query trpre:bitstring;
+  event(C_VerifiedM2(trpre)) ==> event(S_SentM2(trpre)).
 
 (* 4. Record layer: every accepted message was sent (no forgery/replay),
  * scoped to honest-client sessions by the same peer-key pattern. *)
 query k:key, s:nonce, m:bitstring;
   inj-event(R_Receives(k, s, m, pk(sksC))) ==> inj-event(C_Sends(k, s, m)).
 
-(* === System: unbounded sessions + post-session long-term compromise ===
- * Long-term keys are top-level private frees so queries may name them;
- * phase 1 publishes them (models post-session compromise for FS). *)
-free sksC: skey [private].
-free sksS: skey [private].
+(* 5. Initiator identity privacy: M1 carries no static keys and M3 is
+ * emitted only after the responder authenticates, so neither passive
+ * observers nor active attackers (who cannot forge the responder
+ * signature) learn the initiator's long-term key. sksC2 is never
+ * compromised, not even in phase 1. Responder-identity privacy vs
+ * ACTIVE attackers is deliberately NOT claimed (XX-inherent). *)
+query attacker(pk(sksC2)).
 
+(* === System: unbounded sessions + post-session long-term compromise ===
+ * Phase 1 publishes sksC/sksS (models post-session compromise for FS);
+ * sksC2 stays secret: the privacy principal. *)
 process
-  ( (!Client(sksC, pk(sksS))) | (!Server(sksS))
+  ( (!Client(sksC, pk(sksS))) | (!Server(sksS)) | (!ClientPriv())
   | (phase 1; out(net, sksC); out(net, sksS)) )

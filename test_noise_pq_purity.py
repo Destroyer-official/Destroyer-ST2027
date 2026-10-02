@@ -190,3 +190,37 @@ def test_selftest_error_state_latches(monkeypatch):
         assert cs._FAILED is True
     finally:
         cs._PASSED, cs._FAILED = saved_passed, saved_failed
+
+
+def test_noise_intermediate_key_scrubbing():
+    """Verifies that SymmetricState._key is a bytearray and zeroized in-place upon destroy()."""
+    sym = npq.SymmetricState()
+    sym.mix_key(b"initial_key_material_for_test_12345678")
+    assert isinstance(sym._key, bytearray)
+    raw_key_ref = sym._key
+    assert any(b != 0 for b in raw_key_ref)
+    sym.destroy()
+    assert sym._key is None
+    # Underlying memory must be actively zeroed
+    assert all(b == 0 for b in raw_key_ref)
+
+
+def test_noise_session_transport_keys_scrubbed():
+    """Verifies that NoiseSession transport and secret keys are zeroized in-place upon destroy()."""
+    sess = npq.NoiseSession(is_initiator=True, sig_pk=b"A"*2592, sig_sk=b"B"*4896)
+    sess._f_ss = bytearray(b"C" * 32)
+    sess._k_send = bytearray(b"D" * 32)
+    sess._k_recv = bytearray(b"E" * 32)
+    ref_ss = sess._f_ss
+    ref_send = sess._k_send
+    ref_recv = sess._k_recv
+
+    sess.destroy()
+
+    assert sess._f_ss is None
+    assert sess._k_send is None
+    assert sess._k_recv is None
+    assert all(b == 0 for b in ref_ss)
+    assert all(b == 0 for b in ref_send)
+    assert all(b == 0 for b in ref_recv)
+

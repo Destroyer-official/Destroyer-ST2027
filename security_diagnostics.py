@@ -216,7 +216,9 @@ def _c07() -> str:
 
 @check("g01", "CONFIG", "config.json strict (TLS1.3, no plaintext, mTLS)")
 def _g01() -> str:
-    cfg = json.loads((REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    from utils.config_manager import ConfigManager
+    mgr = ConfigManager()
+    cfg = mgr.config
     tls = cfg["networking"]["tls"]
     # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
     assert tls.get("min_version") == "1.3", "TLS min != 1.3"  # nosec: B101
@@ -295,7 +297,9 @@ def _g05() -> str:
     final Aug 2024; FIPS 206 (FN-DSA) IPD-track, FIPS 207 (HQC) draft ~2026.
     Institutional items (NIAP profiles, FIPS 140-3 CMVP) are out of scope
     for a code sweep and reported, not asserted, here."""
-    cfg = json.loads((REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    from utils.config_manager import ConfigManager
+    mgr = ConfigManager()
+    cfg = mgr.config
     algs = cfg["security"]["algorithms"]
     if "ML-KEM-1024" not in algs["key_exchange"]:
         raise AssertionError("CNSA 2.0 key establishment (ML-KEM-1024) missing")
@@ -904,11 +908,18 @@ def _f01() -> str:
             if any(f in h.upper() for f in forbidden):
                 violations.append(f"{p.name} hash: {h}")
 
+        crypto_algs = cfg.get("cryptography", {}).get("algorithms", {})
+        for k, v in crypto_algs.items():
+            if isinstance(v, str) and any(f in v.upper() for f in forbidden):
+                violations.append(f"{p.name} cryptography.{k}: {v}")
+
     dlog(f"scanned active cipher configs, violations={len(violations)}")
     if violations:
         raise AssertionError("forbidden ciphers detected: " + "; ".join(violations))
 
-    cfg = json.loads((REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    from utils.config_manager import ConfigManager
+    mgr = ConfigManager()
+    cfg = mgr.config
     algs = cfg["security"]["algorithms"]
     # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
     assert all("256" in c or "1024" in c or "POLY1305" in c.upper() for c in algs["encryption"]), "weak cipher under 256 bits"  # nosec: B101

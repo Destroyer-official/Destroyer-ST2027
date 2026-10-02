@@ -46,8 +46,7 @@ All legacy and non-quantum algorithms (RSA, DH, ECDSA, ECDH, DES, 3DES, RC4, MD5
 | **Key Encapsulation (KEM)** | ML-KEM-1024 | FIPS 203 | SELF-TEST PASS (AFT, KAT) |
 | **Digital Signatures** | ML-DSA-87 | FIPS 204 | SELF-TEST PASS (AFT, KAT) |
 | **Stateless Signatures** | SLH-DSA-256f | FIPS 205 | SELF-TEST PASS (AFT, KAT) |
-| **Symmetric AEAD** | AES-256-GCM | FIPS 197 / NIST SP 800-38D | SELF-TEST PASS (KAT Vector 15) |
-| **Bulk Stream AEAD** | ChaCha20-Poly1305 | RFC 8439 | SELF-TEST PASS (RFC 8439 §2.8.2) |
+| **Symmetric Bulk AEAD** | AES-256-GCM | FIPS 197 / NIST SP 800-38D | SELF-TEST PASS (KAT Vector 15, SP 800-38D) |
 | **Key Derivation (KDF)** | HKDF-SHA384 | RFC 5869 / NIST SP 800-56C | SELF-TEST PASS |
 | **Cryptographic Hash** | SHA-384, SHA-512 | FIPS 180-4 | SELF-TEST PASS (MCT, KAT) |
 | **Extendable Output** | SHA3-512, SHAKE-256 | FIPS 202 | SELF-TEST PASS (MCT, KAT) |

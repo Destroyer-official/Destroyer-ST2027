@@ -50,7 +50,7 @@ Per NSA CNSA 2.0 requirements for National Security Systems (NSS) operating past
 - **Storage**: Volatile RAM only. Memory buffers protected by anti-debugging hooks and zeroized immediately upon ratchet initialization.
 
 ### 3.4 Double Ratchet Message Keys
-- **Algorithm**: 256-bit symmetric keys for ChaCha20-Poly1305 AEAD.
+- **Algorithm**: 256-bit symmetric keys for AES-256-GCM AEAD (and legacy research prototype ChaCha20-Poly1305).
 - **Cryptoperiod**: Exactly 1 message frame.
 - **Forward Secrecy**: Once a frame is encrypted or decrypted, the message key is permanently purged from memory via native Rust `ZeroizeOnDrop`.
 

@@ -59,6 +59,16 @@ class TestQuantizedPadding(unittest.TestCase):
         self.assertEqual(len(padded_10), len(padded_200),
                          "10-byte and 200-byte messages should pad to same quantum (256)")
 
+    def test_multiblock_payload_padding(self):
+        """Payloads exceeding PAD_QUANTA[-1] must pad to multiples of 16384 with perfect recovery."""
+        for size in [16385, 20000, 32767, 32768, 50000]:
+            data = secrets.token_bytes(size)
+            padded = UnifiedSecurePipeline._quantize_pad(data)
+            self.assertEqual(len(padded) % PAD_QUANTA[-1], 0,
+                             f"Padded length {len(padded)} not multiple of {PAD_QUANTA[-1]}")
+            recovered = UnifiedSecurePipeline._quantize_unpad(padded)
+            self.assertEqual(data, recovered)
+
     def test_unpad_corrupted_length_fails(self):
         """Corrupted length header must be rejected (fail-closed)."""
         # Forge a length header claiming 999999 bytes in a 256-byte frame

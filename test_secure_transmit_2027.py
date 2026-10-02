@@ -204,6 +204,28 @@ def test_ts_outer_posture_gate():
             st._require_ts_outer_posture(old)
 
 
+def test_openssl_cnf_posture_verification(tmp_path):
+    """Audits openssl.cnf detection: explicit hybrid passes, classical-only fails closed."""
+    # 1. Test explicit hybrid template
+    status, grps = st.check_openssl_cnf_group_posture("openssl_cnsa2_posture.cnf")
+    assert status == "EXPLICIT_HYBRID"
+    assert "SecP384r1MLKEM1024" in grps
+
+    # 2. Test classical-only config file
+    bad_cnf = tmp_path / "bad_openssl.cnf"
+    bad_cnf.write_text("[system_default_sect]\nGroups = prime256v1:secp384r1\n")
+    status_bad, grps_bad = st.check_openssl_cnf_group_posture(str(bad_cnf))
+    assert status_bad == "CLASSICAL_ONLY"
+    assert grps_bad == "prime256v1:secp384r1"
+
+    # _require_ts_outer_posture must fail closed on classical-only openssl.cnf
+    with pytest.raises(st.SecurityError, match="classical-only"):
+        st._require_ts_outer_posture((3, 5, 0), conf_path=str(bad_cnf))
+
+    # _require_ts_outer_posture must pass on hybrid config
+    assert st._require_ts_outer_posture((3, 5, 0), conf_path="openssl_cnsa2_posture.cnf") is None
+
+
 def test_retired_rung_gate_fails_loud():
     """The retired rung gate must refuse loudly, never silently pass."""
     class _Ctx:

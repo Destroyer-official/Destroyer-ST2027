@@ -24,14 +24,16 @@
  * the proof vacuous. The upfront public leak avoids the pattern
  * entirely; the negative control below would catch any recurrence.)
  *
- * Session 2 = REHANDSHAKE with FRESH ephemerals on both sides under the
- * SAME identities. Proven: attacker(payload2) RESULT true (healing
+ * Session 2 = XXhfs REHANDSHAKE with FRESH ephemerals on both sides under the
+ * SAME identities (M1 ephemeral-only, M2/M3 encrypted identities, Split
+ * keys). Proven: attacker(payload2) RESULT true (healing
  * works). Sanity negative control (pytest runner, scratch copy):
  * attacker(payload1) is false — the compromise genuinely takes effect.
  *
  * Abstractions inherited from st2027_handshake.pv (see its header):
- * timestamps-as-freshness, injective symbolic tuples, TOFU-as-pinned,
- * kdf one-way (dual-PRF assumption documented there), no outer TLS.
+ * completion deadline instead of timestamps, injective symbolic tuples,
+ * TOFU-as-pinned, kdf one-way (dual-PRF assumption documented there),
+ * no outer TLS.
  * Single session pair (no replication): PCS is a per-epoch property;
  * multi-session confusion is covered by the main model.
  *)
@@ -70,63 +72,116 @@ reduc forall k:key, n:nonce, p:bitstring, aad:bitstring;
 
 fun sha384(bitstring): bitstring.
 
+free n1:nonce.
+free n2:nonce.
+free n3:nonce.
+free n4:nonce.
+free peerid: bitstring.
+
+fun id_enc(key, nonce, pkey, bitstring): bitstring.
+fun id_dec(key, nonce, bitstring, bitstring): pkey
+reduc forall k:key, n:nonce, pkx:pkey, aad:bitstring;
+  id_dec(k, n, id_enc(k, n, pkx, aad), aad) = pkx.
+
 free sksC: skey [private].
 free sksS: skey [private].
 free secret_payload1: bitstring [private].
 free secret_payload2: bitstring [private].
 
-(* --- Epoch 1: full ephemeral handshake, payload under k1 --- *)
+(* --- Epoch 1: XXhfs handshake (M1 ephemeral-only), payload under k1 --- *)
 let Client1() =
-  new eC:skey; new dkC:skey; new t:nonce;
-  let m1 = (pk(eC), mlkem_pk(dkC), t, pk(sksC),
-            mldsa_sign(sksC, (pk(eC), mlkem_pk(dkC), t))) in
-  out(net, m1);
+  new eC:skey; new dkC:skey;
+  let h1 = (peerid, pk(eC), mlkem_pk(dkC)) in
+  out(net, (pk(eC), mlkem_pk(dkC)));
   in(net, m2:bitstring);
-  let (eS:pkey, ct:bitstring, ts:nonce, sigS:bitstring) = m2 in
-  if mldsa_verify(pk(sksS), (pk(eC), mlkem_pk(dkC), t, eS, ct, ts), sigS) = true then
-  let k1 = kdf(ecdh(eC, eS), mlkem_open(dkC, ct),
-               (pk(eC), mlkem_pk(dkC), t, eS, ct, ts)) in
+  let (eS:pkey, ct:bitstring, cpk:bitstring, csig:bitstring) = m2 in
+  let he = ecdh(eC, eS) in
+  let hm = mlkem_open(dkC, ct) in
+  let ck1 = kdf(he, hm, (h1, eS, ct)) in
+  let aad1 = (h1, eS, ct) in
+  let pkSv:pkey = id_dec(ck1, n1, cpk, aad1) in
+  let sigSv:bitstring = aead_dec(ck1, n2, csig, (aad1, cpk)) in
+  if mldsa_verify(pkSv, (h1, eS, ct, cpk), sigSv) = true then
+  if pkSv = pk(sksS) then
+  let cpkI = id_enc(ck1, n3, pk(sksC), (aad1, cpk, csig)) in
+  let sigC = mldsa_sign(sksC, (h1, eS, ct, cpk, csig, cpkI)) in
+  let csigI = aead_enc(ck1, n4, sigC, (aad1, cpk, csig, cpkI)) in
+  out(net, (cpkI, csigI));
+  let k1 = kdf(he, hm, (h1, eS, ct, cpk, csig, cpkI, csigI)) in
   new seq:nonce;
   out(net, (seq, aead_enc(k1, seq, (secret_payload1, sha384(secret_payload1)),
-                          (seq, t))));
+                          (seq, h1))));
   (* Epoch-1 key compromise, published immediately (superset of post-hoc
    * compromise — see header). No private cross-phase channel involved. *)
   out(net, k1).
 
 let Server1() =
   in(net, m1:bitstring);
-  let (eC:pkey, ekC:pkey, t:nonce, pkC:pkey, sigC:bitstring) = m1 in
-  if mldsa_verify(pkC, (eC, ekC, t), sigC) = true then
-  new eS:skey; new r:nonce; new ts:nonce;
+  let (eC:pkey, ekC:pkey) = m1 in
+  new eS:skey; new r:nonce;
   let ct = mlkem_ct(ekC, r) in
-  let k1 = kdf(ecdh(eS, eC), mlkem_ss(ekC, r),
-               (eC, ekC, t, pk(eS), ct, ts)) in
-  out(net, (pk(eS), ct, ts,
-            mldsa_sign(sksS, (eC, ekC, t, pk(eS), ct, ts)))).
+  let he = ecdh(eS, eC) in
+  let hm = mlkem_ss(ekC, r) in
+  let h1 = (peerid, eC, ekC) in
+  let ck1 = kdf(he, hm, (h1, pk(eS), ct)) in
+  let aad1 = (h1, pk(eS), ct) in
+  let cpk = id_enc(ck1, n1, pk(sksS), aad1) in
+  let sigS = mldsa_sign(sksS, (h1, pk(eS), ct, cpk)) in
+  let csig = aead_enc(ck1, n2, sigS, (aad1, cpk)) in
+  out(net, (pk(eS), ct, cpk, csig));
+  in(net, m3:bitstring);
+  let (cpkI:bitstring, csigI:bitstring) = m3 in
+  let aad2 = (aad1, cpk, csig) in
+  let pkCv:pkey = id_dec(ck1, n3, cpkI, aad2) in
+  let sigCv:bitstring = aead_dec(ck1, n4, csigI, (aad2, cpkI)) in
+  if mldsa_verify(pkCv, (h1, pk(eS), ct, cpk, csig, cpkI), sigCv) = true then
+  0.
 
-(* --- Epoch 2: REHANDSHAKE, fresh ephemerals, same identities --- *)
+(* --- Epoch 2: XXhfs REHANDSHAKE, fresh ephemerals, same identities --- *)
 let Client2() =
-  new eC:skey; new dkC:skey; new t:nonce;
-  let m1 = (pk(eC), mlkem_pk(dkC), t, pk(sksC),
-            mldsa_sign(sksC, (pk(eC), mlkem_pk(dkC), t))) in
-  out(net, m1);
+  new eC:skey; new dkC:skey;
+  let h1 = (peerid, pk(eC), mlkem_pk(dkC)) in
+  out(net, (pk(eC), mlkem_pk(dkC)));
   in(net, m2:bitstring);
-  let (eS:pkey, ct:bitstring, ts:nonce, sigS:bitstring) = m2 in
-  if mldsa_verify(pk(sksS), (pk(eC), mlkem_pk(dkC), t, eS, ct, ts), sigS) = true then
-  let k2 = kdf(ecdh(eC, eS), mlkem_open(dkC, ct),
-               (pk(eC), mlkem_pk(dkC), t, eS, ct, ts)) in
+  let (eS:pkey, ct:bitstring, cpk:bitstring, csig:bitstring) = m2 in
+  let he = ecdh(eC, eS) in
+  let hm = mlkem_open(dkC, ct) in
+  let ck1 = kdf(he, hm, (h1, eS, ct)) in
+  let aad1 = (h1, eS, ct) in
+  let pkSv:pkey = id_dec(ck1, n1, cpk, aad1) in
+  let sigSv:bitstring = aead_dec(ck1, n2, csig, (aad1, cpk)) in
+  if mldsa_verify(pkSv, (h1, eS, ct, cpk), sigSv) = true then
+  if pkSv = pk(sksS) then
+  let cpkI = id_enc(ck1, n3, pk(sksC), (aad1, cpk, csig)) in
+  let sigC = mldsa_sign(sksC, (h1, eS, ct, cpk, csig, cpkI)) in
+  let csigI = aead_enc(ck1, n4, sigC, (aad1, cpk, csig, cpkI)) in
+  out(net, (cpkI, csigI));
+  let k2 = kdf(he, hm, (h1, eS, ct, cpk, csig, cpkI, csigI)) in
   new seq:nonce;
   out(net, (seq, aead_enc(k2, seq, (secret_payload2, sha384(secret_payload2)),
-                          (seq, t)))).
+                          (seq, h1)))).
 
 let Server2() =
   in(net, m1:bitstring);
-  let (eC:pkey, ekC:pkey, t:nonce, pkC:pkey, sigC:bitstring) = m1 in
-  if mldsa_verify(pkC, (eC, ekC, t), sigC) = true then
-  new eS:skey; new r:nonce; new ts:nonce;
+  let (eC:pkey, ekC:pkey) = m1 in
+  new eS:skey; new r:nonce;
   let ct = mlkem_ct(ekC, r) in
-  out(net, (pk(eS), ct, ts,
-            mldsa_sign(sksS, (eC, ekC, t, pk(eS), ct, ts)))).
+  let he = ecdh(eS, eC) in
+  let hm = mlkem_ss(ekC, r) in
+  let h1 = (peerid, eC, ekC) in
+  let ck1 = kdf(he, hm, (h1, pk(eS), ct)) in
+  let aad1 = (h1, pk(eS), ct) in
+  let cpk = id_enc(ck1, n1, pk(sksS), aad1) in
+  let sigS = mldsa_sign(sksS, (h1, pk(eS), ct, cpk)) in
+  let csig = aead_enc(ck1, n2, sigS, (aad1, cpk)) in
+  out(net, (pk(eS), ct, cpk, csig));
+  in(net, m3:bitstring);
+  let (cpkI:bitstring, csigI:bitstring) = m3 in
+  let aad2 = (aad1, cpk, csig) in
+  let pkCv:pkey = id_dec(ck1, n3, cpkI, aad2) in
+  let sigCv:bitstring = aead_dec(ck1, n4, csigI, (aad2, cpkI)) in
+  if mldsa_verify(pkCv, (h1, pk(eS), ct, cpk, csig, cpkI), sigCv) = true then
+  0.
 
 (* PCS: post-healing payload stays secret despite total epoch-1 compromise.
  * Long-term identities are never compromised in this file (see header). *)

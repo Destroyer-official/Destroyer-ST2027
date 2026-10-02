@@ -7,7 +7,7 @@ secret via HKDF). Activated only with ``P2P_DATA_PLANE=rust``; default path is
 unchanged Python.
 
 Wire format per frame: fixed quantum (256/512/1232B), header
-``seq:u64 | len:u16 | type:u8`` + ChaCha20-Poly1305 (16B tag).
+``seq:u64 | len:u16 | type:u8`` + AES-256-GCM (16B GHASH tag).
 Types: 0x01 message, 0xFF chaff (absorbed, never returned).
 """
 

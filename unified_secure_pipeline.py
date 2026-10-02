@@ -237,11 +237,16 @@ class UnifiedSecurePipeline:
         payload = struct.pack(">I", original_len) + data
 
         # Find the smallest quantum that fits
-        padded_len = PAD_QUANTA[-1]  # Default to largest
-        for q in PAD_QUANTA:
-            if len(payload) <= q:
-                padded_len = q
-                break
+        q_max = PAD_QUANTA[-1]
+        if len(payload) > q_max:
+            # Multi-block payloads pad to the next multiple of the largest quantum
+            padded_len = ((len(payload) + q_max - 1) // q_max) * q_max
+        else:
+            padded_len = q_max
+            for q in PAD_QUANTA:
+                if len(payload) <= q:
+                    padded_len = q
+                    break
 
         # Pad with CSPRNG bytes (not zeros -- indistinguishable from ciphertext)
         pad_needed = padded_len - len(payload)
@@ -503,8 +508,15 @@ class UnifiedSecurePipeline:
             "--file", file_path,
             "--parity-ratio", str(parity_ratio),
         ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return res.returncode == 0
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60, check=False)
+            return res.returncode == 0
+        except subprocess.TimeoutExpired:
+            log.error("[PIPELINE DIODE] diode-send process timed out after 60s")
+            return False
+        except Exception as e:
+            log.error(f"[PIPELINE DIODE] diode-send failed: {e}")
+            return False
 
     @staticmethod
     def recv_diode_file(bind_addr: str, out_file: str, key_path: str, state_path: str,
@@ -523,8 +535,16 @@ class UnifiedSecurePipeline:
             "--out", out_file,
             "--timeout-ms", str(timeout_ms),
         ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return res.returncode == 0
+        try:
+            timeout_sec = (float(timeout_ms) / 1000.0) + 10.0
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout_sec, check=False)
+            return res.returncode == 0
+        except subprocess.TimeoutExpired:
+            log.error(f"[PIPELINE DIODE] diode-recv process timed out after {timeout_sec:.1f}s")
+            return False
+        except Exception as e:
+            log.error(f"[PIPELINE DIODE] diode-recv failed: {e}")
+            return False
 
     # ------------------------------------------------------------------
     # Telemetry

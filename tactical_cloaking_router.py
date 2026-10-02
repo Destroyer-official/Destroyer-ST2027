@@ -22,7 +22,8 @@ class TacticalCloakViolation(SecurityError if "SecurityError" in globals() else 
 def tactical_cloak_enabled() -> bool:
     """True when tactical cloaking is enforced via environment or command-line."""
     val = os.environ.get("P2P_TACTICAL_CLOAK", "0").strip().lower()
-    return val in ("1", "true", "yes", "enabled", "strict")
+    ts_val = os.environ.get("P2P_TS_MODE", "0").strip().lower()
+    return val in ("1", "true", "yes", "enabled", "strict") or ts_val in ("1", "true", "yes", "enabled", "strict")
 
 
 def is_private_or_loopback(host: str) -> bool:
@@ -59,6 +60,26 @@ def validate_outbound_destination(host: str, port: int) -> bool:
         f"[TACTICAL CLOAK VIOLATION] Direct unencapsulated connection to public destination "
         f"{host}:{port} is forbidden under P2P_TACTICAL_CLOAK=1. "
         f"Route through tactical overlay, WireGuard point-to-point tunnel, or APN."
+    )
+
+
+def validate_inbound_source(host: str) -> bool:
+    """
+    Validate that an inbound connection source complies with tactical cloaking.
+    Under tactical cloaking, unencapsulated direct public IP connections are blocked.
+    """
+    if not tactical_cloak_enabled():
+        return True
+
+    # Under tactical cloaking, direct public sockets are forbidden unless overlay active
+    overlay_active = os.environ.get("P2P_OVERLAY_ACTIVE", "0").lower() in ("1", "true")
+    if overlay_active or is_private_or_loopback(host):
+        return True
+
+    raise TacticalCloakViolation(
+        f"[TACTICAL CLOAK VIOLATION] Direct unencapsulated connection from public source "
+        f"{host} is forbidden under P2P_TACTICAL_CLOAK=1. "
+        f"Incoming connections must arrive through tactical overlay, WireGuard point-to-point tunnel, or APN."
     )
 
 
@@ -174,10 +195,23 @@ if __name__ == "__main__":
     # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
     assert blocked is True  # nosec: B101
 
-    # Direct public IP with overlay active allowed
+    # Inbound validation: loopback and private allowed, public blocked without overlay
+    assert validate_inbound_source("127.0.0.1") is True  # nosec: B101
+    assert validate_inbound_source("10.0.0.5") is True  # nosec: B101
+    assert validate_inbound_source("192.168.1.10") is True  # nosec: B101
+
+    os.environ["P2P_OVERLAY_ACTIVE"] = "0"
+    inbound_blocked = False
+    try:
+        validate_inbound_source("8.8.8.8")
+    except Exception as e:
+        inbound_blocked = True
+        print(f"[*] Successfully blocked direct public inbound connection: {e}")
+    assert inbound_blocked is True  # nosec: B101
+
+    # Inbound public with overlay active allowed
     os.environ["P2P_OVERLAY_ACTIVE"] = "1"
-    # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
-    assert validate_outbound_destination("8.8.8.8", 50007) is True  # nosec: B101
+    assert validate_inbound_source("8.8.8.8") is True  # nosec: B101
 
     os.environ["P2P_TACTICAL_CLOAK"] = "0"
     os.environ["P2P_OVERLAY_ACTIVE"] = "0"

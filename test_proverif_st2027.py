@@ -26,10 +26,13 @@ PCS_MODEL = REPO_ROOT / "docs" / "formal" / "st2027_pcs.pv"
 EXPECTED_QUERIES = (
     # Secrecy appears phase-transformed (attacker_p1) because the model
     # leaks long-term keys in phase 1 to prove forward secrecy.
-    ("attacker(secret_payload", "attacker_p1(secret_payload"),
+    ("attacker_p1(secret_payload", "attacker(secret_payload"),
     ("inj-event(S_Accepts",),
     ("inj-event(R_Receives",),
-    ("event(C_Accepts",),
+    ("event(C_VerifiedM2",),
+    # Initiator identity privacy (M1 carries no static keys; M3 only
+    # after the responder authenticates). Phase-transformed like secrecy.
+    ("attacker_p1(pk(sksC2", "attacker(pk(sksC2"),
 )
 
 # 15 minutes: the model is small (DH + KEM + phases + one table).

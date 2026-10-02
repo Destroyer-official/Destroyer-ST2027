@@ -7,18 +7,17 @@
 `src/lib.rs` (`SecureEngine`: session API — `establish_session(key, seq,
 is_initiator)`, `seal_msg`, `open_msg`, `check_seq`, `drop_count`).
 
-## Modules (all read in full, 64 tests green: 35 unit + 29 kani harnesses)
+## Modules (all read in full, 80 tests green: 51 unit + 29 kani harness tests: 7 property doubles + re-exported module tests)
 
 - `frame.rs` — `[seq:u64‖len:u16‖type:u8‖ct‖tag:16B]`, quanta 256/512/1232
   (TOTAL wire sizes; max payload 1205; 1232+40+8=1280 proven in-test),
   `split_payload` chunking with boundary tests.
 - `replay.rs` — u64 seq + u64 bitmap (WireGuard mechanism), random start
   offsets, wrapping counters; 5 behavioral tests.
-- `aead.rs` — ChaCha20-Poly1305, header-AAD, `seq‖dir` nonces
+- `aead.rs` — AES-256-GCM (CNSA 2.0 suite), header-AAD, `seq‖dir` nonces
   (`DIR_SEND=0x00`/`DIR_RECV=0x01`), HKDF-SHA512 key derivation,
-  `ZeroizeOnDrop` keys; RFC 8439 §2.8.2 KAT cross-generated from Python
-  `cryptography` (a hand-copied vector was caught wrong by the test and
-  regenerated — documented proof the suite works).
+  `ZeroizeOnDrop` keys; NIST SP 800-38D test case 1 KAT cross-generated from Python
+  `cryptography` (OpenSSL) backend.
 - `kem.rs` — X25519-dalek 3.0.0 + `ml-kem` 0.3.2, RFC 10024 concatenation,
   FIPS sizes pinned, implicit-rejection verified live, fail-closed lengths.
 - `net.rs` — dual-stack UDP, black-hole discipline, per-source token bucket

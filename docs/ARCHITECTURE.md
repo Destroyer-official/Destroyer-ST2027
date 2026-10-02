@@ -18,7 +18,7 @@ AES-256 → 2¹²⁸ operations, physically infeasible).
 | Backbone/ISP active | inject/modify/replay packets, strip layers | Signatures pre-decaps, AEAD tags, 64-bit replay window, no-plaintext negotiation |
 | Botnet/scanner | port sweeps, banner grabs, handshake probing | Silent-drop, no beacon strings, peer-prefix firewall |
 | Endpoint seizure | disk/RAM forensics | Ephemeral+in-memory defaults, sealed storage (scrypt), DoD wipe, memory locking |
-| CRQC (future) | Shor breaks RSA/ECDH, Grover halves symmetric | ML-KEM-1024/McEliece KEMs, ML-DSA-87/SLH-DSA signatures, AES-256/ChaCha20-256 DEM |
+| CRQC (future) | Shor breaks RSA/ECDH, Grover halves symmetric | ML-KEM-1024/McEliece KEMs, ML-DSA-87/SLH-DSA signatures, AES-256-GCM DEM (CNSA 2.0; ChaCha20 quarantined to legacy prototype) |
 | Insider/operator error | weak config, skipped verification | Fail-closed policy engines, secure defaults, TOFU pin continuity |
 
 Out of scope for code alone (operational tracks): HSM attestation, WORM/SIEM
@@ -51,7 +51,7 @@ Maintained for multi-party chat research and experimental comparison (contains n
 [1] Mutual TLS 1.3 (TLS_AES_256_GCM_SHA384) ........................ tls_channel_manager.py
 [2] Hybrid X3DH+PQ Handshake (X25519 + ML-KEM-1024 + Falcon) ........ hybrid_kex.py
 [3] Double Ratchet (HKDF-SHA512, AES-256-GCM) ....................... double_ratchet.py
-[4] Legacy Data Plane Envelope (ChaCha20-Poly1305) .................. rust_data_plane/
+[4] Legacy Python Envelope (ChaCha20-Poly1305 / AES-GCM) ............ archive/legacy_prototype/
 ```
 
 ## 4. KEM-DEM Data Flow (2027 Top-Secret Path)

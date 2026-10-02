@@ -46,6 +46,7 @@ import select
 import json
 import urllib.request
 import urllib.parse
+import urllib.error
 import threading
 import webbrowser
 import base64
@@ -1355,7 +1356,11 @@ class OAuth2DeviceFlowAuth:
         try:
             req = urllib.request.Request(
                 self.provider_config['user_info_url'],
-                headers={'Authorization': f'Bearer {self.access_token}'}
+                headers={
+                    'Authorization': f'Bearer {self.access_token}',
+                    'User-Agent': 'Destroyer-ST2027-SecurityPipeline/1.0',
+                    'Accept': 'application/json'
+                }
             )
 
             self.user_info = _hardened_https_post_json(req)
@@ -1431,6 +1436,91 @@ class OAuth2DeviceFlowAuth:
         if self.is_authenticated():
             return self.access_token
         return None
+
+    def validate_received_token(self, token: str) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+        """
+        Validate an OAuth bearer token received from a peer against the identity provider.
+
+        CNSA 2.0 / Zero-Trust Requirement:
+        All received credentials must be validated via cryptographically authenticated
+        TLS connections to the authoritative identity provider (or local IdP in custom mode).
+        Blind acceptance of unverified tokens is strictly forbidden.
+
+        Args:
+            token: The raw OAuth access/bearer token string.
+
+        Returns:
+            Tuple of (is_valid: bool, user_info: Optional[Dict], identity_or_error: str)
+        """
+        # Block public cloud OAuth in sovereign production mode
+        if _tls_is_production() and self.provider_name in ('google', 'microsoft', 'github'):
+            msg = f"Public OAuth validation for '{self.provider_name}' prohibited in sovereign production mode"
+            log.error(msg)
+            return False, None, msg
+
+        if not token or not isinstance(token, str):
+            return False, None, "Invalid or empty token"
+
+        token = token.strip()
+        if not token:
+            return False, None, "Empty token"
+
+        # Cap token length to prevent memory exhaustion / DoS
+        if len(token) > 8192:
+            return False, None, "Token exceeds maximum allowed length (8192 bytes)"
+
+        user_info_url = self.provider_config.get('user_info_url')
+        if not user_info_url:
+            return False, None, f"No user_info_url configured for provider '{self.provider_name}'"
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Accept': 'application/json',
+            'User-Agent': 'Destroyer-ST2027-SecurityPipeline/1.0',
+        }
+
+        try:
+            req = urllib.request.Request(user_info_url, headers=headers)
+            user_data = _hardened_https_post_json(req)
+
+            if not isinstance(user_data, dict):
+                return False, None, "Invalid response payload from identity provider"
+
+            # Check for error responses from provider
+            if 'error' in user_data:
+                err_desc = user_data.get('error_description') or user_data.get('error')
+                return False, None, f"Provider error: {err_desc}"
+
+            # Extract authoritative identity
+            identity = None
+            if self.provider_name == 'google':
+                identity = user_data.get('email') or user_data.get('sub')
+            elif self.provider_name == 'microsoft':
+                identity = user_data.get('userPrincipalName') or user_data.get('mail') or user_data.get('displayName') or user_data.get('id')
+            elif self.provider_name == 'github':
+                identity = user_data.get('login') or user_data.get('email') or (str(user_data.get('id')) if user_data.get('id') else None)
+            else:
+                # Custom provider
+                identity = user_data.get('email') or user_data.get('sub') or user_data.get('preferred_username') or user_data.get('username') or user_data.get('name')
+
+            if not identity:
+                return False, None, "Could not determine identity from provider response"
+
+            log.info(f"OAuth token successfully validated for identity '{identity}' via {self.provider_name}")
+            return True, user_data, str(identity)
+
+        except urllib.error.HTTPError as e:
+            msg = f"Provider rejected token with HTTP {e.code}: {e.reason}"
+            log.warning(f"OAuth token validation failed: {msg}")
+            return False, None, msg
+        except urllib.error.URLError as e:
+            msg = f"Network failure reaching provider: {e.reason}"
+            log.error(f"OAuth token validation network error: {msg}")
+            return False, None, msg
+        except Exception as e:
+            msg = f"Validation failed: {e}"
+            log.error(f"OAuth token validation error: {msg}")
+            return False, None, msg
 
     def logout(self):
         """Clear all authentication data."""
@@ -3372,11 +3462,20 @@ class TLSSecureChannel:
                     log.error(f"Error verifying signature: {e}")
                     return False
 
-            # In a real implementation, verify the token with the auth provider
-            # This would involve sending the token to the provider's verification endpoint
-
-            log.info(f"Client authenticated with {auth_data.get('token_type')} token")
-            return True
+            # Cryptographically verify the token with the auth provider
+            if getattr(self, 'oauth_auth', None):
+                is_valid, user_info, identity = self.oauth_auth.validate_received_token(token)
+                if not is_valid:
+                    log.error(f"Client token validation rejected: {identity}")
+                    return False
+                self.client_user_info = user_info
+                self.authenticated_user = identity
+                self.authenticated = True
+                log.info(f"Client successfully authenticated as '{identity}' with {auth_data.get('token_type')} token")
+                return True
+            else:
+                log.error("Authentication required but no OAuth handler configured to validate client token")
+                return False
 
         except Exception as e:
             log.error(f"Error during client authentication: {e}")

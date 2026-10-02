@@ -904,7 +904,74 @@ def _select_outer_group(set_curve_fn) -> str:
     raise SecurityError(f"legacy ECDH curve unavailable: {last_err}")
 
 
-def _require_ts_outer_posture(version_info=None) -> None:
+def check_openssl_cnf_group_posture(conf_path: str | None = None) -> tuple[str, str | None]:
+    """Inspect openssl.cnf (or $OPENSSL_CONF) for outer TLS 1.3 group configuration.
+
+    Returns:
+        tuple of (status: str, detected_groups: str | None)
+        where status is:
+        - "EXPLICIT_HYBRID": Groups directive explicitly configures ML-KEM/hybrid groups.
+        - "DEFAULT_STACK": No explicit Groups directive; inherits OpenSSL >= 3.5 hybrid defaults.
+        - "CLASSICAL_ONLY": Explicit Groups directive configured without post-quantum groups (FORBIDDEN).
+        - "NO_CONF_FILE": No openssl.cnf found; inherits build defaults.
+    """
+    candidate_paths: list[str] = []
+    if conf_path:
+        candidate_paths.append(conf_path)
+    elif os.environ.get("OPENSSL_CONF"):
+        candidate_paths.append(os.environ["OPENSSL_CONF"])
+    else:
+        # Standard candidate paths
+        candidate_paths.extend([
+            os.path.join(os.path.dirname(__file__), "openssl_cnsa2_posture.cnf"),
+            os.path.join(os.path.dirname(__file__), "openssl.cnf"),
+            r"C:\Program Files\OpenSSL\bin\openssl.cnf",
+            r"C:\Program Files\Common Files\SSL\openssl.cnf",
+            "/etc/ssl/openssl.cnf",
+            "/usr/lib/ssl/openssl.cnf",
+        ])
+
+    target_file = None
+    for p in candidate_paths:
+        if p and os.path.isfile(p):
+            target_file = p
+            break
+
+    if not target_file:
+        return "NO_CONF_FILE", None
+
+    try:
+        with open(target_file, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+
+        detected_groups = None
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                k_clean = k.strip().lower()
+                if k_clean in ("groups", "curves"):
+                    detected_groups = v.strip()
+                    break
+
+        if detected_groups:
+            lower_grp = detected_groups.lower()
+            # Check for standard hybrid/PQ group tokens (RFC 10024 / OpenSSL 3.5 names)
+            hybrid_tokens = ("mlkem", "ml-kem", "x25519mlkem768", "secp384r1mlkem1024", "secp256r1mlkem768")
+            if any(tok in lower_grp for tok in hybrid_tokens):
+                return "EXPLICIT_HYBRID", detected_groups
+            else:
+                return "CLASSICAL_ONLY", detected_groups
+
+        return "DEFAULT_STACK", None
+    except Exception as e:
+        log.warning("Could not read OpenSSL configuration at %s: %s", target_file, e)
+        return "DEFAULT_STACK", None
+
+
+def _require_ts_outer_posture(version_info=None, conf_path: str | None = None) -> None:
     """TS gate: the outer TLS stack must be hybrid-capable by default.
 
     Requires OpenSSL >= 3.5: the first release with native hybrid TLS 1.3
@@ -913,6 +980,10 @@ def _require_ts_outer_posture(version_info=None) -> None:
     hybrid KEM groups and whose default keyshares offer X25519MLKEM768
     (OpenSSL 3.5 release notes, Apr 2025). Older stacks negotiate
     classical-only by default and are refused for TOP SECRET.
+
+    Also audits OpenSSL configuration: if an operator explicitly restricted
+    the TLS 1.3 groups list to classical-only groups via openssl.cnf, this
+    refuses connection fail-closed with SecurityError.
 
     Honest residual (do NOT re-add a rung gate here): the exact negotiated
     TLS 1.3 group is UNOBSERVABLE from Python's ssl on this build, so no
@@ -929,6 +1000,18 @@ def _require_ts_outer_posture(version_info=None) -> None:
         raise SecurityError(
             f"outer PQ groups unavailable: OpenSSL {ssl.OPENSSL_VERSION} "
             "predates native hybrid TLS 1.3 groups (need >= 3.5)")
+
+    status, grps = check_openssl_cnf_group_posture(conf_path=conf_path)
+    if status == "CLASSICAL_ONLY":
+        raise SecurityError(
+            f"outer TLS posture violation: openssl.cnf explicitly restricts TLS 1.3 "
+            f"to classical-only groups: {grps!r}. Post-quantum hybrid groups "
+            "(SecP384r1MLKEM1024 / X25519MLKEM768) are strictly required for CNSA 2.0."
+        )
+    elif status == "EXPLICIT_HYBRID":
+        log.info("Outer TLS 1.3 group posture verified with explicit hybrid groups: %s", grps)
+    else:
+        log.debug("Outer TLS 1.3 groups ride OpenSSL %s hybrid defaults (OpenSSL >= 3.5)", ssl.OPENSSL_VERSION)
 
 
 def _require_l5_outer_group(ctx: ssl.SSLContext) -> None:  # pragma: no cover

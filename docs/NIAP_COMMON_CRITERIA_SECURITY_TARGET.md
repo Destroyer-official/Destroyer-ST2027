@@ -18,7 +18,7 @@
 | SFR Identifier | Title | Standard & Baseline | Implementation Architecture |
 | :--- | :--- | :--- | :--- |
 | **`FCS_CKM.1/PQC`** | Cryptographic Key Generation | FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), RFC 10024 | `noise_pq.py`, `cnsa_purity.py`, `trust_anchor.py`, `cng_platform.py` |
-| **`FCS_COP.1/SYM`** | Cryptographic Operation (Symmetric) | FIPS 197 / NIST SP 800-38D (AES-256-GCM), RFC 8439 | `secure_transmit_2027.py`, `ts_rt/src/lib.rs`, `rust_data_plane/src/aead.rs` |
+| **`FCS_COP.1/SYM`** | Cryptographic Operation (Symmetric) | FIPS 197 / NIST SP 800-38D (AES-256-GCM) | `secure_transmit_2027.py`, `ts_rt/src/lib.rs`, `rust_data_plane/src/aead.rs` |
 | **`FCS_COP.1/HASH`** | Cryptographic Operation (Hash & KDF) | FIPS 180-4 (SHA-384, SHA-512), RFC 5869 (HKDF-SHA384) | `crypto_selftest.py`, `noise_pq.py`, `cnsa_purity.py` |
 | **`FCS_RBG_EXT.1`** | Random Bit Generation | NIST SP 800-90A / Hardware Entropy Conditioning | Windows CNG `BCryptGenRandom`, `platform_hsm_interface.py`, `crypto_selftest.py` |
 | **`FIA_X509_EXT.1`** | Certificate Validation (PQ PKI) | RFC 9881 / Offline 3-of-5 Threshold ML-DSA-87 Root | `trust_anchor.py`, `pq_certificate_authority.py` |

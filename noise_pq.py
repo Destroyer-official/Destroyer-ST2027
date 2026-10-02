@@ -95,6 +95,13 @@ def _noise_hkdf(ck: bytes, ikm: bytes, n_out: int) -> Tuple[bytes, ...]:
     return tuple(outs)
 
 
+def _zero(b: bytearray) -> None:
+    """Explicitly zeroizes a mutable bytearray buffer in-place."""
+    if b is not None and isinstance(b, bytearray):
+        for i in range(len(b)):
+            b[i] = 0
+
+
 class SymmetricState:
     """Noise SymmetricState with SHA-384 / AES-256-GCM (spec section 5)."""
 
@@ -104,7 +111,7 @@ class SymmetricState:
         else:
             self.h = hashlib.sha384(protocol_name).digest()
         self.ck = self.h
-        self._key: Optional[bytes] = None
+        self._key: Optional[bytearray] = None
         self._n = 0
 
     def mix_hash(self, data: bytes) -> None:
@@ -114,15 +121,15 @@ class SymmetricState:
         ck, temp_k = _noise_hkdf(self.ck, ikm, 2)
         self.ck = ck
         # CNSA cipher keys are 256-bit; temp_k is 48B (SHA-384 output).
-        # Truncating HKDF output preserves PRF security (prefix of a PRF).
-        self._key = temp_k[:32]
+        # Store as mutable bytearray so destroy() can wipe it in place.
+        self._key = bytearray(temp_k[:32])
         self._n = 0
 
     def mix_key_and_hash(self, ikm: bytes) -> None:
         ck, temp_h, temp_k = _noise_hkdf(self.ck, ikm, 3)
         self.ck = ck
         self.mix_hash(temp_h)
-        self._key = temp_k[:32]
+        self._key = bytearray(temp_k[:32])
         self._n = 0
 
     def _nonce(self) -> bytes:
@@ -161,11 +168,10 @@ class SymmetricState:
         return ((k1[:32], k2[:32])), self.h
 
     def destroy(self) -> None:
-        # Only _key-derived bytearray material is truly wiped; immutable
-        # `bytes` outputs from HKDF cannot be scrubbed — references are
-        # dropped so refcount release frees them immediately (CPython, no
-        # cycles). Same documented H6 limitation as secure_transmit_2027.
-        self._key = None
+        # In-place memory scrubbing of mutable cipher key buffer
+        if self._key is not None:
+            _zero(self._key)
+            self._key = None
 
 
 def _p384_keygen() -> Tuple[object, bytes]:
@@ -232,10 +238,10 @@ class NoiseSession:
     _e_priv: Optional[object] = field(default=None, repr=False)
     _e_pub: Optional[bytes] = field(default=None, repr=False)
     _f_sk: Optional[bytearray] = field(default=None, repr=False)  # ML-KEM dk (initiator)
-    _f_ss: Optional[bytes] = field(default=None, repr=False)      # KEM ss (responder)
+    _f_ss: Optional[bytearray] = field(default=None, repr=False)  # KEM ss (responder)
     _peer_sig_pk: Optional[bytes] = field(default=None, repr=False)
-    _k_send: Optional[bytes] = field(default=None, repr=False)
-    _k_recv: Optional[bytes] = field(default=None, repr=False)
+    _k_send: Optional[bytearray] = field(default=None, repr=False)
+    _k_recv: Optional[bytearray] = field(default=None, repr=False)
     _send_n: int = 0
     _m3_done: bool = False  # M3 emitted (initiator) / processed (responder)
     _recv_win_base: int = 0
@@ -244,14 +250,19 @@ class NoiseSession:
     handshake_hash: Optional[bytes] = None
 
     def destroy(self) -> None:
-        # Truly wiped: _f_sk (mutable bytearray). Immutable bytes (_f_ss,
-        # _k_send/_k_recv, sym key): references dropped for immediate
-        # refcount release — cannot be scrubbed, documented H6 limitation.
+        # Truly wiped: _f_sk, _f_ss, _k_send, _k_recv (mutable bytearrays).
         if self._f_sk is not None:
-            for i in range(len(self._f_sk)):
-                self._f_sk[i] = 0
+            _zero(self._f_sk)
             self._f_sk = None
-        self._f_ss = self._k_send = self._k_recv = None
+        if self._f_ss is not None:
+            _zero(self._f_ss)
+            self._f_ss = None
+        if self._k_send is not None:
+            _zero(self._k_send)
+            self._k_send = None
+        if self._k_recv is not None:
+            _zero(self._k_recv)
+            self._k_recv = None
         self.sym.destroy()
 
 
@@ -291,10 +302,13 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     sess.sym.mix_hash(e_cli)
     sess.sym.mix_hash(ek_cli)
     e_pub = _take_ephemeral(sess)  # mixes e_pub exactly once (see helper)
-    ml_ct, ml_ss = _mlkem_encaps(ek_cli)
+    ml_ct, ml_ss_raw = _mlkem_encaps(ek_cli)
+    ml_ss = bytearray(ml_ss_raw)
     sess._f_ss = ml_ss
     sess.sym.mix_hash(ml_ct)
-    sess.sym.mix_key(_p384_dh(sess._e_priv, e_cli))   # ee
+    dh_secret = bytearray(_p384_dh(sess._e_priv, e_cli))
+    sess.sym.mix_key(dh_secret)                        # ee
+    _zero(dh_secret)
     sess.sym.mix_key(ml_ss)                            # ff
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)    # s (encrypted)
     h_for_sig = bytes(sess.sym.h)
@@ -313,9 +327,12 @@ def initiator_finish(sess: NoiseSession, m2: bytes) -> None:
     ml_ct, rest = rest[:MLKEM_CT], rest[MLKEM_CT:]
     sess.sym.mix_hash(e_srv)
     sess.sym.mix_hash(ml_ct)
-    sess.sym.mix_key(_p384_dh(sess._e_priv, e_srv))    # ee
-    ml_ss = _mlkem_decaps(sess._f_sk, ml_ct)           # ff
+    dh_secret = bytearray(_p384_dh(sess._e_priv, e_srv))
+    sess.sym.mix_key(dh_secret)                         # ee
+    _zero(dh_secret)
+    ml_ss = bytearray(_mlkem_decaps(sess._f_sk, ml_ct)) # ff
     sess.sym.mix_key(ml_ss)
+    _zero(ml_ss)
     # Split enc_pk (2592 + 16 tag) from enc_sig (rest).
     from liboqs_wrapper import LibOQS_MLDSA_87  # noqa: F401 (sizes below)
     enc_pk, enc_sig = rest[:2592 + 16], rest[2592 + 16:]
@@ -367,7 +384,7 @@ def split_session(sess: NoiseSession) -> Tuple[bytes, bytes, bytes]:
     sess.handshake_hash = h
     k_send, k_recv = (k1, k2) if sess.is_initiator else (k2, k1)
     sess.destroy()  # wipes ephemerals, KEM ss, and handshake cipher state
-    sess._k_send, sess._k_recv = k_send, k_recv  # transport keys only survive
+    sess._k_send, sess._k_recv = bytearray(k_send), bytearray(k_recv)  # transport keys only survive
     return k_send, k_recv, h
 
 

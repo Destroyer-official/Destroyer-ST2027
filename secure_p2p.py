@@ -5850,6 +5850,16 @@ class SecureP2PChat:
                     print(f"\033[91mSecurity components not ready: {missing}\033[0m")
                     raise ValueError(f"Security components not ready: {missing}. Cannot establish secure connection.")
 
+                # Enforce tactical network cloaking policy (prohibit unencapsulated public egress)
+                try:
+                    from tactical_cloaking_router import validate_outbound_destination, TacticalCloakViolation
+                    validate_outbound_destination(peer_ip, peer_port)
+                except TacticalCloakViolation as e:
+                    log.critical(f"Tactical network cloaking violation: {e}")
+                    raise SecurityError(f"Connection to [{peer_ip}]:{peer_port} prohibited by tactical cloaking: {e}")
+                except ImportError:
+                    pass
+
                 # Validate network transport under CNSA 2.0 / DoD ATO pilot requirements
                 try:
                     transport_mode = getattr(self, 'transport_mode', os.environ.get('P2P_TRANSPORT_MODE', ''))
@@ -6607,6 +6617,21 @@ class SecureP2PChat:
 
                             # Per-IP and per-subnet rate limiter to prevent connection flooding / DoS (Finding 26)
                             client_ip = str(client_address[0])
+
+                            # Enforce tactical network cloaking policy on inbound ingress
+                            try:
+                                from tactical_cloaking_router import validate_inbound_source, TacticalCloakViolation
+                                validate_inbound_source(client_ip)
+                            except TacticalCloakViolation as e:
+                                log.warning(f"Inbound connection from {client_ip} rejected by tactical cloaking: {e}")
+                                try:
+                                    client_socket.close()
+                                except Exception:
+                                    pass
+                                continue
+                            except ImportError:
+                                pass
+
                             subnet_key = client_ip.rsplit('.', 1)[0] if '.' in client_ip else client_ip.rsplit(':', 4)[0]
                             now = time.time()
                             if not hasattr(self, '_conn_rate_limiter'):
@@ -7223,7 +7248,7 @@ class SecureP2PChat:
                                 # Schedule a task to restart the handle_connections method
                                 asyncio.create_task(self.handle_connections())
                                 break
-                            elif decrypted_message.startswith('COVER_CHAFF') or decrypted_message.startswith('HEARTBEAT:COVER'):
+                            elif decrypted_message.startswith('COVER_CHAFF') or decrypted_message.startswith('HEARTBEAT:COVER') or decrypted_message.startswith('TACTICAL_CHAFF'):
                                 # Transparently absorb and discard background cover/chaff frame
                                 log.debug("Background cover chaff traffic frame received and absorbed.")
                                 self.last_heartbeat_received = time.time()
@@ -8011,9 +8036,16 @@ class SecureP2PChat:
 
                         while time.time() - auth_start < auth_timeout:
                             try:
-                                data = tls_channel.recv_nonblocking(1024)
+                                data = tls_channel.recv_nonblocking(8192)
                                 if data and data != b'':  # Got data
                                     auth_data = data
+                                    # Drain any buffered bytes in SSL socket
+                                    while getattr(tls_channel, 'ssl_socket', None) and tls_channel.ssl_socket.pending() > 0:
+                                        extra = tls_channel.recv_nonblocking(8192)
+                                        if extra:
+                                            auth_data += extra
+                                        else:
+                                            break
                                     auth_received = True
                                     break
                                 elif data == b'':  # Would block
@@ -8034,9 +8066,49 @@ class SecureP2PChat:
                             tls_channel.ssl_socket.close()
                             return
 
-                        # Validate the token
-                        tls_channel.authenticated = True  # Set authenticated flag on successful token validation
-                        print(f"\033[92mClient OAuth authentication successful\033[0m")
+                        # Extract and validate the received OAuth token
+                        try:
+                            token_raw = auth_data.decode('utf-8', errors='replace').strip()
+                            token_str = token_raw
+                            try:
+                                parsed = json.loads(token_raw)
+                                if isinstance(parsed, dict) and 'access_token' in parsed:
+                                    t = parsed['access_token']
+                                    try:
+                                        token_str = base64.b64decode(t).decode('utf-8')
+                                    except Exception:
+                                        token_str = t
+                            except Exception:
+                                token_str = token_raw
+
+                            if not token_str:
+                                log.error("Received empty authentication token from client")
+                                print(f"\033[91mAuthentication failed: Empty token received. Connection aborted.\033[0m")
+                                tls_channel.authenticated = False
+                                tls_channel.ssl_socket.close()
+                                return
+
+                            # Cryptographically validate token against authoritative identity provider
+                            is_valid, user_info, identity = tls_channel.oauth_auth.validate_received_token(token_str)
+                            if not is_valid:
+                                log.error(f"Client OAuth token rejected by identity provider: {identity}")
+                                print(f"\033[91mClient OAuth validation failed: {identity}. Connection aborted.\033[0m")
+                                tls_channel.authenticated = False
+                                tls_channel.ssl_socket.close()
+                                return
+
+                            # Set authenticated flag and record authenticated identity
+                            tls_channel.authenticated = True
+                            tls_channel.client_identity = identity
+                            tls_channel.client_user_info = user_info
+                            log.info(f"Client OAuth authentication verified successfully for identity: {identity}")
+                            print(f"\033[92mClient OAuth authentication verified: {identity}\033[0m")
+                        except Exception as e:
+                            log.error(f"Error during OAuth token validation: {e}")
+                            print(f"\033[91mAuthentication error: {e}. Connection aborted.\033[0m")
+                            tls_channel.authenticated = False
+                            tls_channel.ssl_socket.close()
+                            return
                     else:
                         log.info("Mutual ML-DSA-87 certificate authentication verified for incoming connection (Sovereign mode).")
                         tls_channel.authenticated = True
@@ -8060,6 +8132,15 @@ class SecureP2PChat:
                     print(f"  \033[96mPost-Quantum Security: \033[92mEnabled (X25519MLKEM1024)\033[0m")
                 else:
                     print(f"  \033[96mPost-Quantum Security: \033[93mLimited (TLS without PQ KEM)\033[0m")
+
+                # Show authentication status
+                if self.require_authentication:
+                    if getattr(tls_channel, 'oauth_auth', None) and getattr(tls_channel, 'client_identity', None):
+                        print(f"  \033[96mUser Authentication: \033[92mVerified ({self.oauth_provider.capitalize()}: {tls_channel.client_identity})\033[0m")
+                    elif getattr(tls_channel, 'authenticated', False):
+                        print(f"  \033[96mUser Authentication: \033[92mVerified (Mutual ML-DSA-87 Certificates)\033[0m")
+                    else:
+                        print(f"  \033[96mUser Authentication: \033[93mUnverified\033[0m")
 
                 # Store the socket
                 self.tcp_socket = tls_channel.ssl_socket
@@ -8425,7 +8506,7 @@ class SecureP2PChat:
             # Internal NC3 Emergency Action Message payload
             if len(message) > 10 * 1024 * 1024:
                 return _deny("NC3 message exceeds maximum permitted transfer size")
-        elif message in ['EXIT', 'HEARTBEAT', 'HEARTBEAT_ACK'] or message.startswith('HEARTBEAT:') or message.startswith('ROTATE:') or message.startswith('KEY_ROTATION:') or message.startswith('KEY_ROTATION_ACK:') or message.startswith('USERNAME:'):
+        elif message in ['EXIT', 'HEARTBEAT', 'HEARTBEAT_ACK'] or message.startswith('HEARTBEAT:') or message.startswith('ROTATE:') or message.startswith('KEY_ROTATION:') or message.startswith('KEY_ROTATION_ACK:') or message.startswith('USERNAME:') or message.startswith('COVER_CHAFF:') or message.startswith('TACTICAL_CHAFF:'):
             pass  # Valid internal protocol control frames
         else:
             if not InputValidator.validate_message(message):
@@ -8545,6 +8626,11 @@ class SecureP2PChat:
             # open through ALL layers in reverse: Rust AEAD → ratchet → unpad.
             pipeline = getattr(self, '_zero_gap_pipeline', None)
             if pipeline is not None:
+                # Lazy-establish the Rust AEAD layer from the hybrid root key if not already armed
+                root = getattr(self, 'hybrid_root_key', None)
+                if root and not pipeline.is_fully_armed:
+                    pipeline.establish_rust_layer(
+                        root, is_initiator=bool(getattr(self, 'is_ratchet_initiator', False)))
                 from unified_secure_pipeline import PipelineSecurityError, PIPELINE_MAGIC
                 # Check if this is a pipeline-wrapped frame
                 if encrypted_data[:2] == PIPELINE_MAGIC:
@@ -8959,29 +9045,59 @@ class SecureP2PChat:
                     break
 
     async def _send_cover_traffic(self):
-        """Sends periodic chaff/cover traffic frames to defeat SIGINT traffic analysis."""
-        log.info("Cover traffic generator active: transmitting uniform 1024-byte chaff frames.")
+        """Sends periodic chaff/cover traffic frames to defeat SIGINT traffic analysis.
+
+        In high-threat or tactical cloaking mode (P2P_TACTICAL_CLOAK=1), inter-arrival
+        intervals are generated by a true memoryless Poisson process (exponential distribution)
+        using tactical_cloaking_router.get_poisson_interval(), bounded to [0.8, 7.5]s to
+        flatten network flow entropy against deep-learning flow correlation (Securitas / Tamaraw).
+        Payloads are sized across discrete quantum buckets (256B, 512B, 1024B, 2048B) so wire
+        size distributions are statistically indistinguishable from real operational messaging.
+        """
+        try:
+            from tactical_cloaking_router import (
+                tactical_cloak_enabled,
+                get_poisson_interval,
+                get_chaff_jitter_interval
+            )
+        except ImportError:
+            tactical_cloak_enabled = lambda: False
+            get_poisson_interval = lambda rate_lambda=0.35: 4.0 + (secrets.randbelow(400) / 100.0)
+            get_chaff_jitter_interval = lambda min_sec=3.0, max_sec=7.0: 4.0 + (secrets.randbelow(400) / 100.0)
+
+        is_cloaked = tactical_cloak_enabled()
+        log.info(f"Cover traffic generator active: transmitting {'Poisson-distributed' if is_cloaked else 'jittered'} multi-bucket chaff frames.")
         while not self.stop_event.is_set() and self.is_connected:
             try:
-                # Random interval between 4.0 and 8.0 seconds with cryptographically secure jitter
-                jitter_delay = 4.0 + (secrets.randbelow(400) / 100.0)
+                if tactical_cloak_enabled():
+                    # Memoryless Poisson process: interval sampled from exponential distribution
+                    # Bound to [0.8, 7.5]s to prevent event clustering or heartbeat starvation
+                    interval = get_poisson_interval(rate_lambda=0.35)
+                    jitter_delay = max(0.8, min(interval, 7.5))
+                else:
+                    jitter_delay = get_chaff_jitter_interval(min_sec=3.0, max_sec=7.0)
+
                 await asyncio.sleep(jitter_delay)
                 if not self.is_connected or self.stop_event.is_set():
                     break
                 if self.tcp_socket and self.ratchet:
                     try:
-                        chaff_token = secrets.token_hex(16)
+                        # Multi-bucket chaff sizes: select variable token sizes matching
+                        # discrete operational traffic quanta (256B, 512B, 1024B, 2048B)
+                        bucket_target = secrets.choice([64, 192, 448, 896])
+                        chaff_token = secrets.token_hex(bucket_target)
                         chaff_msg = f"COVER_CHAFF:{chaff_token}"
                         encrypted_chaff = await self._encrypt_message(chaff_msg)
                         if encrypted_chaff:
                             await p2p.send_framed(self.tcp_socket, encrypted_chaff)
-                            log.debug("Transmitted background 1024-byte cover traffic frame.")
+                            log.debug(f"Transmitted background cover chaff frame ({len(encrypted_chaff)} bytes, next_jitter={jitter_delay:.2f}s).")
                     except Exception as e:
                         log.debug(f"Cover traffic transmission skipped: {e}")
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log.debug(f"Cover traffic loop error: {e}")
+
 
     def __del__(self):
         """

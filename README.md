@@ -222,14 +222,15 @@ Cryptographic protocols in ST2027 are mathematically proven using automated form
 +---------------------------------------------------------------------------------------------------------+
 |                                    FORMAL VERIFICATION EVIDENCE SUMMARY                                 |
 +---------------------------------------------------------------------------------------------------------+
-| ProVerif 2.05 Applied Pi-Calculus Proofs:                                                               |
+| ProVerif 2.05 Applied Pi-Calculus Proofs (XXhfs handshake + PCS epochs):                                    |
 |   ├── docs/formal/st2027_handshake.pv                                                                   |
 |   │   ├── Query not attacker(secret_payload)                      ==> PROVEN TRUE (Secrecy)             |
-|   │   ├── Query inj-event(ReceiverAccepts) ==> inj-event(SenderInit) ==> PROVEN TRUE (Mutual Auth)        |
-|   │   └── Query inj-event(SenderAccepts) ==> inj-event(ReceiverResp)==> PROVEN TRUE (Mutual Auth)        |
+|   │   ├── Query inj-event(S_Accepts) ==> inj-event(C_Accepts)       ==> PROVEN TRUE (Mutual Auth)        |
+|   │   ├── Query event(C_VerifiedM2) ==> event(S_SentM2)             ==> PROVEN TRUE (M2 authenticity)    |
+|   │   ├── Query inj-event(R_Receives) ==> inj-event(C_Sends)        ==> PROVEN TRUE (No forgery/replay)  |
+|   │   └── Query not attacker(initiator static key)                 ==> PROVEN TRUE (M1 identity privacy)|
 |   └── docs/formal/st2027_pcs.pv                                                                         |
-|       └── Query not attacker(epoch_n_minus_1_key) under Epoch N   ==> PROVEN TRUE (Forward Secrecy)     |
-|       └── Query not attacker(epoch_n_plus_1_key) post-rekeying    ==> PROVEN TRUE (PCS Healing)         |
+|       └── Query not attacker(epoch-2 payload) under Epoch-1 total compromise ==> PROVEN TRUE (PCS heal) |
 +---------------------------------------------------------------------------------------------------------+
 | Kani Rust Bounded Model Checking: DEFINED harnesses + EXECUTED doubles (audited 2026-09-29):                         |
 |   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (needs `cargo kani` + CBMC)      |
@@ -364,7 +365,7 @@ A zero-dependency Rust shared library (`ts_rt.dll` / `libts_rt.so`) linked via C
 
 ## 8. Empirical Verification & Automated Test Matrix
 
-The platform is backed by the full automated suite (Python suites plus 64 cargo-test Rust tests: 35 library unit tests + 29-test harness binary) executing green, validating every component from low-level memory zeroization to full network loopback transfers. Fixed historical counts are not cited: the battery grows with the codebase; CI status is the source of truth.
+The platform is backed by the full automated suite (Python suites plus 80 cargo-test Rust tests: 51 library unit tests + 29-test harness binary) executing green, validating every component from low-level memory zeroization to full network loopback transfers. Fixed historical counts are not cited: the battery grows with the codebase; CI status is the source of truth.
 
 ```
 +---------------------------------------------------------------------------------------------------------+
@@ -390,9 +391,9 @@ The platform is backed by the full automated suite (Python suites plus 64 cargo-
 +---------------------------------------------------------------------------------------------------------+
 | Battery 2: Native Rust Data-Plane & Kani Model Checking Battery                                         |
 | Command: cargo test --manifest-path rust_data_plane/Cargo.toml                                          |
-| Status:  Rust battery green: 39 library unit tests + 29-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
+| Status:  Rust battery green: 51 library unit tests + 29-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
 | Coverage:                                                                                               |
-|   ├── Unit Tests (39 passed)           (AEAD vectors, chunking bounds, UDP token bucket, replay bitmap, memlock guard)  |
+|   ├── Unit Tests (51 passed)           (AEAD vectors, chunking bounds, UDP token bucket, replay bitmap, memlock guard)  |
 |   └── Harness binary (29 passed)       (7 deterministic property doubles + re-exported module unit tests) |
 +---------------------------------------------------------------------------------------------------------+
 | TOTAL SUITE STATUS: full automated battery green (CI is the source of truth; no fixed totals cited)           |
