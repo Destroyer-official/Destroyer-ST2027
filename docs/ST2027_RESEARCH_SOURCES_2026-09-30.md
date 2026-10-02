@@ -1,6 +1,6 @@
 # ST2027 research source register
 
-Research cut-off: **30 September 2026**. Companion: [implementation plan](ST2027_2027_PLUS_IMPLEMENTATION_PLAN.md).
+Research cut-off: **30 September 2026**. Companion: [implementation plan](ST2027_IMPLEMENTATION_PLAN.md).
 
 ## Scope and evidence discipline
 

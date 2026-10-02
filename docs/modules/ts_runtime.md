@@ -53,6 +53,6 @@ To eliminate garbage collector memory retention in Python, performance-critical 
 
 ## 3. Test Coverage
 
-- **Suites:** [`test_ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_ts_runtime.py) (14 tests), [`test_ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_ts_attest.py) (5 tests).
+- **Suites:** `test_ts_runtime.py` (14 tests), `test_ts_attest.py` (5 tests).
 - **Pass Rate:** **19 of 19 tests passing (100%)**
 - **Tested Behaviors:** Platform qualification logic, AO waiver parsing, anti-DMA controller discovery, native DLL buffer locking and wiping, branchless replay window verification under duplicate/out-of-order traffic, and IETF RATS evidence serialization.

@@ -158,7 +158,7 @@ To achieve absolute sovereign security and eliminate any possible audit critique
   - **Task 5.1:** Require high-consequence messages to contain an enveloped DPA manifest co-signed by two distinct ML-DSA-87 public keys registered in the sovereign authorization directory.
   - **Task 5.2:** Enforce maximum time delta between signatures (configurable operational window).
   - **Task 5.3:** Receiver station verifies both signatures against the sovereign root anchor before releasing payload to disk.
-* **Verification Gate:** [test_spo_dpo.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_spo_dpo.py) validates that single-signed messages are dropped silently.
+* **Verification Gate:** 	est_spo_dpo.py validates that single-signed messages are dropped silently.
 
 ---
 

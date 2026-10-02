@@ -75,8 +75,8 @@ Formal models in `docs/formal/` are executed directly by ProVerif under the Dole
 ## 3. Test Coverage
 
 - **Suites:**
-  - [`test_noise_pq_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_noise_pq_purity.py) (4 tests)
-  - [`test_proverif_st2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_proverif_st2027.py) (2 tests)
-  - [`test_secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_secure_transmit_2027.py) (24 tests)
+  - `test_noise_pq_purity.py`] (4 tests)
+  - `test_proverif_st2027.py`] (2 tests)
+  - `test_secure_transmit_2027.py`] (24 tests)
 - **Pass Rate:** **30 of 30 tests passing (100%)**
 - **Tested Behaviors:** Handshake key exchange, CNSA 2.0 token purity enforcement, KAT execution and failure tripping, ProVerif Dolev-Yao model execution, and full transmission lifecycle.

@@ -54,6 +54,6 @@ This module implements **Pillar 5: Trust Infrastructure & Post-Quantum PKI** for
 
 ## 3. Test Coverage
 
-- **Suite:** [`test_trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_trust_anchor.py)
+- **Suite:** `test_trust_anchor.py`]
 - **Pass Rate:** **19 of 19 tests passing (100%)**
 - **Tested Behaviors:** 3-of-5 threshold signature quorum validation, rejection of insufficient signatures (1-of-5, 2-of-5), 48h expiration rejection, clock skew enforcement, strict mode unauthenticated peer rejection, threshold CRL revocation broadcasting, replay prevention, and amnesia memory handling.

@@ -184,7 +184,7 @@
 ### Task 1.4: Active Exploit Regression Battery
 
 #### 1. Scope
-Create a dedicated test file: [`test_exploit_regressions.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_exploit_regressions.py) that directly incorporates the external reviewer's test scripts as permanent automated defenses:
+Create a dedicated test file: `test_exploit_regressions.py` that directly incorporates the external reviewer's test scripts as permanent automated defenses:
 1. **Exploit 1: Replay Window Poisoning DoS:**
    - Transmit valid frame $F_1$ (`seq=1`).
    - Transmit forged frame $F_{\text{attack}}$ (`seq=2**64 - 1`, invalid MAC).
@@ -514,7 +514,7 @@ Ran command: `git push origin main`
 ---
 
 ### [x] Task 1.4: Active Exploit Regression Battery (COMPLETED & VERIFIED)
-- **Location:** Create [`test_exploit_regressions.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_exploit_regressions.py)
+- **Location:** Create `test_exploit_regressions.py`
 - **Implementation:** Implement the exact test harness the external auditor executed:
   1. Transmit valid frame $F_1$.
   2. Inject forged frame with `seq = 2**64 - 1` and invalid tag.
@@ -603,14 +603,14 @@ Ran command: `git push origin main`
 ---
 
 ### [x] Task 4.3: Physical Boundary & Memory Disclosures (COMPLETED & VERIFIED)
-- **Location:** [`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SYSTEM_SECURITY_DOCUMENTATION.md)
+- **Location:** [`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`SYSTEM_SECURITY_DOCUMENTATION.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/SYSTEM_SECURITY_DOCUMENTATION.md)
 - **Implementation:** Explicitly document that Python immutable `bytes` cannot be wiped reliably and that Tor does not defend against a global passive adversary.
 - **Verification Gate:** Documentation audit.
 
 ---
 
 ### [x] Task 4.4: Hardware Test Mock Audit & Live Probe Decoupling (COMPLETED & VERIFIED)
-- **Location:** [`test_ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_ts_hw_layer.py)
+- **Location:** `test_ts_hw_layer.py`
 - **Implementation:** Clearly separate mock unit tests from live hardware integration tests.
 - **Verification Gate:** Test suite separation verified.
 

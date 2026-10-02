@@ -62,6 +62,6 @@ This module implements **Pillar 1: Hardware & Physical Security** for the 2027 T
 
 ## 3. Test Coverage
 
-- **Suite:** [`test_ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_ts_hw_layer.py)
+- **Suite:** `test_ts_hw_layer.py`]
 - **Pass Rate:** **33 of 33 tests passing (100%)**
 - **Tested Behaviors:** FIPS provider load/fail logic, CNG TPM 2.0 key operations, RED/BLACK interface validation, TEMPEST registry parser, optical diode simplex frame flow, and zeroization mesh triggers.

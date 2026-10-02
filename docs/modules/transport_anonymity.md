@@ -62,7 +62,7 @@ This module implements **Pillar 4: Network Anonymity & Traffic Shaping** for the
 ## 3. Test Coverage
 
 - **Suites:**
-  - [`test_transport_anonymity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_transport_anonymity.py) (11 tests)
-  - [`test_spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/test_spo_dpo.py) (8 tests)
+  - `test_transport_anonymity.py`] (11 tests)
+  - `test_spo_dpo.py`] (8 tests)
 - **Pass Rate:** **19 of 19 tests passing (100%)**
 - **Tested Behaviors:** SOCKS5 handshake framing, remote DNS formatting, 50ms scheduler tick compliance, 1232B cell serialization/deserialization, AES-256-CTR whitening/unwhitening, DPO dual-token approval, and 2.0s window timeout rejection.

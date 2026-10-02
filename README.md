@@ -317,9 +317,9 @@ Every document in this repository is cataloged below, providing complete technic
 ### 6.5 Compliance Submittals & Supply Chain Packages (`compliance_reports/`)
 - **[`compliance_reports/oscal_ssp_cnsa2.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_ssp_cnsa2.json):** NIST OSCAL 1.1.0 System Security Plan (SSP) mapped to NIST SP 800-53 Rev. 5 controls.
 - **[`compliance_reports/oscal_sar_cato.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/oscal_sar_cato.json):** NIST OSCAL 1.1.0 Security Assessment Report (SAR) for continuous ATO submission.
-- **[`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) & [`cbom.sig`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.sig):** Cryptographic Bill of Materials signed with ML-DSA-87 documenting all post-quantum primitives.
-- **[`compliance_reports/sbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/sbom.json):** Software Bill of Materials tracking pinned cryptographic dependencies.
-- **[`compliance_reports/zero_trust_assessment.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/zero_trust_assessment.json):** CISA Zero Trust Maturity Model Level 4 validation assessment report.
+- **[`compliance_reports/cbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json) & [`cbom.json.mldsa87.sig`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cbom.json.mldsa87.sig):** Cryptographic Bill of Materials signed with ML-DSA-87 documenting all post-quantum primitives.
+- **[`compliance_reports/cyclonedx_sbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/cyclonedx_sbom.json) & [`spdx_sbom.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/spdx_sbom.json):** CycloneDX v1.5 and SPDX v2.3 Software Bills of Materials tracking pinned cryptographic dependencies.
+- **[`compliance_reports/dod_zero_trust_assessment.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/dod_zero_trust_assessment.json):** DoD Zero Trust Maturity Model Level 4 validation assessment report.
 
 ### 6.6 Operational Automation & Runbooks (`scripts/`)
 - **[`scripts/setup_tor_overlay.ps1`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.ps1) & [`setup_tor_overlay.sh`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/setup_tor_overlay.sh):** Automated Tor v3 hidden service and hardened SOCKS5 daemon deployment.
