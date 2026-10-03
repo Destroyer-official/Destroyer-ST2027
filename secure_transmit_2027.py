@@ -321,7 +321,7 @@ def verify_transcript(sig_pk: bytes, transcript: bytes, sig: bytes) -> None:
 # Unified handshake: Noise_XXhfs authoritative engine (Tasks 2.1 / 2.2)
 # ---------------------------------------------------------------------------
 # Session establishment is delegated to noise_pq.py's
-# Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384 state machine.
+# Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384 state machine.
 # FORMAL-MODEL STATUS (honest, 2026-09-29): docs/formal/st2027_handshake.pv
 # and st2027_pcs.pv still encode the RETIRED 2-message handshake
 # (cleartext initiator static in M1, kdf(he,hm,tr) direct derivation) and

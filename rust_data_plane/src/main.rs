@@ -149,21 +149,29 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
         fail("exactly one of --key-file PATH or --key-stdin is required");
     }
     let mut hex_z: Zeroizing<String> = if let Some(path) = from_file {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .unwrap_or_else(|_| fail("key file unreadable"));
+        let meta = file.metadata().unwrap_or_else(|_| fail("key file metadata unreadable"));
+        if meta.file_type().is_symlink() {
+            fail("key file must not be a symlink");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let meta = std::fs::metadata(&path).unwrap_or_else(|_| fail("key file unreadable"));
             if meta.permissions().mode() & 0o077 != 0 {
                 fail("key file must be 0600 (group/other readable refused)");
             }
         }
-        let mut s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("key file unreadable"));
+        let mut s = String::with_capacity(128);
+        file.read_to_string(&mut s).unwrap_or_else(|_| fail("key file read failed"));
         // Zeroize the file buffer copy held by Rust String after parse.
         let z = Zeroizing::new(s.clone());
         s.zeroize();
         z
     } else {
-        let mut s = String::new();
+        let mut s = String::with_capacity(128);
         std::io::stdin()
             .read_to_string(&mut s)
             .unwrap_or_else(|_| fail("key stdin unreadable"));
@@ -171,7 +179,7 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
     };
     let mut bytes = parse_key_hex(&hex_z);
     hex_z.zeroize();
-    let digest = Sha256::digest(bytes);
+    let digest = Sha384::digest(&bytes);
     let mut key_id = [0u8; 16];
     key_id.copy_from_slice(&digest[..16]);
     // Caller builds FrameKey then drops the guard (unlock + wipe).

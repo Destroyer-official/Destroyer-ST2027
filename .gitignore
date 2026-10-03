@@ -6,9 +6,10 @@
 # =============================================================================
 notupload/
 secure_p2p_core/
-/tests/
+/tests/*
 !rust_data_plane/tests/
 test_*.py
+!tests/test_exploit_regressions.py
 archive/
 
 # =============================================================================

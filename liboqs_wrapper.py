@@ -176,7 +176,12 @@ def _find_liboqs_path() -> Path:
         ])
         sys_path = find_library("oqs")
         if sys_path:
-            candidates.append(Path(sys_path))
+            if os.path.isabs(sys_path):
+                candidates.append(Path(sys_path))
+            else:
+                for sys_dir in ("/usr/lib", "/usr/local/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"):
+                    cand = Path(sys_dir) / sys_path
+                    candidates.append(cand)
     else:  # Darwin / macOS
         candidates.extend([
             repo_dir / "liboqs.dylib",
@@ -185,7 +190,12 @@ def _find_liboqs_path() -> Path:
         ])
         sys_path = find_library("oqs")
         if sys_path:
-            candidates.append(Path(sys_path))
+            if os.path.isabs(sys_path):
+                candidates.append(Path(sys_path))
+            else:
+                for sys_dir in ("/usr/local/lib", "/opt/homebrew/lib", "/usr/lib"):
+                    cand = Path(sys_dir) / sys_path
+                    candidates.append(cand)
 
     for cand in candidates:
         try:

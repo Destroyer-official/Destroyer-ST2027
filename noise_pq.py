@@ -20,7 +20,7 @@ profile hybrid is FALSE. Peer-reviewed KEM-Noise results (PQNoise,
 Angel et al., CCS 2022, ePrint 2022/539) cover KEM-replacement Noise
 patterns generally, not this profile.
 
-Instantiation (profile Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384):
+Instantiation (profile Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384):
   DH function ... P-384 ECDH (CNSA L5 hedge; spec-era examples use 25519/448).
   hfs function .. ML-KEM-1024 (FIPS 203): initiator GENERATE_KEM_KEYPAIR,
     send ek (1568); responder GENERATE_KEM_CIPHERTEXT, send ct (1568);
@@ -69,13 +69,23 @@ import struct
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
-PROTOCOL_NAME = b"Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384"
+PROTOCOL_NAME = b"Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384"
 HASHLEN = 48
 MLKEM_EK = 1568
 MLKEM_CT = 1568
 MLKEM_SS = 32
 P384_PUB = 97
 P384_SS = 48
+MLDSA87_PK = 2592
+MLDSA87_SIG = 4627
+AEAD_TAG_LEN = 16
+
+EXPECTED_M1_LEN = P384_PUB + MLKEM_EK
+EXPECTED_M2_LEN = P384_PUB + MLKEM_CT + (MLDSA87_PK + AEAD_TAG_LEN) + (MLDSA87_SIG + AEAD_TAG_LEN)
+EXPECTED_M3_LEN = (MLDSA87_PK + AEAD_TAG_LEN) + (MLDSA87_SIG + AEAD_TAG_LEN)
+
+# FIPS 204 domain separation context string for handshake authentication signatures
+DOMAIN_SEP_SIG = b"ST2027-Noise-XXhfs-MLDSA87-v1\x00"
 
 
 class NoiseError(Exception):
@@ -189,8 +199,11 @@ def _p384_dh(priv, pub_bytes: bytes) -> bytes:
     from cryptography.hazmat.primitives.asymmetric import ec
     if len(pub_bytes) != P384_PUB:
         raise NoiseError("P-384 share violation")
-    peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP384R1(), pub_bytes)
-    ss = priv.exchange(ec.ECDH(), peer)
+    try:
+        peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP384R1(), pub_bytes)
+        ss = priv.exchange(ec.ECDH(), peer)
+    except Exception as exc:
+        raise NoiseError(f"P-384 curve point validation failure: {exc}") from exc
     if len(ss) != P384_SS:
         raise NoiseError("ECDH violation")
     return ss
@@ -220,12 +233,12 @@ def _mlkem_decaps(sk: bytearray, ct: bytes) -> bytes:
 
 def _sign(sk: bytes, msg: bytes) -> bytes:
     from liboqs_wrapper import LibOQS_MLDSA_87
-    return LibOQS_MLDSA_87().sign(sk, msg)
+    return LibOQS_MLDSA_87().sign(sk, DOMAIN_SEP_SIG + msg)
 
 
 def _verify(pk: bytes, msg: bytes, sig: bytes) -> None:
     from liboqs_wrapper import LibOQS_MLDSA_87
-    if not LibOQS_MLDSA_87().verify(pk, msg, sig):
+    if not LibOQS_MLDSA_87().verify(pk, DOMAIN_SEP_SIG + msg, sig):
         raise NoiseError("identity signature invalid")
 
 
@@ -317,12 +330,12 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     return e_pub + ml_ct + enc_pk + enc_sig
 
 
-def initiator_finish(sess: NoiseSession, m2: bytes) -> None:
+def initiator_finish(sess: NoiseSession, m2: bytes, expected_peer_pk: Optional[bytes] = None) -> None:
     """Process M2: complete ee/ff, decrypt s, VERIFY sig_r BEFORE derive."""
     if not sess.is_initiator or sess._f_sk is None or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
-    if len(m2) < P384_PUB + MLKEM_CT:
-        raise NoiseError("M2 size violation")
+    if len(m2) != EXPECTED_M2_LEN:
+        raise NoiseError(f"M2 exact length violation: expected {EXPECTED_M2_LEN}, got {len(m2)}")
     e_srv, rest = m2[:P384_PUB], m2[P384_PUB:]
     ml_ct, rest = rest[:MLKEM_CT], rest[MLKEM_CT:]
     sess.sym.mix_hash(e_srv)
@@ -340,6 +353,8 @@ def initiator_finish(sess: NoiseSession, m2: bytes) -> None:
     h_for_verify = sess.sym.h  # transcript THROUGH the signed message's
     srv_sig = sess.sym.decrypt_and_hash(enc_sig)
     _verify(srv_pk, h_for_verify, srv_sig)   # verify-before-derive
+    if expected_peer_pk is not None and srv_pk != expected_peer_pk:
+        raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = srv_pk
 
 
@@ -360,18 +375,20 @@ def initiator_complete(sess: NoiseSession, signer=None) -> bytes:
     return out
 
 
-def responder_complete(sess: NoiseSession, m3: bytes) -> None:
+def responder_complete(sess: NoiseSession, m3: bytes, expected_peer_pk: Optional[bytes] = None) -> None:
     """Process M3: decrypt s, VERIFY sig_i BEFORE Split."""
     if sess.is_initiator or sess._f_ss is None or sess._m3_done \
             or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
+    if len(m3) != EXPECTED_M3_LEN:
+        raise NoiseError(f"M3 exact length violation: expected {EXPECTED_M3_LEN}, got {len(m3)}")
     enc_pk, enc_sig = m3[:2592 + 16], m3[2592 + 16:]
-    if len(enc_sig) == 0:
-        raise NoiseError("M3 size violation")
     cli_pk = sess.sym.decrypt_and_hash(enc_pk)
     h_for_verify = sess.sym.h  # transcript through the signed message
     cli_sig = sess.sym.decrypt_and_hash(enc_sig)
     _verify(cli_pk, h_for_verify, cli_sig)   # verify-before-derive
+    if expected_peer_pk is not None and cli_pk != expected_peer_pk:
+        raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = cli_pk
     sess._m3_done = True
 
