@@ -555,7 +555,8 @@ def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
 def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
                    peer_id: str, t0: int,
                    peer_cert: Optional[str] = None,
-                   peer_subject: Optional[str] = None):
+                   peer_subject: Optional[str] = None,
+                   expected_peer_pk: Optional[bytes] = None):
     """Process M2 (verify-before-derive), emit M3, Split -> (m3, state)."""
     _assert_session_profile()
     st: Optional[HandshakeState] = None
@@ -565,7 +566,12 @@ def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
         if len(m2) < 97 + 1568 + 16:
             raise SecurityError("handshake size violation")
         sig_pk, _sig_sk, signer = _xxhfs_identity(kp)
-        _npq.initiator_finish(sess, bytes(m2))  # verify sig_r BEFORE derive
+        _npq.initiator_finish(
+            sess,
+            bytes(m2),
+            expected_peer_pk=expected_peer_pk,
+            allow_unpinned=(expected_peer_pk is None),
+        )  # verify sig_r BEFORE derive
         peer_pk = sess._peer_sig_pk
         # IDENTITY-HIDING PROPERTY (SIGMA / Noise XX): Gating the responder's identity
         # BEFORE emitting M3 ensures the initiator's identity (s) is NEVER transmitted
@@ -603,7 +609,8 @@ def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
 def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
                    peer_id: str, t_rsp: int,
                    peer_cert: Optional[str] = None,
-                   peer_subject: Optional[str] = None) -> HandshakeState:
+                   peer_subject: Optional[str] = None,
+                   expected_peer_pk: Optional[bytes] = None) -> HandshakeState:
     """Process M3 (verify-before-Split) -> HandshakeState."""
     _assert_session_profile()
     st: Optional[HandshakeState] = None
@@ -613,7 +620,12 @@ def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
         if len(m3) < 2592 + 16 + 1:
             raise SecurityError("handshake size violation")
         sig_pk, _sig_sk, _signer = _xxhfs_identity(kp)
-        _npq.responder_complete(sess, bytes(m3))  # verify sig_i BEFORE Split
+        _npq.responder_complete(
+            sess,
+            bytes(m3),
+            expected_peer_pk=expected_peer_pk,
+            allow_unpinned=(expected_peer_pk is None),
+        )  # verify sig_i BEFORE Split
         peer_pk = sess._peer_sig_pk
         # GATE BEFORE SPLIT: Verify initiator's identity before deriving transport keys
         _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,

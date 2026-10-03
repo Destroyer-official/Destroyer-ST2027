@@ -31,9 +31,11 @@ Instantiation (profile Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384):
     statics cannot express signing keys, so es/se tokens are REPLACED by
     ML-DSA-87 signatures over the handshake hash (+sig profile suffix),
     verify-before-derive, SIGMA-style. Session keys still mix ee+ss_kem
-    only. This substitution is UNPROVEN (no reduction to the hfs draft,
-    which has no proofs, nor to PQNoise, which keeps DH/KEM auth) and is
-    stated as an assumption; what IS proven by test is structural
+    only. Signatures use strictly separated domain strings for responder
+    (DOMAIN_SEP_SIG_RESP) and initiator (DOMAIN_SEP_SIG_INIT) to prevent
+    cross-role reflection attacks. This substitution is UNPROVEN (no reduction
+    to the hfs draft, which has no proofs, nor to PQNoise, which keeps DH/KEM auth)
+    and is stated as an assumption; what IS proven by test is structural
     agreement with the XXhfs message skeleton plus fail-closed
     verify-before-derive on both sides.
   Combiner ...... HKDF-SHA384 over (ck, ikm) per Noise MixKey (dual-PRF
@@ -54,6 +56,32 @@ Message flow (all lengths fixed; any deviation aborts):
 
 Transport: AES-256-GCM, 12B nonce seq(8BE)||dir(1)||zero(3), strict replay
 window (shared semantics with secure_transmit_2027.Channel).
+
+RATCHET & POST-COMPROMISE SECURITY (PCS):
+  This file defines the initial session handshake and produces a single
+  pair of transport keys (k_ir, k_ri). Continuous post-compromise security
+  (PCS) is NOT provided by this file alone; PCS requires continuous key
+  rotation, which lives in `double_ratchet.py` (PQ double ratchet) and
+  `secure_transmit_2027.py::rehandshake` (Continuous Epoch Ratchet).
+
+MEMORY WIPING LIMITATIONS (Python runtime vs Rust data plane):
+  Memory wiping in Python (`_zero(bytearray)`) is container sanitization
+  only. CPython immutable `bytes` objects (returned by ECDH exchange,
+  liboqs decaps, and slice operations) and OpenSSL/ctypes internal heap
+  buffers cannot be guaranteed zeroized or pinned in physical RAM.
+  Hardware-enforced memory locking (`VirtualLock`/`mlock`) and verified
+  non-swappable zeroization exist strictly in the Rust data plane
+  (`rust_data_plane/src/memlock.rs`, `LockedKey32`, `ZeroizeOnDrop`).
+
+ANTI-DOS / AMPLIFICATION BOUNDS:
+  M1 is 1,665 bytes; M2 is 8,916 bytes (a 5.35x reflection amplification
+  factor). Processing an unauthenticated M1 requires P-384 keygen, ML-KEM
+  encapsulation, and ML-DSA signing. Consequently, this handshake MUST NOT
+  be exposed over unauthenticated connectionless UDP without an outer
+  stateless cookie / address return-routability gate (e.g. QUIC retry token,
+  WireGuard cookie). In Destroyer ST2027, the handshake runs over connection-
+  oriented TCP / TLS 1.3 outer envelope where the 3-way handshake prevents
+  IP address spoofing.
 
 All primitives REAL: liboqs ML-KEM-1024/ML-DSA-87, OpenSSL P-384/AES-GCM/
 HKDF-SHA384. No simulations.
@@ -84,9 +112,14 @@ EXPECTED_M1_LEN = P384_PUB + MLKEM_EK
 EXPECTED_M2_LEN = P384_PUB + MLKEM_CT + (MLDSA87_PK + AEAD_TAG_LEN) + (MLDSA87_SIG + AEAD_TAG_LEN)
 EXPECTED_M3_LEN = (MLDSA87_PK + AEAD_TAG_LEN) + (MLDSA87_SIG + AEAD_TAG_LEN)
 
-# FIPS 204 domain separation context string for handshake authentication signatures
-DOMAIN_SEP_SIG = b"ST2027-Noise-XXhfs-MLDSA87-v1\x00"
-
+# Domain separation context strings for handshake authentication signatures.
+# Roles are strictly separated to prevent cross-role reflection / signature substitution attacks.
+# Note: liboqs C API does not expose the FIPS 204 context (ctx) parameter in OQS_SIG_sign,
+# so unambiguous length-delimited prefix domain separation is applied directly to the message.
+DOMAIN_SEP_SIG_RESP = b"ST2027-Noise-XXhfs-MLDSA87-v1-Responder\x00"
+DOMAIN_SEP_SIG_INIT = b"ST2027-Noise-XXhfs-MLDSA87-v1-Initiator\x00"
+# Backward-compatibility alias
+DOMAIN_SEP_SIG = DOMAIN_SEP_SIG_RESP
 
 class NoiseError(Exception):
     """Fail-closed Noise handshake/transport failure."""
@@ -174,7 +207,8 @@ class SymmetricState:
         return out
 
     def split(self) -> Tuple[Tuple[bytes, bytes], bytes]:
-        k1, k2 = _noise_hkdf(self.ck, b"\x00" * HASHLEN, 2)
+        # Noise spec section 5.2: (temp_k1, temp_k2) = HKDF(ck, zerolen, 2)
+        k1, k2 = _noise_hkdf(self.ck, b"", 2)
         return ((k1[:32], k2[:32])), self.h
 
     def destroy(self) -> None:
@@ -231,14 +265,16 @@ def _mlkem_decaps(sk: bytearray, ct: bytes) -> bytes:
     return LibOQS_MLKEM_1024().decaps(bytes(sk), ct)
 
 
-def _sign(sk: bytes, msg: bytes) -> bytes:
+def _sign(sk: bytes, msg: bytes, *, is_initiator: bool = False) -> bytes:
     from liboqs_wrapper import LibOQS_MLDSA_87
-    return LibOQS_MLDSA_87().sign(sk, DOMAIN_SEP_SIG + msg)
+    domain = DOMAIN_SEP_SIG_INIT if is_initiator else DOMAIN_SEP_SIG_RESP
+    return LibOQS_MLDSA_87().sign(sk, domain + msg)
 
 
-def _verify(pk: bytes, msg: bytes, sig: bytes) -> None:
+def _verify(pk: bytes, msg: bytes, sig: bytes, *, is_initiator: bool = False) -> None:
     from liboqs_wrapper import LibOQS_MLDSA_87
-    if not LibOQS_MLDSA_87().verify(pk, DOMAIN_SEP_SIG + msg, sig):
+    domain = DOMAIN_SEP_SIG_INIT if is_initiator else DOMAIN_SEP_SIG_RESP
+    if not LibOQS_MLDSA_87().verify(pk, domain + msg, sig):
         raise NoiseError("identity signature invalid")
 
 
@@ -263,7 +299,9 @@ class NoiseSession:
     handshake_hash: Optional[bytes] = None
 
     def destroy(self) -> None:
-        # Truly wiped: _f_sk, _f_ss, _k_send, _k_recv (mutable bytearrays).
+        # Best-effort container sanitization for mutable bytearrays.
+        # Note: immutable bytes and C-extension buffers in CPython cannot be
+        # guaranteed zeroized or mlocked; true hardware memory locking belongs to Rust.
         if self._f_sk is not None:
             _zero(self._f_sk)
             self._f_sk = None
@@ -302,7 +340,7 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     """M2: <- e, ee, ekem1, s, es(sig). Verify nothing yet (nothing signed).
 
     signer: optional callable(msg)->sig for HSM-held identities. When None,
-    the session's software sig_sk signs (lab path).
+    the session's software sig_sk signs (lab path). Responder role binds DOMAIN_SEP_SIG_RESP.
     """
     if sess.is_initiator or sess._e_pub is not None:
         raise NoiseError("handshake state violation")
@@ -325,13 +363,25 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     sess.sym.mix_key(ml_ss)                            # ff
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)    # s (encrypted)
     h_for_sig = bytes(sess.sym.h)
-    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig)  # es->sig over h
+    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig, is_initiator=False)  # es->sig over h
     enc_sig = sess.sym.encrypt_and_hash(sig)
     return e_pub + ml_ct + enc_pk + enc_sig
 
 
-def initiator_finish(sess: NoiseSession, m2: bytes, expected_peer_pk: Optional[bytes] = None) -> None:
-    """Process M2: complete ee/ff, decrypt s, VERIFY sig_r BEFORE derive."""
+def initiator_finish(
+    sess: NoiseSession,
+    m2: bytes,
+    expected_peer_pk: Optional[bytes] = None,
+    *,
+    allow_unpinned: bool = False,
+) -> None:
+    """Process M2: complete ee/ff, decrypt s, VERIFY sig_r BEFORE derive.
+
+    Fail-closed identity pinning: expected_peer_pk is required by default.
+    To connect to an arbitrary unpinned peer, allow_unpinned=True must be explicitly set.
+    """
+    if expected_peer_pk is None and not allow_unpinned:
+        raise NoiseError("unpinned peer identity rejected: expected_peer_pk required (or set allow_unpinned=True)")
     if not sess.is_initiator or sess._f_sk is None or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
     if len(m2) != EXPECTED_M2_LEN:
@@ -352,7 +402,7 @@ def initiator_finish(sess: NoiseSession, m2: bytes, expected_peer_pk: Optional[b
     srv_pk = sess.sym.decrypt_and_hash(enc_pk)
     h_for_verify = sess.sym.h  # transcript THROUGH the signed message's
     srv_sig = sess.sym.decrypt_and_hash(enc_sig)
-    _verify(srv_pk, h_for_verify, srv_sig)   # verify-before-derive
+    _verify(srv_pk, h_for_verify, srv_sig, is_initiator=False)   # verify-before-derive (responder role)
     if expected_peer_pk is not None and srv_pk != expected_peer_pk:
         raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = srv_pk
@@ -363,20 +413,33 @@ def initiator_complete(sess: NoiseSession, signer=None) -> bytes:
 
     signer: optional callable(msg)->sig for HSM-held identities.
     Exactly one M3 per session (handshake-cipher nonce reuse = forgery).
+    Initiator role binds DOMAIN_SEP_SIG_INIT.
     """
     if not sess.is_initiator or sess._peer_sig_pk is None \
             or sess._m3_done or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)
     h_for_sig = bytes(sess.sym.h)
-    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig)
+    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig, is_initiator=True)
     out = enc_pk + sess.sym.encrypt_and_hash(sig)
     sess._m3_done = True  # exactly one M3 per session (nonce reuse = forgery)
     return out
 
 
-def responder_complete(sess: NoiseSession, m3: bytes, expected_peer_pk: Optional[bytes] = None) -> None:
-    """Process M3: decrypt s, VERIFY sig_i BEFORE Split."""
+def responder_complete(
+    sess: NoiseSession,
+    m3: bytes,
+    expected_peer_pk: Optional[bytes] = None,
+    *,
+    allow_unpinned: bool = False,
+) -> None:
+    """Process M3: decrypt s, VERIFY sig_i BEFORE Split.
+
+    Fail-closed identity pinning: expected_peer_pk is required by default.
+    To accept an arbitrary unpinned peer, allow_unpinned=True must be explicitly set.
+    """
+    if expected_peer_pk is None and not allow_unpinned:
+        raise NoiseError("unpinned peer identity rejected: expected_peer_pk required (or set allow_unpinned=True)")
     if sess.is_initiator or sess._f_ss is None or sess._m3_done \
             or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
@@ -386,7 +449,7 @@ def responder_complete(sess: NoiseSession, m3: bytes, expected_peer_pk: Optional
     cli_pk = sess.sym.decrypt_and_hash(enc_pk)
     h_for_verify = sess.sym.h  # transcript through the signed message
     cli_sig = sess.sym.decrypt_and_hash(enc_sig)
-    _verify(cli_pk, h_for_verify, cli_sig)   # verify-before-derive
+    _verify(cli_pk, h_for_verify, cli_sig, is_initiator=True)   # verify-before-derive (initiator role)
     if expected_peer_pk is not None and cli_pk != expected_peer_pk:
         raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = cli_pk
