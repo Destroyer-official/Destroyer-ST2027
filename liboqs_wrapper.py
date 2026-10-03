@@ -156,41 +156,44 @@ import platform
 from ctypes.util import find_library
 
 def _find_liboqs_path() -> Path:
+    repo_dir = Path(__file__).resolve().parent
     candidates = []
     if platform.system() == "Windows":
-        candidates = [Path("oqs.dll"), Path("liboqs.dll"), Path(__file__).parent / "oqs.dll"]
+        # Strictly anchor to the audited repository directory to defeat DLL hijacking / CWD planting
+        candidates = [
+            repo_dir / "oqs.dll",
+            repo_dir / "liboqs.dll"
+        ]
     elif platform.system() == "Linux":
-        sys_path = find_library("oqs")
-        if sys_path:
-            candidates.append(Path(sys_path))
         candidates.extend([
-            Path("liboqs.so"),
-            Path("oqs.so"),
-            Path(__file__).parent / "liboqs.so",
+            repo_dir / "liboqs.so",
             Path("/usr/local/lib/liboqs.so"),
             Path("/usr/lib/liboqs.so"),
             Path("/usr/lib/x86_64-linux-gnu/liboqs.so"),
             Path("/usr/lib/aarch64-linux-gnu/liboqs.so")
         ])
-    else:  # Darwin / macOS
         sys_path = find_library("oqs")
         if sys_path:
             candidates.append(Path(sys_path))
+    else:  # Darwin / macOS
         candidates.extend([
-            Path("liboqs.dylib"),
+            repo_dir / "liboqs.dylib",
             Path("/usr/local/lib/liboqs.dylib"),
             Path("/opt/homebrew/lib/liboqs.dylib")
         ])
+        sys_path = find_library("oqs")
+        if sys_path:
+            candidates.append(Path(sys_path))
 
     for cand in candidates:
         try:
-            if cand.resolve().exists():
+            if cand.resolve().exists() and cand.is_file():
                 return cand.resolve()
         # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
         except Exception:  # nosec: B110
             pass
-    # Fallback to local default
-    return Path("oqs.dll").resolve()
+    # Fail-closed default anchored to repo directory
+    return (repo_dir / ("oqs.dll" if platform.system() == "Windows" else "liboqs.so")).resolve()
 
 LIBOQS_DLL_PATH = _find_liboqs_path()
 
@@ -656,10 +659,11 @@ class HybridKEM:
             if not hasattr(HybridKEM, '_military_validation_printed'):
                 quiet_print("MILITARY KEM ALGORITHMS VALIDATED: ML-KEM-1024 + McEliece-8192128f")
                 HybridKEM._military_validation_printed = True
-        except ImportError:
-            print("WARN  Military enforcement not available - proceeding with standard security")
+        except ImportError as e:
+            logger.critical("FATAL: Military security enforcement module missing in HybridKEM: %s", e)
+            raise ImportError(f"CRITICAL: Military enforcement required - failing closed: {e}") from e
         except Exception as e:
-            print(f"ALERT MILITARY SECURITY VIOLATION: {e}")
+            logger.critical(f"ALERT MILITARY SECURITY VIOLATION: {e}")
             raise
         if HybridKEM._cached_mlkem is None:
             HybridKEM._cached_mlkem = LibOQS_MLKEM_1024()
