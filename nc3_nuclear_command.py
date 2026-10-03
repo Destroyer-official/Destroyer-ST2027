@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-NC3 (Nuclear Command, Control, and Communications) Subsystem
-============================================================
-Military-Grade Emergency Action Message (EAM) & Permissive Action Link (PAL)
-Dual-Custody Protocol conforming to:
-- DoD Directive S-5210.41M (Two-Person Rule / Multi-Custody Security)
-- USSTRATCOM Emergency Action Procedures (EAP-STRAT)
-- CJCSI 3265.01 (NC3 Command & Control Message Security)
-- FIPS 140-3 Level 4 (Zeroization, Dual Custody, Platform Attestation)
-- NIST FIPS 204 (ML-DSA-87) & FIPS 203 (ML-KEM-1024)
+Two-Person Integrity (TPI) Dual-Custody Protocol & Synthetic Emergency Action Subsystem
+========================================================================================
+Software Research Implementation of Dual-Person Authorization (DPA) and Multi-Custody Security.
 
-Security Invariants:
-1. Two-Person Rule (2-of-2 Multi-Custody): No single officer can seal or release an EAM.
-2. Temporal Bounding: Strict 120-second validity window. Expired orders are rejected fail-closed.
-3. Cryptographic Authenticator: Dual post-quantum ML-DSA-87 signatures covering canonical payload.
-4. Split-Knowledge Encryption: Inner PAL payload encrypted with key split between custodians.
-5. Anti-Forensic Zeroization: DoD 5220.22-M 3-pass wiping of all plaintext buffers immediately post-use.
+RESEARCH EVALUATION NOTICE:
+This module is a software research implementation modeling Two-Person Integrity (TPI)
+cryptographic workflows (M-of-N threshold signatures, Shamir/Feldman VSS, and temporal
+authorization windows). All directives, keys, and classification banners (e.g., SI-OP-IA, NC3)
+are STRICTLY SYNTHETIC test fixtures for protocol modeling in unclassified environments.
+Operational Nuclear Command, Control, and Communications (NC3) requires dedicated
+NSA Type-1 certified cryptographic hardware, air-gapped buried infrastructure, and
+government-accredited physical enclosures.
+
+Modeled Protocol Invariants:
+- DoD Directive S-5210.41M (Two-Person Rule / Multi-Custody Security Protocol)
+- USSTRATCOM Emergency Action Procedures (EAP-STRAT Schema Modeling)
+- NIST FIPS 204 (ML-DSA-87) & FIPS 203 (ML-KEM-1024) Post-Quantum Tokens
+- Strict 120-second temporal lifetime and synchronized dual-authorization window
 """
 
 import os

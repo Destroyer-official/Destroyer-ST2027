@@ -636,19 +636,20 @@ class HybridKEM:
     """
     MILITARY-GRADE HYBRID KEY ENCAPSULATION MECHANISM
     
-    MILITARY SECURITY ENFORCEMENT ACTIVE
-    • ONLY APPROVED ALGORITHMS: ML-KEM-1024 + McEliece-8192128f
-    • KEY DERIVATION: HKDF-SHA384 ONLY
-    • NO FALLBACKS PERMITTED
-    • FAIL CLOSED SECURITY MODEL
+    DUAL POST-QUANTUM RESEARCH AGILITY KEM (LATTICE + CODE-BASED HEDGE)
     
-    This implementation provides maximum security by combining two fundamentally different
-    cryptographic approaches:
-    - ML-KEM-1024: Fast lattice-based KEM (NIST FIPS 203)
-    - McEliece-8192128f: Conservative code-based KEM (unbroken since 1978)
+    RESEARCH AGILITY RESERVE CONFIGURATION:
+    • ALGORITHMS: ML-KEM-1024 (Lattice, NIST FIPS 203) + McEliece-8192128f (Code-based hedge)
+    • KEY DERIVATION: HKDF-SHA384 combining both shared secrets
+    • ROLE: Experimental post-quantum diversity hedge (Standard CNSA 2.0 uses ML-KEM-1024)
+    • FAIL CLOSED: No classical fallbacks permitted; missing enforcement halts execution
     
-    The final shared secret is derived using HKDF-SHA384, combining both shared secrets.
-    An attacker must break BOTH algorithms to compromise the session key.
+    This experimental class provides cryptographic hedge diversity by combining two fundamentally
+    different mathematical hardness assumptions:
+    - ML-KEM-1024: Primary NIST/CNSA 2.0 standard (Module-LWE hardness)
+    - McEliece-8192128f: Conservative code-based KEM (Goppa codes, unbroken since 1978)
+    
+    The final shared secret is derived using HKDF-SHA384 combining both encapsulations.
     """
     
     _cached_mlkem = None
