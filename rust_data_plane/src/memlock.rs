@@ -89,6 +89,22 @@ impl LockedKey32 {
         Self { inner, locked }
     }
 
+    /// Parse hex directly into a page-locked, zeroized container,
+    /// avoiding any intermediate secret copy on the stack.
+    pub fn from_hex(hex: &str) -> Result<Self, &'static str> {
+        let clean = hex.trim();
+        if clean.len() != 64 {
+            return Err("key must be exactly 64 hex characters (32 bytes)");
+        }
+        let mut inner = Box::new(Zeroizing::new([0u8; 32]));
+        let locked = lock_slice(&inner[..]);
+        for (i, chunk) in clean.as_bytes().chunks_exact(2).enumerate() {
+            let s = std::str::from_utf8(chunk).map_err(|_| "bad hex encoding")?;
+            inner[i] = u8::from_str_radix(s, 16).map_err(|_| "bad hex digit")?;
+        }
+        Ok(Self { inner, locked })
+    }
+
     /// Borrow the secret for a single copy-out. Keep the borrow short:
     /// every extra live copy is a wiping liability.
     pub fn as_bytes(&self) -> &[u8; 32] {

@@ -164,6 +164,15 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
                 fail("key file must be 0600 (group/other readable refused)");
             }
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            let attrs = meta.file_attributes();
+            // Refuse reparse points (symlinks/mount points)
+            if attrs & 0x400 != 0 {
+                fail("key file must not be a reparse point or symlink");
+            }
+        }
         let mut s = String::with_capacity(128);
         file.read_to_string(&mut s).unwrap_or_else(|_| fail("key file read failed"));
         // Zeroize the file buffer copy held by Rust String after parse.
@@ -177,14 +186,12 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
             .unwrap_or_else(|_| fail("key stdin unreadable"));
         Zeroizing::new(s)
     };
-    let mut bytes = parse_key_hex(&hex_z);
+    // Direct in-place parse into page-locked buffer: zero stack copies of raw secret
+    let out = LockedKey32::from_hex(&hex_z).unwrap_or_else(|e| fail(e));
     hex_z.zeroize();
-    let digest = Sha384::digest(&bytes);
+    let digest = Sha384::digest(out.as_bytes());
     let mut key_id = [0u8; 16];
     key_id.copy_from_slice(&digest[..16]);
-    // Caller builds FrameKey then drops the guard (unlock + wipe).
-    let out = LockedKey32::new(bytes);
-    bytes.zeroize();
     (out, key_id)
 }
 
@@ -386,7 +393,7 @@ fn cmd_send(args: &[String]) {
     }
     // Reserve BEFORE encrypt: crash skips, never reuses (NIST SP 800-38D).
     let seq = reserve_send_seq(&state, &key_id, 1);
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
     let frame = aead::seal(&key, seq, DIR_SEND, FTYPE_MSG, msg.as_bytes())
         .unwrap_or_else(|_| fail("seal failed"));
@@ -421,7 +428,7 @@ fn cmd_recv(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(5000);
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
     // Hold the state lock for the whole recv session so concurrent
     // receivers cannot accept the same seq twice.
@@ -596,7 +603,7 @@ fn cmd_send_file(args: &[String]) {
     }
     // Reserve the full range BEFORE sealing any chunk.
     let seq0 = reserve_send_seq(&state, &key_id, n);
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -641,7 +648,7 @@ fn cmd_recv_file(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(15000);
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
     let send_preserve: u64 = {
@@ -850,7 +857,7 @@ fn cmd_diode_send(args: &[String]) {
 
     let n = (k + m) as u64;
     let seq0 = reserve_send_seq(&state, &key_id, n);
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -919,7 +926,7 @@ fn cmd_diode_recv(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .and_then(|s| s.parse().ok())
         .unwrap_or(20000);
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
@@ -1093,7 +1100,7 @@ fn cmd_stream_chaff(args: &[String]) {
         fail("bad --quantum: must be 256, 512, or 1232");
     }
 
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -1184,7 +1191,7 @@ fn cmd_channel(args: &[String]) {
         (DIR_SEND, DIR_RECV)
     };
 
-    let key = FrameKey::from_bytes(*kb.as_bytes());
+    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
     let mut state_file = open_locked_state(&state);

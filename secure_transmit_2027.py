@@ -566,15 +566,18 @@ def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
             raise SecurityError("handshake size violation")
         sig_pk, _sig_sk, signer = _xxhfs_identity(kp)
         _npq.initiator_finish(sess, bytes(m2))  # verify sig_r BEFORE derive
+        peer_pk = sess._peer_sig_pk
+        # IDENTITY-HIDING PROPERTY (SIGMA / Noise XX): Gating the responder's identity
+        # BEFORE emitting M3 ensures the initiator's identity (s) is NEVER transmitted
+        # to an untrusted, unverified, or rogue peer.
+        _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,
+                          peer_subject, "cli:")
         m3 = _npq.initiator_complete(sess, signer=signer)
         k_s, k_r, h = _npq.split_session(sess)
         okm = _xxhfs_record_key(k_s, k_r, h, True)
         st = HandshakeState(role="client", peer_id=peer_id)
         st._secure = SecureBytes(okm)
         st.created = _now()
-        peer_pk = sess._peer_sig_pk
-        _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,
-                          peer_subject, "cli:")
         audit_event("handshake_xxhfs_client_ok", {"peer": peer_id})
         return m3, st
     except SecurityError:
@@ -611,14 +614,15 @@ def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
             raise SecurityError("handshake size violation")
         sig_pk, _sig_sk, _signer = _xxhfs_identity(kp)
         _npq.responder_complete(sess, bytes(m3))  # verify sig_i BEFORE Split
+        peer_pk = sess._peer_sig_pk
+        # GATE BEFORE SPLIT: Verify initiator's identity before deriving transport keys
+        _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,
+                          peer_subject, "srv:")
         k_s, k_r, h = _npq.split_session(sess)
         okm = _xxhfs_record_key(k_s, k_r, h, False)
         st = HandshakeState(role="server", peer_id=peer_id)
         st._secure = SecureBytes(okm)
         st.created = _now()
-        peer_pk = sess._peer_sig_pk
-        _xxhfs_peer_gates(sig_pk, peer_pk, peer_id, peer_cert,
-                          peer_subject, "srv:")
         audit_event("handshake_xxhfs_server_ok", {"peer": peer_id})
         return st
     except SecurityError:

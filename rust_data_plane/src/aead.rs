@@ -30,6 +30,12 @@ impl FrameKey {
         FrameKey(Key::<Aes256Gcm>::from(bytes))
     }
 
+    /// Construct FrameKey directly from a borrowed 32-byte secret slice,
+    /// avoiding intermediate by-value copies.
+    pub fn from_slice(slice: &[u8; 32]) -> Self {
+        FrameKey(Key::<Aes256Gcm>::from(*slice))
+    }
+
     /// Derive a frame key from a 32-byte ratchet secret via HKDF-SHA512.
     /// `info` MUST be domain-separated per use (e.g. b"destroyer/frame/v1").
     pub fn derive(secret: &[u8; 32], info: &[u8]) -> Self {
