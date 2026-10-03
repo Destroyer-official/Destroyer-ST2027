@@ -675,20 +675,23 @@ ST2027 provides 5 independent, fail-closed transport channels engineered for cla
 # 1. Master Defense Hardening Audit (10/10 Gates Verified, ML-DSA-87 Signed Receipt):
 python scripts/run_defense_audit.py
 
-# 2. Master Military Battle-Readiness Test (12/12 Trials Passed, 100% Operational):
-python master_military_battle_readiness_test.py
+# 2. Master Tactical Battle-Readiness Drill (100% In-Band Directives & Purge):
+python destroyer_tactical_p2p.py demo
 
-# 3. 50X Sovereign Defense Superiority Benchmark (5/5 Vectors Verified):
+# 3. Comprehensive Multi-Trial Battle Readiness Suite (12/12 Trials Passed):
+python tests/scratch/master_military_battle_readiness_test.py
+
+# 4. 50X Sovereign Defense Superiority Benchmark (5/5 Vectors Verified):
 python scripts/verify_50x_sovereign_superiority.py
 
-# 4. SLSA Level 3+ Reproducible Build Verification:
+# 5. SLSA Level 3+ Reproducible Build Verification:
 python scripts/verify_reproducible_build.py
 
-# 5. Rust Data Plane Unit & Formal Harness Tests (80/80 Passed):
+# 6. Rust Data Plane Unit & Formal Harness Tests (80/80 Passed):
 cargo test --manifest-path rust_data_plane/Cargo.toml
 
-# 6. Standalone Executable Integration Battery (16/16 Passed):
-pytest test_rust_standalone_binary.py
+# 7. Standalone Executable Integration Battery (16/16 Passed):
+pytest tests/test_rust_standalone_binary.py
 ```
 
 ---
