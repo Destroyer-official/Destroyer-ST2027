@@ -15,7 +15,15 @@ docs/
 ├── SYSTEM_SECURITY_DOCUMENTATION.md         # Master Engineering Record & Tier 0-7 Architecture (Vol A)
 ├── SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md   # AST Mechanical Logic Flows & Parameter Catalog (Vol C)
 ├── security_audit_report.md                 # Defensive Security Audit & 63-Finding Remediation Matrix
+├── SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md # Master engineering specification & state machines
+├── COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md # 50X defense superiority white paper vs Signal/CDS
+├── ST2027_SPEC.md                           # Top-Secret sovereign transport specification & wire formats
+├── ST2027_RESEARCH_SOURCES_2026-09-30.md    # Academic research citations, RFCs, and literature survey
+├── DEFENSE_HARDENING_MASTER_PLAN.md         # Strategic defense hardening roadmap & verification criteria
 ├── OPEN_INTERNET_HARDENING_PLAN.md          # Sovereign Direct IPv6 P2P Transport & Hardening Blueprint
+├── ST2027_IMPLEMENTATION_PLAN.md            # Multi-phase engineering implementation & migration plan
+├── RESTRUCTURE_PLAN.md                      # Codebase restructuring & legacy testbed quarantine plan
+├── EVALUATION_DOSSIER.md                    # Formal defense evaluation dossier for accredited lab testing
 ├── CONOPS_TACTICAL_DEPLOYMENT.md            # Tactical concept of operations in DDIL environments
 ├── FIPS_140_3_SECURITY_POLICY.md            # FIPS 140-3 Cryptographic Module Security Policy (CMSP target)
 ├── NIAP_COMMON_CRITERIA_SECURITY_TARGET.md  # NIAP NDcPP / Common Criteria EAL4+ Security Target (target)
@@ -30,6 +38,7 @@ docs/
 ├── incident_response.md                     # Post-compromise recovery and incident handling runbook
 ├── liboqs_pin.md                            # Native LibOQS DLL build hashes and pin provenance
 ├── formal/                                  # Machine-checked formal verification models
+│   ├── README.md                            # Formal verification architecture & proof index
 │   ├── st2027_handshake.pv                  # ProVerif model: hybrid secrecy & mutual auth proof
 │   ├── st2027_pcs.pv                        # ProVerif model: post-compromise security (PCS) healing
 │   └── handshake_model.pv                   # Structural baseline handshake model
@@ -85,11 +94,11 @@ The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`]
 The codebase is validated by the full automated battery (Python suites plus 80 cargo-test Rust tests: 51 library unit tests + 29-test harness binary) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
 ```bash
 # Execute the unified 2027 Top-Secret test battery
-pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py \
-       test_noise_pq_purity.py test_proverif_st2027.py test_spo_dpo.py \
-       test_transport_anonymity.py test_trust_anchor.py test_ts_attest.py \
-       test_hw_readiness.py test_runbooks_ps.py test_rust_standalone_binary.py \
-       test_no_marketing_buzzwords_property.py test_no_emoji_property.py -v
+pytest tests/test_ts_hw_layer.py tests/test_ts_runtime.py tests/test_secure_transmit_2027.py \
+       tests/test_noise_pq_purity.py tests/test_proverif_st2027.py tests/test_spo_dpo.py \
+       tests/test_transport_anonymity.py tests/test_trust_anchor.py tests/test_ts_attest.py \
+       tests/test_hw_readiness.py tests/test_runbooks_ps.py tests/test_rust_standalone_binary.py \
+       tests/test_no_marketing_buzzwords_property.py tests/test_no_emoji_property.py -v
 
 # Execute the native Rust data-plane test battery
 cargo test --manifest-path rust_data_plane/Cargo.toml
