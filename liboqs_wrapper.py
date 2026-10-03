@@ -88,13 +88,15 @@ def _check_native_sig(signature: bytes, sig_size: int, alg: str) -> bytes:
     return bytes(signature)
 
 
-# --- Decaps DFR / fault-injection counters (non-breaking, observability only) ---
-# Tracks native liboqs KEM decapsulation outcomes for decapsulation-failure /
-# fault-attack detection (cf. 2009 DF oracle work; 2025 ML-KEM fault analyses).
-# Success path is UNCHANGED (same return values, same exceptions); only counters
-# + warning/CRITICAL logs are added. needs-manual-review: if the authoritative
-# decaps path is pqc_algorithms.EnhancedMLKEM_1024 or forward_secrecy_manager,
-# keep these counters mirrored there.
+# --- Decaps DFR / native FFI error counters (non-breaking, observability only) ---
+# Tracks native liboqs KEM decapsulation outcomes for native error detection.
+# NOTE ON ML-KEM IMPLICIT REJECTION (NIST FIPS 203):
+# Under standard IND-CCA2 security, ML-KEM employs the Fujisaki-Okamoto (FO) transform
+# with implicit rejection. Corrupted or invalid ciphertexts do NOT produce an OQS_ERROR;
+# instead, decapsulation deterministically outputs a pseudorandom key derived from the
+# ciphertext and secret seed. Therefore, this counter specifically tracks low-level FFI,
+# memory-corruption, or explicit API failure returns from OQS_KEM_decaps, rather than
+# standard in-band ciphertext rejection.
 _DECAPS_TOTAL = 0
 _DECAPS_FAIL = 0
 _DECAPS_LOCK = threading.Lock()
@@ -209,32 +211,41 @@ if not LIBOQS_DLL_PATH.exists():
 else:
     print(f"Found liboqs library at: {LIBOQS_DLL_PATH}")
 
-# --- Verify DLL Security Before Loading (Windows only, mandatory) ---
-if LIBOQS_DLL_PATH.suffix == '.dll':
-    try:
-        dll_name = LIBOQS_DLL_PATH.name  # Get filename (oqs.dll or liboqs.dll)
-        print(f"Performing security verification of {dll_name}...")
+# --- Verify Native Dynamic Library Security Before Loading ---
+try:
+    lib_name = LIBOQS_DLL_PATH.name
+    print(f"Performing security verification of {lib_name}...")
 
-        # Use the appropriate verification function based on DLL name
-        if dll_name == "liboqs.dll":
+    if lib_name in ("oqs.dll", "liboqs.dll"):
+        # Vendored binary: verified against embedded Ed25519 signature and SHA-384 pin
+        if lib_name == "liboqs.dll":
             verification_result = verify_liboqs_dll(str(LIBOQS_DLL_PATH))
         else:
-            # For oqs.dll, use critical dependency verification
             from dependency_security_verifier import verify_critical_dependency
-            verification_result = verify_critical_dependency(dll_name, str(LIBOQS_DLL_PATH))
+            verification_result = verify_critical_dependency(lib_name, str(LIBOQS_DLL_PATH))
 
         if verification_result:
-            print(f"[OK] {dll_name} security verification passed")
+            print(f"[OK] {lib_name} security verification passed")
         else:
-            print(f"[FAIL] {dll_name} security verification failed")
-            raise ImportError(f"{dll_name} failed security verification - loading blocked")
+            print(f"[FAIL] {lib_name} security verification failed")
+            raise ImportError(f"{lib_name} failed security verification - loading blocked")
+    else:
+        # Linux (.so) or macOS (.dylib): enforce absolute path existence, regular file, and basic safety
+        if not LIBOQS_DLL_PATH.is_file():
+            raise ImportError(f"Target shared library {LIBOQS_DLL_PATH} is not a valid regular file")
+        # Ensure path is not world-writable on POSIX
+        if hasattr(os, 'stat'):
+            st = os.stat(str(LIBOQS_DLL_PATH))
+            if hasattr(st, 'st_mode') and (st.st_mode & 0o002):
+                raise ImportError(f"FATAL: Shared library {LIBOQS_DLL_PATH} is world-writable (insecure permissions)")
+        print(f"[OK] {lib_name} file integrity and permission verification passed")
 
-    except DependencySecurityError as e:
-        print(f"[FAIL] {dll_name} security verification error: {e}")
-        raise ImportError(f"{dll_name} security verification failed: {e}")
-    except Exception as e:
-        print(f"[FAIL] {dll_name} security verification encountered an error: {e}")
-        raise ImportError(f"{dll_name} security verification failed: {e}")
+except DependencySecurityError as e:
+    print(f"[FAIL] Native library security verification error: {e}")
+    raise ImportError(f"{LIBOQS_DLL_PATH.name} security verification failed: {e}")
+except Exception as e:
+    print(f"[FAIL] Native library security verification encountered an error: {e}")
+    raise ImportError(f"{LIBOQS_DLL_PATH.name} security verification failed: {e}")
 
 
 # --- Load the library ---

@@ -31,6 +31,26 @@ The transport layer statistically masks traffic against localized observers (ISP
 
 ---
 
+## 0. Evaluator Disclosures & Architectural Scope Boundaries (Read This First)
+
+To maintain absolute scientific honesty and avoid any unearned accreditation claims, the following boundaries govern this repository:
+
+1. **Independent Reference Implementation (No Government ATO):**
+   This repository contains an independent research implementation, mathematical specifications, and automated verification testbeds. Execution of automated test batteries and generation of OSCAL artifacts does **NOT** constitute an official government Authority to Operate (ATO), Common Criteria EAL4+ certificate, or NIST CMVP FIPS 140-3 laboratory certification. Formal accreditation requires evaluation by an accredited third-party laboratory and an Authorizing Official (AO).
+2. **Physical vs. Software Gatekeeper Boundary:**
+   User-space software acts strictly as an algorithmic enforcement engine and fail-closed gatekeeper (`TSRequiredError`). Physical FIPS 140-3 Level 3/4 tamper-proof enclosures, TEMPEST SDIP-27/28 RF attenuation, and physical optical unidirectional glass diodes must be procured from accredited hardware vendors.
+3. **Transport Layering Disambiguation (Tor vs. UDP):**
+   - **Public Internet / Anonymity Transit:** Operates exclusively via **Tor v3 Onion Services over TCP SOCKS5** (RFC 1928).
+   - **Tactical Military / Radio / Cross-Domain Transit:** Operates over **UDP IPv6** with 1232-byte fixed-rate cell quantization (1232 + 40 + 8 = 1280 IPv6 minimum MTU).
+   - *Tor carries only TCP; UDP datagrams are never tunneled into Tor.*
+4. **Synthetic Test Data & Protocol Schemas:**
+   All cryptographic keys, identities, certificates, and tactical directives (MIL-STD-6090 Cursor-on-Target, Two-Person Integrity, Emergency Action Messages) in this repository are **100% synthetic, unclassified, and executed in local test harnesses**.
+5. **Algorithmic Baseline vs. Agility Reserves:**
+   - **Mandatory Production Baseline:** Strict NSA CNSA Suite 2.0 (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**).
+   - **Quarantined Diversity Reserve:** High-latency code-based KEMs (Classic McEliece-8192128f with 1.3 MB public keys) and lattice signatures (Falcon-1024) are maintained strictly as experimental agility reserves against future cryptanalysis, not default line-rate transport ciphers.
+
+---
+
 ## 1. System Architectures: Sovereign Pipeline vs. Quarantined Research Prototype
 
 To preserve complete engineering truth and auditability, this repository maintains an absolute architectural separation between the modern 2027 production target and the quarantined historical prototype:
@@ -667,8 +687,8 @@ ST2027 provides 5 independent, fail-closed transport channels engineered for cla
    - Ephemeral keys wiped from locked memory (`VirtualLock`/`mlock`) upon message consumption.
 4. **MIL-STD-6090 Cursor-on-Target (CoT) Situational Awareness**:
    - Real-time tactical tracks signed with FIPS 204 ML-DSA-87 with fail-closed tamper detection.
-5. **Two-Person Integrity (TPI) Nuclear Command (NC3) Conduit**:
-   - Dual-custody cryptographic token verification for high-consequence orders and Permissive Action Links.
+5. **Two-Person Integrity (TPI) Dual-Custody Command Verification**:
+   - Dual-custody cryptographic token verification (M-of-N threshold signatures) for high-consequence administrative actions and sensitive emergency directives.
 
 #### Verification Test Commands:
 ```bash
