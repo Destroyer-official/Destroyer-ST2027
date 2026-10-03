@@ -76,15 +76,15 @@ docs/
 
 ## 2. Core 2027 Architecture: The 5 Strategic Pillars
 
-The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py) across 5 fail-closed pillars:
+The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`](secure_transmit_2027.py) across 5 fail-closed pillars:
 
 | Pillar | Focus Area | Primary Source Files | Primary Specifications & Module Docs |
 |---|---|---|---|
-| **Pillar 1** | **Hardware & Physical Security** | [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py)<br>[`cng_platform.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cng_platform.py) | [modules/ts_hw_layer.md](modules/ts_hw_layer.md)<br>[FIPS_140_3_SECURITY_POLICY.md](FIPS_140_3_SECURITY_POLICY.md)<br>[hw_tpm_hsm_setup.md](hw_tpm_hsm_setup.md) |
-| **Pillar 2** | **OS & Execution Runtime** | [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py)<br>[`ts_rt/src/lib.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs)<br>[`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py) | [modules/ts_runtime.md](modules/ts_runtime.md)<br>[deployment_hardening_guide.md](deployment_hardening_guide.md)<br>[ARCHITECTURE.md §3-§6](ARCHITECTURE.md) |
-| **Pillar 3** | **Cryptography & Protocol** | [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py)<br>[`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py)<br>[`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) | [modules/noise_pq.md](modules/noise_pq.md)<br>[formal/st2027_handshake.pv](formal/st2027_handshake.pv)<br>[formal/st2027_pcs.pv](formal/st2027_pcs.pv) |
-| **Pillar 4** | **Network Anonymity & Shaping** | [`transport_anonymity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py)<br>[`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py) | [modules/transport_anonymity.md](modules/transport_anonymity.md)<br>[MILITARY_NC3_DEPLOYMENT_GUIDE.md](MILITARY_NC3_DEPLOYMENT_GUIDE.md)<br>[CONOPS_TACTICAL_DEPLOYMENT.md](CONOPS_TACTICAL_DEPLOYMENT.md) |
-| **Pillar 5** | **Trust Infrastructure & PKI** | [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py) | [modules/trust_anchor.md](modules/trust_anchor.md)<br>[KEY_CEREMONY.md](KEY_CEREMONY.md)<br>[KEY_MANAGEMENT_PLAN_KMP.md](KEY_MANAGEMENT_PLAN_KMP.md) |
+| **Pillar 1** | **Hardware & Physical Security** | [`ts_hw_layer.py`](ts_hw_layer.py)<br>[`cng_platform.py`](cng_platform.py) | [modules/ts_hw_layer.md](modules/ts_hw_layer.md)<br>[FIPS_140_3_SECURITY_POLICY.md](FIPS_140_3_SECURITY_POLICY.md)<br>[hw_tpm_hsm_setup.md](hw_tpm_hsm_setup.md) |
+| **Pillar 2** | **OS & Execution Runtime** | [`ts_runtime.py`](ts_runtime.py)<br>[`ts_rt/src/lib.rs`](ts_rt/src/lib.rs)<br>[`ts_attest.py`](ts_attest.py) | [modules/ts_runtime.md](modules/ts_runtime.md)<br>[deployment_hardening_guide.md](deployment_hardening_guide.md)<br>[ARCHITECTURE.md §3-§6](ARCHITECTURE.md) |
+| **Pillar 3** | **Cryptography & Protocol** | [`noise_pq.py`](noise_pq.py)<br>[`cnsa_purity.py`](cnsa_purity.py)<br>[`crypto_selftest.py`](crypto_selftest.py) | [modules/noise_pq.md](modules/noise_pq.md)<br>[formal/st2027_handshake.pv](formal/st2027_handshake.pv)<br>[formal/st2027_pcs.pv](formal/st2027_pcs.pv) |
+| **Pillar 4** | **Network Anonymity & Shaping** | [`transport_anonymity.py`](transport_anonymity.py)<br>[`spo_dpo.py`](spo_dpo.py) | [modules/transport_anonymity.md](modules/transport_anonymity.md)<br>[MILITARY_NC3_DEPLOYMENT_GUIDE.md](MILITARY_NC3_DEPLOYMENT_GUIDE.md)<br>[CONOPS_TACTICAL_DEPLOYMENT.md](CONOPS_TACTICAL_DEPLOYMENT.md) |
+| **Pillar 5** | **Trust Infrastructure & PKI** | [`trust_anchor.py`](trust_anchor.py) | [modules/trust_anchor.md](modules/trust_anchor.md)<br>[KEY_CEREMONY.md](KEY_CEREMONY.md)<br>[KEY_MANAGEMENT_PLAN_KMP.md](KEY_MANAGEMENT_PLAN_KMP.md) |
 
 ---
 

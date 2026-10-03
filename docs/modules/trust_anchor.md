@@ -10,7 +10,7 @@ This module implements **Pillar 5: Trust Infrastructure & Post-Quantum PKI** for
 
 | Source File | Lines | Primary Security Responsibilities |
 |---|---|---|
-| [`trust_anchor.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/trust_anchor.py) | ~530 | 3-of-5 threshold ML-DSA-87 Root CA, strict certificate issuance/validation, threshold CRL revocation, and amnesia storage. |
+| [`trust_anchor.py`](trust_anchor.py) | ~530 | 3-of-5 threshold ML-DSA-87 Root CA, strict certificate issuance/validation, threshold CRL revocation, and amnesia storage. |
 
 ---
 

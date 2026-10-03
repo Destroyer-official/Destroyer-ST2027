@@ -10,9 +10,9 @@ This module implements **Pillar 2: OS & Execution Runtime** for the 2027 Top-Sec
 
 | Source File | Lines | Primary Security Responsibilities |
 |---|---|---|
-| [`ts_runtime.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py) | ~650 | Operating system platform gate (seL4 vs AO test waiver + VBS/HVCI), anti-DMA bus scan, native library binding. |
-| [`ts_rt/src/lib.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs) | ~400 | Native zero-dependency Rust crate (`ts_rt.dll`) providing OS page locking (`VirtualLock`), volatile memory wiping, and branchless anti-replay sliding window. |
-| [`ts_attest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py) | ~180 | IETF RATS (RFC 9334) platform evidence packaging and TPM quote attestation. |
+| [`ts_runtime.py`](ts_runtime.py) | ~650 | Operating system platform gate (seL4 vs AO test waiver + VBS/HVCI), anti-DMA bus scan, native library binding. |
+| [`ts_rt/src/lib.rs`](ts_rt/src/lib.rs) | ~400 | Native zero-dependency Rust crate (`ts_rt.dll`) providing OS page locking (`VirtualLock`), volatile memory wiping, and branchless anti-replay sliding window. |
+| [`ts_attest.py`](ts_attest.py) | ~180 | IETF RATS (RFC 9334) platform evidence packaging and TPM quote attestation. |
 
 ---
 

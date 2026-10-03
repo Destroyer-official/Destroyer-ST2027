@@ -60,7 +60,7 @@ def verify_ed25519_signature(binary_path: Path, sig_path: Path, pub_path: Path) 
 
 def run_reproducible_build_verification():
     print("=" * 78)
-    print("REPRODUCIBLE BUILD & SUPPLY CHAIN INTEGRITY VERIFICATION (SLSA LEVEL 3+)")
+    print("REPRODUCIBLE BUILD & SUPPLY CHAIN INTEGRITY VERIFICATION (SLSA-ALIGNED)")
     print("=" * 78)
 
     reports_dir = PROJECT_ROOT / "compliance_reports"
@@ -68,7 +68,7 @@ def run_reproducible_build_verification():
 
     results = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "verification_standard": "SLSA Level 3+ / NIST SP 800-161 / FIPS 140-3",
+        "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
         "binaries": {},
         "core_modules": {},
         "sbom_status": {},

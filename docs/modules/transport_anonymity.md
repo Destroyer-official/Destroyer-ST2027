@@ -10,8 +10,8 @@ This module implements **Pillar 4: Network Anonymity & Traffic Shaping** for the
 
 | Source File | Lines | Primary Security Responsibilities |
 |---|---|---|
-| [`transport_anonymity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py) | ~800 | SOCKS5 Tor client with remote DNS, sovereign APN pinning, 50ms constant-rate cell scheduler, 1232B cell framing, AES-256-CTR whitening. |
-| [`spo_dpo.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/spo_dpo.py) | ~350 | DoD Directive S-5210.41M Single Persona / Dual Persona Operator (DPO) two-person integrity enforcement with a 2.0s hardware window. |
+| [`transport_anonymity.py`](transport_anonymity.py) | ~800 | SOCKS5 Tor client with remote DNS, sovereign APN pinning, 50ms constant-rate cell scheduler, 1232B cell framing, AES-256-CTR whitening. |
+| [`spo_dpo.py`](spo_dpo.py) | ~350 | DoD Directive S-5210.41M Single Persona / Dual Persona Operator (DPO) two-person integrity enforcement with a 2.0s hardware window. |
 
 ---
 

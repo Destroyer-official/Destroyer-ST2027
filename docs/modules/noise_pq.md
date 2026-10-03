@@ -10,11 +10,11 @@ This module implements **Pillar 3: Cryptography & Protocol Architecture** for th
 
 | Source File | Lines | Primary Security Responsibilities |
 |---|---|---|
-| [`noise_pq.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/noise_pq.py) | ~450 | `Noise_XXhfs` hybrid handshake using `SecP384r1MLKEM1024` and `ML-DSA-87` mutual authentication. |
-| [`cnsa_purity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cnsa_purity.py) | ~260 | CNSA 2.0 policy enforcer; validates token purity and quarantines non-CNSA algorithms. |
-| [`crypto_selftest.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto_selftest.py) | ~320 | FIPS 140-3 synchronous power-up KATs, conditional PCTs, and AST entropy enforcement. |
-| [`docs/formal/st2027_handshake.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_handshake.pv) | ~140 | Formal ProVerif 2.05 model for payload secrecy and injective mutual authentication. |
-| [`docs/formal/st2027_pcs.pv`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_pcs.pv) | ~150 | Formal ProVerif 2.05 model for post-compromise security (PCS) healing. |
+| [`noise_pq.py`](noise_pq.py) | ~450 | `Noise_XXhfs` hybrid handshake using `SecP384r1MLKEM1024` and `ML-DSA-87` mutual authentication. |
+| [`cnsa_purity.py`](cnsa_purity.py) | ~260 | CNSA 2.0 policy enforcer; validates token purity and quarantines non-CNSA algorithms. |
+| [`crypto_selftest.py`](crypto_selftest.py) | ~320 | FIPS 140-3 synchronous power-up KATs, conditional PCTs, and AST entropy enforcement. |
+| [`docs/formal/st2027_handshake.pv`](docs/formal/st2027_handshake.pv) | ~140 | Formal ProVerif 2.05 model for payload secrecy and injective mutual authentication. |
+| [`docs/formal/st2027_pcs.pv`](docs/formal/st2027_pcs.pv) | ~150 | Formal ProVerif 2.05 model for post-compromise security (PCS) healing. |
 
 ---
 

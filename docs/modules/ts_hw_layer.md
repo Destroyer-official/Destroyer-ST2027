@@ -10,8 +10,8 @@ This module implements **Pillar 1: Hardware & Physical Security** for the 2027 T
 
 | Source File | Lines | Primary Security Responsibilities |
 |---|---|---|
-| [`ts_hw_layer.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py) | ~1,100 | OpenSSL FIPS provider probe, RED/BLACK interface separation, TEMPEST registry, optical data diode framing, zeroization mesh. |
-| [`cng_platform.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cng_platform.py) | ~250 | Microsoft Windows Cryptography API: Next Generation (CNG) TPM 2.0 non-exportable hardware key custody. |
+| [`ts_hw_layer.py`](ts_hw_layer.py) | ~1,100 | OpenSSL FIPS provider probe, RED/BLACK interface separation, TEMPEST registry, optical data diode framing, zeroization mesh. |
+| [`cng_platform.py`](cng_platform.py) | ~250 | Microsoft Windows Cryptography API: Next Generation (CNG) TPM 2.0 non-exportable hardware key custody. |
 
 ---
 
