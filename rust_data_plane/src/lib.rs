@@ -189,8 +189,99 @@ impl SecureEngine {
     }
 }
 
+/// Native Hybrid Key Exchange (X25519 + ML-KEM-1024) exposed to Python.
+/// Ephemeral private keys and raw shared secrets remain sealed and zeroized in Rust memory.
+#[pyclass]
+pub struct NativeHybridKex {
+    keys: Option<kem::EphemeralKeys>,
+}
+
+#[pymethods]
+impl NativeHybridKex {
+    #[new]
+    pub fn new() -> PyResult<Self> {
+        let keys = kem::EphemeralKeys::generate()
+            .map_err(|e| PyValueError::new_err(format!("KEX keygen failed: {e:?}")))?;
+        Ok(NativeHybridKex { keys: Some(keys) })
+    }
+
+    /// Return our ephemeral public keys: (x25519_pub_32B, mlkem1024_ek_1568B).
+    pub fn get_public_keys(&self) -> PyResult<(Vec<u8>, Vec<u8>)> {
+        let keys = self.keys.as_ref().ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
+        Ok((keys.x_public.to_vec(), keys.ml_ek.clone()))
+    }
+
+    /// Responder encapsulation: encapsulate against peer's (x_pub, ml_ek).
+    /// Returns (eph_x_pub_32B, ml_ct_1568B, session_key_32B).
+    #[staticmethod]
+    pub fn encapsulate_to_peer(
+        peer_x_pub: Vec<u8>,
+        peer_ml_ek: Vec<u8>,
+        transcript_hash: Vec<u8>,
+    ) -> PyResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if peer_x_pub.len() != 32 {
+            return Err(PyValueError::new_err("peer_x_pub must be 32 bytes"));
+        }
+        if peer_ml_ek.len() != kem::MLKEM_PK {
+            return Err(PyValueError::new_err(format!(
+                "peer_ml_ek must be {} bytes, got {}",
+                kem::MLKEM_PK,
+                peer_ml_ek.len()
+            )));
+        }
+        let mut x_arr = [0u8; 32];
+        x_arr.copy_from_slice(&peer_x_pub);
+        let (ct, hybrid_ss, eph_pub) = kem::EphemeralKeys::encapsulate(&x_arr, &peer_ml_ek)
+            .map_err(|e| PyValueError::new_err(format!("encapsulate failed: {e:?}")))?;
+
+        let session_key = if transcript_hash.len() == 48 {
+            let mut th = [0u8; 48];
+            th.copy_from_slice(&transcript_hash);
+            kem::derive_session_key_transcript(&hybrid_ss, None, &th)
+        } else {
+            kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V1")
+        };
+        Ok((eph_pub.to_vec(), ct, session_key.to_vec()))
+    }
+
+    /// Initiator decapsulation: decapsulate peer's (eph_x_pub, ml_ct) and derive 32B session key.
+    pub fn decapsulate_session_key(
+        &mut self,
+        peer_eph_x_pub: Vec<u8>,
+        peer_ml_ct: Vec<u8>,
+        transcript_hash: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        let keys = self.keys.as_ref().ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
+        if peer_eph_x_pub.len() != 32 {
+            return Err(PyValueError::new_err("peer_eph_x_pub must be 32 bytes"));
+        }
+        if peer_ml_ct.len() != kem::MLKEM_CT {
+            return Err(PyValueError::new_err(format!(
+                "peer_ml_ct must be {} bytes, got {}",
+                kem::MLKEM_CT,
+                peer_ml_ct.len()
+            )));
+        }
+        let mut x_arr = [0u8; 32];
+        x_arr.copy_from_slice(&peer_eph_x_pub);
+        let hybrid_ss = keys.decapsulate(&x_arr, &peer_ml_ct)
+            .map_err(|e| PyValueError::new_err(format!("decapsulate failed: {e:?}")))?;
+
+        let session_key = if transcript_hash.len() == 48 {
+            let mut th = [0u8; 48];
+            th.copy_from_slice(&transcript_hash);
+            kem::derive_session_key_transcript(&hybrid_ss, None, &th)
+        } else {
+            kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V1")
+        };
+        Ok(session_key.to_vec())
+    }
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SecureEngine>()?;
+    m.add_class::<NativeHybridKex>()?;
     Ok(())
 }
+
