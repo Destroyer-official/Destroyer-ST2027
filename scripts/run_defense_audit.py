@@ -206,8 +206,15 @@ def main():
     reports_dir.mkdir(parents=True, exist_ok=True)
     receipt_file = reports_dir / "defense_master_audit_receipt.json"
 
+    def _get_git_commit() -> str:
+        try:
+            return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, cwd=str(REPO_ROOT)).strip()
+        except Exception:
+            return "unknown"
+
     receipt_data = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "commit": _get_git_commit(),
         "audit_version": "ST2027-EVAL-V1",
         "overall_status": "PASS" if card.overall_pass else "FAIL",
         "score": "10/10" if card.overall_pass else "DEFICIENT",

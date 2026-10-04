@@ -12,9 +12,9 @@
       "CNSA 2.0 (Commercial National Security Algorithm Suite)",
       "MITRE ATT&CK for Enterprise & Sovereign P2P Protocols"
     ],
-    "evaluation_date_utc": "2026-09-09T20:37:00Z",
+    "evaluation_date_utc": "2026-10-03T15:00:00Z",
     "target_system": "Secure P2P Post-Quantum Communications Engine v2.0.0-CNSA2-2027",
-    "target_repository_commit": "e8d91f27c3 (L5-Verified)"
+    "target_repository_commit": "e9e3c29 (Internal Developer Drill Baseline; pending external adversarial evaluation)"
   },
   "executive_summary": {
     "overall_verdict": "INTERNAL_DRILL_COMPLETE",

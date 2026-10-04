@@ -98,6 +98,7 @@ impl LockedKey32 {
         }
         let mut inner = Box::new(Zeroizing::new([0u8; 32]));
         let locked = lock_slice(&inner[..]);
+        #[allow(clippy::chunks_exact_to_as_chunks)]
         for (i, chunk) in clean.as_bytes().chunks_exact(2).enumerate() {
             let s = std::str::from_utf8(chunk).map_err(|_| "bad hex encoding")?;
             inner[i] = u8::from_str_radix(s, 16).map_err(|_| "bad hex digit")?;

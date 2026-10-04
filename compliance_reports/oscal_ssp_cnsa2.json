@@ -7,7 +7,7 @@
       "last-modified": "2026-09-19T13:35:35.068526+00:00",
       "version": "2028.1.0-DEFENSE",
       "oscal-version": "1.1.0",
-      "remarks": "Formally accredited under DoD RMF, NIST SP 800-53 Rev 5, CNSSI 1253, and NSA CNSA 2.0.",
+      "remarks": "Self-assessment engineering evidence package targeting DoD RMF, NIST SP 800-53 Rev 5, CNSSI 1253, and NSA CNSA 2.0 baseline. Pre-decisional engineering artifact; pending third-party accredited laboratory evaluation and formal Authorizing Official (AO) action.",
       "roles": [
         {
           "id": "authorizing-official",
@@ -29,9 +29,9 @@
         {
           "id": "sovereign-defense-hq",
           "type": "organization",
-          "name": "Sovereign Defense Communications Command",
+          "name": "ST2027 Research & Engineering Maintainers",
           "email-addresses": [
-            "crypto-command@defense.mil"
+            "security@destroyer-st2027.internal"
           ]
         }
       ]

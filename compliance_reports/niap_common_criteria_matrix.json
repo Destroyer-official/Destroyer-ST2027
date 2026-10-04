@@ -16,7 +16,7 @@
       "name": "Cryptographic Key Generation (Post-Quantum)",
       "standard": "FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA-256f)",
       "implementation_file": "pqc_algorithms.py, triple_hybrid_kem.py",
-      "verification_suite": "scripts/cavp_algorithm_validator.py, test_2027_defense_hardening.py",
+      "verification_suite": "scripts/cavp_algorithm_validator.py, tests/test_2027_defense_hardening.py",
       "compliance_status": "PASS"
     },
     {
@@ -40,7 +40,7 @@
       "name": "Random Bit Generation",
       "standard": "NIST SP 800-90A / FIPS 140-3 Hardware Entropy Conditioning",
       "implementation_file": "quantum_rng.py, platform_hsm_interface.py",
-      "verification_suite": "test_crypto_root_fixes.py",
+      "verification_suite": "tests/test_crypto_root_fixes.py",
       "compliance_status": "PASS"
     },
     {
@@ -48,7 +48,7 @@
       "name": "X.509 Certificate Validation (Sovereign PQ PKI)",
       "standard": "RFC 5280 / CNSA 2.0 Strict PKI Profile",
       "implementation_file": "pq_certificate_authority.py, scripts/generate_sovereign_pki.py",
-      "verification_suite": "test_2027_defense_hardening.py",
+      "verification_suite": "tests/test_2027_defense_hardening.py",
       "compliance_status": "PASS"
     },
     {
@@ -72,7 +72,7 @@
       "name": "Audit Data Generation & Merkle Chaining",
       "standard": "NIST SP 800-53 Rev 5 AU-2, AU-3 / SHA-512 Hash Chaining",
       "implementation_file": "audit_logging_system.py, enhanced_audit_logging.py",
-      "verification_suite": "test_2027_defense_hardening.py",
+      "verification_suite": "tests/test_2027_defense_hardening.py",
       "compliance_status": "PASS"
     },
     {
@@ -80,7 +80,7 @@
       "name": "Protected Audit Trail Storage (WORM Policy)",
       "standard": "NIST SP 800-53 AU-9 / SQLite Triggers + Out-of-band SIEM",
       "implementation_file": "audit_logging_system.py",
-      "verification_suite": "test_2027_defense_hardening.py",
+      "verification_suite": "tests/test_2027_defense_hardening.py",
       "compliance_status": "PASS"
     },
     {
@@ -88,7 +88,7 @@
       "name": "Timing of Authentication (No Unauthenticated Switches)",
       "standard": "DoD Zero Trust Architecture Mandate / Fail-Closed Auth",
       "implementation_file": "secure_p2p.py",
-      "verification_suite": "test_2027_defense_hardening.py",
+      "verification_suite": "tests/test_2027_defense_hardening.py",
       "compliance_status": "PASS"
     },
     {
@@ -96,7 +96,7 @@
       "name": "Trusted Path Network Obfuscation & Anonymity",
       "standard": "DoD Network Concealment / Tor SOCKS5 & Private Tactical APN",
       "implementation_file": "metadata_resistance.py, network_adversary_resistance.py, cnsa2_policy_engine.py",
-      "verification_suite": "test_2027_defense_hardening.py",
+      "verification_suite": "tests/test_2027_defense_hardening.py",
       "compliance_status": "PASS"
     }
   ],
