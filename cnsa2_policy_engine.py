@@ -326,10 +326,10 @@ class CNSA2PolicyEngine:
     @property
     def is_cnsa_2027_strict(self) -> bool:
         """Check if 2027+ strict procurement gate mode is active."""
-        if os.environ.get('CNSA_2027_STRICT', '').lower() in ('1', 'true', 'yes'):
+        if os.environ.get('CNSA_2027_STRICT', '').strip().lower() in ('1', 'true', 'yes', 'on'):
             return True
-        if (os.environ.get('SECURE_P2P_PRODUCTION', '').lower() == 'true') or \
-           (os.environ.get('P2P_PRODUCTION', '').lower() == 'true'):
+        if os.environ.get('SECURE_P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on') or \
+           os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on'):
             return True
         return False
     
