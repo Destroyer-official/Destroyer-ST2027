@@ -55,5 +55,9 @@ def test_anonymous_loopback_top_secret(tmp_path, monkeypatch):
                       classification="TOP SECRET", receipt=receipt,
                       server_hostname="loopback-test")
     th.join(timeout=120)
+    if errors:
+        import traceback
+        for err in errors:
+            traceback.print_exception(type(err), err, err.__traceback__)
     assert not errors, errors
     assert out["path"].read_bytes() == data

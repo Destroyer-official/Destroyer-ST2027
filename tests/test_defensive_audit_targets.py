@@ -228,7 +228,10 @@ class TestPFSPCS(unittest.TestCase):
 # 9. Cover Indistinguishability & Padding
 class TestCoverIndistinguishability(unittest.TestCase):
     def test_uniform_1024_block_padding(self):
-        import archive.legacy_prototype.secure_p2p as secure_p2p
+        try:
+            import secure_p2p
+        except ImportError:
+            import archive.legacy_prototype.secure_p2p as secure_p2p
         chat = secure_p2p.SecureP2PChat(identity="test_pad")
         plaintext = b"Strategic military transmission payload"
         padded = chat._add_random_padding(plaintext)

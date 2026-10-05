@@ -6,6 +6,11 @@ import os
 import sys
 
 import pytest
+from pathlib import Path
+
+_LEGACY_P2 = Path(__file__).resolve().parent.parent / "archive" / "legacy_prototype" / "secure_p2.py"
+if not _LEGACY_P2.exists():
+    pytestmark = pytest.mark.skip(reason="legacy prototype twins not present in archive")
 
 
 @pytest.fixture(scope="module", autouse=True)

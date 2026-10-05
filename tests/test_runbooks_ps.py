@@ -9,7 +9,7 @@ Windows: tor overlay refuses without tor daemon, wg refuses without iface.
 import pathlib
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent if pathlib.Path(__file__).resolve().parent.name == "tests" else pathlib.Path(__file__).resolve().parent
 TOR_PS = ROOT / "scripts" / "setup_tor_overlay.ps1"
 WG_PS = ROOT / "scripts" / "setup_wireguard.ps1"
 

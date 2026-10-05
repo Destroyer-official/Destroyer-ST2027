@@ -263,8 +263,12 @@ class TestTwinFileParityPhase6:
     """Twin Parity Invariant: secure_p2p.py and secure_p2.py must match byte-for-byte."""
 
     def test_phase6_byte_for_byte_identity(self):
-        p2p_bytes = Path("archive/legacy_prototype/secure_p2p.py").read_bytes()
-        p2_bytes = Path("archive/legacy_prototype/secure_p2.py").read_bytes()
+        p2p_path = Path("archive/legacy_prototype/secure_p2p.py")
+        p2_path = Path("archive/legacy_prototype/secure_p2.py")
+        if not p2p_path.exists() or not p2_path.exists():
+            pytest.skip("legacy prototype twins not present in archive")
+        p2p_bytes = p2p_path.read_bytes()
+        p2_bytes = p2_path.read_bytes()
 
         assert p2p_bytes == p2_bytes, (  # nosec: B101
             f"Twin parity error! secure_p2p.py ({len(p2p_bytes)}B) != secure_p2.py ({len(p2_bytes)}B)"

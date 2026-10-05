@@ -47,6 +47,9 @@ class DestroyerNode:
         self._buckets = {}
         self._udp_drops = 0
         self._udp_admitted = 0
+        self.cookie_gate = None
+        self.cookie_difficulty = 0
+        self.cookie_required = False
 
     # Upper bound for chunked streams (H24): seal_stream/transmit_large
     # refuse absurd totals instead of building unbounded frame lists.
@@ -272,6 +275,83 @@ class DestroyerNode:
             return None  # Chaff absorbed silently
 
         return payload, from_addr
+
+    def enable_cookie_gate(
+        self,
+        rotation_interval: int = 120,
+        difficulty_bits: int = 0,
+        require_cookie: bool = False,
+    ) -> None:
+        """Enable stateless anti-amplification and anti-DoS cookie challenge gate."""
+        from noise_pq import StatelessCookieGate
+        self.cookie_gate = StatelessCookieGate(rotation_interval=rotation_interval)
+        self.cookie_difficulty = difficulty_bits
+        self.cookie_required = require_cookie
+
+    def process_udp_ingress(
+        self,
+        raw: bytes,
+        from_addr: tuple[str, int],
+        *,
+        require_cookie: bool | None = None,
+    ) -> tuple[str, bytes]:
+        """
+        Unified stateless ingress filter for datagrams (both data plane & handshake).
+        Returns:
+            ("ACCEPT_DATA", payload) — verified authenticated data frame
+            ("ACCEPT_HANDSHAKE", m1_bytes) — address-validated Noise M1 frame
+            ("CHALLENGE", challenge_packet) — anti-amplification cookie challenge
+            ("DROP", b"") — silent drop (oversize, ratelimit, replay, chaff, forgery)
+        """
+        if not self._check_rate_limit(from_addr[0]):
+            self._udp_drops += 1
+            return ("DROP", b"")
+
+        # Check for Noise M1 handshake frame or cookie-wrapped M1
+        from noise_pq import EXPECTED_M1_LEN, COOKIE_M1_PREFIX
+        is_m1 = len(raw) == EXPECTED_M1_LEN or raw.startswith(COOKIE_M1_PREFIX)
+        if is_m1:
+            if len(raw) > 4096:
+                self._udp_drops += 1
+                return ("DROP", b"")
+            if self.cookie_gate is not None:
+                req = self.cookie_required if require_cookie is None else require_cookie
+                status, out = self.cookie_gate.process_incoming_m1(
+                    raw,
+                    from_addr[0],
+                    from_addr[1],
+                    require_cookie=req,
+                    difficulty_bits=self.cookie_difficulty,
+                )
+                if status == "ACCEPT":
+                    self._udp_admitted += 1
+                    return ("ACCEPT_HANDSHAKE", out)
+                elif status == "CHALLENGE":
+                    return ("CHALLENGE", out)
+                else:
+                    self._udp_drops += 1
+                    return ("DROP", b"")
+            elif len(raw) == EXPECTED_M1_LEN:
+                self._udp_admitted += 1
+                return ("ACCEPT_HANDSHAKE", raw)
+
+        if len(raw) > self.MAX_DATAGRAM:
+            self._udp_drops += 1
+            return ("DROP", b"")
+
+
+        # Post-handshake data plane frame
+        opened = self.receive(raw)
+        if opened is None:
+            self._udp_drops += 1
+            return ("DROP", b"")
+
+        self._udp_admitted += 1
+        ftype, payload = opened
+        if ftype == FTYPE_CHAFF:
+            return ("DROP", b"")  # Chaff absorbed silently
+
+        return ("ACCEPT_DATA", payload)
 
     def close_udp(self) -> None:
         """Close UDP socket and flush rate buckets."""

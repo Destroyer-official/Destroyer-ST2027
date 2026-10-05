@@ -453,12 +453,12 @@ def _xxhfs_identity(kp: HybridKeyPair | IdentityHandle):
 
 
 def _xxhfs_new_session(is_initiator: bool, sig_pk: bytes, sig_sk: bytes,
-                       peer_id: str):
+                       peer_id: str, psk: Optional[bytes] = None):
     """Fresh Noise session with the session label bound into the transcript."""
     _assert_session_profile()
     if not sig_pk:
         raise SecurityError("identity missing")
-    sess = _npq.NoiseSession(bool(is_initiator), bytes(sig_pk), bytes(sig_sk))
+    sess = _npq.NoiseSession(bool(is_initiator), bytes(sig_pk), bytes(sig_sk), psk=psk)
     sess.sym.mix_hash(XXHFS_PEER_BIND + peer_id.encode())
     return sess
 
@@ -511,11 +511,12 @@ def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
         check_pin(tag + peer_id, identity_pin(local_sig_pk, peer_sig_pk))
 
 
-def xxhfs_initiate(kp: HybridKeyPair | IdentityHandle, peer_id: str):
+def xxhfs_initiate(kp: HybridKeyPair | IdentityHandle, peer_id: str,
+                   psk: Optional[bytes] = None):
     """M1: ephemeral-only (zero static keys). Returns (m1, sess, t0)."""
     _assert_session_profile()
     sig_pk, sig_sk, _signer = _xxhfs_identity(kp)
-    sess = _xxhfs_new_session(True, sig_pk, sig_sk, peer_id)
+    sess = _xxhfs_new_session(True, sig_pk, sig_sk, peer_id, psk=psk)
     try:
         m1 = _npq.initiator_hello(sess)
     except Exception as e:
@@ -527,14 +528,14 @@ def xxhfs_initiate(kp: HybridKeyPair | IdentityHandle, peer_id: str):
 
 
 def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
-                  peer_id: str):
+                  peer_id: str, psk: Optional[bytes] = None):
     """Process M1 (size-checked BEFORE any encaps/ECDH). Returns (m2, sess, t)."""
     _assert_session_profile()
     try:
         if len(m1) != XXHFS_M1_LEN:
             raise SecurityError("handshake size violation")
         sig_pk, sig_sk, signer = _xxhfs_identity(kp)
-        sess = _xxhfs_new_session(False, sig_pk, sig_sk, peer_id)
+        sess = _xxhfs_new_session(False, sig_pk, sig_sk, peer_id, psk=psk)
         m2 = _npq.responder_reply(sess, bytes(m1), signer=signer)
     except SecurityError:
         try:

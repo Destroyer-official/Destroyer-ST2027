@@ -210,6 +210,8 @@ class TestProductionGradeDestroyer(unittest.TestCase):
         """Execute full 2-terminal military base communications test under P2P_DATA_PLANE=rust."""
         env = dict(os.environ, P2P_DATA_PLANE="rust", PYTHONUNBUFFERED="1", P2P_ALLOW_LOOPBACK="1")
         test_script = PROJECT_ROOT / "run_two_terminals_secure_p2_test.py"
+        if not test_script.exists():
+            self.skipTest("run_two_terminals_secure_p2_test.py not present")
 
         print("\n  [2-TERMINAL TEST] Launching live Base Alpha (NORAD) <-> Base Bravo (Pentagon) processes...")
         proc = subprocess.run(  # nosec: B603

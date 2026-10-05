@@ -148,6 +148,41 @@ def _zero(b: bytearray) -> None:
             b[i] = 0
 
 
+def _lock_buffer(buf: bytearray) -> bool:
+    """Best-effort page lock (VirtualLock/mlock) to prevent secret swapping."""
+    if not buf or not isinstance(buf, (bytearray, memoryview)):
+        return False
+    try:
+        import ctypes as _ct
+        import sys as _sys
+        addr = _ct.addressof((_ct.c_char * len(buf)).from_buffer(buf))
+        if _sys.platform == "win32":
+            return bool(_ct.windll.kernel32.VirtualLock(_ct.c_void_p(addr), _ct.c_size_t(len(buf))))
+        else:
+            libc = _ct.CDLL(None)
+            return bool(libc.mlock(_ct.c_void_p(addr), _ct.c_size_t(len(buf))) == 0)
+    except Exception:
+        return False
+
+
+def _unlock_buffer(buf: bytearray) -> None:
+    """Best-effort unlock before wipe."""
+    if not buf or not isinstance(buf, (bytearray, memoryview)):
+        return
+    try:
+        import ctypes as _ct
+        import sys as _sys
+        addr = _ct.addressof((_ct.c_char * len(buf)).from_buffer(buf))
+        if _sys.platform == "win32":
+            _ct.windll.kernel32.VirtualUnlock(_ct.c_void_p(addr), _ct.c_size_t(len(buf)))
+        else:
+            libc = _ct.CDLL(None)
+            libc.munlock(_ct.c_void_p(addr), _ct.c_size_t(len(buf)))
+    except Exception:
+        pass
+
+
+
 class SymmetricState:
     """Noise SymmetricState with SHA-384 / AES-256-GCM (spec section 5)."""
 
@@ -168,14 +203,22 @@ class SymmetricState:
         self.ck = ck
         # CNSA cipher keys are 256-bit; temp_k is 48B (SHA-384 output).
         # Store as mutable bytearray so destroy() can wipe it in place.
+        if self._key is not None:
+            _unlock_buffer(self._key)
+            _zero(self._key)
         self._key = bytearray(temp_k[:32])
+        _lock_buffer(self._key)
         self._n = 0
 
     def mix_key_and_hash(self, ikm: bytes) -> None:
         ck, temp_h, temp_k = _noise_hkdf(self.ck, ikm, 3)
         self.ck = ck
         self.mix_hash(temp_h)
+        if self._key is not None:
+            _unlock_buffer(self._key)
+            _zero(self._key)
         self._key = bytearray(temp_k[:32])
+        _lock_buffer(self._key)
         self._n = 0
 
     def _nonce(self) -> bytes:
@@ -217,6 +260,7 @@ class SymmetricState:
     def destroy(self) -> None:
         # In-place memory scrubbing of mutable cipher key buffer
         if self._key is not None:
+            _unlock_buffer(self._key)
             _zero(self._key)
             self._key = None
 
@@ -251,7 +295,9 @@ def _mlkem_keygen() -> Tuple[bytes, bytes]:
     pk, sk = LibOQS_MLKEM_1024().keygen()
     if len(pk) != MLKEM_EK:
         raise NoiseError("ML-KEM-1024 size violation")
-    return pk, bytearray(sk)  # wipeable
+    sk_buf = bytearray(sk)
+    _lock_buffer(sk_buf)
+    return pk, sk_buf
 
 
 def _mlkem_encaps(ek: bytes):
@@ -313,23 +359,26 @@ class NoiseSession:
                 self.sym = SymmetricState(PROTOCOL_NAME)
 
     def destroy(self) -> None:
-        # Best-effort container sanitization for mutable bytearrays.
-        # Note: immutable bytes and C-extension buffers in CPython cannot be
-        # guaranteed zeroized or mlocked; true hardware memory locking belongs to Rust.
+        # Best-effort container sanitization for mutable bytearrays and page-locked buffers.
         if self._f_sk is not None:
+            _unlock_buffer(self._f_sk)
             _zero(self._f_sk)
             self._f_sk = None
         if self._f_ss is not None:
+            _unlock_buffer(self._f_ss)
             _zero(self._f_ss)
             self._f_ss = None
         if self._k_send is not None:
+            _unlock_buffer(self._k_send)
             _zero(self._k_send)
             self._k_send = None
         if self._k_recv is not None:
+            _unlock_buffer(self._k_recv)
             _zero(self._k_recv)
             self._k_recv = None
         if self.psk is not None:
             if isinstance(self.psk, bytearray):
+                _unlock_buffer(self.psk)
                 _zero(self.psk)
             self.psk = None
         if self.sym is not None:
@@ -415,6 +464,9 @@ def initiator_finish(
     sess.sym.mix_key(dh_secret)                         # ee
     _zero(dh_secret)
     ml_ss = bytearray(_mlkem_decaps(sess._f_sk, ml_ct)) # ff
+    _unlock_buffer(sess._f_sk)
+    _zero(sess._f_sk)
+    sess._f_sk = None
     sess.sym.mix_key(ml_ss)
     _zero(ml_ss)
     # Split enc_pk (2592 + 16 tag) from enc_sig (rest).
@@ -488,6 +540,8 @@ def split_session(sess: NoiseSession) -> Tuple[bytes, bytes, bytes]:
     k_send, k_recv = (k1, k2) if sess.is_initiator else (k2, k1)
     sess.destroy()  # wipes ephemerals, KEM ss, and handshake cipher state
     sess._k_send, sess._k_recv = bytearray(k_send), bytearray(k_recv)  # transport keys only survive
+    _lock_buffer(sess._k_send)
+    _lock_buffer(sess._k_recv)
     return k_send, k_recv, h
 
 
@@ -668,4 +722,64 @@ class StatelessCookieGate:
             if int.from_bytes(h, "big") < target:
                 return cookie + nb
         return None
+
+    def process_incoming_m1(
+        self,
+        wire: bytes,
+        client_ip: str,
+        client_port: int,
+        require_cookie: bool = False,
+        difficulty_bits: int = 0,
+    ) -> Tuple[str, bytes]:
+        """
+        Ingress filter for incoming M1 frames over connectionless transport.
+        Returns:
+            ("ACCEPT", m1_bytes) — proceed to responder_reply
+            ("CHALLENGE", challenge_packet) — transmit challenge back to client
+            ("DROP", b"") — invalid, oversize, or spoofed; drop silently
+        """
+        solution, m1 = unpack_cookie_m1(wire)
+        if len(m1) != EXPECTED_M1_LEN:
+            return ("DROP", b"")
+        if not require_cookie and solution is None:
+            return ("ACCEPT", m1)
+        if solution is None:
+            challenge = self.create_challenge(client_ip, client_port, m1[:64], difficulty_bits)
+            return ("CHALLENGE", challenge)
+        if self.verify_response(solution, client_ip, client_port, m1[:64], difficulty_bits):
+            return ("ACCEPT", m1)
+        return ("DROP", b"")
+
+    @staticmethod
+    def client_handle_challenge(challenge_wire: bytes, m1: bytes) -> Optional[bytes]:
+        """
+        Client-side response to an incoming challenge packet: solves challenge
+        and returns the cookie-wrapped M1 frame ready for retransmission.
+        """
+        solution = StatelessCookieGate.solve_challenge(challenge_wire)
+        if solution is None:
+            return None
+        return pack_cookie_m1(solution, m1)
+
+
+COOKIE_M1_PREFIX = b"NPQK1\x00"
+
+
+def pack_cookie_m1(cookie_solution: bytes, m1: bytes) -> bytes:
+    """Pack an address-verified cookie solution prefix onto an M1 handshake frame."""
+    return COOKIE_M1_PREFIX + struct.pack(">H", len(cookie_solution)) + cookie_solution + m1
+
+
+def unpack_cookie_m1(wire: bytes) -> Tuple[Optional[bytes], bytes]:
+    """Unpack wire payload into (cookie_solution_or_None, m1_bytes)."""
+    if wire.startswith(COOKIE_M1_PREFIX) and len(wire) > len(COOKIE_M1_PREFIX) + 2:
+        off = len(COOKIE_M1_PREFIX)
+        clen = struct.unpack(">H", wire[off:off+2])[0]
+        off += 2
+        if len(wire) >= off + clen:
+            solution = wire[off:off+clen]
+            m1 = wire[off+clen:]
+            return solution, m1
+    return None, wire
+
 

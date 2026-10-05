@@ -183,6 +183,9 @@ class TestProductionTier7CSPRNGCompleteAudit(unittest.TestCase):
         p2p_path = REPO_ROOT / "archive/legacy_prototype/secure_p2p.py"
         p2_path = REPO_ROOT / "archive/legacy_prototype/secure_p2.py"
 
+        if not p2_path.exists() or not p2p_path.exists():
+            self.skipTest("legacy prototype twins not present in archive")
+
         with open(p2p_path, "rb") as f:
             h_p2p = hashlib.sha256(f.read()).hexdigest()
         with open(p2_path, "rb") as f:

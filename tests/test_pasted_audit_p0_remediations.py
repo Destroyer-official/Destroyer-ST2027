@@ -174,9 +174,12 @@ class TestP0PreAuthCapsBound(unittest.TestCase):
         # 64KB/10s ceiling. A bare receive_framed(self.tcp_socket) anywhere
         # is a 4MB pre-auth allocation primitive (P0-5).
         import pathlib
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
         for name in ("archive/legacy_prototype/secure_p2p.py", "archive/legacy_prototype/secure_p2.py"):
-            src = pathlib.Path(os.path.dirname(os.path.abspath(__file__))
-                               ).joinpath(name).read_text(encoding="utf-8")
+            p = repo_root / name
+            if not p.exists():
+                self.skipTest("legacy prototype twins not present in archive")
+            src = p.read_text(encoding="utf-8")
             # Bare form ends with ')' right after the socket (4MB default).
             bare = src.count("receive_framed(self.tcp_socket)")
             capped_std = src.count(

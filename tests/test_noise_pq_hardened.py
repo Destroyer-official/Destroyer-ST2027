@@ -226,3 +226,95 @@ class TestStatelessCookieGate:
 
         # Verification must be fast (< 25 microseconds in Python, compared to ~5000us for full M2)
         assert avg_us < 50.0, f"Cookie check too slow: {avg_us:.2f}us"
+
+    def test_m1_cookie_packing_and_ingress_flow(self):
+        """Verify full connectionless M1 challenge-response exchange."""
+        (ci_pk, ci_sk), (cr_pk, cr_sk) = _make_identities()
+        gate = npq.StatelessCookieGate()
+        client_addr = ("198.51.100.25", 54321)
+
+        # 1. Initiator prepares M1
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        m1 = npq.initiator_hello(ini)
+
+        # 2. Server under attack / flood requires cookies
+        status, challenge = gate.process_incoming_m1(
+            m1, client_addr[0], client_addr[1], require_cookie=True, difficulty_bits=4
+        )
+        assert status == "CHALLENGE"
+        assert challenge.startswith(b"NPQ_CHALLENGE\x00")
+        assert len(challenge) < 64  # Minimal wire size: zero amplification
+
+        # 3. Client handles challenge statelessly
+        cookie_m1 = npq.StatelessCookieGate.client_handle_challenge(challenge, m1)
+        assert cookie_m1 is not None
+        assert cookie_m1.startswith(npq.COOKIE_M1_PREFIX)
+
+        # 4. Server admits validated M1
+        status2, accepted_m1 = gate.process_incoming_m1(
+            cookie_m1, client_addr[0], client_addr[1], require_cookie=True, difficulty_bits=4
+        )
+        assert status2 == "ACCEPT"
+        assert accepted_m1 == m1
+
+        # 5. Handshake completes successfully
+        rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
+        m2 = npq.responder_reply(rsp, accepted_m1)
+        npq.initiator_finish(ini, m2, expected_peer_pk=cr_pk)
+        m3 = npq.initiator_complete(ini)
+        npq.responder_complete(rsp, m3, expected_peer_pk=ci_pk)
+
+        ki_s, ki_r, hi = npq.split_session(ini)
+        kr_s, kr_r, hr = npq.split_session(rsp)
+        assert ki_s == kr_r
+        assert hi == hr
+
+
+class TestDestroyerNodeIngressHardening:
+    """Verify DestroyerNode integration with StatelessCookieGate and Rust data plane."""
+
+    def test_destroyer_node_ingress_gating(self):
+        """Test unified ingress filter in DestroyerNode for both handshake and data."""
+        from destroyer_node import DestroyerNode
+
+        node = DestroyerNode()
+        node.enable_cookie_gate(difficulty_bits=4, require_cookie=True)
+
+        addr = ("192.168.1.100", 50000)
+        (ci_pk, ci_sk), _ = _make_identities()
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        m1 = npq.initiator_hello(ini)
+
+        # 1. Raw M1 under cookie requirement elicits CHALLENGE
+        status, challenge = node.process_udp_ingress(m1, addr)
+        assert status == "CHALLENGE"
+        assert challenge.startswith(b"NPQ_CHALLENGE\x00")
+
+        # 2. Client-solved cookie M1 is admitted for handshake
+        cookie_m1 = npq.StatelessCookieGate.client_handle_challenge(challenge, m1)
+        status, admitted = node.process_udp_ingress(cookie_m1, addr)
+        assert status == "ACCEPT_HANDSHAKE"
+        assert admitted == m1
+
+        # 3. Spoofed IP fails closed (silent drop)
+        spoofed_addr = ("192.168.1.101", 50000)
+        status, _ = node.process_udp_ingress(cookie_m1, spoofed_addr)
+        assert status == "DROP"
+
+        # 4. Oversized datagram dropped
+        oversized = b"\x00" * 1500
+        status, _ = node.process_udp_ingress(oversized, addr)
+        assert status == "DROP"
+
+    def test_physical_memory_locking_discipline(self):
+        """Verify memory locking and in-place zeroization for cryptographic buffers."""
+        buf = bytearray(32)
+        buf[:] = b"\x42" * 32
+        locked = npq._lock_buffer(buf)
+        assert isinstance(locked, bool)
+
+        # Unlock and scrub
+        npq._unlock_buffer(buf)
+        npq._zero(buf)
+        assert buf == bytearray(32)
+

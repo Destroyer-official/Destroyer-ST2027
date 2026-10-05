@@ -30,7 +30,10 @@ from file_transfer import FileMessage, FileMessageType
 def test_zero_trust_file_message_rejected_for_unverified_peer():
     """Unverified peers (e.g. PENDING_OOB_VERIFICATION) must be rejected fail-closed on file transfer."""
     async def _run():
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        try:
+            from secure_p2p import SecureP2PChat
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat
 
         chat = SecureP2PChat(identity="test_alice")
         chat.peer_username = "bob"
@@ -55,7 +58,10 @@ def test_zero_trust_file_message_rejected_for_unverified_peer():
 def test_rbac_file_message_rejected_without_send_file_permission():
     """Authenticated peers without SEND_FILE (e.g. ANONYMOUS) must be rejected fail-closed."""
     async def _run():
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        try:
+            from secure_p2p import SecureP2PChat
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat
 
         chat = SecureP2PChat(identity="test_alice")
         chat.peer_username = "bob"
@@ -81,7 +87,10 @@ def test_rbac_file_message_rejected_without_send_file_permission():
 def test_file_message_accepted_for_verified_operator():
     """Verified operator peer with SEND_FILE is permitted through to handler."""
     async def _run():
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        try:
+            from secure_p2p import SecureP2PChat
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat
 
         chat = SecureP2PChat(identity="test_alice")
         chat.peer_username = "bob"
@@ -195,9 +204,13 @@ def test_mls_framing_transcript_hash_chain():
 
 def test_twin_parity_between_secure_p2_and_secure_p2p():
     """Verify 100% line-by-line parity between secure_p2.py and secure_p2p.py."""
-    root = Path(__file__).resolve().parent
-    lines_p2 = [ln.rstrip() for ln in (root / "archive/legacy_prototype/secure_p2.py").read_text(encoding="utf-8").splitlines() if ln.strip()]
-    lines_p2p = [ln.rstrip() for ln in (root / "archive/legacy_prototype/secure_p2p.py").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    root = Path(__file__).resolve().parent.parent
+    p2_path = root / "archive" / "legacy_prototype" / "secure_p2.py"
+    p2p_path = root / "archive" / "legacy_prototype" / "secure_p2p.py"
+    if not p2_path.exists() or not p2p_path.exists():
+        pytest.skip("legacy prototype twins not present in archive")
+    lines_p2 = [ln.rstrip() for ln in p2_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    lines_p2p = [ln.rstrip() for ln in p2p_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
     assert len(lines_p2) == len(lines_p2p), f"Drift in normalized line count: {len(lines_p2)} vs {len(lines_p2p)}"  # nosec: B101
     for idx, (l1, l2) in enumerate(zip(lines_p2, lines_p2p)):

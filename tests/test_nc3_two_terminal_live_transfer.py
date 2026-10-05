@@ -13,6 +13,7 @@ import sys
 import time
 import subprocess  # nosec: B404
 import threading
+import pytest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON_EXE = sys.executable
@@ -383,6 +384,9 @@ def test_nc3_two_terminal_live_eam_transfer():
     /nc3-send, EAM alert, dual-officer /nc3-verify unseal, /zeroize).
     ~3-5 min, loopback lab only. Ports 50021+ fixed: do not run two
     instances concurrently."""
+    legacy = os.path.join(BASE_DIR, "archive/legacy_prototype/secure_p2.py")
+    if not os.path.exists(legacy):
+        pytest.skip("legacy prototype twins not present in archive")
     assert run_live_nc3_test() is True  # nosec: B101
 
 
