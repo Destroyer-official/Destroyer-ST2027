@@ -2254,9 +2254,14 @@ class SecureP2PChat:
             from unified_secure_pipeline import UnifiedSecurePipeline
             self._zero_gap_pipeline = UnifiedSecurePipeline()
             log.info("[PASS] Zero-Gap Defense Pipeline initialized")
-        except ImportError:
+        except ImportError as e:
+            import os as _os
+            _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1"
+            if _prod:
+                log.critical(f"unified_secure_pipeline missing in production — fail-closed (no legacy path): {e}")
+                raise RuntimeError("unified_secure_pipeline required in production; legacy path refused") from e
             self._zero_gap_pipeline = None
-            log.warning("unified_secure_pipeline not found — using legacy encryption path")
+            log.warning("unified_secure_pipeline not found — using legacy encryption path (lab only, NOT production)")
 
         # Initialize connection status and events
         self.is_connected = False

@@ -371,6 +371,8 @@ def test_embedded_pins_defeat_sidecar_substitution(tmp_path):
     assert EMBEDDED_OQS_ED25519_PUBKEY_PEM.strip().startswith(b"-----BEGIN")
     assert len(EMBEDDED_OQS_SHA384.strip()) == 96  # sha384 hex
     repo = Path(__file__).resolve().parent
+    if not (repo / "oqs.dll").exists():
+        repo = repo.parent
     work = tmp_path / "vendored"
     work.mkdir()
 
@@ -424,6 +426,8 @@ def test_unpinned_names_never_read_sidecars(tmp_path):
         Ed25519PrivateKey)
     from cryptography.hazmat.primitives import serialization
     repo = Path(__file__).resolve().parent
+    if not (repo / "oqs.dll").exists():
+        repo = repo.parent
     work = tmp_path / "unpinned"
     work.mkdir()
     dll = work / "other.dll"
@@ -460,10 +464,13 @@ def test_selftest_cli_returns_zero_with_clean_status():
     import subprocess
     import sys
     from pathlib import Path as _P
+    repo_root = _P(__file__).resolve().parent
+    if not (repo_root / "secure_transmit_2027.py").exists():
+        repo_root = repo_root.parent
     proc = subprocess.run(
         [sys.executable, "secure_transmit_2027.py", "selftest"],
         capture_output=True, text=True, timeout=120,
-        cwd=str(_P(__file__).resolve().parent))
+        cwd=str(repo_root))
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert "SELFTEST-OK" in proc.stdout, proc.stdout[-1500:]
     for gate in ("crypto-KATs", "cnsa-purity", "supply-chain",

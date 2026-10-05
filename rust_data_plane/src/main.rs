@@ -1379,6 +1379,31 @@ fn cmd_channel(args: &[String]) {
     });
 }
 
+fn kex_auth_required() -> bool {
+    for (k, want) in [("P2P_PRODUCTION", true), ("SECURE_P2P_PRODUCTION", false), ("P2P_TS_MODE", true), ("ST2027_REQUIRE_PSK", true)] {
+        if let Ok(v) = std::env::var(k) {
+            let v = v.trim().to_lowercase();
+            if want {
+                if v == "1" || v == "true" || v == "yes" || v == "on" {
+                    return true;
+                }
+            } else if v == "1" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn require_kex_auth(psk_present: bool) {
+    if kex_auth_required() && !psk_present {
+        fail("kex PSK required in production (set --psk or --psk-file); unauthenticated KEX refused (MITM protection)");
+    }
+    if !psk_present {
+        eprintln!("WARNING: kex running WITHOUT PSK — key is NOT authenticated. You MUST compare SAS out-of-band before use (lab only).");
+    }
+}
+
 fn cmd_kex_listen(args: &[String]) {
     reject_forbidden_cli(args);
     let bind: SocketAddr = get_flag(args, "--bind")
@@ -1399,6 +1424,7 @@ fn cmd_kex_listen(args: &[String]) {
     } else {
         None
     };
+    require_kex_auth(psk_bytes.is_some());
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1470,7 +1496,11 @@ fn cmd_kex_listen(args: &[String]) {
     });
 
     write_key_file(&out, &key_hex);
-    println!("kex-listen SUCCESS: authenticated ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out}");
+    if psk_bytes.is_some() {
+        println!("kex-listen SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
+    } else {
+        println!("kex-listen SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+    }
 }
 
 fn cmd_kex_connect(args: &[String]) {
@@ -1493,6 +1523,7 @@ fn cmd_kex_connect(args: &[String]) {
     } else {
         None
     };
+    require_kex_auth(psk_bytes.is_some());
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1561,7 +1592,11 @@ fn cmd_kex_connect(args: &[String]) {
     });
 
     write_key_file(&out, &key_hex);
-    println!("kex-connect SUCCESS: authenticated ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out}");
+    if psk_bytes.is_some() {
+        println!("kex-connect SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
+    } else {
+        println!("kex-connect SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+    }
 }
 
 fn cmd_zeroize(args: &[String]) {

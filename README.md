@@ -83,6 +83,8 @@ To preserve complete engineering truth and auditability, this repository maintai
 
 **Evaluation boundary (read before citing):** This software is an engineering baseline designed to meet the technical specifications of CNSA 2.0. It has not undergone accredited laboratory evaluation (FIPS 140-3 CMVP / Common Criteria) and does not possess a government Authority to Operate (ATO).
 
+**Messenger-path honesty (research prototype):** the messaging path (`hybrid_kex.py` + `double_ratchet.py` + `secure_p2p.py`) is a Signal-style **hybrid-transition prototype** (X25519 + ML-KEM + ChaCha20-Poly1305 + Falcon-verify/ML-DSA) — it is **NOT CNSA-pure** and is **NOT audited**. Only `noise_pq.py` + `secure_transmit_2027.py` enforce the strict CNSA 2.0 session set (ML-KEM-1024 / ML-DSA-87 / AES-256-GCM / SHA-384 / HKDF-SHA384). For real messaging today, use Signal (audited, loss-tolerant, PQ handshake + ratchet).
+
 The security architecture is formally specified against a multidimensional threat matrix addressing physical, network, system, and algorithmic attack surfaces:
 
 ```

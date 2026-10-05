@@ -15,9 +15,14 @@ What this IS (all real, fail-closed, no simulations):
     below SECRET. Refused for TOP SECRET.
   DPO: two DISTINCT hardware-bound ML-DSA-87 approvals over the same fresh
     challenge and payload digest, with distinct officer identities, distinct
-    token references, independent client nonces, and a 2.0 second
-    simultaneous-action window. Mandatory for TOP SECRET. Always accepted
-    where SPO would be accepted (stronger ceremony satisfies weaker policy).
+    token references, DISTINCT hardware serials (production), independent
+    client nonces, signer-time AND server-receipt simultaneity checks within
+    a 2.0 second window, and approvals bound to the challenge lifetime.
+    Mandatory for TOP SECRET. Always accepted where SPO would be accepted.
+  Honesty boundary: this is a dual-SIGNATURE ceremony in one process, not
+    physical two-person presence (visual contact, separate stations). True
+    two-person presence requires procedural/physical controls outside this
+    module; software alone cannot prove two humans.
   Freshness: 32 byte server challenge nonce, 30 second challenge lifetime,
     120 second approval lifetime, used-nonce FIFO cap 8192 with replay
     refusal, constant-time equality throughout, generic errors on the wire
@@ -392,6 +397,47 @@ def authorize_spo(
     return receipt
 
 
+def _hw_serial(handle: Any) -> str:
+    """Hardware token serial behind a handle (production distinctness).
+
+    Lab handles may lack serials (empty string); production requires
+    non-empty distinct serials so one operator holding two labels on the
+    SAME token cannot satisfy DPO. Never raises (returns "" when absent).
+    """
+    for attr in ("hsm_serial", "token_serial", "serial", "key_id", "slot_id"):
+        try:
+            v = str(getattr(handle, attr, "") or "").strip()
+        except Exception:
+            continue
+        if v:
+            return v
+    return ""
+
+
+def _check_approval_time(ch: OperationChallenge, approved_at: float) -> None:
+    """Bind approval time to the challenge (trusted-server-side check).
+
+    approved_at is signer-reported and untrusted alone: it must fall within
+    [challenge.issued_at - 5s skew, now + 5s skew] and within the 120s
+    approval lifetime. Prevents pre-signed / post-dated approvals.
+    """
+    try:
+        ts = float(approved_at)
+    except (TypeError, ValueError):
+        raise AuthorizationError("authorization rejected")
+    now = _utcnow()
+    try:
+        issued = float(ch.issued_at)
+    except (TypeError, ValueError):
+        raise AuthorizationError("authorization rejected")
+    if ts < issued - 5.0:
+        raise AuthorizationError("authorization rejected")
+    if ts > now + 5.0:
+        raise AuthorizationError("authorization rejected")
+    if (now - ts) > APPROVAL_LIFETIME_S:
+        raise AuthorizationError("authorization rejected")
+
+
 def authorize_dpo(
     ch: OperationChallenge,
     handle_one: Any,
@@ -399,6 +445,8 @@ def authorize_dpo(
     handle_two: Any,
     approval_two: OperationApproval,
     max_sync: float = SYNC_WINDOW_S,
+    received_at_one: Optional[float] = None,
+    received_at_two: Optional[float] = None,
 ) -> Dict[str, Any]:
     _assert_session_profile()
     _check_challenge_fresh(ch)
@@ -406,6 +454,13 @@ def authorize_dpo(
         if not bool(getattr(handle_one, "stored_in_hsm", False)):
             raise AuthorizationError("authorization rejected")
         if not bool(getattr(handle_two, "stored_in_hsm", False)):
+            raise AuthorizationError("authorization rejected")
+        # One operator, two labels on the SAME token must not satisfy DPO:
+        # require distinct non-empty hardware serials in production.
+        _s1, _s2 = _hw_serial(handle_one), _hw_serial(handle_two)
+        if not _s1 or not _s2:
+            raise AuthorizationError("authorization rejected")
+        if _compare(_s1.encode("utf-8"), _s2.encode("utf-8")):
             raise AuthorizationError("authorization rejected")
     label_one = str(getattr(handle_one, "label", "") or "")
     label_two = str(getattr(handle_two, "label", "") or "")
@@ -425,12 +480,30 @@ def authorize_dpo(
         bytes(approval_one.client_nonce), bytes(approval_two.client_nonce)
     ):
         raise AuthorizationError("authorization rejected")
+    # Time checks: signer-reported approved_at is UNTRUSTED alone. Enforce
+    # BOTH the self-reported delta AND the server-receipt delta within the
+    # simultaneous-action window, plus challenge binding (no pre/post-dating).
+    _check_approval_time(ch, approval_one.approved_at)
+    _check_approval_time(ch, approval_two.approved_at)
     delta = abs(float(approval_one.approved_at) - float(approval_two.approved_at))
     if not 0.0 <= float(max_sync) <= 5.0:
         raise AuthorizationError("authorization rejected")
     if delta > float(max_sync):
         try:
             _audit("dpo_sync_breach", {"op": ch.operation_id, "delta": delta})
+        except Exception:
+            pass
+        raise AuthorizationError("authorization rejected")
+    _now = _utcnow()
+    _r1 = float(received_at_one) if received_at_one is not None else _now
+    _r2 = float(received_at_two) if received_at_two is not None else _now
+    try:
+        _rdelta = abs(_r1 - _r2)
+    except (TypeError, ValueError):
+        raise AuthorizationError("authorization rejected")
+    if _rdelta > float(max_sync):
+        try:
+            _audit("dpo_sync_breach", {"op": ch.operation_id, "rdelta": _rdelta})
         except Exception:
             pass
         raise AuthorizationError("authorization rejected")
@@ -444,6 +517,7 @@ def authorize_dpo(
         "officer_two": label_two,
         "payload_hex": bytes(ch.payload_digest).hex(),
         "delta": delta,
+        "rdelta": _rdelta,
         "ts": _utcnow(),
     }
     _audit("dpo_authorized", {"op": receipt["op"]})

@@ -552,6 +552,11 @@ def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
     return m2, sess, _now()
 
 
+def _production_strict() -> bool:
+    import os as _os
+    return _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1" or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
                    peer_id: str, t0: int,
                    peer_cert: Optional[str] = None,
@@ -565,12 +570,16 @@ def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
             raise SecurityError("stale")
         if len(m2) < 97 + 1568 + 16:
             raise SecurityError("handshake size violation")
+        if _production_strict() and expected_peer_pk is None:
+            # Fail-closed pinning: production never connects to an unpinned peer
+            # (TOFU only in lab). Prevents MITM via rogue peer + silent TOFU store.
+            raise SecurityError("unpinned peer refused in production (expected_peer_pk required)")
         sig_pk, _sig_sk, signer = _xxhfs_identity(kp)
         _npq.initiator_finish(
             sess,
             bytes(m2),
             expected_peer_pk=expected_peer_pk,
-            allow_unpinned=(expected_peer_pk is None),
+            allow_unpinned=(expected_peer_pk is None and not _production_strict()),
         )  # verify sig_r BEFORE derive
         peer_pk = sess._peer_sig_pk
         # IDENTITY-HIDING PROPERTY (SIGMA / Noise XX): Gating the responder's identity
@@ -619,12 +628,14 @@ def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
             raise SecurityError("stale")
         if len(m3) < 2592 + 16 + 1:
             raise SecurityError("handshake size violation")
+        if _production_strict() and expected_peer_pk is None:
+            raise SecurityError("unpinned peer refused in production (expected_peer_pk required)")
         sig_pk, _sig_sk, _signer = _xxhfs_identity(kp)
         _npq.responder_complete(
             sess,
             bytes(m3),
             expected_peer_pk=expected_peer_pk,
-            allow_unpinned=(expected_peer_pk is None),
+            allow_unpinned=(expected_peer_pk is None and not _production_strict()),
         )  # verify sig_i BEFORE Split
         peer_pk = sess._peer_sig_pk
         # GATE BEFORE SPLIT: Verify initiator's identity before deriving transport keys

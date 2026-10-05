@@ -1086,11 +1086,15 @@ def _hardened_https_context() -> "ssl.SSLContext":
     Bandit B310 flags urlopen() without an explicit SSL context. All four
     OAuth call sites below now pass this context plus a 10s timeout, pin to
     https:// URLs only, and cap response bodies (1 MB) before json parsing.
+    Production (P2P_PRODUCTION=1) floors at TLS 1.3 (CNSA 2.0); lab stays at
+    TLS 1.2 for interop.
     """
+    import os as _os
+    _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
     ctx = ssl.create_default_context()
     if hasattr(ssl, "TLSVersion"):
         try:
-            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_3 if _prod else ssl.TLSVersion.TLSv1_2
         # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
         except Exception:  # nosec: B110
             pass
@@ -1966,7 +1970,14 @@ class TLSSecureChannel:
         Security note:
             Setting verify_certs=False or enforce_dane_validation=False significantly
             reduces security and should only be done in controlled test environments.
+            Production (P2P_PRODUCTION=1) refuses both (fail-closed).
         """
+        import os as _os
+        _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+        if _prod and not verify_certs:
+            raise ValueError("verify_certs=False refused in production (MITM protection)")
+        if _prod and not enforce_dane_validation:
+            raise ValueError("enforce_dane_validation=False refused in production")
         # Set in_memory_only attribute first, as other methods depend on it
         self.in_memory_only = in_memory_only
 

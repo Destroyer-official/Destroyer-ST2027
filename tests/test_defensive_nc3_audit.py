@@ -153,7 +153,7 @@ class TestDefensiveNC3Audit(unittest.TestCase):
     def test_eam_wire_padding(self):
         """Verify Finding P0.3: Wire payloads are uniformly padded to exact 1024-byte blocks."""
         # Use helper from secure_p2p
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        from secure_p2p import SecureP2PChat
         
         chat = SecureP2PChat.__new__(SecureP2PChat)
         chat.BLOCK_PADDING_SIZE = 1024
@@ -252,7 +252,7 @@ class TestDefensiveNC3Audit(unittest.TestCase):
 
     def test_heartbeat_ack_throttle(self):
         """Verify Finding P0.2 / Item 30: Heartbeat responses throttled to at most 1 ACK per 5 seconds."""
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        from secure_p2p import SecureP2PChat
         chat = SecureP2PChat.__new__(SecureP2PChat)
         chat._last_hb_ack_time = 0.0
         

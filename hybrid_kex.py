@@ -724,8 +724,14 @@ class HybridKeyExchange:
     # v1 = legacy HKDF-SHA3_512 raw-concat combiner (wire format frozen,
     #      never modified). v2 = HKDF-SHA384 length-prefixed combiner with
     #      transcript binding (see crypto.kem.hybrid_combine_v2).
+    # Research (USENIX'24 Bhargavan et al. on PQXDH; Signal PQXDH spec):
+    # version/{"protocol_version"} MUST be transcript-bound; unauthenticated
+    # min() negotiation downgrades to v1. Production therefore floors at v2.
     PROTOCOL_VERSION = 2
     PROTOCOL_VERSION_MIN = 1
+    # Production floor: P2P_PRODUCTION=1 / P2P_TS_MODE=1 refuses v1 combiner
+    # (fail-closed, no silent downgrade to raw-concat).
+    PROTOCOL_VERSION_MIN_PRODUCTION = 2
 
     def __init__(self, identity: str = "user", keys_dir: Optional[str] = None,
                  ephemeral: bool = True, key_lifetime: int = MIN_KEY_LIFETIME,
@@ -3107,11 +3113,16 @@ class HybridKeyExchange:
                 + _lp(eph) + _lp(pq) + _lp(ct_b) + _lp(role_b) + opk_flag + _lp(opk_b))
 
     def negotiate_protocol_version(self, peer_bundle: Optional[Dict[str, Any]]) -> int:
-        """Negotiate the PQXDH combiner version: max common, min v1.
+        """Negotiate the PQXDH combiner version: max common, floor enforced.
 
         A missing/unparseable peer 'protocol_version' means v1 (pre-v2
-        peer). Logs which version was negotiated.
+        peer). Production (P2P_PRODUCTION=1 / P2P_TS_MODE=1) floors at v2 and
+        raises SecurityError on v1 (fail-closed downgrade protection).
+        Lab stays interoperable at v1 with a warning.
         """
+        import os as _os
+        _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+        _floor = int(getattr(type(self), "PROTOCOL_VERSION_MIN_PRODUCTION", 2)) if _prod else int(type(self).PROTOCOL_VERSION_MIN)
         peer_v = type(self).PROTOCOL_VERSION_MIN
         try:
             if isinstance(peer_bundle, dict) and peer_bundle.get("protocol_version") is not None:
@@ -3125,10 +3136,23 @@ class HybridKeyExchange:
         except (TypeError, ValueError):
             local_v = type(self).PROTOCOL_VERSION_MIN
         negotiated = min(local_v, peer_v)
-        hybrid_kex_logger.info(
-            f"PQXDH combiner version negotiated: v{negotiated} "
-            f"(local v{local_v}, peer v{peer_v})"
-        )
+        if negotiated < _floor:
+            hybrid_kex_logger.critical(
+                f"PQXDH combiner downgrade refused: negotiated v{negotiated} < floor v{_floor} "
+                f"(local v{local_v}, peer v{peer_v}, production={_prod})"
+            )
+            raise SecurityError(
+                f"PQXDH combiner v{negotiated} refused in production (minimum v{_floor})"
+            )
+        if negotiated == type(self).PROTOCOL_VERSION_MIN and not _prod:
+            hybrid_kex_logger.warning(
+                f"PQXDH combiner v1 negotiated (legacy raw-concat, lab interop only): local v{local_v}, peer v{peer_v}"
+            )
+        else:
+            hybrid_kex_logger.info(
+                f"PQXDH combiner version negotiated: v{negotiated} "
+                f"(local v{local_v}, peer v{peer_v})"
+            )
         return negotiated
 
     def derive_root_v2(self, dh1: bytes, dh2: bytes, dh3: bytes, dh4: bytes,

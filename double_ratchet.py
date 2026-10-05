@@ -1956,16 +1956,22 @@ class DoubleRatchet:
     for increased security against quantum computing threats.
     """
 
-    # Security parameters - Enhanced defaults
-    MAX_SKIP_MESSAGE_KEYS = 0      # Completely disabled to ensure maximum forward secrecy
-    HARD_MAX_SKIP = 32             # Absolute hard ceiling on skipped keys to prevent CPU exhaustion DoS (Finding 4.4)
+    # Security parameters - Signal-spec aligned (see signal.org/docs/specifications/doubleratchet).
+    # MAX_SKIP=1000 per spec section 2.6/3: high enough for routine loss/reorder,
+    # low enough to bound attacker-triggered HMAC computation (DoS). MKSKIPPED
+    # per-session cap 1000; deletion after interval enforced via expiry below.
+    # Prior value 0 broke on any loss/reorder and forced fail-closed on benign gaps.
+    MAX_SKIP_MESSAGE_KEYS = 1000
+    HARD_MAX_SKIP = 1000              # Absolute hard ceiling: single-chain gap >1000 aborts (CPU DoS bound)
+    MAX_SKIPPED_TOTAL = 2000          # Per-session total cap across chains (evict oldest + expiry)
+    SKIPPED_KEY_EXPIRY_SECONDS = 3600  # Delete skipped keys after 1h (Signal 8.4: timer-based deletion)
     MAX_MESSAGE_SIZE = 524288      # 512KB maximum message size (reduced from 1MB)
     CHAIN_KEY_SIZE = 32            # Chain key size in bytes
     MSG_KEY_SIZE = 32              # Message key size in bytes
     ROOT_KEY_SIZE = 32             # Root key size in bytes
     KEY_ROTATION_MESSAGES = 30     # Rotate keys after this many messages
     KEY_ROTATION_TIME = 3600       # Rotate keys after this many seconds (1 hour)
-    MAX_REPLAY_CACHE_SIZE = 200    # Max number of message IDs to store for replay detection
+    MAX_REPLAY_CACHE_SIZE = 1000   # Signal-aligned: cover MKSKIPPED window (1000) to avoid eviction-replay
 
     # Hybrid KEM ciphertext size: ML-KEM-1024 (1568) + McEliece-8192128f (208) = 1776
     HYBRID_KEM_CIPHERTEXT_SIZE = 1776  # Expected ciphertext size for Hybrid KEM
@@ -2055,7 +2061,7 @@ class DoubleRatchet:
         root_key: bytes,
         is_initiator: bool = True,
         enable_pq: bool = True,
-        max_skipped_keys: int = 0,  # Force zero to ensure maximum forward secrecy
+        max_skipped_keys: int = 1000,  # Signal spec default: tolerate loss/reorder up to 1000
         security_level: str = "MAXIMUM",
         threshold_security: bool = True,  # Enable by default for enhanced security
         hardware_binding: bool = True,    # Enable by default for enhanced security
@@ -2169,8 +2175,13 @@ class DoubleRatchet:
                 "legacy synchronized-KEM reuse (v1 wire format)"
             )
 
-        # Force max_skipped_keys to 0 to enforce maximum forward secrecy
-        self.max_skipped_message_keys = 0
+        # Signal 2.6/3: honor caller limit, clamped to [1, MAX_SKIP_MESSAGE_KEYS].
+        # Prior code forced 0, breaking on any loss/reorder.
+        try:
+            _req = int(max_skipped_keys)
+        except (TypeError, ValueError):
+            _req = self.MAX_SKIP_MESSAGE_KEYS
+        self.max_skipped_message_keys = max(1, min(_req, self.MAX_SKIP_MESSAGE_KEYS))
 
         # Enhanced security options - force to maximum security
         self.security_level = "MAXIMUM"
@@ -2219,8 +2230,13 @@ class DoubleRatchet:
         self.receiving_chain_length = 0
         self.previous_sending_chain_length = 0
 
-        # Skipped message keys (limited to zero for maximum forward secrecy)
+        # Skipped message keys (Signal MKSKIPPED, capped + expiry for forward secrecy)
         self.skipped_message_keys = {}
+        # Parallel timestamps for timer-based deletion (Signal 8.4). {key_tuple: monotonic_time}
+        self._skipped_key_times = {}
+        # Optional handshake binding mixed into AEAD AD (set_handshake_binding).
+        # None = legacy AD for interop; bytes = bound AD (both sides identical).
+        self._handshake_binding = None
 
         # Key rotation timestamps
         self.last_key_rotation_time = time.time()
@@ -3647,6 +3663,104 @@ class DoubleRatchet:
                 # Silently handle any errors during secure erasure
                 logger.debug("Secure erasure encountered non-fatal error")
 
+    def _snapshot_decrypt_state(self) -> dict:
+        """Snapshot mutable ratchet state for copy-on-write decrypt (Signal 3.x).
+
+        Signal spec: "If an exception is raised (e.g. message authentication
+        failure) then the message is discarded and changes to the state object
+        are discarded." Snapshot covers every field mutated by _dh_ratchet_step,
+        _skip_message_keys, _store_skipped_message_keys and chain advancement.
+        """
+        return {
+            "root_key": bytes(self.root_key) if isinstance(self.root_key, (bytes, bytearray)) else self.root_key,
+            "sending_chain_key": bytes(self.sending_chain_key) if isinstance(self.sending_chain_key, (bytes, bytearray)) else self.sending_chain_key,
+            "receiving_chain_key": bytes(self.receiving_chain_key) if isinstance(self.receiving_chain_key, (bytes, bytearray)) else self.receiving_chain_key,
+            "sending_message_number": self.sending_message_number,
+            "receiving_message_number": self.receiving_message_number,
+            "sending_chain_length": getattr(self, "sending_chain_length", 0),
+            "receiving_chain_length": getattr(self, "receiving_chain_length", 0),
+            "previous_sending_chain_length": getattr(self, "previous_sending_chain_length", 0),
+            "remote_dh_public_key": self.remote_dh_public_key,
+            "remote_kem_public_key": bytes(self.remote_kem_public_key) if isinstance(self.remote_kem_public_key, (bytes, bytearray)) else self.remote_kem_public_key,
+            "dh_private_key": self.dh_private_key,
+            "dh_public_key": self.dh_public_key,
+            "current_ratchet_key_id": bytes(self.current_ratchet_key_id) if isinstance(getattr(self, "current_ratchet_key_id", None), (bytes, bytearray)) else getattr(self, "current_ratchet_key_id", None),
+            "skipped_message_keys": dict(self.skipped_message_keys),
+            "skipped_key_times": dict(getattr(self, "_skipped_key_times", {})),
+            "kem_private_key": self.kem_private_key,
+            "kem_public_key": self.kem_public_key,
+            "kem_ciphertext": bytes(self.kem_ciphertext) if isinstance(getattr(self, "kem_ciphertext", None), (bytes, bytearray)) else getattr(self, "kem_ciphertext", None),
+            "pending_pq_ct": bytes(self._pending_pq_ct) if isinstance(getattr(self, "_pending_pq_ct", None), (bytes, bytearray)) else getattr(self, "_pending_pq_ct", None),
+            "peer_ct_seen": getattr(self, "_peer_ct_seen", False),
+            "synchronized_kem_secret": bytes(getattr(self, "_synchronized_kem_secret", None)) if isinstance(getattr(self, "_synchronized_kem_secret", None), (bytes, bytearray)) else getattr(self, "_synchronized_kem_secret", None),
+            "last_pq_ratchet_time": getattr(self, "_last_pq_ratchet_time", 0.0),
+        }
+
+    def _restore_decrypt_state(self, snap: dict) -> None:
+        """Restore snapshot taken by _snapshot_decrypt_state; wipe staged keys."""
+        staged = getattr(self, "skipped_message_keys", {})
+        snap_keys = snap.get("skipped_message_keys", {})
+        for k, v in list(staged.items()):
+            if k not in snap_keys:
+                _wipe_secret_best_effort(bytearray(v) if isinstance(v, bytes) else v, "staged skipped key rollback")
+        self.root_key = snap["root_key"]
+        self.sending_chain_key = snap["sending_chain_key"]
+        self.receiving_chain_key = snap["receiving_chain_key"]
+        self.sending_message_number = snap["sending_message_number"]
+        self.receiving_message_number = snap["receiving_message_number"]
+        self.sending_chain_length = snap["sending_chain_length"]
+        self.receiving_chain_length = snap["receiving_chain_length"]
+        self.previous_sending_chain_length = snap["previous_sending_chain_length"]
+        self.remote_dh_public_key = snap["remote_dh_public_key"]
+        self.remote_kem_public_key = snap["remote_kem_public_key"]
+        self.dh_private_key = snap["dh_private_key"]
+        self.dh_public_key = snap["dh_public_key"]
+        if "current_ratchet_key_id" in snap:
+            self.current_ratchet_key_id = snap["current_ratchet_key_id"]
+        self.skipped_message_keys = dict(snap["skipped_message_keys"])
+        self._skipped_key_times = dict(snap.get("skipped_key_times", {}))
+        self.kem_private_key = snap["kem_private_key"]
+        self.kem_public_key = snap["kem_public_key"]
+        try:
+            self.kem_ciphertext = snap["kem_ciphertext"]
+        except KeyError:
+            pass
+        self._pending_pq_ct = snap["pending_pq_ct"]
+        self._peer_ct_seen = snap["peer_ct_seen"]
+        try:
+            self._synchronized_kem_secret = snap["synchronized_kem_secret"]
+        except KeyError:
+            pass
+        self._last_pq_ratchet_time = snap["last_pq_ratchet_time"]
+
+    def _prune_skipped_keys(self) -> None:
+        """Enforce expiry + total cap on MKSKIPPED (Signal 8.4). Never raises."""
+        try:
+            now = time.monotonic()
+            expiry = float(getattr(self, "SKIPPED_KEY_EXPIRY_SECONDS", 3600))
+            times = getattr(self, "_skipped_key_times", {})
+            for k, ts in list(times.items()):
+                try:
+                    if (now - float(ts)) > expiry:
+                        v = self.skipped_message_keys.pop(k, None)
+                        times.pop(k, None)
+                        if isinstance(v, bytes):
+                            _wipe_secret_best_effort(bytearray(v), "expired skipped key")
+                except Exception:
+                    continue
+            cap = int(getattr(self, "MAX_SKIPPED_TOTAL", 2000))
+            while len(self.skipped_message_keys) > cap and times:
+                try:
+                    oldest = min(times.items(), key=lambda x: float(x[1]))[0]
+                except Exception:
+                    break
+                v = self.skipped_message_keys.pop(oldest, None)
+                times.pop(oldest, None)
+                if isinstance(v, bytes):
+                    _wipe_secret_best_effort(bytearray(v), "evicted skipped key")
+        except Exception:
+            pass
+
     def decrypt(self, message: bytes) -> bytes:
         """Decrypt a message using the Double Ratchet protocol.
 
@@ -3751,18 +3865,32 @@ class DoubleRatchet:
                 # 3. Create authenticated data from header
                 auth_data = self._get_associated_data(header_bytes)
 
-                # 4. Perform DH ratchet step if needed and derive message key.
-                # The peer CT (if any) is consumed by the v2 DH step for the
-                # peer-synced mix; absence on a v2 session falls back to
-                # legacy reuse with a warning and never aborts here.
-                message_key = self._ratchet_decrypt(header, peer_pq_ct=peer_pq_ct)
+                # 4. Copy-on-write: snapshot BEFORE any DH/chain mutation (Signal:
+                # "changes to the state object are discarded" on exception).
+                # Fixes state-corruption on replayed old signed header + AEAD fail.
+                self._prune_skipped_keys()
+                _snap = self._snapshot_decrypt_state()
+                _mk = None
+                try:
+                    _mk = self._ratchet_decrypt(header, peer_pq_ct=peer_pq_ct)
+                    logger.debug(f"Decrypting with message key #{header.message_number}")
+                    plaintext = self._decrypt_with_cipher(nonce, ciphertext, auth_data, _mk)
+                except Exception:
+                    try:
+                        self._restore_decrypt_state(_snap)
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    try:
+                        if isinstance(_mk, bytes):
+                            _wipe_secret_best_effort(bytearray(_mk), "staged message key")
+                    except Exception:
+                        pass
 
-                # 5. Decrypt the message
-                logger.debug(f"Decrypting with message key #{header.message_number}")
-                plaintext = self._decrypt_with_cipher(nonce, ciphertext, auth_data, message_key)
-
-                # Add successfully processed message ID to replay cache
+                # Commit only on success: replay mark + pruned skipped-key GC.
                 self.replay_cache.add(header.message_id)
+                self._prune_skipped_keys()
 
                 return plaintext
 
@@ -3874,9 +4002,27 @@ class DoubleRatchet:
         # 1. Check KSKIPPED: If key for (header.public_key, header.message_number) is stored, use it.
         key_tuple = (current_message_ratchet_id, message_number)
         if key_tuple in self.skipped_message_keys:
+            # Enforce expiry: stale skipped keys are deleted, treated as missed (Signal 8.4).
+            try:
+                _ts = float(self._skipped_key_times.get(key_tuple, time.monotonic()))
+                if (time.monotonic() - _ts) > float(getattr(self, "SKIPPED_KEY_EXPIRY_SECONDS", 3600)):
+                    _stale = self.skipped_message_keys.pop(key_tuple, None)
+                    self._skipped_key_times.pop(key_tuple, None)
+                    if isinstance(_stale, bytes):
+                        _wipe_secret_best_effort(bytearray(_stale), "expired skipped key on use")
+                    raise SecurityError("Skipped message key expired.")
+            except SecurityError:
+                raise
+            except Exception:
+                pass
             logger.info(f"Using stored key for message #{message_number} (ratchet {format_binary(current_message_ratchet_id)})")
-            # Pop the key as it's now being used.
-            return self.skipped_message_keys.pop(key_tuple)
+            # Pop the key as it's now being used (single-use, Signal MKSKIPPED_del).
+            _mk = self.skipped_message_keys.pop(key_tuple)
+            try:
+                self._skipped_key_times.pop(key_tuple, None)
+            except Exception:
+                pass
+            return _mk
 
         # --- Potential DH Ratchet Step ---
         # Check if the sender's DH public key in the header is new compared to our stored remote DH key.
@@ -3896,12 +4042,12 @@ class DoubleRatchet:
                 logger.debug(f"Storing skipped keys for old ratchet {format_binary(old_remote_ratchet_id)} "
                              f"from message #{self.receiving_message_number} up to #{header.previous_chain_length-1}.")
                 try:
-                    # Enforce strict hard gap ceiling of 32 to prevent CPU exhaustion DoS (Finding 4.4)
-                    effective_max_skip = min(self.MAX_SKIP_MESSAGE_KEYS, getattr(self, 'HARD_MAX_SKIP', 32))
-                    if (header.previous_chain_length - self.receiving_message_number) > getattr(self, 'HARD_MAX_SKIP', 32):
+                    # Enforce hard gap ceiling (Signal MAX_SKIP=1000 DoS bound).
+                    effective_max_skip = min(self.MAX_SKIP_MESSAGE_KEYS, getattr(self, 'HARD_MAX_SKIP', 1000))
+                    if (header.previous_chain_length - self.receiving_message_number) > getattr(self, 'HARD_MAX_SKIP', 1000):
                         logger.error(f"SECURITY ALERT: previous_chain_length gap ({header.previous_chain_length - self.receiving_message_number}) "
-                                     f"exceeds hard limit of {getattr(self, 'HARD_MAX_SKIP', 32)}. Aborting to prevent CPU DoS.")
-                        raise SecurityError("Previous chain gap exceeds hard limit of 32.")
+                                     f"exceeds hard limit of {getattr(self, 'HARD_MAX_SKIP', 1000)}. Aborting to prevent CPU DoS.")
+                        raise SecurityError("Previous chain gap exceeds hard limit.")
 
                     bounded_previous_chain_length = min(
                         header.previous_chain_length,
@@ -3910,7 +4056,7 @@ class DoubleRatchet:
 
                     if bounded_previous_chain_length < header.previous_chain_length:
                         logger.warning(f"Limiting previous chain storage to {bounded_previous_chain_length} " +
-                                      f"(original was {header.previous_chain_length}) to prevent DOS")
+                                       f"(original was {header.previous_chain_length}) to prevent DOS")
 
                     self._store_skipped_message_keys(
                         self.receiving_chain_key,         # The CKr for the old chain
@@ -3918,9 +4064,11 @@ class DoubleRatchet:
                         bounded_previous_chain_length,    # Bounded Pn from header (sender's old chain length)
                         old_remote_ratchet_id             # Ratchet ID of the old chain
                     )
+                except SecurityError:
+                    raise
                 except Exception as e:
                     logger.error(f"Error storing skipped message keys: {e}")
-                    # Continue with DH ratchet even if skipping fails
+                    raise SecurityError(f"Failed to store skipped message keys: {e}")
 
         if needs_dh_ratchet:
             try:
@@ -3959,9 +4107,9 @@ class DoubleRatchet:
             raise SecurityError(f"Message replay attack detected: old message sequence number (#{message_number}) for current ratchet, not in skipped keys cache.")
 
         if message_number > self.receiving_message_number:
-            # Bound check to prevent remote CPU exhaustion via unbounded skipping (Item 29 / Finding 4.4)
+            # Bound check: Signal MAX_SKIP=1000 (DoS bound, still tolerates loss/reorder).
             gap = message_number - self.receiving_message_number
-            hard_limit = getattr(self, 'HARD_MAX_SKIP', 32)
+            hard_limit = getattr(self, 'HARD_MAX_SKIP', 1000)
             if gap > hard_limit:
                 logger.error(f"SECURITY ALERT: Message number gap {gap} exceeds HARD_MAX_SKIP ({hard_limit}). Aborting to prevent CPU DoS.")
                 raise SecurityError(f"Message number {message_number} gap exceeds maximum allowable limit of {hard_limit}.")
@@ -4036,9 +4184,13 @@ class DoubleRatchet:
             next_chain_key, message_key = self._chain_ratchet_step(current_chain_key)
             current_chain_key = next_chain_key
 
-            # Store the skipped key for later use
+            # Store the skipped key for later use (+ timestamp for Signal 8.4 expiry)
             key_tuple = (remote_key_id, i)
             self.skipped_message_keys[key_tuple] = message_key
+            try:
+                self._skipped_key_times[key_tuple] = time.monotonic()
+            except Exception:
+                pass
             logger.debug(f"Stored key for skipped message #{i}")
 
     def _create_new_receiving_chain(self) -> None:
@@ -4336,13 +4488,54 @@ class DoubleRatchet:
         """
         Create authenticated data binding the header to the ciphertext.
 
-        This prevents header modification and cross-protocol attacks.
+        Binds header + optional session binding (handshake transcript hash and
+        both identity keys). Signal binds the header via the chain-derived key;
+        explicit binding here adds unknown-key-share / identity-misbinding
+        resistance (cf. PQXDH binding analysis, USENIX'24). Legacy sessions
+        without a binding fall back to context+SHA256(header) for interop.
         """
         # Application context for domain separation
         context = b"DoubleRatchet_PQSv2"
         # Deterministically bind header to context
         auth_data = hashlib.sha256(header_bytes).digest()
+        bind = getattr(self, "_handshake_binding", None)
+        if bind:
+            try:
+                return context + auth_data + bytes(bind)
+            except Exception:
+                pass
         return context + auth_data
+
+    def set_handshake_binding(self, transcript_hash: Optional[bytes] = None,
+                              local_sig_pk: Optional[bytes] = None,
+                              remote_sig_pk: Optional[bytes] = None) -> bytes:
+        """Bind the data-plane AD to the handshake (opt-in, symmetric both sides).
+
+        Both peers MUST call with byte-identical (transcript, local, remote)
+        in canonical order or AEAD will fail closed (no silent downgrade).
+        Returns the 32-byte binding mixed into _get_associated_data.
+        Call after the handshake; safe to call before first encrypt/decrypt.
+        """
+        import hashlib as _hl
+        th = bytes(transcript_hash) if transcript_hash is not None else b""
+        lp = bytes(local_sig_pk) if local_sig_pk is not None else b""
+        rp = bytes(remote_sig_pk) if remote_sig_pk is not None else b""
+        if len(th) not in (0, 32, 48, 64):
+            raise SecurityError("handshake transcript hash must be 32/48/64 bytes or empty")
+        for name, pk in (("local_sig_pk", lp), ("remote_sig_pk", rp)):
+            if pk and len(pk) != 2592:
+                raise SecurityError(f"handshake {name} must be 2592-byte ML-DSA-87 or empty")
+        # Canonical order: sorted identity pair + transcript (order-independent,
+        # reflection-resistant); domain-separated SHA256.
+        ids = sorted([lp, rp])
+        h = _hl.sha256()
+        h.update(b"DR-AD-BIND-v1")
+        h.update(len(th).to_bytes(4, "big") + th)
+        for pk in ids:
+            h.update(len(pk).to_bytes(4, "big") + pk)
+        self._handshake_binding = h.digest()
+        logger.info("Handshake binding set for ratchet AD (transcript+identities)")
+        return bytes(self._handshake_binding)
 
     def get_dss_public_key(self) -> Optional[Union[bytes, dict]]:
         """Returns the public key for the Digital Signature Scheme (FALCON-1024).
@@ -4464,8 +4657,8 @@ class DoubleRatchet:
         # Check if we'll exceed the max skipped keys limit before starting the skip process
         total_keys_needed = until_message_number - start_msg_num
 
-        # Enforce hard skip ceiling of 32 to prevent remote CPU exhaustion (Finding 4.4)
-        hard_limit = getattr(self, 'HARD_MAX_SKIP', 32)
+        # Enforce hard skip ceiling (Signal MAX_SKIP=1000 DoS bound).
+        hard_limit = getattr(self, 'HARD_MAX_SKIP', 1000)
         if total_keys_needed > hard_limit:
             logger.error(f"SECURITY ALERT: total_keys_needed ({total_keys_needed}) exceeds HARD_MAX_SKIP ({hard_limit}). Aborting skip.")
             raise SecurityError(f"Skipping {total_keys_needed} keys exceeds maximum hard limit of {hard_limit}.")
@@ -4505,6 +4698,12 @@ class DoubleRatchet:
             # Store the skipped message key
             key_tuple = (ratchet_key_id, i) # i is the message number being skipped
             self.skipped_message_keys[key_tuple] = message_key_val
+            try:
+                if not hasattr(self, "_skipped_key_times"):
+                    self._skipped_key_times = {}
+                self._skipped_key_times[key_tuple] = time.monotonic()
+            except Exception:
+                pass
 
             # Update the main chain key and message number to reflect this step
             self.receiving_chain_key = next_chain_key_val
@@ -4691,7 +4890,7 @@ class DoubleRatchetDefaults:
     SECURITY_LEVELS = {
         "MAXIMUM": {
             "enable_pq": True,                # Always enable PQ for NIST Level-5
-            "max_skipped_keys": 0,            # No skipped keys for maximum forward secrecy
+            "max_skipped_keys": 1000,         # Signal MAX_SKIP: tolerate loss/reorder, bounded DoS + expiry
             "key_rotation_messages": 3,        # Very frequent key rotation
             "key_rotation_time": 10,          # 10 second key rotation
             "max_message_size": 262144,       # 256KB max message size

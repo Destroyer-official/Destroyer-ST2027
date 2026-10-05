@@ -41,10 +41,17 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 # Session-path files subject to the strict profile (this file excluded:
 # it defines the policy and instantiates no crypto).
+# NOTE (hybrid-transition honesty): the messenger path (double_ratchet.py,
+# hybrid_kex.py, secure_p2p.py) is a Signal-style hybrid (X25519 + ML-KEM +
+# ChaCha20-Poly1305 + Falcon-verify) and is NOT CNSA-pure. It is scanned as
+# HYBRID_TRANSITION (warn, not pass) so CI cannot claim purity for it; only
+# the files below may claim strict CNSA 2.0 session status.
 TS_SESSION_FILES = ("secure_transmit_2027.py", "noise_pq.py", "crypto_selftest.py",
                     "ts_hw_layer.py", "ts_runtime.py",
                     "ts_attest.py", "cng_platform.py", "spo_dpo.py",
                     "trust_anchor.py", "transport_anonymity.py")
+# Messenger hybrid-transition files: must never be presented as CNSA-pure.
+HYBRID_TRANSITION_FILES = ("double_ratchet.py", "hybrid_kex.py", "secure_p2p.py")
 
 # Exact allowed negotiated names (runtime layer).
 ALLOW_KEM = {"ML-KEM-1024"}
