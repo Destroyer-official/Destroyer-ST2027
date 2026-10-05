@@ -1,4 +1,4 @@
 """destroyer_core — Rust data plane (PyO3 native extension)."""
-from ._native import SecureEngine
+from ._native import SecureEngine, NativeHybridKex
 
-__all__ = ["SecureEngine"]
+__all__ = ["SecureEngine", "NativeHybridKex"]

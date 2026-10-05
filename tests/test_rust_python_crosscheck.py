@@ -103,17 +103,19 @@ def test_boundary_contract_pq_stays_python():
     assert (kem.pk_size, kem.ct_size, kem.ss_size) == (1568, 1568, 32)  # nosec: B101
     dsa = LibOQS_MLDSA_87()
     assert (dsa.pk_size, dsa.sk_size, dsa.sig_size) == (2592, 4896, 4627)  # nosec: B101
-    # Rust tree: symmetric + KEM only. No signature scheme crate or module.
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "rust_data_plane")
-    cargo = open(os.path.join(root, "Cargo.toml"), encoding="utf-8").read()
+    from pathlib import Path
+    repo = Path(__file__).resolve().parent
+    if not (repo / "rust_data_plane").exists():
+        repo = repo.parent
+    root = repo / "rust_data_plane"
+    cargo = open(root / "Cargo.toml", encoding="utf-8").read()
     for crate in ("ml-dsa", "dilithium", "falcon", "slh", "sphincs",
                   "ed25519", "ecdsa", "rsa", "p256", "p384"):
         assert crate not in cargo.lower(), f"sig crate in Rust deps: {crate}"  # nosec: B101
     import re
     token_re = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
     hits = []
-    for dirpath, _, files in os.walk(os.path.join(root, "src")):
+    for dirpath, _, files in os.walk(root / "src"):
         for fn in files:
             if not fn.endswith(".rs"):
                 continue
@@ -124,4 +126,34 @@ def test_boundary_contract_pq_stays_python():
             if bad:
                 hits.append((fn, sorted(bad)))
     assert not hits, f"signature symbols in Rust tree: {hits}"  # nosec: B101
+
+
+def test_native_hybrid_kex_roundtrip():
+    """Verify Rust-native hybrid KEX roundtrip with transcript binding."""
+    NativeHybridKex = getattr(destroyer_core, "NativeHybridKex", None)
+    if NativeHybridKex is None:
+        pytest.skip("NativeHybridKex not exposed in destroyer_core")
+    import secrets
+    transcript = secrets.token_bytes(48)
+    
+    # Alice generates ephemeral keys (X25519 + ML-KEM-1024)
+    alice = NativeHybridKex()
+    alice_x_pub, alice_ml_ek = alice.get_public_keys()
+    assert len(alice_x_pub) == 32
+    assert len(alice_ml_ek) == 1568
+
+    # Bob encapsulates against Alice's public keys
+    bob_eph_x, bob_ml_ct, bob_ss = NativeHybridKex.encapsulate_to_peer(
+        alice_x_pub, alice_ml_ek, transcript
+    )
+    assert len(bob_eph_x) == 32
+    assert len(bob_ml_ct) == 1568
+    assert len(bob_ss) == 32
+
+    # Alice decapsulates Bob's ciphertext
+    alice_ss = alice.decapsulate_session_key(bob_eph_x, bob_ml_ct, transcript)
+    assert len(alice_ss) == 32
+
+    # Both must reach identical 32-byte session secret
+    assert alice_ss == bob_ss
 
