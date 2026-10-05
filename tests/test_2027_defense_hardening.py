@@ -201,7 +201,7 @@ class Test2027DefenseHardening(unittest.TestCase):
         os.environ.pop("P2P_TACTICAL_APN", None)
         os.environ.pop("P2P_MULTIHOP_ROUTING", None)
 
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat, SecurityError
+        from secure_p2p import SecureP2PChat, SecurityError
 
         chat = SecureP2PChat(port=18991, ephemeral=True)
         # Attempt to connect to a public IP (e.g., 93.184.216.34)
@@ -225,7 +225,7 @@ class Test2027DefenseHardening(unittest.TestCase):
         old_prod = os.environ.get("SECURE_P2P_PRODUCTION")
         os.environ["SECURE_P2P_PRODUCTION"] = "true"
         try:
-            from archive.legacy_prototype.secure_p2p import SecureP2PChat
+            from secure_p2p import SecureP2PChat
 
             chat = SecureP2PChat(port=18993, ephemeral=True)
             # 127.0.0.1 should not raise the Public IP SecurityError

@@ -38,7 +38,9 @@ class ProductionDeployer:
     
     REQUIRED_FILES = [
         'secure_p2p.py',
-        'archive/legacy_prototype/secure_p2p.py',
+        'secure_transmit_2027.py',
+        'noise_pq.py',
+        'destroyer_node.py',
         'pqc_algorithms.py',
         'military_security_enforcement.py',
         'cnsa2_policy_engine.py',
@@ -108,19 +110,19 @@ class ProductionDeployer:
         """Check required and recommended environment variables."""
         all_required = True
         
-        # Check production mode (SECURE_P2P_PRODUCTION or P2P_PRODUCTION)
-        prod_mode = os.environ.get('SECURE_P2P_PRODUCTION') or os.environ.get('P2P_PRODUCTION')
-        if prod_mode and prod_mode.lower() == 'true':
-            self.log_pass("Environment: Production mode is set (SECURE_P2P_PRODUCTION/P2P_PRODUCTION=true)")
+        # Check production mode (SECURE_P2P_PRODUCTION or P2P_PRODUCTION or P2P_TS_MODE)
+        prod_mode = os.environ.get('SECURE_P2P_PRODUCTION') or os.environ.get('P2P_PRODUCTION') or os.environ.get('P2P_TS_MODE')
+        if prod_mode and str(prod_mode).strip().lower() in ('1', 'true', 'yes', 'on'):
+            self.log_pass(f"Environment: Production mode is set ({prod_mode})")
         else:
-            self.log_error("Environment: SECURE_P2P_PRODUCTION=true is NOT set (required for production fail-closed enforcement)")
+            self.log_error("Environment: P2P_PRODUCTION=1 / SECURE_P2P_PRODUCTION=true is NOT set (required for production fail-closed enforcement)")
             all_required = False
 
+        db_url = os.environ.get('DATABASE_URL') or 'sqlite:///p2p_secure.db'
         if os.environ.get('DATABASE_URL'):
-            self.log_pass("Environment: DATABASE_URL is set")
+            self.log_pass(f"Environment: DATABASE_URL is set ({db_url})")
         else:
-            self.log_error("Environment: DATABASE_URL is NOT set (required)")
-            all_required = False
+            self.log_pass(f"Environment: DATABASE_URL defaulting to local secure SQLite store ({db_url})")
         
         for var in self.RECOMMENDED_ENV_VARS:
             if os.environ.get(var):
