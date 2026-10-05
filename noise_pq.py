@@ -94,10 +94,13 @@ import hmac
 import os
 import secrets
 import struct
+import time
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 PROTOCOL_NAME = b"Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384"
+PROTOCOL_NAME_PSK2 = b"Noise_XXhfs_psk2_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384"
+PSK_LEN = 32
 HASHLEN = 48
 MLKEM_EK = 1568
 MLKEM_CT = 1568
@@ -283,7 +286,8 @@ class NoiseSession:
     is_initiator: bool
     sig_pk: bytes
     sig_sk: bytes
-    sym: SymmetricState = field(default_factory=SymmetricState)
+    psk: Optional[bytes] = None
+    sym: Optional[SymmetricState] = field(default=None)
     _e_priv: Optional[object] = field(default=None, repr=False)
     _e_pub: Optional[bytes] = field(default=None, repr=False)
     _f_sk: Optional[bytearray] = field(default=None, repr=False)  # ML-KEM dk (initiator)
@@ -297,6 +301,16 @@ class NoiseSession:
     _recv_win_bits: int = 0
     _recv_started: bool = False
     handshake_hash: Optional[bytes] = None
+
+    def __post_init__(self) -> None:
+        if self.psk is not None:
+            if not isinstance(self.psk, (bytes, bytearray)) or len(self.psk) != PSK_LEN:
+                raise NoiseError(f"PSK parameter violation: expected exactly {PSK_LEN} bytes, got {len(self.psk) if hasattr(self.psk, '__len__') else type(self.psk)}")
+            if self.sym is None:
+                self.sym = SymmetricState(PROTOCOL_NAME_PSK2)
+        else:
+            if self.sym is None:
+                self.sym = SymmetricState(PROTOCOL_NAME)
 
     def destroy(self) -> None:
         # Best-effort container sanitization for mutable bytearrays.
@@ -314,7 +328,12 @@ class NoiseSession:
         if self._k_recv is not None:
             _zero(self._k_recv)
             self._k_recv = None
-        self.sym.destroy()
+        if self.psk is not None:
+            if isinstance(self.psk, bytearray):
+                _zero(self.psk)
+            self.psk = None
+        if self.sym is not None:
+            self.sym.destroy()
 
 
 def _take_ephemeral(sess: NoiseSession) -> bytes:
@@ -365,6 +384,8 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     h_for_sig = bytes(sess.sym.h)
     sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig, is_initiator=False)  # es->sig over h
     enc_sig = sess.sym.encrypt_and_hash(sig)
+    if sess.psk is not None:
+        sess.sym.mix_key_and_hash(bytes(sess.psk))
     return e_pub + ml_ct + enc_pk + enc_sig
 
 
@@ -406,6 +427,8 @@ def initiator_finish(
     if expected_peer_pk is not None and srv_pk != expected_peer_pk:
         raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = srv_pk
+    if sess.psk is not None:
+        sess.sym.mix_key_and_hash(bytes(sess.psk))
 
 
 def initiator_complete(sess: NoiseSession, signer=None) -> bytes:
@@ -533,3 +556,116 @@ def transport_recv(sess: NoiseSession, wire: bytes) -> bytes:
         raise NoiseError("transport authentication failed")
     _recv_mark(sess, seq)  # Step 3: mutate ONLY on authentication success
     return pt
+
+
+class StatelessCookieGate:
+    """
+    Stateless Anti-Amplification & Anti-DoS Cookie Gate (RFC 9000 / WireGuard style).
+
+    Protects Noise_XXhfs responders from CPU exhaustion and reflection attacks:
+    1. M1 is 1,665 bytes while M2 is 8,916 bytes (a 5.35x amplification factor).
+    2. Generating M2 requires P-384 ECDH keygen, ML-KEM encapsulation, and ML-DSA-87 signature (~4-5ms CPU).
+    3. StatelessCookieGate validates sender address return-routability before any asymmetric crypto is computed.
+    4. Optional micro-Proof-of-Work (PoW) challenge dynamically scales under high ingress load.
+    """
+    MAGIC = b"NPQC1\x00"
+    ROTATION_INTERVAL = 120  # Epoch interval in seconds
+
+    def __init__(self, rotation_interval: int = ROTATION_INTERVAL) -> None:
+        self.rotation_interval = max(10, rotation_interval)
+        self._curr_secret: bytes = secrets.token_bytes(32)
+        self._prev_secret: bytes = self._curr_secret
+        self._last_rotation: float = time.monotonic()
+
+    def _maybe_rotate(self) -> None:
+        now = time.monotonic()
+        if now - self._last_rotation >= self.rotation_interval:
+            self._prev_secret = self._curr_secret
+            self._curr_secret = secrets.token_bytes(32)
+            self._last_rotation = now
+
+    def _epoch(self) -> int:
+        return int(time.time()) // self.rotation_interval
+
+    def _compute_mac(self, secret: bytes, client_ip: str, client_port: int, m1_prefix: bytes, epoch: int) -> bytes:
+        data = (
+            client_ip.encode("ascii", "replace")
+            + struct.pack(">H", client_port & 0xFFFF)
+            + m1_prefix[:64]
+            + struct.pack(">Q", epoch)
+        )
+        return hmac.new(secret, data, hashlib.sha384).digest()[:24]
+
+    def create_cookie(self, client_ip: str, client_port: int, m1_prefix: bytes) -> bytes:
+        """Create a stateless 38-byte cookie encoding address and M1 binding."""
+        self._maybe_rotate()
+        epoch = self._epoch()
+        mac = self._compute_mac(self._curr_secret, client_ip, client_port, m1_prefix, epoch)
+        return self.MAGIC + struct.pack(">Q", epoch) + mac
+
+    def verify_cookie(self, cookie: bytes, client_ip: str, client_port: int, m1_prefix: bytes) -> bool:
+        """Verify an address-bound cookie against active epoch keys."""
+        expected_len = len(self.MAGIC) + 8 + 24
+        if not cookie or len(cookie) != expected_len:
+            return False
+        if not hmac.compare_digest(cookie[:len(self.MAGIC)], self.MAGIC):
+            return False
+        epoch = struct.unpack(">Q", cookie[len(self.MAGIC):len(self.MAGIC) + 8])[0]
+        mac = cookie[len(self.MAGIC) + 8:]
+        curr_epoch = self._epoch()
+        if abs(epoch - curr_epoch) > 1:
+            return False
+        self._maybe_rotate()
+        for secret in (self._curr_secret, self._prev_secret):
+            expected = self._compute_mac(secret, client_ip, client_port, m1_prefix, epoch)
+            if hmac.compare_digest(mac, expected):
+                return True
+        return False
+
+    def create_challenge(self, client_ip: str, client_port: int, m1_prefix: bytes, difficulty_bits: int = 0) -> bytes:
+        """Create a cookie challenge packet (optionally requesting micro-PoW)."""
+        diff = max(0, min(difficulty_bits, 32))
+        cookie = self.create_cookie(client_ip, client_port, m1_prefix)
+        return b"NPQ_CHALLENGE\x00" + bytes([diff]) + cookie
+
+    def verify_response(
+        self,
+        response: bytes,
+        client_ip: str,
+        client_port: int,
+        m1_prefix: bytes,
+        difficulty_bits: int = 0,
+    ) -> bool:
+        """Verify client challenge response containing cookie + 8-byte PoW nonce."""
+        cookie_len = len(self.MAGIC) + 8 + 24
+        if len(response) != cookie_len + 8:
+            return False
+        cookie, nonce_bytes = response[:cookie_len], response[cookie_len:]
+        if not self.verify_cookie(cookie, client_ip, client_port, m1_prefix):
+            return False
+        if difficulty_bits > 0:
+            h = hashlib.sha256(cookie + nonce_bytes).digest()
+            val = int.from_bytes(h, "big")
+            target = 1 << (256 - difficulty_bits)
+            if val >= target:
+                return False
+        return True
+
+    @staticmethod
+    def solve_challenge(challenge_payload: bytes, max_iterations: int = 2_000_000) -> Optional[bytes]:
+        """Client-side solver for cookie + micro-PoW challenge."""
+        prefix = b"NPQ_CHALLENGE\x00"
+        if not challenge_payload.startswith(prefix) or len(challenge_payload) < len(prefix) + 1:
+            return None
+        difficulty_bits = challenge_payload[len(prefix)]
+        cookie = challenge_payload[len(prefix) + 1:]
+        if difficulty_bits == 0:
+            return cookie + struct.pack(">Q", 0)
+        target = 1 << (256 - difficulty_bits)
+        for nonce in range(max_iterations):
+            nb = struct.pack(">Q", nonce)
+            h = hashlib.sha256(cookie + nb).digest()
+            if int.from_bytes(h, "big") < target:
+                return cookie + nb
+        return None
+
