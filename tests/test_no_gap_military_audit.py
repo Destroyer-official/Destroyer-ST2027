@@ -19,10 +19,16 @@ import hmac
 from typing import Dict, Any
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+REPO_ROOT = os.path.dirname(BASE_DIR) if os.path.basename(BASE_DIR) == "tests" else BASE_DIR
+for p in (REPO_ROOT, BASE_DIR):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from ca_services import CAExchange, SecurityError
-from archive.legacy_prototype.secure_p2 import SecureP2PChat
+try:
+    from secure_p2p import SecureP2PChat
+except ImportError:
+    from archive.legacy_prototype.secure_p2 import SecureP2PChat
 from double_ratchet import DoubleRatchet
 
 GREEN = "\033[92m"

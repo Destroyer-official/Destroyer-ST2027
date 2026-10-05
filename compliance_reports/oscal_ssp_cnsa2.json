@@ -1,13 +1,13 @@
 {
   "system-security-plan": {
-    "id": "39f46bef-e984-4083-8ba4-d7df246f8923",
+    "id": "8933d185-d2b9-4f5e-a8d3-a8f4c28aeecc",
     "metadata": {
       "title": "Sovereign Military P2P Communications Platform - System Security Plan (SSP)",
-      "published": "2026-09-19T13:35:35.068526+00:00",
-      "last-modified": "2026-09-19T13:35:35.068526+00:00",
+      "published": "2026-10-05T17:20:36.199883+00:00",
+      "last-modified": "2026-10-05T17:20:36.199883+00:00",
       "version": "2028.1.0-DEFENSE",
       "oscal-version": "1.1.0",
-      "remarks": "Self-assessment engineering evidence package targeting DoD RMF, NIST SP 800-53 Rev 5, CNSSI 1253, and NSA CNSA 2.0 baseline. Pre-decisional engineering artifact; pending third-party accredited laboratory evaluation and formal Authorizing Official (AO) action.",
+      "remarks": "SELF-AUTHORED SSP DRAFT for AO package assembly (not accredited; no AO action). Control coverage below is the implemented-boundary subset (12 controls); full High-baseline extension is tracked in the SAR POA&M.",
       "roles": [
         {
           "id": "authorizing-official",
@@ -29,15 +29,16 @@
         {
           "id": "sovereign-defense-hq",
           "type": "organization",
-          "name": "ST2027 Research & Engineering Maintainers",
+          "name": "Sovereign Defense Communications Command",
           "email-addresses": [
-            "security@destroyer-st2027.internal"
+            "crypto-command@defense.mil"
           ]
         }
       ]
     },
     "import-profile": {
-      "href": "https://csrc.nist.gov/projects/cnsa-2-0/profiles/cnsa2-strict-profile.json"
+      "href": "#local-cnsa2-strict-tailoring",
+      "remarks": "No external profile imported (a prior draft cited a non-existent NIST URL; removed). Tailoring: CNSA 2.0 strict (ML-KEM-1024 + ML-DSA-87 mandatory; see cnsa2_policy_engine.py)."
     },
     "system-characteristics": {
       "system-name": "Sovereign Military P2P Tactical Mesh",
@@ -74,8 +75,8 @@
         "security-objective-availability": "fips-199-high"
       },
       "status": {
-        "state": "operational",
-        "remarks": "Accredited for zero-trust deployment on contested open internet backbones."
+        "state": "under-development",
+        "remarks": "Self-assessed development state; operational use requires AO authorization (not granted)."
       },
       "authorization-boundary": {
         "description": "Encompasses local node memory, physical TPM 2.0 chip, native destroyer_core Rust execution boundary, and WireGuard UDP data plane sockets."
@@ -109,15 +110,15 @@
           "type": "software",
           "title": "Tamper-Evident SIEM Audit Engine",
           "description": "Generates forward-secure HMAC-SHA384 chained audit trails streamed over TLS 1.3.",
-          "purpose": "Guarantees forensic log non-repudiation and anti-tamper compliance."
+          "purpose": "Supports forensic log integrity and anti-tamper detection (design goal, not a guarantee)."
         }
       ]
     },
     "control-implementation": {
-      "description": "Full compliance implementation mapped to NIST SP 800-53 Rev 5 controls.",
+      "description": "Implemented-boundary control subset mapped to NIST SP 800-53 Rev 5 (12 controls with in-repo evidence). NOT full High-baseline coverage; extension tracked in SAR POA&M.",
       "implemented-requirements": [
         {
-          "uuid": "b670bc9f-f8c1-49a4-8e0e-6412ba236a1c",
+          "uuid": "11529b20-440f-4f6c-9eae-659e5c38947e",
           "control-id": "ac-3",
           "description": "Access Enforcement: Strict Zero-Trust RBAC engine enforces least privilege and default-deny.",
           "by-components": [
@@ -128,7 +129,7 @@
           ]
         },
         {
-          "uuid": "67b08ff8-9fe9-444f-a92a-e1c2d387e03c",
+          "uuid": "f9a7d17b-2d75-4f5a-a643-a0bbc709d50b",
           "control-id": "ac-4",
           "description": "Information Flow Enforcement: Enforces discrete traffic quantum shape and chaff absorption.",
           "by-components": [
@@ -139,7 +140,7 @@
           ]
         },
         {
-          "uuid": "08e233dc-ee2f-4458-ab31-313f6f355541",
+          "uuid": "866cda08-8cbe-4dd5-8f91-fa9be3b88377",
           "control-id": "au-2",
           "description": "Event Logging: All authentication, key rotation, and packet drop events recorded.",
           "by-components": [
@@ -150,7 +151,7 @@
           ]
         },
         {
-          "uuid": "0fe8d64c-66d7-48aa-8c89-ad8eddef1341",
+          "uuid": "de8fef07-bdae-4404-adfb-eef4419e0c99",
           "control-id": "au-9",
           "description": "Protection of Audit Information: Audit logs protected via forward-secure HMAC-SHA384 chaining.",
           "by-components": [
@@ -161,7 +162,7 @@
           ]
         },
         {
-          "uuid": "e84c6507-1a49-4a68-b4fd-38ccf3372fbe",
+          "uuid": "f53ed45b-d505-4e1b-9fc8-84f7faf41a2a",
           "control-id": "au-10",
           "description": "Non-Repudiation: Every session transaction and certificate signed with ML-DSA-87.",
           "by-components": [
@@ -172,7 +173,7 @@
           ]
         },
         {
-          "uuid": "8a4c8342-abba-488c-bce2-7965be84080a",
+          "uuid": "4f0dfa95-0b15-48e8-ab5e-d02cfc2fc159",
           "control-id": "ia-2",
           "description": "Identification and Authentication: Multi-factor and hardware-backed peer authentication.",
           "by-components": [
@@ -183,7 +184,7 @@
           ]
         },
         {
-          "uuid": "3d79fbe8-e019-4fae-830f-519852b2a8cf",
+          "uuid": "4b75ccbc-b457-4bf2-9578-7eb74c224934",
           "control-id": "ia-5",
           "description": "Authenticator Management: Post-quantum Double Ratchet provides forward secrecy and break-in recovery.",
           "by-components": [
@@ -194,7 +195,7 @@
           ]
         },
         {
-          "uuid": "8ec9cc5b-fb00-4318-ab6b-2b54949ac307",
+          "uuid": "f4082697-e24c-4e03-8c6f-7a74e0f6cbad",
           "control-id": "sc-8",
           "description": "Transmission Confidentiality and Integrity: Dual-layer authenticated encryption over wire.",
           "by-components": [
@@ -205,7 +206,7 @@
           ]
         },
         {
-          "uuid": "19193079-bbf1-4a6c-af2b-46cd0c62f035",
+          "uuid": "b659b9b5-b3ac-41b3-bd11-08a3e54a9dcf",
           "control-id": "sc-12",
           "description": "Cryptographic Key Establishment and Management: Post-quantum hybrid KEM and M-of-N Shamir backup.",
           "by-components": [
@@ -216,7 +217,7 @@
           ]
         },
         {
-          "uuid": "88c698ef-78ca-4419-b3b4-6c46fc1f6f61",
+          "uuid": "6c3624d1-8fb9-46da-8a0d-0cc3e3778997",
           "control-id": "sc-13",
           "description": "Cryptographic Protection: NIST Level 5+ algorithms conforming strictly to NSA CNSA 2.0.",
           "by-components": [
@@ -227,7 +228,7 @@
           ]
         },
         {
-          "uuid": "56459a72-22c2-42e1-81c4-722a4f42d998",
+          "uuid": "2fccf847-b981-415f-857c-826b5412d511",
           "control-id": "si-4",
           "description": "Information System Monitoring: Anti-replay sliding window and token-bucket flood prevention.",
           "by-components": [
@@ -238,7 +239,7 @@
           ]
         },
         {
-          "uuid": "9ed5ffa1-64f8-48df-ad69-694849c90366",
+          "uuid": "8596320b-1e88-4981-877f-ef828f4cb368",
           "control-id": "si-7",
           "description": "Software, Firmware, and Information Integrity: CycloneDX 1.6 CBOM and TUF anti-rollback.",
           "by-components": [

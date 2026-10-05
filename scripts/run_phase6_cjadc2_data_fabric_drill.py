@@ -28,7 +28,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Ensure repository root is in python path
-REPO_ROOT = Path(__file__).resolve().parent
+_this_dir = Path(__file__).resolve().parent
+REPO_ROOT = _this_dir.parent if _this_dir.name == "scripts" else _this_dir
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

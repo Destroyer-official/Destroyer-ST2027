@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Cryptographically signed compliance reports and manifests must preserve exact byte representation
+compliance_reports/*.json text eol=lf
+compliance_reports/*.sig binary
+compliance_reports/*.pub binary
+critical_modules.hashes text eol=lf

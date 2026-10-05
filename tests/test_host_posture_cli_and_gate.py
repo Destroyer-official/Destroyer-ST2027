@@ -13,12 +13,17 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from archive.legacy_prototype.secure_p2p import SecureP2PChat
+try:
+    from secure_p2p import SecureP2PChat
+except ImportError:
+    from archive.legacy_prototype.secure_p2p import SecureP2PChat
 from network.session_manager import SessionManager, SecurityError
 
 
 # Import scripts directory for verify_host_hardening
-scripts_dir = os.path.join(os.path.dirname(__file__), "scripts")
+_here = os.path.dirname(os.path.abspath(__file__))
+_root = _here if os.path.isdir(os.path.join(_here, "scripts")) else os.path.dirname(_here)
+scripts_dir = os.path.join(_root, "scripts")
 if scripts_dir not in sys.path:
     sys.path.insert(0, scripts_dir)
 import verify_host_hardening

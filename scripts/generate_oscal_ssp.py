@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Dict, Any, Tuple
 import uuid
 
-REPO_ROOT = Path(__file__).resolve().parent
+_this_dir = Path(__file__).resolve().parent
+REPO_ROOT = _this_dir.parent if _this_dir.name == "scripts" else _this_dir
 
 try:
     from liboqs_wrapper import LibOQS_MLDSA_87

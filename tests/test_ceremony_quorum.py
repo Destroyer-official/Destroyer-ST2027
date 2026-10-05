@@ -22,9 +22,12 @@ from pathlib import Path
 
 import pytest
 
+_root = Path(__file__).resolve().parent
+if not (_root / "scripts").exists():
+    _root = _root.parent
 _SPEC = importlib.util.spec_from_file_location(
     "witnessed_key_ceremony",
-    str(Path(__file__).resolve().parent / "scripts" / "witnessed_key_ceremony.py"))
+    str(_root / "scripts" / "witnessed_key_ceremony.py"))
 _cer = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_cer)
 WitnessedKeyCeremony = _cer.WitnessedKeyCeremony

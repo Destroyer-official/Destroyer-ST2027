@@ -84,12 +84,14 @@ class EnhancedUserManager(BaseModule):
     def __init__(self, orchestrator=None):
         """Initialize the enhanced user manager."""
         super().__init__(orchestrator)
+        self.log = self.logger
         self.profile_file = Path("enhanced_user_profile.json")
         self.data = {}
         self.database_available = DATABASE_AVAILABLE
         self.api_client = None
         self.discovery_initialized = False
         self._encryption_key = None  # To hold the derived key
+        self._salt = None
         
         if self.database_available:
             try:
@@ -179,6 +181,7 @@ class EnhancedUserManager(BaseModule):
             nonce = encrypted_data[16:28]
             ciphertext = encrypted_data[28:]
 
+            self._salt = salt
             self._encryption_key = self._derive_key(passphrase, salt)
             aesgcm = AESGCM(self._encryption_key)
 
@@ -372,13 +375,23 @@ class EnhancedUserManager(BaseModule):
             role: SecurityRole string (default: OPERATOR)
         """
         try:
-            if not self._encryption_key:
-                if not passphrase:
-                    raise ValueError("Passphrase is required to save a new profile.")
+            if passphrase:
                 salt = secrets.token_bytes(16)
+                self._salt = salt
                 self._encryption_key = self._derive_key(passphrase, salt)
-            else:  # re-saving, use existing key but new salt for re-encryption
-                salt = secrets.token_bytes(16)
+            elif self._encryption_key:
+                salt = getattr(self, '_salt', None)
+                if not salt and Path(self.profile_file).exists():
+                    try:
+                        with open(self.profile_file, 'rb') as f:
+                            salt = f.read(16)
+                    except Exception:
+                        salt = None
+                if not salt:
+                    salt = secrets.token_bytes(16)
+                self._salt = salt
+            else:
+                raise ValueError("Passphrase is required to save a new profile.")
 
             username_hash = MilitaryGradeCrypto.hash_username_for_lookup(username)
             user_id_hash = MilitaryGradeCrypto.hash_user_id_for_storage(user_id)

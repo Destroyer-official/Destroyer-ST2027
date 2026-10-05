@@ -40,7 +40,10 @@ from pathlib import Path
 import pytest
 
 from secure_file_sharing import FileChunk, FileMetadata
-from archive.legacy_prototype.secure_p2 import SecureP2PChat
+try:
+    from secure_p2p import SecureP2PChat
+except ImportError:
+    from archive.legacy_prototype.secure_p2 import SecureP2PChat
 
 PAYLOAD = b"TRAVERSAL-GUARD-PROBE-PAYLOAD"
 PAYLOAD_SHA3 = hashlib.sha3_256(PAYLOAD).hexdigest()

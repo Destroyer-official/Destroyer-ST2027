@@ -33,13 +33,19 @@ from typing import Dict, Any
 
 # Ensure workspace imports resolve
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
+REPO_ROOT = os.path.dirname(BASE_DIR) if os.path.basename(BASE_DIR) == "tests" else BASE_DIR
+for p in (REPO_ROOT, BASE_DIR):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from ca_services import CAExchange, secure_wipe_buffer, SecurityError, InputValidationError
 from secure_memory_wiper import secure_shred_file
 from double_ratchet import DoubleRatchet
 from pqc_algorithms import EnhancedMLKEM_1024, HybridCryptographyManager
-from archive.legacy_prototype.secure_p2 import EnhancedUserManager
+try:
+    from secure_p2p import EnhancedUserManager
+except ImportError:
+    from archive.legacy_prototype.secure_p2 import EnhancedUserManager
 
 # ANSI Terminal Formatting
 GREEN = "\033[92m"
