@@ -11,7 +11,7 @@
     "post_quantum_signature_suite": "ML-DSA-87 (FIPS 204)"
   },
   "gateway_id": "US-CJADC2-ALLIED-GW-01",
-  "report_id": "CJADC2-ALLIED-GW-1791223701",
+  "report_id": "CJADC2-ALLIED-GW-1791397466",
   "standard": "DoD CJADC2 Combined Interoperability / NATO STANAG 4774/4778",
   "statistics": {
     "blocked_noforn_count": 0,
@@ -75,5 +75,5 @@
       "USA"
     ]
   },
-  "timestamp": "2026-10-05T18:08:21.166970+00:00"
+  "timestamp": "2026-10-07T18:24:26.608300+00:00"
 }
