@@ -40,7 +40,10 @@ def workdir():
 def test_cli_key_fill_import_success(ceremony_keys, workdir, monkeypatch):
     """Test /key-fill-import successfully authenticates and unseals payload into session."""
     async def _run():
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        try:
+            from secure_p2p import SecureP2PChat
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat
 
         pk, sk = ceremony_keys
         ceremony_pub_path = str(workdir / "ceremony.pub")
@@ -85,7 +88,10 @@ def test_cli_key_fill_import_success(ceremony_keys, workdir, monkeypatch):
 def test_cli_key_fill_import_replay_fails_closed(ceremony_keys, workdir, monkeypatch):
     """Test re-importing the same fill fails closed due to registry locking."""
     async def _run():
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        try:
+            from secure_p2p import SecureP2PChat
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat
 
         pk, sk = ceremony_keys
         ceremony_pub_path = str(workdir / "ceremony.pub")
@@ -129,7 +135,10 @@ def test_cli_key_fill_import_replay_fails_closed(ceremony_keys, workdir, monkeyp
 def test_cli_diode_tx_and_rx_roundtrip():
     """Test /diode-tx and /diode-rx command handlers roundtrip across loopback socket."""
     async def _run():
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat
+        try:
+            from secure_p2p import SecureP2PChat
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat
 
         chat_sender = SecureP2PChat(identity="diode_tx_node")
         chat_receiver = SecureP2PChat(identity="diode_rx_node")

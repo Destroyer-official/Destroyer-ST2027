@@ -126,7 +126,10 @@ class TestAuditConfirmedRegressions(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_finding_12_tofu_unknown_collision_and_oob_verification(self):
         """Verify Finding 12: Unique fingerprint pins prevent collision, and OOB gate fails closed."""
-        from archive.legacy_prototype.secure_p2p import SecurityError
+        try:
+            from secure_p2p import SecurityError
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecurityError
 
         # A: Derivation test - 'unknown' or empty usernames generate distinct fingerprint-based peer_ids
         fp1 = "1111" * 16
@@ -449,7 +452,10 @@ class TestAuditConfirmedRegressions(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_finding_12_tofu_blocks_pinning_unverified(self):
         """Verify Finding 12: TOFU first-contact fails closed and never pins unverified attacker keys."""
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat, SecurityError
+        try:
+            from secure_p2p import SecureP2PChat, SecurityError
+        except ImportError:
+            from archive.legacy_prototype.secure_p2p import SecureP2PChat, SecurityError
         from ui.safety_numbers import check_pin
 
         # Save environment

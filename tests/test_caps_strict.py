@@ -141,7 +141,7 @@ class TestStrictEncryptSentinel(unittest.TestCase):
 
     def test_require_encrypted_raises_on_empty(self):
         # Pure: no network, bypass __init__ via __new__
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat, SecurityError
+        from secure_p2p import SecureP2PChat, SecurityError
         inst = SecureP2PChat.__new__(SecureP2PChat)
         with self.assertRaises(SecurityError):
             inst._require_encrypted(b"", "test:empty")
@@ -153,7 +153,7 @@ class TestStrictEncryptSentinel(unittest.TestCase):
     def test_encrypt_message_strict_raises_instead_of_sentinel(self):
         # Pure: not connected -> lab returns b'', strict raises SecurityError.
         # No sockets touched (early return before any I/O).
-        from archive.legacy_prototype.secure_p2p import SecureP2PChat, SecurityError
+        from secure_p2p import SecureP2PChat, SecurityError
         old_strict = os.environ.get("P2P_STRICT_ENCRYPT")
         old_prod = os.environ.get("P2P_PRODUCTION")
         old_sprod = os.environ.get("SECURE_P2P_PRODUCTION")
