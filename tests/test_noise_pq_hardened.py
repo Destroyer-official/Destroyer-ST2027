@@ -257,6 +257,12 @@ class TestStatelessCookieGate:
         assert status2 == "ACCEPT"
         assert accepted_m1 == m1
 
+        # Replayed cookie_m1 MUST be rejected fail-closed
+        status_replay, _ = gate.process_incoming_m1(
+            cookie_m1, client_addr[0], client_addr[1], require_cookie=True, difficulty_bits=4
+        )
+        assert status_replay == "DROP"
+
         # 5. Handshake completes successfully
         rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
         m2 = npq.responder_reply(rsp, accepted_m1)
@@ -268,6 +274,23 @@ class TestStatelessCookieGate:
         kr_s, kr_r, hr = npq.split_session(rsp)
         assert ki_s == kr_r
         assert hi == hr
+
+    def test_single_use_solution_anti_replay(self):
+        """Verify solved challenge response cannot be replayed twice."""
+        gate = npq.StatelessCookieGate()
+        client_ip = "198.51.100.77"
+        client_port = 45000
+        m1 = secrets.token_bytes(80)
+
+        challenge = gate.create_challenge(client_ip, client_port, m1, difficulty_bits=4)
+        response = npq.StatelessCookieGate.solve_challenge(challenge)
+        assert response is not None
+
+        # First verification succeeds
+        assert gate.verify_response(response, client_ip, client_port, m1, difficulty_bits=4) is True
+
+        # Replay attempt with identical solved response MUST fail closed
+        assert gate.verify_response(response, client_ip, client_port, m1, difficulty_bits=4) is False
 
 
 class TestDestroyerNodeIngressHardening:
@@ -317,4 +340,83 @@ class TestDestroyerNodeIngressHardening:
         npq._unlock_buffer(buf)
         npq._zero(buf)
         assert buf == bytearray(32)
+
+    def test_derive_shared_frame_key_initiator_responder_agreement(self):
+        """Verify initiator and responder derive bit-identical shared frame keys."""
+        (ci_pk, ci_sk), (cr_pk, cr_sk) = _make_identities()
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
+
+        m1 = npq.initiator_hello(ini)
+        m2 = npq.responder_reply(rsp, m1)
+        npq.initiator_finish(ini, m2, expected_peer_pk=cr_pk)
+        m3 = npq.initiator_complete(ini)
+        npq.responder_complete(rsp, m3, expected_peer_pk=ci_pk)
+
+        npq.split_session(ini)
+        npq.split_session(rsp)
+
+        key_ini = npq.derive_shared_frame_key(ini)
+        key_rsp = npq.derive_shared_frame_key(rsp)
+        assert len(key_ini) == 32
+        assert key_ini == key_rsp, "Initiator and responder must derive identical shared frame key"
+
+    def test_derive_double_ratchet_root_agreement(self):
+        """Verify initiator and responder derive bit-identical root keys for Double Ratchet."""
+        (ci_pk, ci_sk), (cr_pk, cr_sk) = _make_identities()
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
+
+        m1 = npq.initiator_hello(ini)
+        m2 = npq.responder_reply(rsp, m1)
+        npq.initiator_finish(ini, m2, expected_peer_pk=cr_pk)
+        m3 = npq.initiator_complete(ini)
+        npq.responder_complete(rsp, m3, expected_peer_pk=ci_pk)
+
+        npq.split_session(ini)
+        npq.split_session(rsp)
+
+        root_ini, h_ini = npq.derive_double_ratchet_root(ini)
+        root_rsp, h_rsp = npq.derive_double_ratchet_root(rsp)
+        assert len(root_ini) == 32
+        assert root_ini == root_rsp, "Initiator and responder must derive identical Double Ratchet root key"
+        assert h_ini == h_rsp
+
+    def test_destroyer_node_establish_from_noise_loopback(self):
+        """Verify full loopback communication between two DestroyerNode instances seeded from NoiseSession."""
+        from destroyer_node import DestroyerNode
+
+        (ci_pk, ci_sk), (cr_pk, cr_sk) = _make_identities()
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
+
+        m1 = npq.initiator_hello(ini)
+        m2 = npq.responder_reply(rsp, m1)
+        npq.initiator_finish(ini, m2, expected_peer_pk=cr_pk)
+        m3 = npq.initiator_complete(ini)
+        npq.responder_complete(rsp, m3, expected_peer_pk=ci_pk)
+
+        node_ini = DestroyerNode()
+        node_rsp = DestroyerNode()
+
+        h_ini = node_ini.establish_from_noise(ini)
+        h_rsp = node_rsp.establish_from_noise(rsp)
+        assert h_ini == h_rsp
+
+        # Transmit from initiator to responder
+        msg1 = b"TACTICAL_MISSION_DIRECTIVE_ALPHA_001"
+        wire1 = node_ini.transmit(msg1)
+        opened1 = node_rsp.receive(wire1)
+        assert opened1 is not None
+        ftype1, payload1 = opened1
+        assert payload1 == msg1
+
+        # Transmit from responder to initiator
+        msg2 = b"TARGET_ACKNOWLEDGED_BURST_BRAVO_002"
+        wire2 = node_rsp.transmit(msg2)
+        opened2 = node_ini.receive(wire2)
+        assert opened2 is not None
+        ftype2, payload2 = opened2
+        assert payload2 == msg2
+
 

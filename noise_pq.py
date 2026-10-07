@@ -89,6 +89,7 @@ HKDF-SHA384. No simulations.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import hmac
 import os
@@ -545,6 +546,35 @@ def split_session(sess: NoiseSession) -> Tuple[bytes, bytes, bytes]:
     return k_send, k_recv, h
 
 
+def derive_shared_frame_key(sess: NoiseSession) -> bytes:
+    """Derive unified 32-byte shared frame key for DestroyerNode / rust_data_plane.
+
+    Both initiator and responder derive the bit-identical frame key bound to the
+    cryptographic transcript hash `h` and crossed session keys.
+    """
+    if sess.handshake_hash is None or sess._k_send is None or sess._k_recv is None:
+        raise NoiseError("session must be split before deriving frame key")
+    k1 = bytes(sess._k_send) if sess.is_initiator else bytes(sess._k_recv)
+    k2 = bytes(sess._k_recv) if sess.is_initiator else bytes(sess._k_send)
+    frame_key = hmac.new(sess.handshake_hash, k1 + k2 + b"ST2027-Rust-DataPlane-SharedFrameKey", hashlib.sha384).digest()[:32]
+    return frame_key
+
+
+def derive_double_ratchet_root(sess: NoiseSession) -> Tuple[bytes, bytes]:
+    """Derive (root_key, transcript_h) to initialize DoubleRatchet root key.
+
+    Returns:
+        root_key: 32-byte symmetric root key for Double Ratchet initialization
+        h: 48-byte transcript hash for channel binding / authentication
+    """
+    if sess.handshake_hash is None or sess._k_send is None or sess._k_recv is None:
+        raise NoiseError("session must be split before deriving DoubleRatchet root")
+    k1 = bytes(sess._k_send) if sess.is_initiator else bytes(sess._k_recv)
+    k2 = bytes(sess._k_recv) if sess.is_initiator else bytes(sess._k_send)
+    root_key = hmac.new(sess.handshake_hash, k1 + k2 + b"ST2027-DoubleRatchet-RootKey", hashlib.sha384).digest()[:32]
+    return root_key, sess.handshake_hash
+
+
 def _transport_nonce(seq: int, direction: int) -> bytes:
     return struct.pack(">Q", seq) + bytes([direction]) + b"\x00\x00\x00"
 
@@ -625,11 +655,13 @@ class StatelessCookieGate:
     MAGIC = b"NPQC1\x00"
     ROTATION_INTERVAL = 120  # Epoch interval in seconds
 
-    def __init__(self, rotation_interval: int = ROTATION_INTERVAL) -> None:
+    def __init__(self, rotation_interval: int = ROTATION_INTERVAL, max_cached_solutions: int = 8192) -> None:
         self.rotation_interval = max(10, rotation_interval)
         self._curr_secret: bytes = secrets.token_bytes(32)
         self._prev_secret: bytes = self._curr_secret
         self._last_rotation: float = time.monotonic()
+        self._seen_solutions: collections.OrderedDict[bytes, float] = collections.OrderedDict()
+        self.max_cached_solutions = max_cached_solutions
 
     def _maybe_rotate(self) -> None:
         now = time.monotonic()
@@ -637,6 +669,11 @@ class StatelessCookieGate:
             self._prev_secret = self._curr_secret
             self._curr_secret = secrets.token_bytes(32)
             self._last_rotation = now
+            # Prune solutions older than 2 * rotation_interval to prevent memory growth
+            cutoff = now - (2 * self.rotation_interval)
+            expired = [k for k, t in self._seen_solutions.items() if t < cutoff]
+            for k in expired:
+                del self._seen_solutions[k]
 
     def _epoch(self) -> int:
         return int(time.time()) // self.rotation_interval
@@ -691,6 +728,10 @@ class StatelessCookieGate:
         difficulty_bits: int = 0,
     ) -> bool:
         """Verify client challenge response containing cookie + 8-byte PoW nonce."""
+        # Single-use enforcement: check for solution replay
+        if response in self._seen_solutions:
+            return False
+
         cookie_len = len(self.MAGIC) + 8 + 24
         if len(response) != cookie_len + 8:
             return False
@@ -703,7 +744,16 @@ class StatelessCookieGate:
             target = 1 << (256 - difficulty_bits)
             if val >= target:
                 return False
+
+        # Mark solution as consumed (one-time-use)
+        self._seen_solutions[response] = time.monotonic()
+        if len(self._seen_solutions) > self.max_cached_solutions:
+            self._seen_solutions.popitem(last=False)
         return True
+
+    def reset_replay_cache(self) -> None:
+        """Clear single-use challenge solution cache (testing / maintenance)."""
+        self._seen_solutions.clear()
 
     @staticmethod
     def solve_challenge(challenge_payload: bytes, max_iterations: int = 2_000_000) -> Optional[bytes]:

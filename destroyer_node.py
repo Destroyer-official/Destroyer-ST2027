@@ -83,6 +83,25 @@ class DestroyerNode:
                 for i in range(len(frame_key)):
                     frame_key[i] = 0
 
+    def establish_from_noise(self, sess: Any, start_seq: int | None = None) -> bytes:
+        """Derive shared frame key directly from a post-quantum NoiseSession.
+
+        Binds the key into the memory-safe data plane, wipes intermediate key material,
+        and returns the 48-byte handshake hash binding `h`.
+        """
+        import noise_pq
+        if sess.handshake_hash is None:
+            noise_pq.split_session(sess)
+        frame_key = noise_pq.derive_shared_frame_key(sess)
+        frame_key_buf = bytearray(frame_key)
+        noise_pq._lock_buffer(frame_key_buf)
+        try:
+            self.establish(frame_key_buf, start_seq=start_seq, is_initiator=sess.is_initiator)
+        finally:
+            noise_pq._unlock_buffer(frame_key_buf)
+            noise_pq._zero(frame_key_buf)
+        return sess.handshake_hash
+
     def transmit(self, message: bytes, chaff: bool = False) -> bytes:
         """Seal one message into a fixed-quantum wire frame."""
         ftype = FTYPE_CHAFF if chaff else FTYPE_MSG
