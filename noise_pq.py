@@ -442,9 +442,11 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     e_pub = _take_ephemeral(sess)  # mixes e_pub exactly once (see helper)
     ml_ct, ml_ss_raw = _mlkem_encaps(ek_cli)
     ml_ss = bytearray(ml_ss_raw)
+    _lock_buffer(ml_ss)
     sess._f_ss = ml_ss
     sess.sym.mix_hash(ml_ct)
     dh_secret = bytearray(_p384_dh(sess._e_priv, e_cli))
+    sess._e_priv = None  # Single-use ephemeral ECDH key zero-dwell disposal (NIST SP 800-227)
     sess.sym.mix_key(dh_secret)                        # ee
     _zero(dh_secret)
     sess.sym.mix_key(ml_ss)                            # ff
@@ -489,13 +491,16 @@ def initiator_finish(
     sess.sym.mix_hash(e_srv)
     sess.sym.mix_hash(ml_ct)
     dh_secret = bytearray(_p384_dh(sess._e_priv, e_srv))
+    sess._e_priv = None  # Single-use ephemeral ECDH key zero-dwell disposal (NIST SP 800-227)
     sess.sym.mix_key(dh_secret)                         # ee
     _zero(dh_secret)
     ml_ss = bytearray(_mlkem_decaps(sess._f_sk, ml_ct)) # ff
     _unlock_buffer(sess._f_sk)
     _zero(sess._f_sk)
     sess._f_sk = None
+    _lock_buffer(ml_ss)
     sess.sym.mix_key(ml_ss)
+    _unlock_buffer(ml_ss)
     _zero(ml_ss)
     # Split enc_pk (2592 + 16 tag) from enc_sig (rest).
     from liboqs_wrapper import LibOQS_MLDSA_87  # noqa: F401 (sizes below)
@@ -608,8 +613,11 @@ def derive_shared_frame_key(sess: NoiseSession) -> bytes:
         raise NoiseError("session must be split before deriving frame key")
     k1 = bytes(sess._k_send) if sess.is_initiator else bytes(sess._k_recv)
     k2 = bytes(sess._k_recv) if sess.is_initiator else bytes(sess._k_send)
-    frame_key = hmac.new(sess.handshake_hash, k1 + k2 + b"ST2027-Rust-DataPlane-SharedFrameKey", hashlib.sha384).digest()[:32]
-    return frame_key
+    h = hmac.new(sess.handshake_hash, digestmod=hashlib.sha384)
+    h.update(k1)
+    h.update(k2)
+    h.update(b"ST2027-Rust-DataPlane-SharedFrameKey")
+    return h.digest()[:32]
 
 
 def derive_double_ratchet_root(sess: NoiseSession) -> Tuple[bytes, bytes]:
@@ -625,8 +633,11 @@ def derive_double_ratchet_root(sess: NoiseSession) -> Tuple[bytes, bytes]:
         raise NoiseError("session must be split before deriving DoubleRatchet root")
     k1 = bytes(sess._k_send) if sess.is_initiator else bytes(sess._k_recv)
     k2 = bytes(sess._k_recv) if sess.is_initiator else bytes(sess._k_send)
-    root_key = hmac.new(sess.handshake_hash, k1 + k2 + b"ST2027-DoubleRatchet-RootKey", hashlib.sha384).digest()[:32]
-    return root_key, sess.handshake_hash
+    h = hmac.new(sess.handshake_hash, digestmod=hashlib.sha384)
+    h.update(k1)
+    h.update(k2)
+    h.update(b"ST2027-DoubleRatchet-RootKey")
+    return h.digest()[:32], sess.handshake_hash
 
 
 def _transport_nonce(seq: int, direction: int) -> bytes:

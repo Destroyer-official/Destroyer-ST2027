@@ -276,11 +276,13 @@ class DestroyerNode:
         dest: tuple[str, int],
         interval_sec: float = 0.05,
         jitter_sec: float = 0.01,
+        poisson: bool = False,
     ) -> None:
         """Start adaptive background cover traffic injection (DAITA / Maybenot defense).
 
         Transmits synthetic CSPRNG chaff frames during idle windows to maintain
         constant wire packet density and destroy packet timing / size correlation.
+        Supports both uniform-jittered and exponential Poisson memoryless scheduling.
         """
         if self._chaff_thread is not None and self._chaff_thread.is_alive():
             return
@@ -288,10 +290,16 @@ class DestroyerNode:
         self._chaff_stop_event = threading.Event()
 
         def _pacing_loop():
+            import math
             rng = secrets.SystemRandom()
+            rate_lambda = 1.0 / max(0.001, interval_sec)
             while not self._chaff_stop_event.is_set():
-                jitter = rng.uniform(-jitter_sec, jitter_sec) if jitter_sec > 0 else 0.0
-                delay = max(0.005, interval_sec + jitter)
+                if poisson:
+                    u = rng.uniform(0.0001, 0.9999)
+                    delay = max(0.005, min(1.0, -math.log(1.0 - u) / rate_lambda))
+                else:
+                    jitter = rng.uniform(-jitter_sec, jitter_sec) if jitter_sec > 0 else 0.0
+                    delay = max(0.005, interval_sec + jitter)
                 if self._chaff_stop_event.wait(delay):
                     break
                 if self.udp_sock is not None and self.engine.is_connected():

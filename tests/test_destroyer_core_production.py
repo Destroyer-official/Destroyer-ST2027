@@ -318,6 +318,38 @@ class TestDestroyerCoreProduction(unittest.TestCase):
             node_a.close_udp()
             node_b.close_udp()
 
+    def test_11_destroyer_node_poisson_pacing(self):
+        """Verify Poisson-scheduled memoryless cover traffic pacing."""
+        import time
+
+        node_a = DestroyerNode()
+        node_b = DestroyerNode()
+        key = secrets.token_bytes(32)
+
+        node_a.establish(key, is_initiator=True)
+        node_b.establish(key, is_initiator=False)
+
+        addr_b = node_b.bind_udp("127.0.0.1", 0)
+        node_a.bind_udp("127.0.0.1", 0)
+
+        try:
+            node_a.start_pacing_chaff(addr_b, interval_sec=0.02, poisson=True)
+            self.assertTrue(node_a.is_pacing_chaff())
+
+            time.sleep(0.08)  # Let background Poisson thread transmit memoryless chaff
+
+            # Real payload transmission across Poisson background traffic
+            node_a.send_udp_msg(b"POISSON_PAYLOAD_TEST", addr_b)
+            recv_msg = node_b.recv_udp_msg(timeout=1.0)
+            self.assertIsNotNone(recv_msg)
+            self.assertEqual(recv_msg[0], b"POISSON_PAYLOAD_TEST")
+
+            node_a.stop_pacing_chaff()
+            self.assertFalse(node_a.is_pacing_chaff())
+        finally:
+            node_a.close_udp()
+            node_b.close_udp()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
