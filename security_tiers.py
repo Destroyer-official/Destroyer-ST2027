@@ -323,6 +323,12 @@ class SecurityTierEngine:
 
         return (len(violations) == 0, violations)
 
+    @staticmethod
+    def create_critical_authority() -> Any:
+        """Create and return an initialized CriticalReleaseAuthority instance for TPI ceremonies."""
+        from critical_release import CriticalReleaseAuthority
+        return CriticalReleaseAuthority()
+
     @classmethod
     def assess_runtime_security_tier(
         cls,

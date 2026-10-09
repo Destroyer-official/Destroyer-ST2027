@@ -42,6 +42,7 @@ from security_tiers import (
     SecurityTierViolationError,
     TIER_PROFILES,
 )
+from critical_release import CriticalReleaseAuthority, ReleaseAuthError
 
 
 class TestComprehensiveSecurityTiers(unittest.TestCase):
@@ -295,6 +296,72 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
         )
         self.assertFalse(fail_expired)
         self.assertTrue(any("expired" in v.lower() for v in v_expired))
+
+    def test_critical_release_threshold_key_split_and_combine(self):
+        """CriticalReleaseAuthority splits key into dual-sealed shares and reconstructs into NativeSecureBuffer."""
+        auth = CriticalReleaseAuthority()
+        auth.enroll("alice", "passphrase_alpha_secure_99")
+        auth.enroll("bob", "passphrase_bravo_secure_88")
+
+        raw_key = secrets.token_bytes(32)
+        enc_s1, n1, enc_s2, n2 = auth.split_release_key(raw_key)
+
+        # Neither share alone equals raw_key
+        self.assertNotEqual(enc_s1, raw_key)
+        self.assertNotEqual(enc_s2, raw_key)
+
+        # Joint authorization combines into protected NativeSecureBuffer
+        buf = auth.combine_release_key(
+            enc_s1, n1, enc_s2, n2,
+            "alice", "passphrase_alpha_secure_99",
+            "bob", "passphrase_bravo_secure_88",
+        )
+        self.assertTrue(buf.is_protected)
+        self.assertEqual(buf.export_bytes(), raw_key)
+        buf.wipe()
+        self.assertTrue(buf.wiped)
+
+    def test_critical_release_payload_encrypt_decrypt_roundtrip(self):
+        """End-to-end critical payload encryption and dual-operator ceremony decryption."""
+        auth = CriticalReleaseAuthority()
+        auth.enroll("alice", "passphrase_alpha_secure_99")
+        auth.enroll("bob", "passphrase_bravo_secure_88")
+
+        payload = b"EXECUTE_STRATEGIC_PAYLOAD_COMMAND_ALPHA_2027"
+        bundle = auth.encrypt_critical_payload(payload)
+
+        # Decrypt with both authorized operators
+        plaintext = auth.decrypt_critical_payload(
+            bundle,
+            "alice", "passphrase_alpha_secure_99",
+            "bob", "passphrase_bravo_secure_88",
+        )
+        self.assertEqual(plaintext, payload)
+
+    def test_critical_release_wrong_passphrase_fails_closed(self):
+        """Critical payload decryption fails closed on incorrect passphrase or missing operator."""
+        auth = CriticalReleaseAuthority()
+        auth.enroll("alice", "passphrase_alpha_secure_99")
+        auth.enroll("bob", "passphrase_bravo_secure_88")
+
+        payload = b"CRITICAL_PROTECTED_COMMAND"
+        bundle = auth.encrypt_critical_payload(payload)
+
+        # Wrong passphrase for bob
+        with self.assertRaises(ReleaseAuthError):
+            auth.decrypt_critical_payload(
+                bundle,
+                "alice", "passphrase_alpha_secure_99",
+                "bob", "wrong_passphrase",
+            )
+
+        # Same operator twice rejected
+        with self.assertRaises(ReleaseAuthError):
+            auth.decrypt_critical_payload(
+                bundle,
+                "alice", "passphrase_alpha_secure_99",
+                "alice", "passphrase_alpha_secure_99",
+            )
 
     # ----------------------------------------------------------------------
     # 5. Dynamic Runtime Tier Assessment

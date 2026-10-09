@@ -17,6 +17,12 @@ import hmac
 import logging
 import os
 import secrets
+from typing import Any, Dict, Optional, Tuple
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
+from native_secure_buffer import NativeSecureBuffer, wipe_native
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +175,186 @@ class CriticalReleaseAuthority:
             del verifier
         self._failures = 0
         self._locked = False
+
+    def split_release_key(self, raw_key: bytes) -> Tuple[bytes, bytes, bytes, bytes]:
+        """Split a 32-byte release payload key into two sealed shares for enrolled operators.
+
+        Neither operator alone can recover raw_key. Each share is encrypted under an
+        operator-specific key derived from their PBKDF2 verifier using HKDF-SHA512.
+        """
+        if self._locked:
+            raise ReleaseAuthError("authority locked after failures")
+        if len(self._verifiers) != MAX_OPERATORS:
+            raise ReleaseAuthError("two operators must be enrolled first")
+        if len(raw_key) != 32:
+            raise ValueError("raw_key must be exactly 32 bytes")
+
+        op_ids = list(self._verifiers.keys())
+        salt1, verifier1 = self._verifiers[op_ids[0]]
+        salt2, verifier2 = self._verifiers[op_ids[1]]
+
+        share1 = bytearray(secrets.token_bytes(32))
+        share2 = bytearray(a ^ b for a, b in zip(raw_key, share1))
+
+        # Derive share-encryption keys
+        k1 = HKDF(
+            algorithm=hashes.SHA512(),
+            length=32,
+            salt=salt1,
+            info=b"CRITICAL_RELEASE_OPERATOR_1_SHARE",
+        ).derive(verifier1)
+        k2 = HKDF(
+            algorithm=hashes.SHA512(),
+            length=32,
+            salt=salt2,
+            info=b"CRITICAL_RELEASE_OPERATOR_2_SHARE",
+        ).derive(verifier2)
+
+        nonce1 = secrets.token_bytes(12)
+        nonce2 = secrets.token_bytes(12)
+
+        aes1 = AESGCM(k1)
+        aes2 = AESGCM(k2)
+
+        enc_share1 = aes1.encrypt(nonce1, bytes(share1), b"TPI_SHARE_1")
+        enc_share2 = aes2.encrypt(nonce2, bytes(share2), b"TPI_SHARE_2")
+
+        # Zeroize temporary secret buffers
+        wipe_native(share1)
+        wipe_native(share2)
+        del k1, k2
+
+        return (enc_share1, nonce1, enc_share2, nonce2)
+
+    def combine_release_key(
+        self,
+        enc_share1: bytes,
+        nonce1: bytes,
+        enc_share2: bytes,
+        nonce2: bytes,
+        id1: str,
+        pw1: str,
+        id2: str,
+        pw2: str,
+        *,
+        requester_role=None,
+        requester_peer_id=None,
+        zero_trust_engine=None,
+    ) -> NativeSecureBuffer:
+        """Jointly authorize and reconstruct release key into a protected NativeSecureBuffer.
+
+        Reconstructs raw_key into locked, in-RAM encrypted memory via NativeSecureBuffer.protect().
+        """
+        self.authorize(
+            id1,
+            pw1,
+            id2,
+            pw2,
+            requester_role=requester_role,
+            requester_peer_id=requester_peer_id,
+            zero_trust_engine=zero_trust_engine,
+        )
+
+        op_ids = list(self._verifiers.keys())
+        salt1, verifier1 = self._verifiers[op_ids[0]]
+        salt2, verifier2 = self._verifiers[op_ids[1]]
+
+        k1 = HKDF(
+            algorithm=hashes.SHA512(),
+            length=32,
+            salt=salt1,
+            info=b"CRITICAL_RELEASE_OPERATOR_1_SHARE",
+        ).derive(verifier1)
+        k2 = HKDF(
+            algorithm=hashes.SHA512(),
+            length=32,
+            salt=salt2,
+            info=b"CRITICAL_RELEASE_OPERATOR_2_SHARE",
+        ).derive(verifier2)
+
+        try:
+            aes1 = AESGCM(k1)
+            aes2 = AESGCM(k2)
+            share1 = bytearray(aes1.decrypt(nonce1, enc_share1, b"TPI_SHARE_1"))
+            share2 = bytearray(aes2.decrypt(nonce2, enc_share2, b"TPI_SHARE_2"))
+            raw_key = bytearray(a ^ b for a, b in zip(share1, share2))
+        except Exception as e:
+            self._register_failure()
+            raise ReleaseAuthError(f"Share decryption failed: {e}") from e
+        finally:
+            del k1, k2
+
+        buf = NativeSecureBuffer(raw_key)
+        wipe_native(share1)
+        wipe_native(share2)
+        wipe_native(raw_key)
+
+        buf.protect()
+        return buf
+
+    def encrypt_critical_payload(
+        self,
+        plaintext: bytes,
+    ) -> Dict[str, Any]:
+        """Encrypt payload with a fresh 256-bit key and generate two sealed shares."""
+        raw_key = bytearray(secrets.token_bytes(32))
+        enc_share1, nonce1, enc_share2, nonce2 = self.split_release_key(bytes(raw_key))
+
+        payload_nonce = secrets.token_bytes(12)
+        aes = AESGCM(bytes(raw_key))
+        ciphertext = aes.encrypt(payload_nonce, plaintext, b"CRITICAL_RELEASE_PAYLOAD_V2")
+        wipe_native(raw_key)
+
+        return {
+            "ciphertext": ciphertext,
+            "payload_nonce": payload_nonce,
+            "enc_share1": enc_share1,
+            "share_nonce1": nonce1,
+            "enc_share2": enc_share2,
+            "share_nonce2": nonce2,
+        }
+
+    def decrypt_critical_payload(
+        self,
+        bundle: Dict[str, Any],
+        id1: str,
+        pw1: str,
+        id2: str,
+        pw2: str,
+        *,
+        requester_role=None,
+        requester_peer_id=None,
+        zero_trust_engine=None,
+    ) -> bytes:
+        """Authenticate both operators and decrypt payload using reconstructed key."""
+        key_buf = self.combine_release_key(
+            bundle["enc_share1"],
+            bundle["share_nonce1"],
+            bundle["enc_share2"],
+            bundle["share_nonce2"],
+            id1,
+            pw1,
+            id2,
+            pw2,
+            requester_role=requester_role,
+            requester_peer_id=requester_peer_id,
+            zero_trust_engine=zero_trust_engine,
+        )
+
+        try:
+            with key_buf.expose() as key_bytes:
+                aes = AESGCM(bytes(key_bytes))
+                plaintext = aes.decrypt(
+                    bundle["payload_nonce"],
+                    bundle["ciphertext"],
+                    b"CRITICAL_RELEASE_PAYLOAD_V2",
+                )
+            return plaintext
+        except Exception as e:
+            self._register_failure()
+            raise ReleaseAuthError(f"Critical payload decryption failed: {e}") from e
+        finally:
+            key_buf.wipe()
 
     @staticmethod
     def session_environ_ready() -> bool:
