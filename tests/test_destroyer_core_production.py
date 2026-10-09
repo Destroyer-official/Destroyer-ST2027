@@ -256,6 +256,68 @@ class TestDestroyerCoreProduction(unittest.TestCase):
         unsealed = server_node.open_stream(outer_envelope)
         self.assertEqual(unsealed, mock_ratchet_ciphertext)
 
+    def test_09_destroyer_node_send_chaff(self):
+        """Verify send_chaff transmits authenticated dummy frames silently absorbed by receiver."""
+        node_a = DestroyerNode()
+        node_b = DestroyerNode()
+        key = secrets.token_bytes(32)
+
+        node_a.establish(key, is_initiator=True)
+        node_b.establish(key, is_initiator=False)
+
+        addr_b = node_b.bind_udp("127.0.0.1", 0)
+        node_a.bind_udp("127.0.0.1", 0)
+
+        try:
+            # Send chaff frame: receiver must silently absorb
+            sent_bytes = node_a.send_chaff(addr_b, payload_len=64)
+            self.assertGreater(sent_bytes, 0)
+
+            recv_res = node_b.recv_udp_msg(timeout=0.3)
+            self.assertIsNone(recv_res, "Chaff frame must be absorbed silently without payload leakage")
+
+            # Follow-up real frame must be successfully admitted
+            node_a.send_udp_msg(b"REAL_AUTHENTIC_PAYLOAD", addr_b)
+            recv_real = node_b.recv_udp_msg(timeout=0.5)
+            self.assertIsNotNone(recv_real)
+            self.assertEqual(recv_real[0], b"REAL_AUTHENTIC_PAYLOAD")
+        finally:
+            node_a.close_udp()
+            node_b.close_udp()
+
+    def test_10_destroyer_node_pacing_chaff_lifecycle(self):
+        """Verify start_pacing_chaff, is_pacing_chaff, and stop_pacing_chaff lifecycle."""
+        import time
+
+        node_a = DestroyerNode()
+        node_b = DestroyerNode()
+        key = secrets.token_bytes(32)
+
+        node_a.establish(key, is_initiator=True)
+        node_b.establish(key, is_initiator=False)
+
+        addr_b = node_b.bind_udp("127.0.0.1", 0)
+        node_a.bind_udp("127.0.0.1", 0)
+
+        try:
+            self.assertFalse(node_a.is_pacing_chaff())
+            node_a.start_pacing_chaff(addr_b, interval_sec=0.02, jitter_sec=0.005)
+            self.assertTrue(node_a.is_pacing_chaff())
+
+            time.sleep(0.08)  # Let background pacing thread transmit chaff
+
+            # Transmit real message concurrently with active background cover traffic
+            node_a.send_udp_msg(b"PAYLOAD_DURING_CHAFF", addr_b)
+            recv_msg = node_b.recv_udp_msg(timeout=1.0)
+            self.assertIsNotNone(recv_msg)
+            self.assertEqual(recv_msg[0], b"PAYLOAD_DURING_CHAFF")
+
+            node_a.stop_pacing_chaff()
+            self.assertFalse(node_a.is_pacing_chaff())
+        finally:
+            node_a.close_udp()
+            node_b.close_udp()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

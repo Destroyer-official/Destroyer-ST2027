@@ -14,6 +14,7 @@ Types: 0x01 message, 0xFF chaff (absorbed, never returned).
 import os
 import time
 import secrets
+import threading
 
 FTYPE_MSG = 0x01
 FTYPE_CHAFF = 0xFF
@@ -50,6 +51,9 @@ class DestroyerNode:
         self.cookie_gate = None
         self.cookie_difficulty = 0
         self.cookie_required = False
+        self._chaff_thread = None
+        self._chaff_stop_event = None
+        self._last_send_time = 0.0
 
     # Upper bound for chunked streams (H24): seal_stream/transmit_large
     # refuse absurd totals instead of building unbounded frame lists.
@@ -259,43 +263,105 @@ class DestroyerNode:
         frame = self.transmit(message, chaff=chaff)
         if len(frame) > self.MAX_DATAGRAM:
             raise ValueError(f"Frame exceeds MAX_DATAGRAM ({len(frame)} > {self.MAX_DATAGRAM})")
+        self._last_send_time = time.monotonic()
         return self.udp_sock.sendto(frame, dest)
 
+    def send_chaff(self, dest: tuple[str, int], payload_len: int = 64) -> int:
+        """Send a single CSPRNG-filled dummy chaff datagram."""
+        dummy = secrets.token_bytes(payload_len)
+        return self.send_udp_msg(dummy, dest, chaff=True)
+
+    def start_pacing_chaff(
+        self,
+        dest: tuple[str, int],
+        interval_sec: float = 0.05,
+        jitter_sec: float = 0.01,
+    ) -> None:
+        """Start adaptive background cover traffic injection (DAITA / Maybenot defense).
+
+        Transmits synthetic CSPRNG chaff frames during idle windows to maintain
+        constant wire packet density and destroy packet timing / size correlation.
+        """
+        if self._chaff_thread is not None and self._chaff_thread.is_alive():
+            return
+
+        self._chaff_stop_event = threading.Event()
+
+        def _pacing_loop():
+            rng = secrets.SystemRandom()
+            while not self._chaff_stop_event.is_set():
+                jitter = rng.uniform(-jitter_sec, jitter_sec) if jitter_sec > 0 else 0.0
+                delay = max(0.005, interval_sec + jitter)
+                if self._chaff_stop_event.wait(delay):
+                    break
+                if self.udp_sock is not None and self.engine.is_connected():
+                    try:
+                        self.send_chaff(dest, payload_len=secrets.randbelow(128))
+                    except Exception:
+                        pass
+
+        self._chaff_thread = threading.Thread(
+            target=_pacing_loop,
+            name="DestroyerNode-TrafficCamouflage",
+            daemon=True,
+        )
+        self._chaff_thread.start()
+
+    def stop_pacing_chaff(self) -> None:
+        """Stop background traffic camouflage pacing loop."""
+        if self._chaff_stop_event is not None:
+            self._chaff_stop_event.set()
+        if self._chaff_thread is not None and self._chaff_thread.is_alive():
+            self._chaff_thread.join(timeout=1.0)
+        self._chaff_thread = None
+        self._chaff_stop_event = None
+
+    def is_pacing_chaff(self) -> bool:
+        """Return True if background traffic camouflage is actively running."""
+        return self._chaff_thread is not None and self._chaff_thread.is_alive()
+
     def recv_udp_msg(self, timeout: float = 0.5) -> tuple[bytes, tuple[str, int]] | None:
-        """Receive one UDP datagram with black-hole silent drop discipline."""
+        """Receive one UDP datagram with black-hole silent drop discipline.
+
+        Transparently absorbs background chaff packets without leaking them to the
+        caller, continuing to wait until an authentic message arrives or timeout expires.
+        """
         if self.udp_sock is None:
             raise RuntimeError("UDP socket not bound: call bind_udp first")
         import socket
-        self.udp_sock.settimeout(timeout)
-        try:
-            raw, from_addr = self.udp_sock.recvfrom(self.MAX_DATAGRAM + 1)
-        except (socket.timeout, TimeoutError):
-            return None
-        except Exception:
-            self._udp_drops += 1
-            return None
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = max(0.001, deadline - time.monotonic())
+            self.udp_sock.settimeout(remaining)
+            try:
+                raw, from_addr = self.udp_sock.recvfrom(self.MAX_DATAGRAM + 1)
+            except (socket.timeout, TimeoutError):
+                return None
+            except Exception:
+                self._udp_drops += 1
+                return None
 
-        # Silent drop if oversized (would be fragmented on wire)
-        if len(raw) > self.MAX_DATAGRAM:
-            self._udp_drops += 1
-            return None
+            # Silent drop if oversized (would be fragmented on wire)
+            if len(raw) > self.MAX_DATAGRAM:
+                self._udp_drops += 1
+                continue
 
-        # Silent drop if over rate limit budget
-        if not self._check_rate_limit(from_addr[0]):
-            self._udp_drops += 1
-            return None
+            # Silent drop if over rate limit budget
+            if not self._check_rate_limit(from_addr[0]):
+                self._udp_drops += 1
+                continue
 
-        self._udp_admitted += 1
-        opened = self.receive(raw)
-        if opened is None:
-            self._udp_drops += 1
-            return None
+            self._udp_admitted += 1
+            opened = self.receive(raw)
+            if opened is None:
+                self._udp_drops += 1
+                continue
 
-        ftype, payload = opened
-        if ftype == FTYPE_CHAFF:
-            return None  # Chaff absorbed silently
+            ftype, payload = opened
+            if ftype == FTYPE_CHAFF:
+                continue  # Chaff absorbed silently; wait for next datagram
 
-        return payload, from_addr
+            return payload, from_addr
 
     def enable_cookie_gate(
         self,
@@ -376,6 +442,7 @@ class DestroyerNode:
 
     def close_udp(self) -> None:
         """Close UDP socket and flush rate buckets."""
+        self.stop_pacing_chaff()
         if self.udp_sock is not None:
             try:
                 self.udp_sock.close()

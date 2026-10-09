@@ -230,11 +230,13 @@ def main():
         pk, sk = signer.keygen()
         canonical_bytes = json.dumps(receipt_data, sort_keys=True).encode("utf-8")
         sig = signer.sign(sk, canonical_bytes)
+        if not signer.verify(pk, canonical_bytes, sig):
+            raise RuntimeError("FAIL-CLOSED: verify-after-sign failed on master audit receipt")
         with open(str(receipt_file) + ".sig", "wb") as f:
             f.write(sig)
         with open(str(receipt_file) + ".pub", "wb") as f:
             f.write(pk)
-        print(f"\n[+] Master defense evaluation receipt cryptographically signed with ML-DSA-87:")
+        print(f"\n[+] Master defense evaluation receipt cryptographically signed with ML-DSA-87 (VAS verified):")
         print(f"    Receipt  : {receipt_file}")
         print(f"    Signature: {receipt_file}.sig ({len(sig)} bytes)")
     except Exception as e:
