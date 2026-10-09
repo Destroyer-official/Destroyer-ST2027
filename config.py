@@ -490,6 +490,13 @@ class ConfigManager:
                         f"FAIL-CLOSED: monotonic counter regress blocks '{config_file}'."
                     )
             else:
+                # Legacy Ed25519 .sig lab-shim. Production (sticky) requires
+                # CNSA ML-DSA-87/DSSE above; Ed25519 is refused there.
+                if _is_production(self.logger):
+                    raise ConfigurationError(
+                        f"FAIL-CLOSED: Configuration '{config_file}' lacks CNSA "
+                        f"ML-DSA-87/DSSE signature (legacy Ed25519 refused in production)."
+                    )
                 sig_file = config_file + ".sig"
                 pub_file = os.path.join("certs", "config_signer.pub")
                 if not os.path.exists(sig_file):

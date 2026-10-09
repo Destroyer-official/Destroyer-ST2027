@@ -14,6 +14,11 @@ Classic-McEliece/HQC/FrodoKEM/Saber/NTRU (not CNSA), pre-standard
 Kyber/Dilithium names, RSA/ECDSA/DH-standalone, ChaCha20-Poly1305 (not
 the CNSA symmetric choice), DES/RC4/MD5/SHA-1, SLH-DSA/SPHINCS+ (approved
 PQ but outside the CNSA 2.0 strict session set).
+2026 review decision (deliberate non-addition): FN-DSA (draft FIPS 206,
+expected late 2026/2027), HQC (selected Mar 2025, standard ~2027) and
+SLH-DSA are NOT added to the session path — CNSA 2.0 strict set stays
+ML-KEM-1024 / ML-DSA-87 / AES-256-GCM / SHA-384/512 / HKDF-SHA384.
+LibOQS/verify paths may retain them for interop only, never negotiation.
 
 Two enforcement layers (both real):
   1. Static scan (CI + cached preflight) over Python TOKEN streams:

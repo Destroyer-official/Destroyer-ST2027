@@ -1758,6 +1758,11 @@ class MessageHeader:
     # Header size in bytes (fixed for binary compatibility)
     HEADER_SIZE = 32 + 4 + 4 + 8  # 48 bytes total
 
+    # Absolute protocol bounds (DoS defense-in-depth, before any HMAC work).
+    # Counters are uint32 on the wire; values beyond this are never legitimate
+    # (1000x the MAX_SKIP window) and are rejected at parse time.
+    MAX_CHAIN_COUNTER = 1_000_000
+
     # Components
     public_key: X25519PublicKey
     previous_chain_length: int
@@ -1774,6 +1779,12 @@ class MessageHeader:
 
         if not isinstance(self.message_number, int) or self.message_number < 0:
             raise ValueError("message_number must be a non-negative integer")
+
+        if self.previous_chain_length > self.MAX_CHAIN_COUNTER:
+            raise ValueError("previous_chain_length exceeds protocol bound")
+
+        if self.message_number > self.MAX_CHAIN_COUNTER:
+            raise ValueError("message_number exceeds protocol bound")
 
         if not isinstance(self.message_id, bytes) or len(self.message_id) != 8:
             raise ValueError("message_id must be 8 bytes")
@@ -2069,7 +2080,8 @@ class DoubleRatchet:
         anomaly_detection: bool = True,
         max_replay_cache_size: int = MAX_REPLAY_CACHE_SIZE,
         protocol_version: int = 1,
-        pq_ratchet_version: Optional[int] = None
+        pq_ratchet_version: Optional[int] = None,
+        deniable: bool = False
     ):
         """Initialize a Double Ratchet session with NIST Level-5 security configuration.
 
@@ -2114,6 +2126,23 @@ class DoubleRatchet:
             import logging as _logging
             _logging.getLogger(__name__).warning("Classical-only DoubleRatchet (enable_pq=False) - lab only, no PQ PCS")
         self.enable_pq = enable_pq
+        # Deniable mode (research-backed, cf. Signal offline-deniability /
+        # BAKE: X3DH/PQXDH deniability rests on symmetric authentication where
+        # either party could have produced the transcript). Deniable sessions
+        # skip per-message DSS signatures: authenticity comes ONLY from the
+        # shared chain key (repudiable), NOT from a third-party-verifiable
+        # signature (RFC 9881 non-repudiation). Fail-closed: refused in TS
+        # mode and in production without explicit opt-in; never usable for
+        # TOP SECRET / DPO-gated payloads (non-repudiation required there).
+        _ts = _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+        if deniable and (_ts or (_prod and _os.environ.get("P2P_ALLOW_DENIABLE", "0") != "1")):
+            raise SecurityError("Deniable mode refused: non-repudiation required (TS/production default)")
+        self.deniable = bool(deniable)
+        if self.deniable:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Deniable DoubleRatchet session: per-message signatures DISABLED "
+                "(AEAD-only repudiable auth; NOT for TOP SECRET/DPO use)")
 
         # Braid-lite PQ ratchet negotiation (versioned, non-breaking).
         # 1 = legacy: reuse _synchronized_kem_secret across DH steps (v1 wire
@@ -2289,7 +2318,12 @@ class DoubleRatchet:
             self.threat_detector = ThreatDetection()
 
         logger.info(f"Double Ratchet initialized with NIST Level-5 security (is_initiator={is_initiator})")
-        logger.info("Post-quantum security enabled with ML-KEM-1024 and ML-DSA-87 (CNSA 2.0)")
+        # Honesty (2026 review): this messenger path is a hybrid-transition
+        # prototype (X25519 + ML-KEM-1024, ChaCha20-Poly1305, HKDF-SHA3-512,
+        # Falcon-verify/ML-DSA) — NOT the CNSA-pure session set (ML-KEM-1024 /
+        # ML-DSA-87 / AES-256-GCM / SHA-384 / HKDF-SHA384 in noise_pq.py +
+        # secure_transmit_2027.py). No silent upgrade claimed here.
+        logger.info("Post-quantum hybrid-transition ratchet (messenger path, not CNSA-pure)")
 
     def _generate_dh_keypair(self):
         """
@@ -3470,7 +3504,8 @@ class DoubleRatchet:
         # Encode header to bytes
         serialized_header = header.encode()
 
-        # 3. Create authenticated data from header
+        # 3. Create authenticated data from header (binding enforced by policy)
+        self._require_handshake_binding("encrypt")
         auth_data = self._get_associated_data(serialized_header)
 
         # 4. Encrypt the message
@@ -3498,8 +3533,12 @@ class DoubleRatchet:
             self._pending_pq_ct = None
 
         # 5. Post-quantum signature if enabled (Item 2 / Finding 5.1)
+        # Deniable sessions (opt-in, lab-only): skip DSS entirely; the AEAD
+        # tag under the shared chain key is the ONLY authenticator (either
+        # party could have produced it -> offline deniability). Wire layout
+        # stays identical (empty-sig) so parsers are unchanged.
         signature = b''
-        if self.enable_pq:
+        if self.enable_pq and not getattr(self, "deniable", False):
             if not self.dss_private_key or not self.dss:
                 raise SecurityError("Cannot encrypt message: DSS private key or signer not initialized under PQ-enabled mode (fail-closed)")
             # Bind the message header, nonce, PQ CT extension (if any), and
@@ -3694,6 +3733,11 @@ class DoubleRatchet:
             "peer_ct_seen": getattr(self, "_peer_ct_seen", False),
             "synchronized_kem_secret": bytes(getattr(self, "_synchronized_kem_secret", None)) if isinstance(getattr(self, "_synchronized_kem_secret", None), (bytes, bytearray)) else getattr(self, "_synchronized_kem_secret", None),
             "last_pq_ratchet_time": getattr(self, "_last_pq_ratchet_time", 0.0),
+            # SPQR cadence + forced-healing budget: mutated by v2 DH steps
+            # (reset on fresh-KEM mix), so they must roll back with the keys.
+            "spqr_msg_counter": getattr(self, "_spqr_msg_counter", 0),
+            "spqr_last_refresh": getattr(self, "_spqr_last_refresh", 0.0),
+            "last_force_pq_ratchet_time": getattr(self, "_last_force_pq_ratchet_time", 0.0),
         }
 
     def _restore_decrypt_state(self, snap: dict) -> None:
@@ -3732,6 +3776,12 @@ class DoubleRatchet:
         except KeyError:
             pass
         self._last_pq_ratchet_time = snap["last_pq_ratchet_time"]
+        if "spqr_msg_counter" in snap:
+            self._spqr_msg_counter = snap["spqr_msg_counter"]
+        if "spqr_last_refresh" in snap:
+            self._spqr_last_refresh = snap["spqr_last_refresh"]
+        if "last_force_pq_ratchet_time" in snap:
+            self._last_force_pq_ratchet_time = snap["last_force_pq_ratchet_time"]
 
     def _prune_skipped_keys(self) -> None:
         """Enforce expiry + total cap on MKSKIPPED (Signal 8.4). Never raises."""
@@ -3823,9 +3873,18 @@ class DoubleRatchet:
                     raise SecurityError("Message replay attack detected: message ID already processed.")
                 # --- END REPLAY DETECTION ---
 
-                # Extract signature length and signature
+                # Extract signature length and signature (bounded before slicing).
                 signature_length_bytes = message[MessageHeader.HEADER_SIZE:MessageHeader.HEADER_SIZE+2]
                 signature_length = int.from_bytes(signature_length_bytes, byteorder='big')
+                # Largest legitimate: hybrid ML-DSA-87 (4627) + SLH-DSA-256f
+                # (49856) dict envelope; cap 60KB to bound allocation/MITM bloat.
+                # Classical lab mode (enable_pq=False) emits empty signatures.
+                if signature_length < 0 or signature_length > 61440:
+                    raise SecurityError("Invalid signature length")
+                if self.enable_pq and not getattr(self, "deniable", False) and signature_length == 0:
+                    raise SecurityError("Missing required post-quantum signature")
+                if MessageHeader.HEADER_SIZE + 2 + signature_length + 12 + 16 > len(message):
+                    raise SecurityError("Truncated message (signature/nonce/tag overrun)")
 
                 signature_offset = MessageHeader.HEADER_SIZE + 2
                 signature = message[signature_offset:signature_offset+signature_length]
@@ -3852,7 +3911,9 @@ class DoubleRatchet:
                 )
 
                 # 2. Verify signature if PQ is enabled (Finding 5.1 & Item 33)
-                if self.enable_pq:
+                # Deniable sessions skip DSS: AEAD tag under the shared chain
+                # key is the sole authenticator (repudiable by design).
+                if self.enable_pq and not getattr(self, "deniable", False):
                     if not signature:
                         logger.error("SECURITY ALERT: Missing required post-quantum digital signature under PQ-enabled mode (fail-closed)")
                         raise SecurityError("Missing required post-quantum digital signature under PQ-enabled mode")
@@ -3862,7 +3923,8 @@ class DoubleRatchet:
                     data_to_verify = header_bytes + nonce + pq_ext_bytes + ciphertext
                     self._secure_verify(self.remote_dss_public_key, data_to_verify, signature, "FALCON message signature")
 
-                # 3. Create authenticated data from header
+                # 3. Create authenticated data from header (binding enforced by policy)
+                self._require_handshake_binding("decrypt")
                 auth_data = self._get_associated_data(header_bytes)
 
                 # 4. Copy-on-write: snapshot BEFORE any DH/chain mutation (Signal:
@@ -3899,9 +3961,10 @@ class DoubleRatchet:
                 # Rethrow security errors without modification
                 raise
             else:
-                # Wrap other exceptions as security errors
-                logger.error(f"Decryption error: {e}", exc_info=True)
-                raise SecurityError(f"Failed to decrypt message: {e}")
+                # Wrap unexpected exceptions generically (oracle reduction:
+                # detail stays in the local log, never on the wire).
+                logger.error("Decryption error (detail in log)", exc_info=True)
+                raise SecurityError("Failed to decrypt message")
 
     def _ratchet_encrypt(self) -> bytes:
         """
@@ -4484,6 +4547,31 @@ class DoubleRatchet:
 
         return basic_init
 
+    def _require_handshake_binding(self, op: str) -> None:
+        """Enforce handshake-bound AD where policy demands it (fail-closed).
+
+        Default: binding is opt-in (lab interop) with a one-time production
+        warning when absent. Strict refusal only under explicit
+        P2P_REQUIRE_HANDSHAKE_BINDING=1: sessions without
+        set_handshake_binding() abort encrypt/decrypt. Never silent.
+        """
+        import os as _os
+        if getattr(self, "_handshake_binding", None):
+            return
+        strict = _os.environ.get("P2P_REQUIRE_HANDSHAKE_BINDING", "0").strip().lower() in ("1", "true", "yes", "on")
+        if strict:
+            raise SecurityError(
+                f"Handshake binding required for {op} (P2P_REQUIRE_HANDSHAKE_BINDING=1)")
+        prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1"
+        if prod and not getattr(self, "_binding_warned", False):
+            try:
+                self._binding_warned = True
+            except Exception:
+                pass
+            logger.warning(
+                f"Production {op} without handshake binding: AD covers header "
+                f"only (call set_handshake_binding for identity-misbinding resistance)")
+
     def _get_associated_data(self, header_bytes: bytes) -> bytes:
         """
         Create authenticated data binding the header to the ciphertext.
@@ -4576,6 +4664,7 @@ class DoubleRatchet:
             'root_key', 'sending_chain_key', 'receiving_chain_key',
             'dh_private_key', 'dss_private_key', 'kem_private_key',
             'kem_shared_secret', '_pending_pq_ct',
+            '_synchronized_kem_secret', 'kem_ciphertext', '_handshake_binding',
         ]
 
         for attr_name in sensitive_attrs:
@@ -4618,6 +4707,11 @@ class DoubleRatchet:
                 except Exception:  # nosec: B110
                     pass
             self.skipped_message_keys.clear()
+        try:
+            if hasattr(self, '_skipped_key_times') and self._skipped_key_times is not None:
+                self._skipped_key_times.clear()
+        except Exception:
+            pass
 
         # Clear the replay cache
         if hasattr(self, 'replay_cache') and self.replay_cache is not None:
@@ -4637,9 +4731,7 @@ class DoubleRatchet:
         """
         if self.receiving_chain_key is None:
             logger.error("Cannot skip message keys: receiving_chain_key is None.")
-            # This state should ideally be prevented if the ratchet is initialized.
-            # Depending on desired robustness, could raise SecurityError.
-            return
+            raise SecurityError("Cannot skip message keys: receiving chain not initialized")
 
         start_msg_num = self.receiving_message_number
 

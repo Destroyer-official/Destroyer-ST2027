@@ -42,15 +42,23 @@ from security_tiers import (
     SecurityTierViolationError,
     TIER_PROFILES,
     TelemetryScrubber,
+    DiagnosticAccessControl,
     DeterministicNonceGenerator,
     AntiReplaySlidingWindow,
+    MonotonicStatePersister,
     TranscriptBoundHybridKEM,
     VASLatchingAuthority,
+    TripleRatchetMessage,
+    TripleRatchetEngine,
     DAITAFrameShaper,
     PoissonCoverTrafficScheduler,
+    TrafficAction,
+    TrafficState,
+    MaybenotTrafficFSM,
     SP800_208_LMS,
     EmergencyMultiPassShredder,
     AntiDowngradePolicyEnforcer,
+    EmergencyPurgeCeremony,
 )
 from critical_release import CriticalReleaseAuthority, ReleaseAuthError
 
@@ -659,6 +667,392 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
         buf_shredded = EmergencyMultiPassShredder.shred(buf)
         self.assertEqual(buf_shredded, 32)
         self.assertTrue(buf.wiped)
+
+    def test_tier_low_diagnostic_access_control(self):
+        """LOW Tier: DiagnosticAccessControl enforces ring buffer memory bounds and rate limits."""
+        ctrl = DiagnosticAccessControl(max_buffer_size=5, max_requests_per_min=10)
+
+        # Record messages
+        for i in range(10):
+            ctrl.record_telemetry(f"Log {i} pointer 0x7ffeefbff000 from 10.0.0.1")
+
+        # Buffer bounded to 5 items
+        items = ctrl.get_recent_telemetry("client_alpha")
+        self.assertEqual(len(items), 5)
+        for item in items:
+            self.assertIn("[ADDR_MASKED]", item)
+            self.assertNotIn("0x7ffeefbff000", item)
+
+        # Rate limit exhaustion
+        for _ in range(9):
+            ctrl.get_recent_telemetry("client_alpha")
+
+        # 11th request exceeds limit
+        with self.assertRaises(SecurityTierViolationError) as ctx:
+            ctrl.get_recent_telemetry("client_alpha")
+        self.assertIn("Rate limit exceeded", str(ctx.exception))
+
+    def test_tier_basic_monotonic_state_persister(self):
+        """BASIC Tier: MonotonicStatePersister atomic crash-consistent write and load."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_file = Path(tmpdir) / "anti_replay_state.json"
+            persister = MonotonicStatePersister(state_file)
+
+            # Initial load non-existent file
+            seq, bmap, drops = persister.load_state()
+            self.assertEqual((seq, bmap, drops), (0, 0, 0))
+
+            # Persist state
+            persister.persist_state(last_seq=42, bitmap=0x0F, drops=2)
+            self.assertTrue(state_file.exists())
+
+            # Load state
+            s2, b2, d2 = persister.load_state()
+            self.assertEqual((s2, b2, d2), (42, 0x0F, 2))
+
+            # Corrupted state file fails closed
+            state_file.write_text("CORRUPTED_JSON_DATA", encoding="utf-8")
+            with self.assertRaises(SecurityTierViolationError) as ctx:
+                persister.load_state()
+            self.assertIn("FAIL-CLOSED: Monotonic state corruption", str(ctx.exception))
+
+    def test_tier_medium_triple_ratchet_conversation_and_spqr(self):
+        """MEDIUM Tier: October 2025 Signal Triple Ratchet (SPQR) conversation roundtrip."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from liboqs_wrapper import LibOQS_MLKEM_1024
+
+        kem = LibOQS_MLKEM_1024()
+        alice_kem_pk, alice_kem_sk = kem.keygen()
+        bob_kem_pk, bob_kem_sk = kem.keygen()
+
+        alice_dh = x25519.X25519PrivateKey.generate()
+        bob_dh = x25519.X25519PrivateKey.generate()
+        alice_dh_pub = alice_dh.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        bob_dh_pub = bob_dh.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+        shared_rk = secrets.token_bytes(48)
+
+        alice = TripleRatchetEngine(
+            local_id="alice",
+            remote_id="bob",
+            shared_root_key=shared_rk,
+            is_initiator=True,
+            remote_dh_pub=bob_dh_pub,
+            remote_kem_pub=bob_kem_pk,
+            local_dh_keypair=alice_dh,
+            local_kem_keypair=(alice_kem_pk, alice_kem_sk),
+        )
+
+        bob = TripleRatchetEngine(
+            local_id="bob",
+            remote_id="alice",
+            shared_root_key=shared_rk,
+            is_initiator=False,
+            remote_dh_pub=alice_dh_pub,
+            remote_kem_pub=alice_kem_pk,
+            local_dh_keypair=bob_dh,
+            local_kem_keypair=(bob_kem_pk, bob_kem_sk),
+        )
+
+        # Alice -> Bob
+        msg1 = alice.encrypt(b"MESSAGE_1_ALICE_TO_BOB")
+        plain1 = bob.decrypt(msg1)
+        self.assertEqual(plain1, b"MESSAGE_1_ALICE_TO_BOB")
+
+        # Alice -> Bob (second in same chain)
+        msg2 = alice.encrypt(b"MESSAGE_2_ALICE_TO_BOB")
+        plain2 = bob.decrypt(msg2)
+        self.assertEqual(plain2, b"MESSAGE_2_ALICE_TO_BOB")
+
+        # Bob -> Alice (turnaround with SPQR advancement)
+        msg3 = bob.encrypt(b"MESSAGE_3_BOB_TO_ALICE_REPLY")
+        plain3 = alice.decrypt(msg3)
+        self.assertEqual(plain3, b"MESSAGE_3_BOB_TO_ALICE_REPLY")
+
+    def test_tier_medium_triple_ratchet_out_of_order_delivery(self):
+        """MEDIUM Tier: Triple Ratchet correctly buffers skipped keys for out-of-order packets."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from liboqs_wrapper import LibOQS_MLKEM_1024
+
+        kem = LibOQS_MLKEM_1024()
+        alice_kem_pk, alice_kem_sk = kem.keygen()
+        bob_kem_pk, bob_kem_sk = kem.keygen()
+
+        alice_dh = x25519.X25519PrivateKey.generate()
+        bob_dh = x25519.X25519PrivateKey.generate()
+        alice_dh_pub = alice_dh.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        bob_dh_pub = bob_dh.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+        shared_rk = secrets.token_bytes(48)
+
+        alice = TripleRatchetEngine(
+            local_id="alice",
+            remote_id="bob",
+            shared_root_key=shared_rk,
+            is_initiator=True,
+            remote_dh_pub=bob_dh_pub,
+            remote_kem_pub=bob_kem_pk,
+            local_dh_keypair=alice_dh,
+            local_kem_keypair=(alice_kem_pk, alice_kem_sk),
+        )
+
+        bob = TripleRatchetEngine(
+            local_id="bob",
+            remote_id="alice",
+            shared_root_key=shared_rk,
+            is_initiator=False,
+            remote_dh_pub=alice_dh_pub,
+            remote_kem_pub=alice_kem_pk,
+            local_dh_keypair=bob_dh,
+            local_kem_keypair=(bob_kem_pk, bob_kem_sk),
+        )
+
+        pkt0 = alice.encrypt(b"PACKET_ZERO")
+        pkt1 = alice.encrypt(b"PACKET_ONE")
+        pkt2 = alice.encrypt(b"PACKET_TWO")
+
+        # Bob receives pkt2 first (out-of-order)
+        plain2 = bob.decrypt(pkt2)
+        self.assertEqual(plain2, b"PACKET_TWO")
+
+        # Bob then receives pkt0, then pkt1
+        plain0 = bob.decrypt(pkt0)
+        self.assertEqual(plain0, b"PACKET_ZERO")
+
+        plain1 = bob.decrypt(pkt1)
+        self.assertEqual(plain1, b"PACKET_ONE")
+
+    def test_tier_high_maybenot_traffic_fsm(self):
+        """HIGH Tier: Maybenot v2 / DAITA traffic finite state machine bursts and transitions."""
+        fsm = MaybenotTrafficFSM(burst_threshold_pkts=3, burst_window_sec=0.1, target_quantum_size=256)
+        self.assertEqual(fsm.state, TrafficState.STATE_PASSIVE_MONITORING)
+
+        # Send 1 packet: passive
+        s1, a1, _ = fsm.on_packet_sent(100)
+        self.assertEqual(s1, TrafficState.STATE_PASSIVE_MONITORING)
+        self.assertEqual(a1, TrafficAction.ACTION_NONE)
+
+        # Send 2nd packet: passive
+        s2, a2, _ = fsm.on_packet_sent(120)
+        self.assertEqual(s2, TrafficState.STATE_PASSIVE_MONITORING)
+
+        # Send 3rd packet: triggers burst mitigation and chaff injection
+        s3, a3, meta3 = fsm.on_packet_sent(150)
+        self.assertEqual(s3, TrafficState.STATE_BURST_MITIGATION)
+        self.assertEqual(a3, TrafficAction.ACTION_INJECT_CHAFF)
+        self.assertEqual(meta3["chaff_size"], 256)
+
+        # Idle timer tick triggers scheduled padding
+        import time
+        time.sleep(0.06)
+        s_tick, a_tick, meta_tick = fsm.on_timer_tick(idle_threshold_sec=0.05)
+        self.assertEqual(s_tick, TrafficState.STATE_SCHEDULED_PADDING)
+        self.assertEqual(a_tick, TrafficAction.ACTION_INJECT_CHAFF)
+
+    def test_tier_critical_emergency_purge_ceremony(self):
+        """CRITICAL Tier: Dual-Operator EmergencyPurgeCeremony securely destroys in-RAM and disk keys."""
+        import tempfile
+        auth = CriticalReleaseAuthority()
+        auth.enroll("commander_1", "secure_passphrase_alpha_77")
+        auth.enroll("commander_2", "secure_passphrase_bravo_88")
+
+        ceremony = EmergencyPurgeCeremony(authority=auth)
+        self.assertFalse(ceremony.is_purged)
+
+        buf1 = NativeSecureBuffer(secrets.token_bytes(32))
+        buf2 = bytearray(secrets.token_bytes(64))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_key_file = Path(tmpdir) / ".sealed_kek_test.sealed"
+            test_key_file.write_bytes(secrets.token_bytes(48))
+            self.assertTrue(test_key_file.exists())
+
+            # Same operator twice rejected (TPI failure)
+            with self.assertRaises(SecurityTierViolationError):
+                ceremony.execute_purge(
+                    "commander_1", "secure_passphrase_alpha_77",
+                    "commander_1", "secure_passphrase_alpha_77",
+                    sensitive_buffers=[buf1],
+                    sealed_key_paths=[test_key_file],
+                )
+
+            # Valid dual-operator purge
+            receipt = ceremony.execute_purge(
+                "commander_1", "secure_passphrase_alpha_77",
+                "commander_2", "secure_passphrase_bravo_88",
+                sensitive_buffers=[buf1, buf2],
+                sealed_key_paths=[test_key_file],
+            )
+
+            self.assertTrue(ceremony.is_purged)
+            self.assertTrue(buf1.wiped)
+            self.assertEqual(bytes(buf2), b"\x00" * 64)
+            self.assertFalse(test_key_file.exists())
+            self.assertEqual(receipt["status"], "PURGE_COMPLETE_ZEROIZATION_ENFORCED")
+
+            # Second execution fails closed
+            with self.assertRaises(SecurityTierViolationError) as ctx:
+                ceremony.execute_purge(
+                    "commander_1", "secure_passphrase_alpha_77",
+                    "commander_2", "secure_passphrase_bravo_88",
+                    sensitive_buffers=[],
+                )
+            self.assertIn("already executed", str(ctx.exception))
+
+    def test_tier_low_shannon_entropy_scrubbing_and_audit_chain(self):
+        """LOW Tier: High-entropy secret scrubbing and SHA-384 diagnostic audit chaining."""
+        raw_token = secrets.token_hex(32)
+        raw_msg = f"Diagnostic state dump secret: {raw_token} complete."
+        scrubbed = TelemetryScrubber.scrub(raw_msg)
+        self.assertNotIn(raw_token, scrubbed)
+
+        ctrl = DiagnosticAccessControl(max_buffer_size=10, max_requests_per_min=30)
+        initial_chain = ctrl.current_audit_chain_hash
+        self.assertEqual(len(initial_chain), 96)  # SHA-384 hex length
+
+        ctrl.record_telemetry("Diagnostic event 1")
+        chain1 = ctrl.current_audit_chain_hash
+        self.assertNotEqual(initial_chain, chain1)
+
+        ctrl.record_telemetry("Diagnostic event 2")
+        chain2 = ctrl.current_audit_chain_hash
+        self.assertNotEqual(chain1, chain2)
+
+    def test_tier_basic_rekey_boundary_and_hmac_persister(self):
+        """BASIC Tier: Rekey threshold guard and HMAC authenticated state persister."""
+        salt = secrets.token_bytes(4)
+        gen = DeterministicNonceGenerator(session_salt=salt, rekey_threshold=3, strict_rekey=True)
+        self.assertFalse(gen.is_rekey_required)
+
+        gen.next_nonce()  # seq 0
+        gen.next_nonce()  # seq 1
+        gen.next_nonce()  # seq 2
+        self.assertTrue(gen.is_rekey_required)
+
+        # Exceeding threshold in strict mode raises error
+        with self.assertRaises(SecurityTierViolationError) as ctx:
+            gen.next_nonce()
+        self.assertIn("re-key threshold reached", str(ctx.exception))
+
+        # HMAC authenticated monotonic persistence
+        import tempfile
+        import json
+        key = secrets.token_bytes(32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fpath = Path(tmpdir) / "authenticated_seq.json"
+            persister = MonotonicStatePersister(fpath, integrity_key=key)
+            persister.persist_state(last_seq=100, bitmap=0xFF, drops=0)
+
+            seq, bmap, _ = persister.load_state()
+            self.assertEqual(seq, 100)
+
+            # Tampered state file is rejected fail-closed
+            tampered_data = json.loads(fpath.read_text(encoding="utf-8"))
+            tampered_data["last_seq"] = 200
+            fpath.write_text(json.dumps(tampered_data), encoding="utf-8")
+
+            with self.assertRaises(SecurityTierViolationError) as ctx2:
+                persister.load_state()
+            self.assertIn("integrity verification failed", str(ctx2.exception))
+
+    def test_tier_medium_triple_ratchet_destroy_lifecycle(self):
+        """MEDIUM Tier: TripleRatchetEngine destroy securely zeroes all keys and rejects subsequent crypto ops."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from liboqs_wrapper import LibOQS_MLKEM_1024
+
+        kem = LibOQS_MLKEM_1024()
+        alice_kem_pk, alice_kem_sk = kem.keygen()
+        bob_kem_pk, bob_kem_sk = kem.keygen()
+
+        alice_dh = x25519.X25519PrivateKey.generate()
+        bob_dh = x25519.X25519PrivateKey.generate()
+        alice_dh_pub = alice_dh.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        bob_dh_pub = bob_dh.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+        alice = TripleRatchetEngine(
+            local_id="alice",
+            remote_id="bob",
+            shared_root_key=secrets.token_bytes(48),
+            is_initiator=True,
+            remote_dh_pub=bob_dh_pub,
+            remote_kem_pub=bob_kem_pk,
+            local_dh_keypair=alice_dh,
+            local_kem_keypair=(alice_kem_pk, alice_kem_sk),
+        )
+
+        msg = alice.encrypt(b"PRE_DESTRUCTION_DATA")
+        self.assertIsNotNone(msg)
+
+        wiped_bytes = alice.destroy()
+        self.assertGreater(wiped_bytes, 0)
+        self.assertTrue(alice.is_destroyed)
+
+        # Subsequent encryption and decryption fail closed
+        with self.assertRaises(SecurityTierViolationError) as ctx:
+            alice.encrypt(b"POST_DESTRUCTION_DATA")
+        self.assertIn("Triple ratchet engine destroyed", str(ctx.exception))
+
+    def test_tier_high_front_defense_and_chaff_stripping(self):
+        """HIGH Tier: FRONT defense model bursts and DAITA constant-time chaff stripping."""
+        fsm = MaybenotTrafficFSM(
+            burst_threshold_pkts=10,
+            burst_window_sec=0.1,
+            target_quantum_size=256,
+            front_window_pkts=3,
+            front_chaff_budget=2,
+        )
+
+        # First packet: FRONT algorithm triggers chaff
+        state1, action1, meta1 = fsm.on_packet_sent(100)
+        self.assertEqual(action1, TrafficAction.ACTION_INJECT_CHAFF)
+        self.assertEqual(meta1.get("reason"), "FRONT_DEFENSE_INITIAL_FLOW_CAMOUFLAGE")
+
+        # Second packet: FRONT algorithm triggers chaff
+        state2, action2, meta2 = fsm.on_packet_sent(100)
+        self.assertEqual(action2, TrafficAction.ACTION_INJECT_CHAFF)
+
+        # Third packet: FRONT budget exhausted, returns NONE
+        state3, action3, _ = fsm.on_packet_sent(100)
+        self.assertEqual(action3, TrafficAction.ACTION_NONE)
+
+        # DAITA frame shaping and chaff stripping
+        real_payload = b"CRITICAL_PAYLOAD_ABC"
+        shaped = DAITAFrameShaper.shape_frame(real_payload)
+        is_chaff, extracted = DAITAFrameShaper.strip_chaff_or_unshape(shaped)
+        self.assertFalse(is_chaff)
+        self.assertEqual(extracted, real_payload)
+
+        chaff_frame = PoissonCoverTrafficScheduler.generate_chaff_frame(256)
+        is_chaff2, extracted2 = DAITAFrameShaper.strip_chaff_or_unshape(chaff_frame)
+        self.assertTrue(is_chaff2)
+        self.assertEqual(extracted2, b"")
+
+    def test_tier_critical_lms_crash_consistent_state_persistence(self):
+        """CRITICAL Tier: SP800_208_LMS monotonic state persistence across restarts."""
+        import tempfile
+        master_seed = secrets.token_bytes(32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            seq_file = Path(tmpdir) / "lms_leaf_state.json"
+            persister = MonotonicStatePersister(seq_file)
+
+            lms1 = SP800_208_LMS(tree_height=2, state_persister=persister, seed=master_seed)
+            pk = lms1.public_key_bytes
+
+            sig1 = lms1.sign(b"COMMAND_1")
+            self.assertTrue(SP800_208_LMS.verify(pk, b"COMMAND_1", sig1, tree_height=2))
+
+            # Simulate restart: create new instance with same persister and seed
+            lms2 = SP800_208_LMS(tree_height=2, state_persister=persister, seed=master_seed)
+            self.assertEqual(lms2._next_q, 1)  # Resumed at leaf 1, leaf 0 not reused!
+            self.assertEqual(lms2.public_key_bytes, pk)
+
+            sig2 = lms2.sign(b"COMMAND_2")
+            self.assertTrue(SP800_208_LMS.verify(pk, b"COMMAND_2", sig2, tree_height=2))
+            self.assertEqual(lms2._next_q, 2)
 
 
 if __name__ == "__main__":

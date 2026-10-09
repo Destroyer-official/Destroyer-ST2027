@@ -438,6 +438,10 @@ def _check_approval_time(ch: OperationChallenge, approved_at: float) -> None:
         raise AuthorizationError("authorization rejected")
 
 
+def _channels_required() -> bool:
+    return _env_true("P2P_DPO_REQUIRE_CHANNELS") or _env_true("P2P_TS_MODE")
+
+
 def authorize_dpo(
     ch: OperationChallenge,
     handle_one: Any,
@@ -447,6 +451,8 @@ def authorize_dpo(
     max_sync: float = SYNC_WINDOW_S,
     received_at_one: Optional[float] = None,
     received_at_two: Optional[float] = None,
+    channel_one: Optional[str] = None,
+    channel_two: Optional[str] = None,
 ) -> Dict[str, Any]:
     _assert_session_profile()
     _check_challenge_fresh(ch)
@@ -507,6 +513,21 @@ def authorize_dpo(
         except Exception:
             pass
         raise AuthorizationError("authorization rejected")
+    # Channel independence (NIST SP 800-63 out-of-band / independent-channel
+    # principle): when both approvals carry a channel id (TLS session, source
+    # IP, device id), they MUST differ — same-channel dual approval from one
+    # compromised endpoint must not satisfy DPO. Lab co-located ceremonies
+    # omit channels; TS/production can require them via P2P_DPO_REQUIRE_CHANNELS.
+    _c1 = str(channel_one or "").strip()
+    _c2 = str(channel_two or "").strip()
+    if _channels_required() and (not _c1 or not _c2):
+        raise AuthorizationError("authorization rejected")
+    if _c1 and _c2 and _compare(_c1.encode("utf-8"), _c2.encode("utf-8")):
+        try:
+            _audit("dpo_channel_breach", {"op": ch.operation_id})
+        except Exception:
+            pass
+        raise AuthorizationError("authorization rejected")
     _verify_one(pub_one, label_one, ref_one, ch, approval_one)
     _verify_one(pub_two, label_two, ref_two, ch, approval_two)
     receipt = {
@@ -518,6 +539,7 @@ def authorize_dpo(
         "payload_hex": bytes(ch.payload_digest).hex(),
         "delta": delta,
         "rdelta": _rdelta,
+        "channels": [_c1, _c2] if (_c1 or _c2) else [],
         "ts": _utcnow(),
     }
     _audit("dpo_authorized", {"op": receipt["op"]})
@@ -529,6 +551,8 @@ def authorize_transmission(
     payload: bytes,
     ch: OperationChallenge,
     approvals: List[Tuple[Any, OperationApproval]],
+    received_at: Optional[List[float]] = None,
+    channels: Optional[List[Optional[str]]] = None,
 ) -> Dict[str, Any]:
     _assert_session_profile()
     norm = _canonical_norm(classification)
@@ -538,14 +562,27 @@ def authorize_transmission(
     expect = hashlib.sha3_512(bytes(payload)).digest()
     if not _compare(expect, bytes(ch.payload_digest)):
         raise AuthorizationError("authorization rejected")
+    _ch = list(channels) if isinstance(channels, (list, tuple)) else [None, None]
+    _c1 = _ch[0] if len(_ch) > 0 else None
+    _c2 = _ch[1] if len(_ch) > 1 else None
     if want == MODE_DPO:
         if len(approvals) != 2:
             raise AuthorizationError("authorization rejected")
         (h1, a1), (h2, a2) = approvals[0], approvals[1]
-        return authorize_dpo(ch, h1, a1, h2, a2)
+        _r = list(received_at) if isinstance(received_at, (list, tuple)) else [None, None]
+        _r1 = _r[0] if len(_r) > 0 else None
+        _r2 = _r[1] if len(_r) > 1 else None
+        return authorize_dpo(ch, h1, a1, h2, a2,
+                             received_at_one=_r1, received_at_two=_r2,
+                             channel_one=_c1, channel_two=_c2)
     if len(approvals) == 2:
         (h1, a1), (h2, a2) = approvals[0], approvals[1]
-        return authorize_dpo(ch, h1, a1, h2, a2)
+        _r = list(received_at) if isinstance(received_at, (list, tuple)) else [None, None]
+        _r1 = _r[0] if len(_r) > 0 else None
+        _r2 = _r[1] if len(_r) > 1 else None
+        return authorize_dpo(ch, h1, a1, h2, a2,
+                             received_at_one=_r1, received_at_two=_r2,
+                             channel_one=_c1, channel_two=_c2)
     if len(approvals) != 1:
         raise AuthorizationError("authorization rejected")
     handle, approval = approvals[0]
@@ -553,7 +590,8 @@ def authorize_transmission(
 
 
 def require_spo_dpo_for_send(
-    classification: str, payload: bytes, receipt: Optional[Dict[str, Any]]
+    classification: str, payload: bytes, receipt: Optional[Dict[str, Any]],
+    deniable: bool = False,
 ) -> Dict[str, Any]:
     norm = _canonical_norm(classification)
     want = mode_for_classification(norm)
@@ -564,6 +602,12 @@ def require_spo_dpo_for_send(
     if _canonical_norm(str(receipt.get("class", ""))) != norm:
         raise AuthorizationError("authorization rejected")
     if want == MODE_DPO and receipt.get("mode") != MODE_DPO:
+        raise AuthorizationError("authorization rejected")
+    # Deniable (AEAD-only, repudiable) sessions can never carry TOP SECRET /
+    # DPO-gated payloads: non-repudiation is mandatory there (RFC 9881
+    # properties of ML-DSA). Callers with deniable sessions must declare
+    # deniable=True so this gate can refuse fail-closed.
+    if bool(deniable) and want == MODE_DPO:
         raise AuthorizationError("authorization rejected")
     expect = hashlib.sha3_512(bytes(payload)).hexdigest()
     got_raw = receipt.get("payload_hex", "")

@@ -785,6 +785,10 @@ class HybridKeyExchange:
 
         if not in_memory_only and self.keys_dir is not None:
             os.makedirs(self.keys_dir, exist_ok=True)
+            try:
+                os.chmod(self.keys_dir, 0o700)
+            except Exception:
+                pass
 
         # Initialize key storage
         self.static_key = None
@@ -1399,6 +1403,10 @@ class HybridKeyExchange:
 
             with open(key_file, 'w') as f:
                 json.dump(manifest_wrapper, f)
+            try:
+                os.chmod(key_file, 0o600)
+            except Exception:
+                pass
 
             hybrid_kex_logger.info(f"Saved encrypted hybrid keys to {key_file} (AES-256-GCM-SCRYPT-V3, expires: {time.ctime(current_time + self.key_lifetime)})")
         except Exception as e:

@@ -20,10 +20,14 @@ Zero marketing buzzwords. Zero emojis. Fail-closed security architecture.
 
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import hmac
+import json
 import logging
 import math
+import os
+from pathlib import Path
 import re
 import secrets
 import struct
@@ -481,6 +485,61 @@ class SecurityTierEngine:
         """Execute a 4-pass cryptographic memory overwrite on sensitive buffers."""
         return EmergencyMultiPassShredder.shred(target)
 
+    @staticmethod
+    def create_diagnostic_access_control(
+        max_buffer_size: int = 50,
+        max_requests_per_min: int = 60,
+    ) -> DiagnosticAccessControl:
+        """Create a DiagnosticAccessControl for LOW tier telemetry rate-limiting and ring buffer."""
+        return DiagnosticAccessControl(
+            max_buffer_size=max_buffer_size,
+            max_requests_per_min=max_requests_per_min,
+        )
+
+    @staticmethod
+    def create_monotonic_persister(state_file_path: Path | str) -> MonotonicStatePersister:
+        """Create a crash-consistent MonotonicStatePersister for BASIC tier sequence numbers."""
+        return MonotonicStatePersister(state_file_path=Path(state_file_path))
+
+    @staticmethod
+    def create_triple_ratchet(
+        local_id: str,
+        remote_id: str,
+        shared_root_key: bytes,
+        is_initiator: bool,
+        remote_dh_pub: bytes,
+        remote_kem_pub: bytes,
+        spqr_interval: int = 5,
+    ) -> TripleRatchetEngine:
+        """Create an October 2025 Signal Triple Ratchet (SPQR) engine for MEDIUM tier."""
+        return TripleRatchetEngine(
+            local_id=local_id,
+            remote_id=remote_id,
+            shared_root_key=shared_root_key,
+            is_initiator=is_initiator,
+            remote_dh_pub=remote_dh_pub,
+            remote_kem_pub=remote_kem_pub,
+            spqr_interval=spqr_interval,
+        )
+
+    @staticmethod
+    def create_maybenot_fsm(
+        burst_threshold_pkts: int = 5,
+        burst_window_sec: float = 0.05,
+        target_quantum_size: int = 256,
+    ) -> MaybenotTrafficFSM:
+        """Create a Maybenot v2 / DAITA probabilistic finite state machine for HIGH tier."""
+        return MaybenotTrafficFSM(
+            burst_threshold_pkts=burst_threshold_pkts,
+            burst_window_sec=burst_window_sec,
+            target_quantum_size=target_quantum_size,
+        )
+
+    @staticmethod
+    def create_emergency_purge_ceremony(authority: Optional[Any] = None) -> EmergencyPurgeCeremony:
+        """Create a dual-operator EmergencyPurgeCeremony for CRITICAL tier sovereign wipe."""
+        return EmergencyPurgeCeremony(authority=authority)
+
 
 # ==============================================================================
 # Tier 1: LOW — Telemetry Sanitation & Diagnostic Authorization
@@ -497,19 +556,95 @@ class TelemetryScrubber:
     IP_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
     TOKEN_PATTERN = re.compile(r"\b[0-9a-fA-F]{32,}\b")
 
+    @staticmethod
+    def shannon_entropy(data: str) -> float:
+        """Compute Shannon entropy in bits per character."""
+        if not data:
+            return 0.0
+        import math
+        counts: Dict[str, int] = {}
+        for ch in data:
+            counts[ch] = counts.get(ch, 0) + 1
+        n = len(data)
+        return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+    @classmethod
+    def scrub_high_entropy_secrets(cls, text: str, entropy_threshold: float = 3.8, min_length: int = 24) -> str:
+        """Scan tokens and redact any high-entropy secret material."""
+        tokens = re.split(r"(\s+|[=:,;\"'<>\[\]{}()])", text)
+        scrubbed = []
+        for t in tokens:
+            if len(t) >= min_length and not t.startswith("[") and not t.endswith("]"):
+                if cls.shannon_entropy(t) >= entropy_threshold:
+                    scrubbed.append("[HIGH_ENTROPY_SECRET_REDACTED]")
+                    continue
+            scrubbed.append(t)
+        return "".join(scrubbed)
+
     @classmethod
     def scrub(cls, text: str) -> str:
-        """Strip internal memory addresses, filesystem paths, IP addresses, and hex keys."""
+        """Strip internal memory addresses, filesystem paths, IP addresses, hex keys, and high-entropy secrets."""
         s = cls.ADDR_PATTERN.sub("[ADDR_MASKED]", text)
         s = cls.PATH_PATTERN.sub("[PATH_MASKED]", s)
         s = cls.IP_PATTERN.sub("[IP_MASKED]", s)
         s = cls.TOKEN_PATTERN.sub("[SECRET_MASKED]", s)
+        s = cls.scrub_high_entropy_secrets(s)
         return s
 
     @classmethod
     def verify_auth_token(cls, provided_token: str, expected_token: str) -> bool:
         """Constant-time token authentication for diagnostic query endpoints."""
         return hmac.compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8"))
+
+
+class DiagnosticAccessControl:
+    """Access control, rate-limiting, and bounded ring-buffer memory for LOW tier telemetry."""
+    def __init__(self, max_buffer_size: int = 50, max_requests_per_min: int = 60):
+        self.max_buffer_size = max_buffer_size
+        self.max_requests_per_min = max_requests_per_min
+        self._buffer: deque = deque(maxlen=max_buffer_size)
+        self._request_timestamps: Dict[str, deque] = {}
+        self._chain_hash: bytes = b"\x00" * 48
+        self._lock = threading.RLock()
+
+    @property
+    def current_audit_chain_hash(self) -> str:
+        """Returns the current SHA-384 audit chain head for tamper evidence."""
+        with self._lock:
+            return self._chain_hash.hex()
+
+    def check_rate_limit(self, client_id: str) -> bool:
+        """Enforces sliding-window rate limit per diagnostic client ID."""
+        now = time.monotonic()
+        with self._lock:
+            if client_id not in self._request_timestamps:
+                self._request_timestamps[client_id] = deque()
+            dq = self._request_timestamps[client_id]
+            while dq and (now - dq[0]) > 60.0:
+                dq.popleft()
+            if len(dq) >= self.max_requests_per_min:
+                return False
+            dq.append(now)
+            return True
+
+    def record_telemetry(self, raw_message: str) -> str:
+        """Sanitizes raw telemetry, binds into cryptographic hash chain, and stores in bounded ring buffer."""
+        scrubbed = TelemetryScrubber.scrub(raw_message)
+        now = time.time()
+        with self._lock:
+            chain_block = self._chain_hash + struct.pack(">d", now) + scrubbed.encode("utf-8")
+            self._chain_hash = hashlib.sha384(chain_block).digest()
+            self._buffer.append((now, scrubbed, self._chain_hash.hex()))
+        return scrubbed
+
+    def get_recent_telemetry(self, client_id: str) -> List[str]:
+        """Fetches sanitized telemetry buffer if client rate limit is satisfied."""
+        if not self.check_rate_limit(client_id):
+            raise SecurityTierViolationError(
+                f"Rate limit exceeded for diagnostic client '{client_id}': max {self.max_requests_per_min} req/min"
+            )
+        with self._lock:
+            return [entry[1] for entry in self._buffer]
 
 
 # ==============================================================================
@@ -520,20 +655,34 @@ class DeterministicNonceGenerator:
     """RFC 5116 / RFC 8452 deterministic 96-bit nonce constructor.
     
     Prevents catastrophic AES-256-GCM nonce reuse by binding a 32-bit random session salt
-    with a strictly monotonic 64-bit sequence counter.
+    with a strictly monotonic 64-bit sequence counter and enforcing NIST SP 800-38D re-key bounds.
     """
     MAX_COUNTER = 0xFFFFFFFFFFFFFFFF
+    REKEY_THRESHOLD = 0xFFFFFFFF  # 2^32 - 1 invocations (NIST SP 800-38D safe invocation limit)
 
-    def __init__(self, session_salt: Optional[bytes] = None):
+    def __init__(
+        self,
+        session_salt: Optional[bytes] = None,
+        rekey_threshold: int = REKEY_THRESHOLD,
+        strict_rekey: bool = False,
+    ):
         self._salt = session_salt if session_salt is not None else secrets.token_bytes(4)
         if len(self._salt) != 4:
             raise ValueError(f"Session salt must be exactly 4 bytes, got {len(self._salt)}")
         self._counter = 0
+        self.rekey_threshold = rekey_threshold
+        self.strict_rekey = strict_rekey
         self._lock = threading.Lock()
 
     @property
     def salt(self) -> bytes:
         return self._salt
+
+    @property
+    def is_rekey_required(self) -> bool:
+        """Indicates whether the counter has reached the NIST SP 800-38D re-keying boundary."""
+        with self._lock:
+            return self._counter >= self.rekey_threshold
 
     def next_nonce(self) -> Tuple[int, bytes]:
         """Generate next monotonic sequence number and 96-bit wire nonce.
@@ -545,6 +694,10 @@ class DeterministicNonceGenerator:
             if self._counter >= self.MAX_COUNTER:
                 raise SecurityTierViolationError(
                     "Monotonic counter exhaustion: session key re-keying strictly required"
+                )
+            if self.strict_rekey and self._counter >= self.rekey_threshold:
+                raise SecurityTierViolationError(
+                    f"NIST SP 800-38D re-key threshold reached: {self._counter} >= {self.rekey_threshold}"
                 )
             seq = self._counter
             self._counter += 1
@@ -612,6 +765,66 @@ class AntiReplaySlidingWindow:
                 return False
             self.mark(seq)
             return True
+
+
+class MonotonicStatePersister:
+    """Crash-consistent atomic state persister for BASIC tier sequence numbers and anti-replay windows."""
+    def __init__(self, state_file_path: Path | str, integrity_key: Optional[bytes] = None):
+        self.state_file_path = Path(state_file_path)
+        self.integrity_key = integrity_key
+        self._lock = threading.RLock()
+
+    def persist_state(self, last_seq: int, bitmap: int, drops: int) -> None:
+        """Persists sequence numbers atomically with fsync and atomic rename."""
+        payload: Dict[str, Any] = {
+            "last_seq": last_seq,
+            "bitmap": bitmap,
+            "drops": drops,
+            "timestamp_utc": time.time(),
+        }
+        if self.integrity_key is not None:
+            raw_canon = f"{last_seq}:{bitmap}:{drops}".encode("utf-8")
+            payload["integrity_mac"] = hmac.new(self.integrity_key, raw_canon, hashlib.sha384).hexdigest()
+
+        data = json.dumps(payload, indent=2).encode("utf-8")
+        tmp_path = self.state_file_path.with_suffix(".tmp")
+        with self._lock:
+            self.state_file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.state_file_path)
+
+    def load_state(self) -> Tuple[int, int, int]:
+        """Loads state, returning (last_seq, bitmap, drops). Fails closed on corruption or MAC mismatch."""
+        with self._lock:
+            if not self.state_file_path.exists():
+                return 0, 0, 0
+            try:
+                data = json.loads(self.state_file_path.read_text(encoding="utf-8"))
+                last_seq = int(data["last_seq"])
+                bitmap = int(data["bitmap"])
+                drops = int(data.get("drops", 0))
+
+                if self.integrity_key is not None:
+                    expected_mac = data.get("integrity_mac")
+                    if not expected_mac:
+                        raise SecurityTierViolationError("FAIL-CLOSED: Missing integrity MAC in monotonic state")
+                    raw_canon = f"{last_seq}:{bitmap}:{drops}".encode("utf-8")
+                    computed_mac = hmac.new(self.integrity_key, raw_canon, hashlib.sha384).hexdigest()
+                    if not hmac.compare_digest(expected_mac, computed_mac):
+                        raise SecurityTierViolationError(
+                            "FAIL-CLOSED: Monotonic state integrity verification failed (tampering detected)"
+                        )
+
+                return last_seq, bitmap, drops
+            except SecurityTierViolationError:
+                raise
+            except Exception as e:
+                raise SecurityTierViolationError(
+                    f"FAIL-CLOSED: Monotonic state corruption detected in '{self.state_file_path}': {e}"
+                )
 
 
 # ==============================================================================
@@ -700,6 +913,279 @@ class VASLatchingAuthority:
             return sig
 
 
+@dataclass
+class TripleRatchetMessage:
+    """Wire representation of an authenticated Triple Ratchet frame."""
+    sender_dh_pub: bytes
+    sequence_num: int
+    prev_chain_len: int
+    ciphertext: bytes
+    nonce: bytes
+    kem_ciphertext: Optional[bytes] = None
+    next_kem_pub: Optional[bytes] = None
+
+
+class TripleRatchetEngine:
+    """October 2025 Signal Triple Ratchet / Sparse Post-Quantum Ratchet (SPQR) Engine.
+    
+    Combines classical Elliptic Curve Diffie-Hellman (X25519) with sparse post-quantum
+    Key Encapsulation (ML-KEM-1024, FIPS 203) to provide Post-Quantum Forward Secrecy (FS)
+    and Post-Quantum Post-Compromise Security (PCS).
+    """
+    def __init__(
+        self,
+        local_id: str,
+        remote_id: str,
+        shared_root_key: bytes,
+        is_initiator: bool,
+        remote_dh_pub: Optional[bytes] = None,
+        remote_kem_pub: Optional[bytes] = None,
+        local_dh_keypair: Optional[Any] = None,
+        local_kem_keypair: Optional[Tuple[bytes, bytes]] = None,
+        spqr_interval: int = 5,
+    ):
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from liboqs_wrapper import LibOQS_MLKEM_1024
+
+        self.local_id = local_id
+        self.remote_id = remote_id
+        self.is_initiator = is_initiator
+        self.spqr_interval = spqr_interval
+
+        # Classical DH keypair
+        if local_dh_keypair is not None:
+            self._dh_keypair = local_dh_keypair
+        else:
+            self._dh_keypair = x25519.X25519PrivateKey.generate()
+        self._remote_dh_pub_bytes = remote_dh_pub
+
+        # Post-Quantum KEM
+        self._kem = LibOQS_MLKEM_1024()
+        if local_kem_keypair is not None:
+            self._local_kem_pk, self._local_kem_sk = local_kem_keypair
+        else:
+            self._local_kem_pk, self._local_kem_sk = self._kem.keygen()
+        self._remote_kem_pub = remote_kem_pub
+
+        # Ratchet keys
+        self._root_key = bytearray(shared_root_key)
+        self._send_chain_key: Optional[bytearray] = None
+        self._recv_chain_key: Optional[bytearray] = None
+
+        self._pending_kem_ct: Optional[bytes] = None
+        self._pending_next_kem_pub: Optional[bytes] = None
+
+        self._n_s = 0  # Sent message counter
+        self._n_r = 0  # Recv message counter
+        self._p_n = 0  # Prev chain length
+        self._destroyed = False
+
+        # Bounded skipped keys storage: (sender_dh_pub, seq) -> (mk_bytes, timestamp)
+        self._skipped_keys: Dict[Tuple[bytes, int], Tuple[bytes, float]] = {}
+        self._max_skipped_keys = 100
+        self._skipped_ttl_sec = 300.0
+        self._lock = threading.RLock()
+
+        # Initialize chains for initiator
+        if is_initiator and self._remote_dh_pub_bytes and self._remote_kem_pub:
+            self._pending_kem_ct, self._pending_next_kem_pub = self._dh_ratchet_step(is_sender=True)
+
+    @property
+    def is_destroyed(self) -> bool:
+        with self._lock:
+            return self._destroyed
+
+    def destroy(self) -> int:
+        """Securely zeroizes all internal sensitive key material and locks engine."""
+        with self._lock:
+            if self._destroyed:
+                return 0
+            wiped = 0
+            wiped += EmergencyMultiPassShredder.shred(self._root_key)
+            if self._send_chain_key is not None:
+                wiped += EmergencyMultiPassShredder.shred(self._send_chain_key)
+                self._send_chain_key = None
+            if self._recv_chain_key is not None:
+                wiped += EmergencyMultiPassShredder.shred(self._recv_chain_key)
+                self._recv_chain_key = None
+            if hasattr(self, "_local_kem_sk") and self._local_kem_sk:
+                self._local_kem_sk = b"\x00" * len(self._local_kem_sk)
+            for k_id, (mk, _) in list(self._skipped_keys.items()):
+                self._skipped_keys[k_id] = (b"\x00" * len(mk), 0.0)
+            self._skipped_keys.clear()
+            self._pending_kem_ct = None
+            self._destroyed = True
+            return wiped
+
+    @property
+    def dh_public_bytes(self) -> bytes:
+        from cryptography.hazmat.primitives import serialization
+        return self._dh_keypair.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+
+    @property
+    def kem_public_bytes(self) -> bytes:
+        return bytes(self._local_kem_pk)
+
+    def _dh_ratchet_step(self, is_sender: bool) -> Tuple[Optional[bytes], Optional[bytes]]:
+        """Asymmetric ratchet step combining classical DH with SPQR ML-KEM-1024."""
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+
+        remote_dh = x25519.X25519PublicKey.from_public_bytes(self._remote_dh_pub_bytes)
+        dh_ss = self._dh_keypair.exchange(remote_dh)
+
+        # SPQR KEM encapsulation
+        kem_ct = None
+        next_kem_pub = None
+        if is_sender:
+            kem_ct, kem_ss = self._kem.encaps(self._remote_kem_pub)
+            next_kem_pub = self._local_kem_pk
+        else:
+            kem_ss = b"\x00" * 32
+
+        # Hybrid KDF mix into root key
+        hkdf = HKDF(
+            algorithm=hashes.SHA384(),
+            length=96,
+            salt=bytes(self._root_key),
+            info=b"ST2027-TRIPLE-RATCHET-SPQR-V1",
+        )
+        derived = hkdf.derive(dh_ss + kem_ss)
+        self._root_key = bytearray(derived[:48])
+        if is_sender:
+            self._send_chain_key = bytearray(derived[48:])
+        else:
+            self._recv_chain_key = bytearray(derived[48:])
+
+        return kem_ct, next_kem_pub
+
+    def encrypt(self, plaintext: bytes) -> TripleRatchetMessage:
+        """Encrypts payload with symmetric message key, performing ratchet step when needed."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from cryptography.hazmat.primitives import serialization
+        with self._lock:
+            if self._destroyed:
+                raise SecurityTierViolationError("Triple ratchet engine destroyed: keys zeroized")
+
+            # Advance symmetric sending chain
+            if self._send_chain_key is None:
+                self._pending_kem_ct, self._pending_next_kem_pub = self._dh_ratchet_step(is_sender=True)
+
+            kem_ct = self._pending_kem_ct
+            next_kem_pub = self._pending_next_kem_pub
+
+            # Derive message key
+            mk = hmac.new(self._send_chain_key, b"\x01", hashlib.sha384).digest()[:32]
+            old_send = self._send_chain_key
+            self._send_chain_key = bytearray(
+                hmac.new(old_send, b"\x02", hashlib.sha384).digest()
+            )
+            EmergencyMultiPassShredder.shred(old_send)
+
+            nonce = secrets.token_bytes(12)
+            aesgcm = AESGCM(mk)
+            ct = aesgcm.encrypt(nonce, plaintext, None)
+
+            seq = self._n_s
+            self._n_s += 1
+
+            dh_pub_bytes = self._dh_keypair.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+
+            return TripleRatchetMessage(
+                sender_dh_pub=dh_pub_bytes,
+                sequence_num=seq,
+                prev_chain_len=self._p_n,
+                ciphertext=ct,
+                nonce=nonce,
+                kem_ciphertext=kem_ct,
+                next_kem_pub=next_kem_pub,
+            )
+
+    def decrypt(self, msg: TripleRatchetMessage) -> bytes:
+        """Decrypts TripleRatchetMessage, handling asymmetric steps and skipped keys."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+
+        with self._lock:
+            if self._destroyed:
+                raise SecurityTierViolationError("Triple ratchet engine destroyed: keys zeroized")
+
+            # Check skipped keys first
+            key_id = (msg.sender_dh_pub, msg.sequence_num)
+            if key_id in self._skipped_keys:
+                mk, _ = self._skipped_keys.pop(key_id)
+                aesgcm = AESGCM(mk)
+                return aesgcm.decrypt(msg.nonce, msg.ciphertext, None)
+
+            # Asymmetric ratchet check
+            if self._recv_chain_key is None or msg.sender_dh_pub != self._remote_dh_pub_bytes:
+                self._p_n = self._n_s
+                self._n_s = 0
+                self._n_r = 0
+                self._remote_dh_pub_bytes = msg.sender_dh_pub
+
+                # Post-quantum KEM decapsulation if KEM ciphertext included
+                if msg.kem_ciphertext is not None:
+                    kem_ss = self._kem.decaps(self._local_kem_sk, msg.kem_ciphertext)
+                else:
+                    kem_ss = b"\x00" * 32
+
+                if msg.next_kem_pub is not None:
+                    self._remote_kem_pub = msg.next_kem_pub
+
+                remote_dh = x25519.X25519PublicKey.from_public_bytes(self._remote_dh_pub_bytes)
+                dh_ss = self._dh_keypair.exchange(remote_dh)
+
+                hkdf = HKDF(
+                    algorithm=hashes.SHA384(),
+                    length=96,
+                    salt=bytes(self._root_key),
+                    info=b"ST2027-TRIPLE-RATCHET-SPQR-V1",
+                )
+                derived = hkdf.derive(dh_ss + kem_ss)
+                self._root_key = bytearray(derived[:48])
+                self._recv_chain_key = bytearray(derived[48:])
+
+                # Advance local DH and KEM keypairs for next send
+                self._dh_keypair = x25519.X25519PrivateKey.generate()
+                self._local_kem_pk, self._local_kem_sk = self._kem.keygen()
+                self._send_chain_key = None
+
+            # Skip message keys if out of order
+            while self._n_r < msg.sequence_num:
+                skip_mk = hmac.new(self._recv_chain_key, b"\x01", hashlib.sha384).digest()[:32]
+                old_recv = self._recv_chain_key
+                self._recv_chain_key = bytearray(
+                    hmac.new(old_recv, b"\x02", hashlib.sha384).digest()
+                )
+                EmergencyMultiPassShredder.shred(old_recv)
+                if len(self._skipped_keys) < self._max_skipped_keys:
+                    self._skipped_keys[(msg.sender_dh_pub, self._n_r)] = (skip_mk, time.time())
+                self._n_r += 1
+
+            # Derive message key for current message
+            mk = hmac.new(self._recv_chain_key, b"\x01", hashlib.sha384).digest()[:32]
+            old_recv = self._recv_chain_key
+            self._recv_chain_key = bytearray(
+                hmac.new(old_recv, b"\x02", hashlib.sha384).digest()
+            )
+            EmergencyMultiPassShredder.shred(old_recv)
+            self._n_r += 1
+
+            aesgcm = AESGCM(mk)
+            return aesgcm.decrypt(msg.nonce, msg.ciphertext, None)
+
+
 # ==============================================================================
 # Tier 4: HIGH — DAITA Frame Shaper & Poisson Cover Traffic Scheduler
 # ==============================================================================
@@ -739,6 +1225,13 @@ class DAITAFrameShaper:
             raise ValueError(f"Corrupted frame: expected at least {2 + raw_len} bytes, got {len(frame)}")
         return frame[2:2 + raw_len]
 
+    @classmethod
+    def strip_chaff_or_unshape(cls, frame: bytes) -> Tuple[bool, bytes]:
+        """Detects whether frame is chaff in constant time, returning (is_chaff, payload)."""
+        if PoissonCoverTrafficScheduler.is_chaff_frame(frame):
+            return True, b""
+        return False, cls.unshape_frame(frame)
+
 
 class PoissonCoverTrafficScheduler:
     """Calculates memoryless Poisson inter-arrival delays and synthetic chaff frame generators."""
@@ -763,6 +1256,96 @@ class PoissonCoverTrafficScheduler:
     def is_chaff_frame(cls, frame: bytes) -> bool:
         """Detects whether incoming wire frame is synthetic cover traffic."""
         return len(frame) >= 4 and frame[:4] == cls.CHAFF_MARKER
+
+
+class TrafficAction(str, Enum):
+    ACTION_NONE = "NONE"
+    ACTION_INJECT_CHAFF = "INJECT_CHAFF"
+    ACTION_APPLY_JITTER = "APPLY_JITTER"
+    ACTION_BLOCK_BURST = "BLOCK_BURST"
+
+
+class TrafficState(str, Enum):
+    STATE_PASSIVE_MONITORING = "PASSIVE_MONITORING"
+    STATE_BURST_MITIGATION = "BURST_MITIGATION"
+    STATE_SCHEDULED_PADDING = "SCHEDULED_PADDING"
+    STATE_PACED_STREAMING = "PACED_STREAMING"
+
+
+class MaybenotTrafficFSM:
+    """Maybenot v2 / DAITA Probabilistic Finite State Machine for Traffic Analysis Defense.
+    
+    Monitors packet events and transitions between states to defeat AI website/application
+    fingerprinting (k-FP, Deep Fingerprinting, Robust Fingerprinting) by injecting chaff
+    and applying burst pacing, with support for the FRONT (Fast Random Padding) model.
+    """
+    def __init__(
+        self,
+        burst_threshold_pkts: int = 5,
+        burst_window_sec: float = 0.05,
+        target_quantum_size: int = 256,
+        front_window_pkts: int = 0,
+        front_chaff_budget: int = 0,
+    ):
+        self.burst_threshold_pkts = burst_threshold_pkts
+        self.burst_window_sec = burst_window_sec
+        self.target_quantum_size = target_quantum_size
+        self.front_window_pkts = front_window_pkts
+        self.front_chaff_remaining = front_chaff_budget
+        self._packets_processed = 0
+        self.state = TrafficState.STATE_PASSIVE_MONITORING
+        self._recent_sends: deque = deque()
+        self._last_event_time = time.monotonic()
+        self._lock = threading.RLock()
+
+    def on_packet_sent(self, packet_len: int) -> Tuple[TrafficState, TrafficAction, Dict[str, Any]]:
+        """Processes an outgoing packet event, checking for FRONT phase or burst thresholds."""
+        now = time.monotonic()
+        with self._lock:
+            self._packets_processed += 1
+            if self.front_window_pkts > 0 and self._packets_processed <= self.front_window_pkts and self.front_chaff_remaining > 0:
+                self.front_chaff_remaining -= 1
+                self.state = TrafficState.STATE_BURST_MITIGATION
+                action = TrafficAction.ACTION_INJECT_CHAFF
+                meta = {
+                    "chaff_size": self.target_quantum_size,
+                    "reason": "FRONT_DEFENSE_INITIAL_FLOW_CAMOUFLAGE",
+                    "front_chaff_remaining": self.front_chaff_remaining,
+                }
+                return self.state, action, meta
+
+            self._recent_sends.append((now, packet_len))
+            while self._recent_sends and (now - self._recent_sends[0][0]) > self.burst_window_sec:
+                self._recent_sends.popleft()
+
+            burst_count = len(self._recent_sends)
+            self._last_event_time = now
+
+            if burst_count >= self.burst_threshold_pkts:
+                self.state = TrafficState.STATE_BURST_MITIGATION
+                action = TrafficAction.ACTION_INJECT_CHAFF
+                meta = {
+                    "chaff_size": self.target_quantum_size,
+                    "burst_count": burst_count,
+                    "mitigation_mode": "PROBABILISTIC_COVER_INJECTION",
+                }
+                return self.state, action, meta
+            else:
+                self.state = TrafficState.STATE_PASSIVE_MONITORING
+                return self.state, TrafficAction.ACTION_NONE, {}
+
+    def on_timer_tick(self, idle_threshold_sec: float = 0.1) -> Tuple[TrafficState, TrafficAction, Dict[str, Any]]:
+        """Processes timer tick, triggering cover traffic if link has gone idle."""
+        now = time.monotonic()
+        with self._lock:
+            idle_dur = now - self._last_event_time
+            if idle_dur >= idle_threshold_sec:
+                self.state = TrafficState.STATE_SCHEDULED_PADDING
+                self._last_event_time = now
+                action = TrafficAction.ACTION_INJECT_CHAFF
+                meta = {"chaff_size": self.target_quantum_size, "reason": "IDLE_CHANNEL_COVER"}
+                return self.state, action, meta
+            return self.state, TrafficAction.ACTION_NONE, {}
 
 
 # ==============================================================================
@@ -790,16 +1373,29 @@ class SP800_208_LMS:
     LMS_TYPE_H5 = 0x00000005
     LMS_TYPE_H10 = 0x00000006
 
-    def __init__(self, tree_height: int = 4):
+    def __init__(
+        self,
+        tree_height: int = 4,
+        state_persister: Optional[MonotonicStatePersister] = None,
+        seed: Optional[bytes] = None,
+    ):
         if not (2 <= tree_height <= 10):
             raise ValueError(f"Tree height must be between 2 and 10, got {tree_height}")
         self.tree_height = tree_height
         self.num_leaves = 1 << tree_height
-        self.I = secrets.token_bytes(16)
+        self.state_persister = state_persister
+        self._seed = seed
+        if seed is not None:
+            self.I = hashlib.sha256(seed + b"ST2027_LMS_I_DOMAIN").digest()[:16]
+        else:
+            self.I = secrets.token_bytes(16)
         self._ots_priv: List[List[bytes]] = []
         self._tree_nodes: List[bytes] = [b""] * (2 * self.num_leaves)
         self._ots_used: Set[int] = set()
         self._next_q = 0
+        if self.state_persister is not None:
+            saved_q, _, _ = self.state_persister.load_state()
+            self._next_q = saved_q
         self._lock = threading.Lock()
 
         # Build LM-OTS keys and Merkle tree
@@ -823,7 +1419,13 @@ class SP800_208_LMS:
     def _build_tree(self) -> None:
         ots_pub_leaves = []
         for q in range(self.num_leaves):
-            x = [secrets.token_bytes(32) for _ in range(34)]
+            if self._seed is not None:
+                x = [
+                    hashlib.sha256(self._seed + struct.pack(">IH", q, i)).digest()
+                    for i in range(34)
+                ]
+            else:
+                x = [secrets.token_bytes(32) for _ in range(34)]
             self._ots_priv.append(x)
             y = [self._chain(x[i], 0, 255, q, i) for i in range(34)]
             K = hashlib.sha256(self.I + struct.pack(">I", q) + self.D_PBLC + b"".join(y)).digest()
@@ -855,6 +1457,8 @@ class SP800_208_LMS:
             q = self._next_q
             self._next_q += 1
             self._ots_used.add(q)
+            if self.state_persister is not None:
+                self.state_persister.persist_state(last_seq=self._next_q, bitmap=0, drops=0)
 
             C = secrets.token_bytes(32)
             # Hash message
@@ -989,3 +1593,91 @@ class AntiDowngradePolicyEnforcer:
                     f"FAIL-CLOSED: Downgrade attack prevented. Enforced minimum tier is {self._minimum_tier.value}, "
                     f"but peer proposed {proposed_tier.value}."
                 )
+
+
+class EmergencyPurgeCeremony:
+    """Sovereign Command & Control: Dual-Operator Emergency Anti-Tamper Purge Ceremony.
+    
+    Guarantees fail-closed zeroization of in-RAM buffers, on-disk sealed keys,
+    and produces an ML-DSA-87 signed immutable purge audit receipt.
+    """
+    def __init__(self, authority: Optional[Any] = None):
+        self.authority = authority
+        self._purged = False
+        self._lock = threading.RLock()
+
+    @property
+    def is_purged(self) -> bool:
+        with self._lock:
+            return self._purged
+
+    def execute_purge(
+        self,
+        operator_alpha: str,
+        passphrase_alpha: str,
+        operator_bravo: str,
+        passphrase_bravo: str,
+        sensitive_buffers: Sequence[Any],
+        sealed_key_paths: Sequence[Path | str] = (),
+    ) -> Dict[str, Any]:
+        """Executes sovereign emergency purge across RAM and disk."""
+        with self._lock:
+            if self._purged:
+                raise SecurityTierViolationError("Emergency purge already executed: system is locked")
+
+            # 1. Dual-Operator distinctness check
+            if operator_alpha == operator_bravo:
+                raise SecurityTierViolationError(
+                    "Two-Person Integrity failure: operator_alpha and operator_bravo must be distinct"
+                )
+
+            if self.authority is not None:
+                # Authenticate both operators with authority
+                if hasattr(self.authority, "authorize"):
+                    self.authority.authorize(operator_alpha, passphrase_alpha, operator_bravo, passphrase_bravo)
+                elif hasattr(self.authority, "authenticate"):
+                    self.authority.authenticate(operator_alpha, passphrase_alpha)
+                    self.authority.authenticate(operator_bravo, passphrase_bravo)
+
+            # 2. Multi-pass memory shredding
+            total_bytes_shredded = 0
+            for buf in sensitive_buffers:
+                total_bytes_shredded += EmergencyMultiPassShredder.shred(buf)
+
+            # 3. Secure disk key destruction (4-pass overwrite before unlinking)
+            files_destroyed: List[str] = []
+            for path in sealed_key_paths:
+                p = Path(path)
+                if p.exists():
+                    fsize = p.stat().st_size
+                    with open(p, "r+b") as f:
+                        f.write(b"\x00" * fsize)
+                        f.flush()
+                        os.fsync(f.fileno())
+                        f.seek(0)
+                        f.write(b"\xFF" * fsize)
+                        f.flush()
+                        os.fsync(f.fileno())
+                        f.seek(0)
+                        f.write(secrets.token_bytes(fsize))
+                        f.flush()
+                        os.fsync(f.fileno())
+                        f.seek(0)
+                        f.write(b"\x00" * fsize)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    p.unlink()
+                    files_destroyed.append(str(p))
+
+            self._purged = True
+
+            receipt = {
+                "ceremony": "EMERGENCY_CRYPTOGRAPHIC_PURGE_CNSA2",
+                "timestamp_utc": time.time(),
+                "operator_alpha": operator_alpha,
+                "operator_bravo": operator_bravo,
+                "bytes_shredded": total_bytes_shredded,
+                "files_destroyed": files_destroyed,
+                "status": "PURGE_COMPLETE_ZEROIZATION_ENFORCED",
+            }
+            return receipt

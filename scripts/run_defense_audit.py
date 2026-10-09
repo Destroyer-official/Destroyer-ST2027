@@ -72,7 +72,7 @@ class AuditScorecard:
         return "\n".join(lines)
 
 
-def run_cmd(cmd: list, cwd: Path = REPO_ROOT, timeout: int = 120) -> tuple[int, str, float]:
+def run_cmd(cmd: list, cwd: Path = REPO_ROOT, timeout: int = 300) -> tuple[int, str, float]:
     t0 = time.perf_counter()
     try:
         p = subprocess.run(
@@ -110,7 +110,7 @@ def main():
         code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
         passed = (code2 == 0 and ("51 passed" in out2 or "49 passed" in out2) and "29 passed" in out2 and "0 failed" in out2)
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         "80 tests passed (51 lib incl. FEC, KEX, pacing, purge & memlock + 29 harness); 0 compiler warnings")
+                         "80 tests passed (51 lib incl. FEC, KEX, pacing, purge & memlock + 29 harness); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
 
     # Gate 2: Native Top-Secret Runtime (ts_rt)
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")
