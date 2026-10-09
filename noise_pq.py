@@ -315,10 +315,17 @@ def _mlkem_decaps(sk: bytearray, ct: bytes) -> bytes:
     return LibOQS_MLKEM_1024().decaps(bytes(sk), ct)
 
 
-def _sign(sk: bytes, msg: bytes, *, is_initiator: bool = False) -> bytes:
+def _sign(sk: bytes, msg: bytes, *, is_initiator: bool = False, pk: Optional[bytes] = None) -> bytes:
     from liboqs_wrapper import LibOQS_MLDSA_87
     domain = DOMAIN_SEP_SIG_INIT if is_initiator else DOMAIN_SEP_SIG_RESP
-    return LibOQS_MLDSA_87().sign(sk, domain + msg)
+    full_msg = domain + msg
+    sig = LibOQS_MLDSA_87().sign(sk, full_msg)
+    if pk is not None:
+        if not LibOQS_MLDSA_87().verify(pk, full_msg, sig):
+            sig_buf = bytearray(sig)
+            _zero(sig_buf)
+            raise NoiseError("verify-after-sign fault detected: signature corrupted")
+    return sig
 
 
 def _verify(pk: bytes, msg: bytes, sig: bytes, *, is_initiator: bool = False) -> None:
@@ -348,6 +355,7 @@ class NoiseSession:
     _recv_win_bits: int = 0
     _recv_started: bool = False
     handshake_hash: Optional[bytes] = None
+    _quarantined: bool = False
 
     def __post_init__(self) -> None:
         if self.psk is not None:
@@ -384,6 +392,12 @@ class NoiseSession:
             self.psk = None
         if self.sym is not None:
             self.sym.destroy()
+            self.sym = None
+
+    def quarantine(self, reason: str = "fault detected") -> None:
+        """Irreversible latching quarantine: zeroize all key buffers and freeze state."""
+        self.destroy()
+        self._quarantined = True
 
 
 def _take_ephemeral(sess: NoiseSession) -> bytes:
@@ -396,6 +410,8 @@ def _take_ephemeral(sess: NoiseSession) -> bytes:
 
 def initiator_hello(sess: NoiseSession) -> bytes:
     """M1: -> e, e1. Preconditions: initiator, fresh session."""
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if not sess.is_initiator or sess._e_pub is not None:
         raise NoiseError("handshake state violation")
     e_pub = _take_ephemeral(sess)
@@ -411,6 +427,8 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     signer: optional callable(msg)->sig for HSM-held identities. When None,
     the session's software sig_sk signs (lab path). Responder role binds DOMAIN_SEP_SIG_RESP.
     """
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if sess.is_initiator or sess._e_pub is not None:
         raise NoiseError("handshake state violation")
     if len(m1) != P384_PUB + MLKEM_EK:
@@ -432,7 +450,14 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     sess.sym.mix_key(ml_ss)                            # ff
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)    # s (encrypted)
     h_for_sig = bytes(sess.sym.h)
-    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig, is_initiator=False)  # es->sig over h
+    try:
+        if signer is not None:
+            sig = signer(h_for_sig)
+        else:
+            sig = _sign(sess.sig_sk, h_for_sig, is_initiator=False, pk=sess.sig_pk)
+    except Exception as exc:
+        sess.quarantine(f"responder signing fault: {exc}")
+        raise NoiseError(f"verify-after-sign fault detected: {exc}") from exc
     enc_sig = sess.sym.encrypt_and_hash(sig)
     if sess.psk is not None:
         sess.sym.mix_key_and_hash(bytes(sess.psk))
@@ -451,6 +476,8 @@ def initiator_finish(
     Fail-closed identity pinning: expected_peer_pk is required by default.
     To connect to an arbitrary unpinned peer, allow_unpinned=True must be explicitly set.
     """
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if expected_peer_pk is None and not allow_unpinned:
         raise NoiseError("unpinned peer identity rejected: expected_peer_pk required (or set allow_unpinned=True)")
     if not sess.is_initiator or sess._f_sk is None or sess.handshake_hash is not None:
@@ -473,11 +500,16 @@ def initiator_finish(
     # Split enc_pk (2592 + 16 tag) from enc_sig (rest).
     from liboqs_wrapper import LibOQS_MLDSA_87  # noqa: F401 (sizes below)
     enc_pk, enc_sig = rest[:2592 + 16], rest[2592 + 16:]
-    srv_pk = sess.sym.decrypt_and_hash(enc_pk)
-    h_for_verify = sess.sym.h  # transcript THROUGH the signed message's
-    srv_sig = sess.sym.decrypt_and_hash(enc_sig)
-    _verify(srv_pk, h_for_verify, srv_sig, is_initiator=False)   # verify-before-derive (responder role)
+    try:
+        srv_pk = sess.sym.decrypt_and_hash(enc_pk)
+        h_for_verify = sess.sym.h  # transcript THROUGH the signed message's
+        srv_sig = sess.sym.decrypt_and_hash(enc_sig)
+        _verify(srv_pk, h_for_verify, srv_sig, is_initiator=False)   # verify-before-derive (responder role)
+    except Exception as exc:
+        sess.quarantine("responder peer verification failed")
+        raise
     if expected_peer_pk is not None and srv_pk != expected_peer_pk:
+        sess.quarantine("peer identity mismatch")
         raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = srv_pk
     if sess.psk is not None:
@@ -491,12 +523,21 @@ def initiator_complete(sess: NoiseSession, signer=None) -> bytes:
     Exactly one M3 per session (handshake-cipher nonce reuse = forgery).
     Initiator role binds DOMAIN_SEP_SIG_INIT.
     """
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if not sess.is_initiator or sess._peer_sig_pk is None \
             or sess._m3_done or sess.handshake_hash is not None:
         raise NoiseError("handshake state violation")
     enc_pk = sess.sym.encrypt_and_hash(sess.sig_pk)
     h_for_sig = bytes(sess.sym.h)
-    sig = signer(h_for_sig) if signer is not None else _sign(sess.sig_sk, h_for_sig, is_initiator=True)
+    try:
+        if signer is not None:
+            sig = signer(h_for_sig)
+        else:
+            sig = _sign(sess.sig_sk, h_for_sig, is_initiator=True, pk=sess.sig_pk)
+    except Exception as exc:
+        sess.quarantine(f"initiator signing fault: {exc}")
+        raise NoiseError(f"verify-after-sign fault detected: {exc}") from exc
     out = enc_pk + sess.sym.encrypt_and_hash(sig)
     sess._m3_done = True  # exactly one M3 per session (nonce reuse = forgery)
     return out
@@ -514,6 +555,8 @@ def responder_complete(
     Fail-closed identity pinning: expected_peer_pk is required by default.
     To accept an arbitrary unpinned peer, allow_unpinned=True must be explicitly set.
     """
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if expected_peer_pk is None and not allow_unpinned:
         raise NoiseError("unpinned peer identity rejected: expected_peer_pk required (or set allow_unpinned=True)")
     if sess.is_initiator or sess._f_ss is None or sess._m3_done \
@@ -522,11 +565,16 @@ def responder_complete(
     if len(m3) != EXPECTED_M3_LEN:
         raise NoiseError(f"M3 exact length violation: expected {EXPECTED_M3_LEN}, got {len(m3)}")
     enc_pk, enc_sig = m3[:2592 + 16], m3[2592 + 16:]
-    cli_pk = sess.sym.decrypt_and_hash(enc_pk)
-    h_for_verify = sess.sym.h  # transcript through the signed message
-    cli_sig = sess.sym.decrypt_and_hash(enc_sig)
-    _verify(cli_pk, h_for_verify, cli_sig, is_initiator=True)   # verify-before-derive (initiator role)
+    try:
+        cli_pk = sess.sym.decrypt_and_hash(enc_pk)
+        h_for_verify = sess.sym.h  # transcript through the signed message
+        cli_sig = sess.sym.decrypt_and_hash(enc_sig)
+        _verify(cli_pk, h_for_verify, cli_sig, is_initiator=True)   # verify-before-derive (initiator role)
+    except Exception as exc:
+        sess.quarantine("initiator peer verification failed")
+        raise
     if expected_peer_pk is not None and cli_pk != expected_peer_pk:
+        sess.quarantine("peer identity mismatch")
         raise NoiseError("peer identity mismatch (pinned ML-DSA-87 key rejected)")
     sess._peer_sig_pk = cli_pk
     sess._m3_done = True
@@ -534,6 +582,8 @@ def responder_complete(
 
 def split_session(sess: NoiseSession) -> Tuple[bytes, bytes, bytes]:
     """Split() -> (k_send, k_recv, handshake_hash h). Wipes handshake state."""
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if sess._peer_sig_pk is None or sess.handshake_hash is not None:
         raise NoiseError("handshake incomplete or already split")
     (k1, k2), h = sess.sym.split()
@@ -552,6 +602,8 @@ def derive_shared_frame_key(sess: NoiseSession) -> bytes:
     Both initiator and responder derive the bit-identical frame key bound to the
     cryptographic transcript hash `h` and crossed session keys.
     """
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if sess.handshake_hash is None or sess._k_send is None or sess._k_recv is None:
         raise NoiseError("session must be split before deriving frame key")
     k1 = bytes(sess._k_send) if sess.is_initiator else bytes(sess._k_recv)
@@ -567,6 +619,8 @@ def derive_double_ratchet_root(sess: NoiseSession) -> Tuple[bytes, bytes]:
         root_key: 32-byte symmetric root key for Double Ratchet initialization
         h: 48-byte transcript hash for channel binding / authentication
     """
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if sess.handshake_hash is None or sess._k_send is None or sess._k_recv is None:
         raise NoiseError("session must be split before deriving DoubleRatchet root")
     k1 = bytes(sess._k_send) if sess.is_initiator else bytes(sess._k_recv)
@@ -581,6 +635,8 @@ def _transport_nonce(seq: int, direction: int) -> bytes:
 
 def transport_send(sess: NoiseSession, pt: bytes) -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if sess._k_send is None or len(pt) > 16384:
         raise NoiseError("transport state violation")
     if sess._send_n >= (1 << 64) - 1:
@@ -628,6 +684,8 @@ def _recv_mark(sess: NoiseSession, seq: int) -> None:
 
 def transport_recv(sess: NoiseSession, wire: bytes) -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    if sess._quarantined:
+        raise NoiseError("session quarantined due to physical fault detection")
     if sess._k_recv is None or len(wire) < 8 + 1 + 16:
         raise NoiseError("transport framing violation")
     seq = struct.unpack(">Q", wire[:8])[0]

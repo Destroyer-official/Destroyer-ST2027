@@ -89,6 +89,8 @@ class DestroyerNode:
         Binds the key into the memory-safe data plane, wipes intermediate key material,
         and returns the 48-byte handshake hash binding `h`.
         """
+        if getattr(sess, "_quarantined", False):
+            raise RuntimeError("Refusing to establish session from quarantined NoiseSession")
         import noise_pq
         if sess.handshake_hash is None:
             noise_pq.split_session(sess)

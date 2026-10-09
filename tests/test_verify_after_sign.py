@@ -1,6 +1,6 @@
 """Verify-after-sign gates (fault-attack countermeasure, cf. eprint 2025/2009).
 
-Seed-pointer / fault attacks on lattice stacks (observed in LibOQS-style
+Pointer / fault attacks on lattice stacks (observed in LibOQS-style
 code, up to 100% forgery success) are defeated when every emitted
 signature is verified under the matching public half BEFORE release.
 Gates covered:
@@ -8,6 +8,9 @@ Gates covered:
   2. Handshake public bundle sign (hybrid_kex get_public_bundle).
   3. TUF role PQ sign (supply_chain_security._pq_sign_blob).
   4. SBOM sign helper (generate_production_sbom._mldsa_sign_verified).
+  5. Noise_XXhfs responder M2 sign with latching quarantine (noise_pq responder_reply).
+  6. Noise_XXhfs initiator M3 sign with latching quarantine (noise_pq initiator_complete).
+  7. DestroyerNode data plane quarantine barrier (destroyer_node establish_from_noise).
 
 Each gate is proven by fault injection: a corrupted signer output must
 raise fail-closed (never emit an unverified signature). Positive paths
@@ -158,4 +161,103 @@ def test_sbom_sign_helper_fault_rejected():
 
     with pytest.raises(RuntimeError):
         _mldsa_sign_verified(_FaultySigner(), sk, pk, data, "probe-fault")
+
+
+def test_noise_pq_responder_faulted_signature_quarantines():
+    """Faulted responder signature in M2 triggers fail-closed latching quarantine."""
+    import noise_pq as npq
+    import liboqs_wrapper
+
+    sig_engine = liboqs_wrapper.LibOQS_MLDSA_87()
+    ci_pk, ci_sk = sig_engine.keygen()
+    cr_pk, cr_sk = sig_engine.keygen()
+
+    ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+    rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
+    m1 = npq.initiator_hello(ini)
+
+    real_sign = liboqs_wrapper.LibOQS_MLDSA_87.sign
+
+    def _fault(self, sk, msg):
+        sig = real_sign(self, sk, msg)
+        bad = bytearray(sig)
+        bad[0] ^= 0x01
+        return bytes(bad)
+
+    liboqs_wrapper.LibOQS_MLDSA_87.sign = _fault
+    try:
+        with pytest.raises(npq.NoiseError, match="fault detected"):
+            npq.responder_reply(rsp, m1)
+    finally:
+        liboqs_wrapper.LibOQS_MLDSA_87.sign = real_sign
+
+    # Responder state must be irrevocably quarantined and zeroized
+    assert rsp._quarantined is True
+    assert rsp._f_ss is None
+    assert rsp._k_send is None
+    assert rsp._k_recv is None
+
+    # Subsequent operations on quarantined session must fail closed
+    with pytest.raises(npq.NoiseError, match="quarantined"):
+        npq.split_session(rsp)
+
+
+def test_noise_pq_initiator_faulted_signature_quarantines():
+    """Faulted initiator signature in M3 triggers fail-closed latching quarantine."""
+    import noise_pq as npq
+    import liboqs_wrapper
+
+    sig_engine = liboqs_wrapper.LibOQS_MLDSA_87()
+    ci_pk, ci_sk = sig_engine.keygen()
+    cr_pk, cr_sk = sig_engine.keygen()
+
+    ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+    rsp = npq.NoiseSession(is_initiator=False, sig_pk=cr_pk, sig_sk=cr_sk)
+    m1 = npq.initiator_hello(ini)
+    m2 = npq.responder_reply(rsp, m1)
+    npq.initiator_finish(ini, m2, expected_peer_pk=cr_pk)
+
+    real_sign = liboqs_wrapper.LibOQS_MLDSA_87.sign
+
+    def _fault(self, sk, msg):
+        sig = real_sign(self, sk, msg)
+        bad = bytearray(sig)
+        bad[0] ^= 0x01
+        return bytes(bad)
+
+    liboqs_wrapper.LibOQS_MLDSA_87.sign = _fault
+    try:
+        with pytest.raises(npq.NoiseError, match="fault detected"):
+            npq.initiator_complete(ini)
+    finally:
+        liboqs_wrapper.LibOQS_MLDSA_87.sign = real_sign
+
+    # Initiator state must be irrevocably quarantined and zeroized
+    assert ini._quarantined is True
+    assert ini._k_send is None
+    assert ini._k_recv is None
+
+    # Subsequent operations on quarantined session must fail closed
+    with pytest.raises(npq.NoiseError, match="quarantined"):
+        npq.split_session(ini)
+
+
+def test_destroyer_node_rejects_quarantined_session():
+    """DestroyerNode rejects establishing session from quarantined NoiseSession."""
+    import noise_pq as npq
+    import liboqs_wrapper
+    from destroyer_node import DestroyerNode
+
+    sig_engine = liboqs_wrapper.LibOQS_MLDSA_87()
+    ci_pk, ci_sk = sig_engine.keygen()
+    ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+    ini.quarantine("fault injected")
+
+    try:
+        node = DestroyerNode()
+    except Exception:
+        pytest.skip("destroyer_core native module not available")
+
+    with pytest.raises(RuntimeError, match="quarantined"):
+        node.establish_from_noise(ini)
 
