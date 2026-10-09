@@ -11,6 +11,7 @@ Gates covered:
   5. Noise_XXhfs responder M2 sign with latching quarantine (noise_pq responder_reply).
   6. Noise_XXhfs initiator M3 sign with latching quarantine (noise_pq initiator_complete).
   7. DestroyerNode data plane quarantine barrier (destroyer_node establish_from_noise).
+  8. Platform waiver offline ceremony sign (sign_waiver cmd_sign_waiver).
 
 Each gate is proven by fault injection: a corrupted signer output must
 raise fail-closed (never emit an unverified signature). Positive paths
@@ -260,4 +261,50 @@ def test_destroyer_node_rejects_quarantined_session():
 
     with pytest.raises(RuntimeError, match="quarantined"):
         node.establish_from_noise(ini)
+
+
+def test_sign_waiver_faulted_signature_fails_closed(tmp_path):
+    """Faulted ML-DSA-87 signature in sign_waiver fails closed."""
+    import argparse
+    import json
+    import subprocess
+    import sys
+    import liboqs_wrapper
+
+    root = Path(__file__).resolve().parent.parent
+    key_stem = str(tmp_path / "ao_test")
+    r = subprocess.run([sys.executable, str(root / "scripts" / "sign_waiver.py"),
+                        "keygen", "--out", key_stem],
+                       capture_output=True, text=True, cwd=str(root))
+    assert r.returncode == 0
+
+    payload_file = tmp_path / "w.json"
+    payload_file.write_text(json.dumps({
+        "justification": "lab test",
+        "ao": "tester",
+        "expires": "2027-01-01",
+        "mitigations": ["airgap"]
+    }), encoding="utf-8")
+    out_file = tmp_path / "w.signed.json"
+
+    sys.path.insert(0, str(root / "scripts"))
+    import sign_waiver
+    args = argparse.Namespace(key=key_stem + ".sk", pub=key_stem + ".pub",
+                              waiver=str(payload_file), out=str(out_file))
+
+    real_sign = liboqs_wrapper.LibOQS_MLDSA_87.sign
+
+    def _fault(self, sk, msg):
+        sig = real_sign(self, sk, msg)
+        bad = bytearray(sig)
+        bad[0] ^= 0x01
+        return bytes(bad)
+
+    liboqs_wrapper.LibOQS_MLDSA_87.sign = _fault
+    try:
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: verify-after-sign failed"):
+            sign_waiver.cmd_sign_waiver(args)
+    finally:
+        liboqs_wrapper.LibOQS_MLDSA_87.sign = real_sign
+
 

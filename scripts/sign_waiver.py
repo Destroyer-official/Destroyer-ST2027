@@ -50,8 +50,16 @@ def cmd_keygen(args) -> int:
 def _load_keypair(args):
     with open(args.key, "rb") as f:
         sk = f.read()
-    pub_path = getattr(args, "pub", None) or (args.key + ".pub"
-                                              if not args.key.endswith(".sk") else None)
+    pub_path = getattr(args, "pub", None)
+    if not pub_path:
+        if args.key.endswith(".sk"):
+            candidate = args.key[:-3] + ".pub"
+            if os.path.exists(candidate):
+                pub_path = candidate
+        else:
+            candidate = args.key + ".pub"
+            if os.path.exists(candidate):
+                pub_path = candidate
     pk = None
     if pub_path and os.path.exists(pub_path):
         with open(pub_path, "rb") as f:
@@ -70,8 +78,12 @@ def cmd_sign_waiver(args) -> int:
         if not payload.get(k):
             print(f"waiver payload missing {k}", file=sys.stderr)
             return 2
-    sk, _pk = _load_keypair(args)
-    sig = LibOQS_MLDSA_87().sign(sk, _canonical(payload))
+    sk, pk = _load_keypair(args)
+    canonical_bytes = _canonical(payload)
+    sig = LibOQS_MLDSA_87().sign(sk, canonical_bytes)
+    if pk is not None:
+        if not LibOQS_MLDSA_87().verify(pk, canonical_bytes, sig):
+            raise RuntimeError("FAIL-CLOSED: verify-after-sign failed for waiver")
     env = {"payload": payload, "signature": sig.hex()}
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(env, f, indent=2)
@@ -84,8 +96,11 @@ def cmd_sign_file(args) -> int:
     from liboqs_wrapper import LibOQS_MLDSA_87
     with open(args.infile, "rb") as f:
         data = f.read()
-    sk, _pk = _load_keypair(args)
+    sk, pk = _load_keypair(args)
     sig = LibOQS_MLDSA_87().sign(sk, data)
+    if pk is not None:
+        if not LibOQS_MLDSA_87().verify(pk, data, sig):
+            raise RuntimeError(f"FAIL-CLOSED: verify-after-sign failed for file {args.infile}")
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(sig.hex() + "\n")
     print(f"[CEREMONY] Signed {args.infile} -> {args.out} (sig {len(sig)}B ML-DSA-87).")
