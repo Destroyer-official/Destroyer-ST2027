@@ -400,6 +400,43 @@ class ConstantTimeOperations:
         
         return bytes(result)
 
+    @staticmethod
+    def constant_time_equals_int(a: int, b: int) -> bool:
+        """Constant-time integer equality comparison without branching."""
+        diff = a ^ b
+        return (((diff | (-diff)) >> 63) & 1) == 0
+
+    @staticmethod
+    def constant_time_verify_padding(data: bytes, block_size: int = 16) -> Tuple[bool, int]:
+        """
+        Constant-time PKCS#7 padding validation.
+        
+        Inspects all potential padding bytes without early termination to
+        prevent padding oracle attacks (e.g. Vaudenay attack).
+        
+        Args:
+            data: Padded byte sequence
+            block_size: Cipher block size (typically 16)
+            
+        Returns:
+            Tuple of (is_valid, padding_length)
+        """
+        if not data or len(data) < block_size or len(data) % block_size != 0:
+            return False, 0
+            
+        pad_len = data[-1]
+        len_valid = int(1 <= pad_len <= block_size)
+        
+        diff = 0
+        for i in range(1, block_size + 1):
+            byte_val = data[-i]
+            in_range = int(i <= pad_len)
+            diff |= in_range & (byte_val ^ pad_len)
+            
+        is_valid = bool(len_valid and (diff == 0))
+        clean_len = pad_len if is_valid else 0
+        return is_valid, clean_len
+
 
 def constant_time_wrapper(operation_name: str = None, 
                           record_timing: bool = True,

@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2026-10-09T05:59:25.065143+00:00",
-  "commit": "43337173b30ba33ec725fa67c483fa2c17c6f05f",
+  "timestamp_utc": "2026-10-09T15:00:14.262146+00:00",
+  "commit": "f9bed5d2741cd77da1baa7e3fb1a99ecc4b7889c",
   "audit_version": "ST2027-EVAL-V1",
   "overall_status": "PASS",
   "score": "10/10",
@@ -9,63 +9,63 @@
       "gate_id": "1.1",
       "name": "Rust Data-Plane Strict Clippy & Test Battery",
       "status": "PASS",
-      "duration_ms": 25137.97,
+      "duration_ms": 23919.52,
       "details": "80 tests passed (51 lib incl. FEC, KEX, pacing, purge & memlock + 29 harness); 0 compiler warnings"
     },
     {
       "gate_id": "2.1",
       "name": "ts_rt Clippy & Memory Discipline Verification",
       "status": "PASS",
-      "duration_ms": 146.16,
+      "duration_ms": 165.73,
       "details": "0 FFI warnings; VirtualLock/mlock verified"
     },
     {
       "gate_id": "3.1",
       "name": "CNSA Suite 2.0 KATs & Algorithm Purity",
       "status": "PASS",
-      "duration_ms": 465.89,
+      "duration_ms": 1445.56,
       "details": "ML-KEM-1024, ML-DSA-87, AES-256-GCM KATs verified"
     },
     {
       "gate_id": "4.1",
       "name": "ProVerif 2.05 Symbolic Handshake & PCS Proofs",
       "status": "PASS",
-      "duration_ms": 31438.92,
+      "duration_ms": 45019.91,
       "details": "2/2 models proven; inj-event & secrecy conclude TRUE"
     },
     {
       "gate_id": "5.1",
       "name": "Active Exploit Defenses (Replay DoS & Nonce Reuse)",
       "status": "PASS",
-      "duration_ms": 14471.04,
+      "duration_ms": 15363.49,
       "details": "RFC 6479 decoupled window & atomic monotonic state pass"
     },
     {
       "gate_id": "6.1",
       "name": "Platform Gating (Signed ML-DSA-87 Waivers)",
       "status": "PASS",
-      "duration_ms": 2240.46,
+      "duration_ms": 3304.18,
       "details": "Unsigned waivers & unverified records fail closed"
     },
     {
       "gate_id": "7.1",
       "name": "SLSA Level 3+ Supply Chain & DLL Pinning",
       "status": "PASS",
-      "duration_ms": 290.55,
+      "duration_ms": 334.32,
       "details": "Ed25519 & SHA-384 embedded pins; Merkle root verified"
     },
     {
       "gate_id": "8.1",
       "name": "Truth-in-Claims & Linguistic Purity",
       "status": "PASS",
-      "duration_ms": 5122.43,
+      "duration_ms": 6080.76,
       "details": "Purged badges; exact Kani bounds; 0 buzzwords; 0 emojis"
     },
     {
       "gate_id": "9.1",
       "name": "In-Process Single-Command Operator Self-Test",
       "status": "PASS",
-      "duration_ms": 5579.11,
+      "duration_ms": 8376.79,
       "details": "In-memory loopback roundtrip, CER, and zeroization verified"
     }
   ]

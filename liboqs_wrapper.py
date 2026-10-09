@@ -45,6 +45,7 @@ import secrets
 import hashlib
 import threading
 from pathlib import Path
+from typing import Tuple, Optional, Dict, Any, List, Union
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +490,7 @@ class LibOQS_MLDSA_87:
             raise RuntimeError(f"{self.alg_name.decode()} keypair failed")
         return bytes(pk), bytes(sk)
 
-    def sign(self, secret_key: bytes, message: bytes) -> bytes:
+    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None) -> bytes:
         if len(secret_key) != self.sk_size:
             raise ValueError("Invalid SK size")
         signature = (ctypes.c_uint8 * self.sig_size)(); sig_len = ctypes.c_size_t(0)
@@ -499,7 +500,18 @@ class LibOQS_MLDSA_87:
         result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(message), sk_c)
         if result != 0:
             raise RuntimeError(f"{self.alg_name.decode()} signing failed")
-        return bytes(signature[:sig_len.value])
+        sig_bytes = bytes(signature[:sig_len.value])
+        if public_key is not None:
+            if not self.verify(public_key, message, sig_bytes):
+                raise RuntimeError(
+                    f"FAIL-CLOSED: Verify-After-Sign (VAS) failed for {self.alg_name.decode()}; "
+                    "potential fault-injection attack (CHES 2024 / eprint 2025/2009)"
+                )
+        return sig_bytes
+
+    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes) -> bytes:
+        """Mandatory Verify-After-Sign (VAS) against fault injection."""
+        return self.sign(secret_key, message, public_key=public_key)
 
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
         if len(public_key) != self.pk_size:
@@ -535,7 +547,7 @@ class LibOQS_SLH_DSA_256f:
             raise RuntimeError(f"{self.alg_name.decode()} keypair failed")
         return bytes(pk), bytes(sk)
 
-    def sign(self, secret_key: bytes, message: bytes) -> bytes:
+    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None) -> bytes:
         if len(secret_key) != self.sk_size:
             raise ValueError("Invalid SK size")
         signature = (ctypes.c_uint8 * self.sig_size)(); sig_len = ctypes.c_size_t(0)
@@ -545,7 +557,18 @@ class LibOQS_SLH_DSA_256f:
         result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(message), sk_c)
         if result != 0:
             raise RuntimeError(f"{self.alg_name.decode()} signing failed")
-        return bytes(signature[:sig_len.value])
+        sig_bytes = bytes(signature[:sig_len.value])
+        if public_key is not None:
+            if not self.verify(public_key, message, sig_bytes):
+                raise RuntimeError(
+                    f"FAIL-CLOSED: Verify-After-Sign (VAS) failed for {self.alg_name.decode()}; "
+                    "potential fault-injection attack (CHES 2024 / eprint 2025/2009)"
+                )
+        return sig_bytes
+
+    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes) -> bytes:
+        """Mandatory Verify-After-Sign (VAS) against fault injection."""
+        return self.sign(secret_key, message, public_key=public_key)
 
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
         if len(public_key) != self.pk_size:
@@ -580,7 +603,7 @@ class LibOQS_Falcon_1024:
             raise RuntimeError(f"{self.alg_name.decode()} keypair failed")
         return bytes(pk), bytes(sk)
 
-    def sign(self, secret_key: bytes, message: bytes) -> bytes:
+    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None) -> bytes:
         if len(secret_key) != self.sk_size:
             raise ValueError(f"Invalid SK size for {self.alg_name.decode()}: expected {self.sk_size}, got {len(secret_key)}")
         signature = (ctypes.c_uint8 * self.sig_size)(); sig_len = ctypes.c_size_t(0)
@@ -590,7 +613,18 @@ class LibOQS_Falcon_1024:
         result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(message), sk_c)
         if result != 0:
             raise RuntimeError(f"{self.alg_name.decode()} signing failed")
-        return bytes(signature[:sig_len.value])
+        sig_bytes = bytes(signature[:sig_len.value])
+        if public_key is not None:
+            if not self.verify(public_key, message, sig_bytes):
+                raise RuntimeError(
+                    f"FAIL-CLOSED: Verify-After-Sign (VAS) failed for {self.alg_name.decode()}; "
+                    "potential fault-injection attack (CHES 2024 / eprint 2025/2009)"
+                )
+        return sig_bytes
+
+    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes) -> bytes:
+        """Mandatory Verify-After-Sign (VAS) against fault injection."""
+        return self.sign(secret_key, message, public_key=public_key)
 
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
         if len(public_key) != self.pk_size:

@@ -46,12 +46,45 @@ of ``group_key_manager.py`` and ``docs/deployment_hardening_guide.md``.
 from __future__ import annotations
 
 import ctypes
+from contextlib import contextmanager
 import logging
 import os
 import sys
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Constants for Windows DPAPI memory protection
+CRYPTPROTECTMEMORY_SAME_PROCESS = 0x00
+CRYPTPROTECTMEMORY_BLOCK_SIZE = 16
+
+
+def _try_crypt_protect(buf: bytearray) -> bool:
+    """Best-effort in-RAM DPAPI encryption of buffer via CryptProtectMemory."""
+    if sys.platform != "win32" or not buf:
+        return False
+    if len(buf) % CRYPTPROTECTMEMORY_BLOCK_SIZE != 0:
+        return False
+    try:
+        c32 = ctypes.windll.crypt32
+        addr = ctypes.addressof((ctypes.c_char * len(buf)).from_buffer(buf))
+        return bool(c32.CryptProtectMemory(ctypes.c_void_p(addr), len(buf), CRYPTPROTECTMEMORY_SAME_PROCESS))
+    except Exception:
+        return False
+
+
+def _try_crypt_unprotect(buf: bytearray) -> bool:
+    """Decrypt in-RAM DPAPI buffer via CryptUnprotectMemory."""
+    if sys.platform != "win32" or not buf:
+        return False
+    if len(buf) % CRYPTPROTECTMEMORY_BLOCK_SIZE != 0:
+        return False
+    try:
+        c32 = ctypes.windll.crypt32
+        addr = ctypes.addressof((ctypes.c_char * len(buf)).from_buffer(buf))
+        return bool(c32.CryptUnprotectMemory(ctypes.c_void_p(addr), len(buf), CRYPTPROTECTMEMORY_SAME_PROCESS))
+    except Exception:
+        return False
 
 
 def _try_sodium_memzero(buf: bytearray) -> bool:
@@ -185,12 +218,14 @@ class NativeSecureBuffer:
     """Managed mutable buffer for key material.
 
     Backed by a ``bytearray`` (so no new runtime dependency), with
-    best-effort page locking at allocation and native wiping at
+    best-effort page locking at allocation, in-RAM encryption at rest
+    (Windows DPAPI ``CryptProtectMemory``), and native wiping at
     teardown. Use as a context manager — the buffer is wiped on exit::
 
         with NativeSecureBuffer(32) as buf:
             buf.fill(secrets.token_bytes(32))
-            use(bytes(buf))  # copies leave the buffer: minimize lifetime
+            buf.protect()   # encrypted in RAM while resting
+            use(bytes(buf)) # transient plaintext exposure; re-protected on exit
 
     ``is_pinned`` is True only when the OS lock call succeeded; gates
     can require it via ``P2P_REQUIRE_PINNED_KEYS=1`` (see
@@ -215,6 +250,7 @@ class NativeSecureBuffer:
         else:
             raise TypeError("size_or_data must be int or bytes-like")
         self._locked = _try_mlock(self._buf)
+        self._is_protected = False
         self._wipe_method: Optional[str] = None
         self._wiped = False
         if not self._locked:
@@ -231,6 +267,11 @@ class NativeSecureBuffer:
         return self._locked
 
     @property
+    def is_protected(self) -> bool:
+        """True when buffer contents are currently encrypted at rest in RAM."""
+        return self._is_protected
+
+    @property
     def wiped(self) -> bool:
         return self._wiped
 
@@ -238,25 +279,84 @@ class NativeSecureBuffer:
         return len(self._buf)
 
     def __bytes__(self) -> bytes:
-        return bytes(self._buf)
+        return self.export_bytes()
 
     def export_bytes(self) -> bytes:
-        """Copy out as immutable ``bytes`` (unwipeable — minimize lifetime)."""
-        return bytes(self._buf)
+        """Copy out as immutable ``bytes`` (unwipeable — minimize lifetime).
+        Temporarily unprotects in-RAM DPAPI encryption if protected."""
+        was_protected = self._is_protected
+        if was_protected:
+            self.unprotect()
+        try:
+            return bytes(self._buf)
+        finally:
+            if was_protected and not self._wiped:
+                self.protect()
 
     def fill(self, data: bytes | bytearray) -> None:
         if len(data) != len(self._buf):
             raise ValueError("fill length must match buffer size")
+        was_protected = self._is_protected
+        if was_protected:
+            self.unprotect()
         self._buf[:] = bytes(data)
+        if was_protected:
+            self.protect()
+
+    def protect(self) -> bool:
+        """Encrypt buffer contents in RAM via CryptProtectMemory (Windows DPAPI).
+
+        Returns True if the in-RAM encryption succeeded.
+        Requires buffer length to be a multiple of 16 bytes.
+        """
+        if self._wiped:
+            raise RuntimeError("cannot protect wiped buffer")
+        if self._is_protected:
+            return True
+        if len(self._buf) % CRYPTPROTECTMEMORY_BLOCK_SIZE != 0:
+            return False
+        if _try_crypt_protect(self._buf):
+            self._is_protected = True
+            return True
+        return False
+
+    def unprotect(self) -> bool:
+        """Decrypt buffer contents in RAM via CryptUnprotectMemory (Windows DPAPI).
+
+        Returns True if in-RAM decryption succeeded or buffer was not protected.
+        """
+        if self._wiped:
+            raise RuntimeError("cannot unprotect wiped buffer")
+        if not self._is_protected:
+            return True
+        if _try_crypt_unprotect(self._buf):
+            self._is_protected = False
+            return True
+        return False
+
+    @contextmanager
+    def expose(self):
+        """Context manager granting transient plaintext access to the buffer."""
+        was_protected = self._is_protected
+        if was_protected:
+            self.unprotect()
+        try:
+            yield self._buf
+        finally:
+            if was_protected and not self._wiped:
+                self.protect()
 
     # -- lifecycle ------------------------------------------------------
     def wipe(self) -> str:
         """Native wipe + unlock. Idempotent. Returns the wipe method used."""
         if self._wiped:
             return self._wipe_method or "already-wiped"
+        if self._is_protected:
+            self.unprotect()
         method = wipe_native(self._buf)
         _try_munlock(self._buf)
         self._locked = False
+        self._is_protected = False
         self._wiped = True
         self._wipe_method = method
         return method
