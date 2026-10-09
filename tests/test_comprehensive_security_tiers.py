@@ -41,6 +41,16 @@ from security_tiers import (
     SecurityTierEngine,
     SecurityTierViolationError,
     TIER_PROFILES,
+    TelemetryScrubber,
+    DeterministicNonceGenerator,
+    AntiReplaySlidingWindow,
+    TranscriptBoundHybridKEM,
+    VASLatchingAuthority,
+    DAITAFrameShaper,
+    PoissonCoverTrafficScheduler,
+    SP800_208_LMS,
+    EmergencyMultiPassShredder,
+    AntiDowngradePolicyEnforcer,
 )
 from critical_release import CriticalReleaseAuthority, ReleaseAuthError
 
@@ -404,6 +414,251 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
         # Minimal capabilities: qualifies for LOW
         low_caps = {"has_anti_replay": False}
         self.assertEqual(SecurityTierEngine.assess_runtime_security_tier(low_caps), SecurityTier.LOW)
+
+    # ----------------------------------------------------------------------
+    # 6. Advanced Micro-to-Major Primitives Across All Tiers
+    # ----------------------------------------------------------------------
+
+    def test_side_channel_constant_time_select(self):
+        """Constant-time selection between two byte strings without branching."""
+        a = b"FIRST_SECRET_KEY_1234567890ABC"
+        b = b"SECOND_SECRET_KEY_1234567890AB"
+        # Lengths must match
+        res_true = ConstantTimeOperations.constant_time_select(True, a, b)
+        self.assertEqual(res_true, a)
+
+        res_false = ConstantTimeOperations.constant_time_select(False, a, b)
+        self.assertEqual(res_false, b)
+
+        with self.assertRaises(ValueError):
+            ConstantTimeOperations.constant_time_select(True, b"short", b"longer_string")
+
+    def test_side_channel_constant_time_wipe(self):
+        """Multi-pass memory zeroization for mutable buffers and NativeSecureBuffers."""
+        data = bytearray(b"SENSITIVE_CRYPTOGRAPHIC_MATERIAL")
+        ConstantTimeOperations.constant_time_wipe(data)
+        self.assertEqual(bytes(data), b"\x00" * len(data))
+
+        buf = NativeSecureBuffer(secrets.token_bytes(32))
+        ConstantTimeOperations.constant_time_wipe(buf)
+        self.assertTrue(buf.wiped)
+
+    def test_tier_low_telemetry_scrubber(self):
+        """LOW Tier: Sanitizes internal addresses, paths, IP addresses, and tokens."""
+        raw_trace = (
+            "Exception at 0x7ffeefbff560 in D:\\code\\Main_projects\\p2p\\key.pem "
+            "from node 192.168.1.105 with token a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+        )
+        scrubbed = TelemetryScrubber.scrub(raw_trace)
+        self.assertNotIn("0x7ffeefbff560", scrubbed)
+        self.assertNotIn("D:\\code\\Main_projects", scrubbed)
+        self.assertNotIn("192.168.1.105", scrubbed)
+        self.assertNotIn("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4", scrubbed)
+        self.assertIn("[ADDR_MASKED]", scrubbed)
+        self.assertIn("[PATH_MASKED]", scrubbed)
+        self.assertIn("[IP_MASKED]", scrubbed)
+        self.assertIn("[SECRET_MASKED]", scrubbed)
+
+        # Constant-time token verification
+        self.assertTrue(TelemetryScrubber.verify_auth_token("ADMIN_TOKEN_999", "ADMIN_TOKEN_999"))
+        self.assertFalse(TelemetryScrubber.verify_auth_token("ADMIN_TOKEN_999", "INVALID_TOKEN"))
+
+    def test_tier_basic_deterministic_nonce_generator(self):
+        """BASIC Tier: Deterministic 96-bit nonce generation prevents GCM nonce reuse."""
+        salt = secrets.token_bytes(4)
+        gen = DeterministicNonceGenerator(session_salt=salt)
+        self.assertEqual(gen.salt, salt)
+
+        seq0, nonce0 = gen.next_nonce()
+        seq1, nonce1 = gen.next_nonce()
+        self.assertEqual(seq0, 0)
+        self.assertEqual(seq1, 1)
+        self.assertEqual(len(nonce0), 12)
+        self.assertEqual(len(nonce1), 12)
+        self.assertEqual(nonce0[:4], salt)
+        self.assertEqual(nonce1[:4], salt)
+        self.assertNotEqual(nonce0, nonce1)
+
+    def test_tier_basic_anti_replay_sliding_window(self):
+        """BASIC Tier: RFC 6479 decoupled sliding window detects in-order, out-of-order, and replays."""
+        window = AntiReplaySlidingWindow(window_size=64)
+
+        # In-order packet
+        self.assertTrue(window.check(1))
+        window.mark(1)
+        self.assertEqual(window.last_seq, 1)
+
+        # Repeated packet rejected (replay attack)
+        self.assertFalse(window.check(1))
+
+        # Check-only does not advance or mutate state
+        self.assertTrue(window.check(5))
+        self.assertEqual(window.last_seq, 1)
+
+        # Out-of-order packet accepted
+        self.assertTrue(window.check_and_update(5))
+        self.assertEqual(window.last_seq, 5)
+
+        # Packet 2 accepted (within window)
+        self.assertTrue(window.check_and_update(2))
+
+        # Duplicate packet 2 rejected
+        self.assertFalse(window.check_and_update(2))
+
+        # Packet far behind window rejected
+        self.assertTrue(window.check_and_update(100))
+        self.assertFalse(window.check_and_update(10))  # 100 - 10 = 90 >= 64
+        self.assertGreater(window.drops, 0)
+
+    def test_tier_medium_transcript_bound_kem(self):
+        """MEDIUM Tier: NIST SP 800-227 / RFC 10024 Transcript-Bound Hybrid KEM derivation."""
+        client_id = "TACTICAL_NODE_ALPHA"
+        server_id = "GATEWAY_NODE_BRAVO"
+        suite_id = "TLS_AES_256_GCM_SHA384_MLKEM1024"
+        c_pk = secrets.token_bytes(1568)
+        s_pk = secrets.token_bytes(1568)
+        ct = secrets.token_bytes(1568)
+        ss1 = secrets.token_bytes(32)
+        ss2 = secrets.token_bytes(32)
+
+        # Client and server derive identical key given matching transcripts
+        k_client = TranscriptBoundHybridKEM.derive_bound_session_key(
+            client_id, server_id, suite_id, c_pk, s_pk, ct, [ss1, ss2]
+        )
+        k_server = TranscriptBoundHybridKEM.derive_bound_session_key(
+            client_id, server_id, suite_id, c_pk, s_pk, ct, [ss1, ss2]
+        )
+        self.assertEqual(k_client, k_server)
+        self.assertEqual(len(k_client), 32)
+
+        # Any transcript modification completely alters the derived key (anti-downgrade)
+        k_tampered = TranscriptBoundHybridKEM.derive_bound_session_key(
+            client_id, server_id, suite_id, c_pk + b"\x01", s_pk, ct, [ss1, ss2]
+        )
+        self.assertNotEqual(k_client, k_tampered)
+
+    def test_tier_medium_vas_latching_quarantine(self):
+        """MEDIUM Tier: Verify-After-Sign (VAS) with fail-closed latching quarantine."""
+        auth = VASLatchingAuthority(key_id="ENCLAVE_KEY_87")
+        self.assertFalse(auth.is_quarantined)
+
+        # Normal valid sign-and-verify succeeds
+        msg = b"VALID_TACTICAL_COMMAND"
+        sig = auth.sign_with_vas(
+            sign_fn=lambda m: b"SIG:" + m,
+            verify_fn=lambda m, s: s == b"SIG:" + m,
+            message=msg,
+        )
+        self.assertEqual(sig, b"SIG:" + msg)
+
+        # Simulated fault injection (corrupted signature)
+        secret_buf = NativeSecureBuffer(secrets.token_bytes(32))
+        with self.assertRaises(SecurityTierViolationError) as ctx:
+            auth.sign_with_vas(
+                sign_fn=lambda m: b"CORRUPTED_SIGNATURE",
+                verify_fn=lambda m, s: s == b"SIG:" + m,
+                message=msg,
+                secret_buffer=secret_buf,
+            )
+        self.assertIn("FAIL-CLOSED: Verify-After-Sign", str(ctx.exception))
+        # Secret buffer was wiped and authority latched into quarantine
+        self.assertTrue(secret_buf.wiped)
+        self.assertTrue(auth.is_quarantined)
+
+        # Subsequent sign attempts immediately fail closed without executing sign_fn
+        with self.assertRaises(SecurityTierViolationError) as ctx2:
+            auth.sign_with_vas(
+                sign_fn=lambda m: b"ANOTHER_SIG",
+                verify_fn=lambda m, s: True,
+                message=msg,
+            )
+        self.assertIn("permanently quarantined", str(ctx2.exception))
+
+    def test_tier_high_daita_frame_shaper(self):
+        """HIGH Tier: DAITA frame size quantization to discrete buckets."""
+        # 50-byte payload padded to 256 bucket
+        p50 = secrets.token_bytes(50)
+        shaped50 = DAITAFrameShaper.shape_frame(p50)
+        self.assertEqual(len(shaped50), 256)
+        self.assertEqual(DAITAFrameShaper.unshape_frame(shaped50), p50)
+
+        # 300-byte payload padded to 512 bucket
+        p300 = secrets.token_bytes(300)
+        shaped300 = DAITAFrameShaper.shape_frame(p300)
+        self.assertEqual(len(shaped300), 512)
+        self.assertEqual(DAITAFrameShaper.unshape_frame(shaped300), p300)
+
+        # 800-byte payload padded to 1024 bucket
+        p800 = secrets.token_bytes(800)
+        shaped800 = DAITAFrameShaper.shape_frame(p800)
+        self.assertEqual(len(shaped800), 1024)
+        self.assertEqual(DAITAFrameShaper.unshape_frame(shaped800), p800)
+
+        # Malformed frame rejected
+        with self.assertRaises(ValueError):
+            DAITAFrameShaper.unshape_frame(b"x")
+
+    def test_tier_high_poisson_cover_traffic_scheduler(self):
+        """HIGH Tier: Memoryless Poisson interval sampling and synthetic chaff detection."""
+        delays = [PoissonCoverTrafficScheduler.sample_delay(interval_sec=0.05) for _ in range(20)]
+        for d in delays:
+            self.assertGreaterEqual(d, 0.005)
+            self.assertLessEqual(d, 1.0)
+
+        chaff = PoissonCoverTrafficScheduler.generate_chaff_frame(bucket_size=256)
+        self.assertEqual(len(chaff), 256)
+        self.assertTrue(PoissonCoverTrafficScheduler.is_chaff_frame(chaff))
+
+        real_payload = b"\x01\x02\x03\x04" + secrets.token_bytes(252)
+        self.assertFalse(PoissonCoverTrafficScheduler.is_chaff_frame(real_payload))
+
+    def test_tier_critical_sp800_208_lms_signature(self):
+        """CRITICAL Tier: NIST SP 800-208 / RFC 8554 LMS stateful hash-based signature and verification."""
+        lms = SP800_208_LMS(tree_height=2)  # 2^2 = 4 signatures
+        pk = lms.public_key_bytes
+        self.assertEqual(len(pk), 56)
+
+        msg = b"SOVEREIGN_CRITICAL_COMMAND_AUTHORIZATION"
+        sig = lms.sign(msg)
+        self.assertTrue(SP800_208_LMS.verify(pk, msg, sig, tree_height=2))
+
+        # Tampered message fails verification
+        self.assertFalse(SP800_208_LMS.verify(pk, msg + b"\x00", sig, tree_height=2))
+
+        # Sign until all 4 one-time keys exhausted (1 signed above)
+        for i in range(3):
+            lms.sign(f"MESSAGE_{i}".encode("utf-8"))
+
+        # 5th signature must fail closed due to key exhaustion
+        with self.assertRaises(SecurityTierViolationError) as ctx:
+            lms.sign(b"EXHAUSTED_SIGNATURE_ATTEMPT")
+        self.assertIn("LMS tree exhausted", str(ctx.exception))
+
+    def test_tier_critical_anti_downgrade_enforcer(self):
+        """CRITICAL Tier: AntiDowngradePolicyEnforcer fails closed on downgrade proposals."""
+        enforcer = AntiDowngradePolicyEnforcer(minimum_enforced_tier=SecurityTier.CRITICAL)
+        self.assertEqual(enforcer.minimum_tier, SecurityTier.CRITICAL)
+
+        # Equal tier permitted
+        enforcer.assert_tier_permitted(SecurityTier.CRITICAL)
+
+        # Lower tiers strictly rejected
+        for lower in [SecurityTier.HIGH, SecurityTier.MEDIUM, SecurityTier.BASIC, SecurityTier.LOW]:
+            with self.assertRaises(SecurityTierViolationError) as ctx:
+                enforcer.assert_tier_permitted(lower)
+            self.assertIn("Downgrade attack prevented", str(ctx.exception))
+
+    def test_tier_critical_emergency_multipass_shredder(self):
+        """CRITICAL Tier: Emergency 4-pass memory overwrite securely wipes secrets."""
+        mem = bytearray(secrets.token_bytes(64))
+        bytes_shredded = EmergencyMultiPassShredder.shred(mem)
+        self.assertEqual(bytes_shredded, 64)
+        self.assertEqual(bytes(mem), b"\x00" * 64)
+
+        buf = NativeSecureBuffer(secrets.token_bytes(32))
+        buf_shredded = EmergencyMultiPassShredder.shred(buf)
+        self.assertEqual(buf_shredded, 32)
+        self.assertTrue(buf.wiped)
 
 
 if __name__ == "__main__":

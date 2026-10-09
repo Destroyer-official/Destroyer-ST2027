@@ -437,6 +437,54 @@ class ConstantTimeOperations:
         clean_len = pad_len if is_valid else 0
         return is_valid, clean_len
 
+    @staticmethod
+    def constant_time_select(condition: bool, a: bytes, b: bytes) -> bytes:
+        """
+        Constant-time selection between two byte strings of equal length without branching.
+        
+        Args:
+            condition: True to select a, False to select b
+            a: First byte string
+            b: Second byte string
+            
+        Returns:
+            a if condition is True, else b
+        """
+        if len(a) != len(b):
+            raise ValueError("Byte sequences must be of identical length for constant-time select")
+        mask = 0xFF if condition else 0x00
+        inv_mask = ~mask & 0xFF
+        return bytes(((byte_a & mask) | (byte_b & inv_mask)) for byte_a, byte_b in zip(a, b))
+
+    @staticmethod
+    def constant_time_wipe(target: Any) -> None:
+        """
+        Multi-pass constant-time memory overwrite for bytearrays and mutable memory views.
+        
+        Overwrites with:
+        Pass 1: 0x00
+        Pass 2: 0xFF
+        Pass 3: CSPRNG random bytes
+        Pass 4: Final 0x00 zeroization
+        """
+        if target is None:
+            return
+        if hasattr(target, "wipe"):
+            target.wipe()
+            return
+        if isinstance(target, (bytearray, memoryview)):
+            n = len(target)
+            for i in range(n):
+                target[i] = 0x00
+            for i in range(n):
+                target[i] = 0xFF
+            rnd = secrets.token_bytes(n)
+            for i in range(n):
+                target[i] = rnd[i]
+            for i in range(n):
+                target[i] = 0x00
+
+
 
 def constant_time_wrapper(operation_name: str = None, 
                           record_timing: bool = True,

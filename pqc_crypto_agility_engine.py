@@ -232,7 +232,7 @@ def sign_and_export_crypto_agility_audit(engine: CryptoAgilityEngine,
 
     signer = LibOQS_MLDSA_87()
     pk, sk = signer.keygen()
-    sig = signer.sign(sk, canon_bytes)
+    sig = signer.sign(sk, canon_bytes, public_key=pk)
 
     sig_path.write_bytes(sig)
     pub_path.write_bytes(pk)
