@@ -3765,99 +3765,77 @@ class EnhancedMLKEM_1024:
     """
     from collections import Counter
 
-    def __init__(self):
+    def __init__(self, use_mceliece: Optional[bool] = None):
         """
         Initialize ML-KEM-1024 with comprehensive security hardening.
 
-        This constructor configures the enhanced ML-KEM-1024 implementation with
-        all security countermeasures enabled and validates the underlying
-        cryptographic library compatibility.
-
-        Initialization Process:
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        1. Security Policy Enforcement:
-           • Enforce NIST Level 5+ security requirements
-           • Reject any fallbacks to weaker algorithms
-           • Validate all cryptographic parameters
-
-        2. Library Validation:
-           • Verify quantcrypt library version compatibility
-           • Initialize base ML-KEM-1024 implementation
-           • Validate parameter set consistency with NIST FIPS 203
-
-        2. Security Parameter Configuration:
-           • Configure domain separation strings for multi-target protection
-           • Set up side-channel protection mechanisms
-           • Initialize entropy sources for enhanced randomness
-
-        3. Memory Protection Setup:
-           • Allocate secure memory regions for sensitive operations
-           • Configure automatic zeroization policies
-           • Set up memory access pattern obfuscation
-
-        4. Performance Optimization:
-           • Initialize precomputed constants for modular arithmetic
-           • Configure cache-friendly data layout
-           • Set up SIMD optimization paths where available
-
-        Configuration Parameters:
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        • Parameter Set: ML-KEM-1024 (k=4, η₁=2, η₂=2, δᵤ=11, δᵥ=5)
-        • Modulus: q = 3329 (0x0D01) - 13-bit prime
-        • Polynomial Degree: n = 256
-        • Security Level: NIST Level 5 (≈ AES-256-classical-equivalent security (NIST Level 5 metric; not "256 post-quantum bits"))
-        • Domain Separator: "MLKEM-1024-FIPS203-v1" (prevents algorithm confusion)
+        Supports standard CNSA 2.0 / NIST FIPS 203 pure ML-KEM-1024 (1568B PK / 1568B CT)
+        for interactive tactical communication, or optional McEliece-8192128f hybrid
+        hedge (P2P_ENABLE_MCELIECE=1) for deep archival resilience.
 
         Size Specifications:
-        • Public Key: 1568 bytes (compressed polynomial vector + seed)
-        • Private Key: 3168 bytes (secret vector + public key + hash values)
-        • Ciphertext: 1568 bytes (compressed polynomial vector + compressed noise)
-        • Shared Secret: 32 bytes (256-bit symmetric key material)
-
-        Error Handling:
-        Initialization failure results in secure cleanup and exception propagation.
-        No partial initialization states are permitted to prevent security
-        vulnerabilities from inconsistent object states.
+        • Pure ML-KEM-1024: Public Key 1568 bytes, Private Key 3168 bytes, Ciphertext 1568 bytes
+        • Hybrid McEliece: Public Key 1,359,392 bytes, Private Key 17,288 bytes, Ciphertext 1,776 bytes
         """
         try:
-            # MILITARY SECURITY ENFORCEMENT
-            if MILITARY_ENFORCEMENT_ACTIVE:
-                validate_military_algorithm("ML-KEM-1024", "KEM")
-                validate_military_algorithm("McEliece-8192128f", "KEM")
-                validate_military_algorithm("HKDF-SHA384", "KDF")
-                enforce_no_fallbacks("EnhancedMLKEM_1024")
-                pqc_logger.info("MILITARY ALGORITHMS VALIDATED: ML-KEM-1024 + McEliece-8192128f")
-            
-            # USE HYBRID KEM FOR MAXIMUM SECURITY (ML-KEM-1024 + McEliece-8192128f)
-            self.base_kem = HybridKEM()  # Primary implementation is now Hybrid
-            self.base_mlkem = self.base_kem  # Compatibility alias
-            pqc_logger.info("[OK] Hybrid KEM initialized (ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384)")
-            
+            import os as _os
+            if use_mceliece is None:
+                use_mceliece = _os.environ.get("P2P_ENABLE_MCELIECE", "0").strip().lower() in ("1", "true", "yes", "on")
+            if _os.environ.get("P2P_CNSA_PURE_KEM", "0").strip().lower() in ("1", "true", "yes", "on"):
+                use_mceliece = False
+            self.use_mceliece = bool(use_mceliece)
+
+            if self.use_mceliece:
+                # MILITARY SECURITY ENFORCEMENT - HYBRID MCELIECE AGILITY HEDGE
+                if MILITARY_ENFORCEMENT_ACTIVE:
+                    validate_military_algorithm("ML-KEM-1024", "KEM")
+                    validate_military_algorithm("McEliece-8192128f", "KEM")
+                    validate_military_algorithm("HKDF-SHA384", "KDF")
+                    enforce_no_fallbacks("EnhancedMLKEM_1024")
+                    pqc_logger.info("MILITARY ALGORITHMS VALIDATED: ML-KEM-1024 + McEliece-8192128f")
+
+                self.base_kem = HybridKEM()
+                self.base_mlkem = self.base_kem
+                pqc_logger.info("[OK] Hybrid KEM initialized (ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384)")
+            else:
+                # MILITARY SECURITY ENFORCEMENT - PURE CNSA 2.0 / FIPS 203 ML-KEM-1024
+                if MILITARY_ENFORCEMENT_ACTIVE:
+                    validate_military_algorithm("ML-KEM-1024", "KEM")
+                    validate_military_algorithm("HKDF-SHA384", "KDF")
+                    enforce_no_fallbacks("EnhancedMLKEM_1024")
+                    pqc_logger.info("MILITARY ALGORITHMS VALIDATED: ML-KEM-1024 (CNSA 2.0 / FIPS 203 Pure)")
+
+                self.base_kem = LibOQS_MLKEM_1024()
+                self.base_mlkem = self.base_kem
+                pqc_logger.info("[OK] Pure ML-KEM-1024 initialized (CNSA 2.0 / FIPS 203 standard, 1568B PK)")
+
             # Validate the implementation is working correctly
             self._validate_production_implementation()
-            
+
             # Verify algorithm parameter consistency
             self._validate_parameter_set()
-            
+
         except MilitarySecurityError as e:
             pqc_logger.critical(f"[ALERT] MILITARY SECURITY VIOLATION: {e}")
             raise
         except Exception as e:
-            pqc_logger.error(f"Failed to initialize Hybrid KEM implementation: {e}")
-            raise RuntimeError(f"Hybrid KEM initialization failed: {e}")
+            pqc_logger.error(f"Failed to initialize KEM implementation: {e}")
+            raise RuntimeError(f"KEM initialization failed: {e}")
 
         # Domain separation string following NIST recommendations
         # Prevents cross-protocol attacks and algorithm confusion
         self.domain_separator = b"MLKEM-1024-FIPS203-v1"
 
-        # Use Hybrid KEM sizes (ML-KEM-1024 + McEliece-8192128f)
-        # These are the combined sizes from both algorithms
-        self.public_key_size = getattr(self.base_kem, 'pk_size_mlkem', 1568) + getattr(self.base_kem, 'pk_size_mceliece', 1357824)  # 1,359,392 bytes
-        self.private_key_size = getattr(self.base_kem, 'sk_size_mlkem', 3168) + getattr(self.base_kem, 'sk_size_mceliece', 14120)  # 17,288 bytes
-        self.ciphertext_size = getattr(self.base_kem, 'ct_size_mlkem', 1568) + getattr(self.base_kem, 'ct_size_mceliece', 208)      # 1,776 bytes
-        self.shared_secret_size = getattr(self.base_kem, 'ss_size', 48)  # 384-bit hybrid shared secret from HKDF-SHA384
+        if self.use_mceliece:
+            self.public_key_size = getattr(self.base_kem, 'pk_size_mlkem', 1568) + getattr(self.base_kem, 'pk_size_mceliece', 1357824)  # 1,359,392 bytes
+            self.private_key_size = getattr(self.base_kem, 'sk_size_mlkem', 3168) + getattr(self.base_kem, 'sk_size_mceliece', 14120)  # 17,288 bytes
+            self.ciphertext_size = getattr(self.base_kem, 'ct_size_mlkem', 1568) + getattr(self.base_kem, 'ct_size_mceliece', 208)      # 1,776 bytes
+            self.shared_secret_size = getattr(self.base_kem, 'ss_size', 48)  # 384-bit hybrid shared secret from HKDF-SHA384
+        else:
+            self.public_key_size = 1568
+            self.private_key_size = 3168
+            self.ciphertext_size = 1568
+            self.shared_secret_size = 32
 
         # Algorithm identification for CAVP testing and validation
         self.parameter_set_id = 3      # NIST parameter set identifier for ML-KEM-1024
@@ -3890,28 +3868,28 @@ class EnhancedMLKEM_1024:
         pqc_logger.debug(f"Configuration: pk={self.public_key_size}B, sk={self.private_key_size}B, "
                          f"ct={self.ciphertext_size}B, ss={self.shared_secret_size}B")
 
-    _KEM_VALIDATED = False
+    _VALIDATED_MODES = set()
 
     def _validate_production_implementation(self):
         """Validate that production KEM implementation is working correctly."""
-        if EnhancedMLKEM_1024._KEM_VALIDATED:
-            pqc_logger.debug("[OK] Enhanced ML-KEM-1024 already validated in current process")
+        mode = "hybrid" if getattr(self, "use_mceliece", False) else "pure"
+        if mode in EnhancedMLKEM_1024._VALIDATED_MODES:
+            pqc_logger.debug(f"[OK] Enhanced ML-KEM-1024 ({mode}) already validated in current process")
             return
         try:
             # Perform a quick test to ensure the implementation works
             test_pk, test_sk = self.base_kem.keygen()
             test_ct, test_ss1 = self.base_kem.encaps(test_pk)
             test_ss2 = self.base_kem.decaps(test_sk, test_ct)
-            
+
             if test_ss1 != test_ss2:
                 raise RuntimeError("Secure KEM validation failed - shared secrets don't match")
-            
-            # Note: Hybrid KEM combines ML-KEM-1024 and McEliece-8192128f
+
             pqc_logger.info(f"[OK] Secure KEM validation successful: pk={len(test_pk)}, sk={len(test_sk)}, ct={len(test_ct)}, ss={len(test_ss1)}")
-            impl_name = getattr(self.base_kem, 'impl_name', 'Hybrid KEM (ML-KEM-1024 + McEliece-8192128f)')
+            impl_name = getattr(self.base_kem, 'impl_name', f'KEM ({mode} ML-KEM-1024)')
             pqc_logger.info(f"[OK] Using {impl_name}")
-            EnhancedMLKEM_1024._KEM_VALIDATED = True
-            
+            EnhancedMLKEM_1024._VALIDATED_MODES.add(mode)
+
         except Exception as e:
             pqc_logger.critical(f"Secure KEM validation failed: {e}")
             raise RuntimeError(f"Production KEM implementation validation failed: {e}")
@@ -4023,7 +4001,10 @@ class EnhancedMLKEM_1024:
         with SecureExceptionHandler("secure_kem_keygen", "PostQuantumCrypto", get_error_reporter()):
             try:
                 # Validate algorithm compliance
-                SecurityPolicyEnforcer.enforce_algorithm("McEliece-8192128f")
+                if getattr(self, 'use_mceliece', False):
+                    SecurityPolicyEnforcer.enforce_algorithm("McEliece-8192128f")
+                else:
+                    SecurityPolicyEnforcer.enforce_algorithm("ML-KEM-1024")
 
                 # Generate raw keys with error checking
                 raw_pk, raw_sk = self.base_kem.keygen()

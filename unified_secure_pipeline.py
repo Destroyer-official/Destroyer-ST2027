@@ -310,13 +310,16 @@ class UnifiedSecurePipeline:
     # ------------------------------------------------------------------
 
     def seal(self, plaintext: bytes, ratchet, *,
-             msg_type: int = PIPELINE_TYPE_MSG) -> bytes:
+             msg_type: int = PIPELINE_TYPE_MSG,
+             stealth: Optional[bool] = None) -> bytes:
         """Seal a message through the full zero-gap pipeline.
 
         Args:
             plaintext: The raw plaintext bytes to protect.
             ratchet: The initialized Double Ratchet instance.
             msg_type: Message type tag (MSG, FILE, NC3).
+            stealth: If True, eliminates cleartext wire magic headers (DPI-immune).
+                     Defaults to True in production/military mode or when P2P_STEALTH_FRAMING=1.
 
         Returns:
             The fully sealed multi-layer ciphertext.
@@ -331,9 +334,24 @@ class UnifiedSecurePipeline:
             raise PipelineSecurityError("Double Ratchet not initialized")
 
         try:
-            # Step 1: Quantized padding (metadata resistance)
-            padded = self._quantize_pad(plaintext)
-            log.debug(f"[SEAL] Quantized: {len(plaintext)} -> {len(padded)} bytes")
+            is_stealth = (
+                stealth if stealth is not None else (
+                    os.environ.get('P2P_STEALTH_FRAMING', '0') in ('1', 'true') or
+                    os.environ.get('P2P_PRODUCTION', '0') in ('1', 'true') or
+                    os.environ.get('P2P_MILITARY_MODE', '0') in ('1', 'true')
+                )
+            )
+
+            if is_stealth:
+                # STEALTH MODE: Zero cleartext wire headers (DPI and SIGINT flow-correlation immune)
+                # Pipeline header is encapsulated INSIDE the inner AEAD envelope before padding
+                payload_to_protect = self._wrap_header(msg_type, plaintext)
+                padded = self._quantize_pad(payload_to_protect)
+            else:
+                # LEGACY / LAB MODE: Plaintext padded first, outer header wrapped on outside
+                padded = self._quantize_pad(plaintext)
+
+            log.debug(f"[SEAL] Quantized: {len(plaintext)} -> {len(padded)} bytes (stealth={is_stealth})")
 
             # Step 2: LAYER 1 -- Inner envelope (Post-Quantum Double Ratchet)
             inner_sealed = ratchet.encrypt(padded)
@@ -357,8 +375,12 @@ class UnifiedSecurePipeline:
                 # Rust not required -- still double-sealed via ratchet + TLS
                 outer_sealed = inner_sealed
 
-            # Step 4: Pipeline header wrapping
-            frame = self._wrap_header(msg_type, outer_sealed)
+            # Step 4: Pipeline framing
+            if is_stealth:
+                # In stealth mode, outer frame is pure AEAD ciphertext (indistinguishable from uniform noise)
+                frame = outer_sealed
+            else:
+                frame = self._wrap_header(msg_type, outer_sealed)
 
             self._seal_count += 1
             if self._seal_count % 100 == 0:
@@ -399,12 +421,11 @@ class UnifiedSecurePipeline:
             raise PipelineSecurityError("Double Ratchet not initialized")
 
         try:
-            # Step 1: Pipeline header unwrapping
-            # Check if this is a pipeline-wrapped frame
-            if frame[:2] == PIPELINE_MAGIC:
+            # Step 1: Detect outer legacy header vs stealth zero-cleartext frame
+            legacy_outer_header = (len(frame) >= 2 and frame[:2] == PIPELINE_MAGIC)
+            if legacy_outer_header:
                 msg_type, sealed_data = self._unwrap_header(frame)
             else:
-                # Legacy frame (no pipeline header) -- backward compatibility
                 msg_type = PIPELINE_TYPE_MSG
                 sealed_data = frame
 
@@ -429,8 +450,18 @@ class UnifiedSecurePipeline:
                 raise PipelineSecurityError("Inner ratchet decryption returned empty")
             log.debug(f"[OPEN] Inner (PQ Ratchet): {len(inner_sealed)} -> {len(padded)} bytes")
 
-            # Step 4: Quantized unpadding
-            plaintext = self._quantize_unpad(padded)
+            # Step 4: Quantized unpadding and stealth inner header unwrapping
+            unpadded = self._quantize_unpad(padded)
+
+            if not legacy_outer_header:
+                # Stealth mode: unpack inner encapsulated pipeline header
+                if len(unpadded) >= 2 and unpadded[:2] == PIPELINE_MAGIC:
+                    msg_type, plaintext = self._unwrap_header(unpadded)
+                else:
+                    plaintext = unpadded
+            else:
+                plaintext = unpadded
+
             log.debug(f"[OPEN] Unpadded: {len(padded)} -> {len(plaintext)} bytes")
 
             self._open_count += 1

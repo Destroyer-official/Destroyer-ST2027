@@ -138,3 +138,58 @@ def test_pubkey_and_envelope_validation():
         ta.appraise_evidence({"v": 999}, b"\x00" * 32)
     with pytest.raises(ta.AttestError):
         ta.produce_evidence(b"short-nonce")
+
+
+def test_enrollment_binding_refuses_substituted_key(monkeypatch):
+    """Audit Finding 4: self-supplied pub alone must not authorize.
+
+    An attacker key (valid sig under attacker pub) passes the raw crypto
+    check but MUST fail when the verifier pins the enrolled device key.
+    Strict mode without enrollment MUST fail closed.
+    """
+    cng = _cng_or_skip()
+    for v in ("P2P_TS_MODE", "P2P_PRODUCTION"):
+        monkeypatch.delenv(v, raising=False)
+    key_name = _unique_key()
+    nonce = os.urandom(32)
+    try:
+        env = ta.produce_evidence(nonce, key_name)
+        enrolled = {key_name: env["pub"]}
+        # Correct enrollment passes (lab).
+        ok = ta.appraise_evidence(env, nonce, trusted_keys=enrolled)
+        assert ok.kid == key_name
+        # Attacker substitutes their own pub+sig with healthy posture:
+        # build a forged envelope signed by a DIFFERENT key.
+        other_name = key_name + "-ATTACKER"
+        forged = ta.produce_evidence(nonce, other_name)
+        forged_mix = dict(env)
+        forged_mix["sig"] = forged["sig"]
+        forged_mix["pub"] = forged["pub"]
+        # Raw TOFU path would verify attacker sig — enrollment must refuse.
+        with pytest.raises(ta.AttestError):
+            ta.appraise_evidence(forged_mix, nonce, trusted_keys=enrolled)
+        # Strict mode without enrollment fails closed even for honest env.
+        monkeypatch.setenv("P2P_PRODUCTION", "1")
+        try:
+            with pytest.raises(ta.AttestError):
+                ta.appraise_evidence(env, nonce)
+            # Strict + correct enrollment passes.
+            ok2 = ta.appraise_evidence(env, nonce, trusted_keys=enrolled)
+            assert ok2.kid == key_name
+        finally:
+            monkeypatch.delenv("P2P_PRODUCTION", raising=False)
+    finally:
+        try:
+            h = cng.open_platform_provider()
+            try:
+                for kn in (key_name, key_name + "-ATTACKER"):
+                    try:
+                        if cng.device_key_exists(h, kn):
+                            k = cng.open_device_key(h, kn)
+                            cng.delete_key(k)
+                    except Exception:
+                        pass
+            finally:
+                cng.close_handle(h)
+        except Exception:
+            pass

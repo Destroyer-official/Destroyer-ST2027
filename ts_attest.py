@@ -165,9 +165,37 @@ def evaluate_policy(posture: Dict[str, Any]) -> Tuple[bool, List[str]]:
     return (not reasons), reasons
 
 
+def _is_strict_attest() -> bool:
+    """True in production / TS mode: self-supplied device keys refused."""
+    return (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip() == "1"
+            or os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on"))
+
+
 def appraise_evidence(env: Dict[str, Any], expected_nonce: bytes,
-                      now: Optional[float] = None) -> AttestationResult:
-    """VERIFIER: validate envelope, freshness, nonce, TPM signature, policy."""
+                       now: Optional[float] = None,
+                       trusted_keys: Optional[Dict[str, str]] = None) -> AttestationResult:
+    """VERIFIER: validate envelope, freshness, nonce, TPM signature, policy.
+
+    HARDENING (audit Finding 4 — self-supplied-key substitution):
+    the ``pub`` field inside ``env`` is ATTACKER-CONTROLLED and MUST NOT be
+    trusted by itself. A valid signature under a self-supplied key only
+    proves "holder of this private key signed this envelope", NOT "this
+    came from the enrolled device". Callers making trust decisions MUST
+    pass ``trusted_keys`` — a map of enrolled ``kid -> expected pub hex``
+    (ECCPUBLICBLOB, 72 bytes) established out-of-band at enrollment
+    (IETF RATS RFC 9334 verifier role: identity trust is independent of
+    the evidence itself).
+
+    Fail-closed rules:
+      * strict mode (P2P_PRODUCTION / SECURE_P2P_PRODUCTION / P2P_TS_MODE):
+        ``trusted_keys`` is REQUIRED and ``kid`` must be enrolled; the
+        supplied ``pub`` must match the enrolled value with
+        ``hmac.compare_digest``. Any mismatch raises AttestError.
+      * lab mode with ``trusted_keys`` supplied: same checks enforced.
+      * lab mode without ``trusted_keys``: legacy TOFU path preserved for
+        local tests, with an explicit warning log (never use for authz).
+    """
     if not isinstance(env, dict):
         raise AttestError("evidence shape violation")
     try:
@@ -188,6 +216,28 @@ def appraise_evidence(env: Dict[str, Any], expected_nonce: bytes,
     now = time.time() if now is None else now
     if abs(now - ts) > ATTEST_FRESHNESS_S:
         raise AttestError("stale evidence")
+    # --- Enrollment binding (fail-closed): never trust self-supplied pub alone.
+    if trusted_keys is not None:
+        try:
+            expected_pub_hex = trusted_keys.get(kid)
+        except AttributeError:
+            raise AttestError("trusted_keys shape violation")
+        if not isinstance(expected_pub_hex, str):
+            raise AttestError("unknown device identity (kid not enrolled)")
+        try:
+            expected_pub = bytes.fromhex(expected_pub_hex)
+        except ValueError:
+            raise AttestError("enrolled device key corrupt")
+        if len(expected_pub) != 72 or not hmac.compare_digest(expected_pub, bytes(pub)):
+            raise AttestError("device key mismatch (not the enrolled device)")
+    elif _is_strict_attest():
+        raise AttestError(
+            "device identity unanchored: trusted_keys enrollment required "
+            "in production/TS mode (self-supplied pub refused)")
+    else:
+        log.warning(
+            "ts_attest TOFU: appraising self-supplied device key without "
+            "enrollment (kid=%s); lab only — never use for authorization", kid)
     body = {"v": env["v"], "nonce": env["nonce"], "ts": env["ts"],
             "posture": posture, "native": env.get("native")}
     _verify_tpm_sig(pub, hashlib.sha256(_canonical(body)).digest(), sig)

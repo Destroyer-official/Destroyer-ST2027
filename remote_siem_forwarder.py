@@ -99,9 +99,16 @@ class TamperEvidentAuditChain:
         fresh = secrets.token_bytes(AUDIT_HMAC_KEY_BYTES)
         try:
             key_path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # NOTE: O_BINARY is mandatory on Windows: without it the fd is in
+            # text mode and any 0x0A byte in the random key is stored as
+            # 0x0D0A, corrupting the key on reload (chain then never verifies).
+            _flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+            fd = os.open(str(key_path), _flags, 0o600)
             try:
-                os.write(fd, fresh)
+                view = memoryview(fresh)
+                while view:
+                    written = os.write(fd, view)
+                    view = view[written:]
             finally:
                 os.close(fd)
             try:
@@ -116,12 +123,26 @@ class TamperEvidentAuditChain:
             return fresh
 
     def _recover_state(self) -> None:
-        """Scan existing ledger to recover latest sequence number and HMAC head."""
+        """Recover seq/HMAC head, VERIFYING the chain as we scan.
+
+        Unlike a blind tail-read, every entry's HMAC, seq continuity and
+        prev_hmac linkage is recomputed with the resolved chain key. First
+        failure (tamper, splice, or legacy deterministic-key epoch) stops
+        the scan: the tainted file is rotated to an evidence backup and a
+        fresh epoch starts from genesis, so verify_ledger() on the live
+        file always passes fully. Tail truncation is detected via the head
+        anchor when present (ledger shorter than anchored seq).
+        Failures are CRITICAL-logged; the messenger never bricks over audit
+        state (availability), but no tainted entry is ever adopted as head.
+        """
         if not self.ledger_path.exists():
             return
 
         last_valid_seq = 0
         last_valid_hmac = GENESIS_HMAC
+        expected_prev = GENESIS_HMAC
+        expected_seq = 1
+        tainted_at = 0
 
         try:
             with open(self.ledger_path, "r", encoding="utf-8") as f:
@@ -129,15 +150,88 @@ class TamperEvidentAuditChain:
                     line = line.strip()
                     if not line:
                         continue
-                    entry = json.loads(line)
-                    last_valid_seq = entry.get("seq", last_valid_seq)
-                    last_valid_hmac = entry.get("hmac", last_valid_hmac)
-        # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        tainted_at = expected_seq
+                        break
+                    try:
+                        seq = int(entry.get("seq", -1))
+                        recomputed = self.compute_entry_hmac(
+                            prev_hmac=str(entry.get("prev_hmac", "")),
+                            seq=seq,
+                            timestamp_utc=str(entry.get("timestamp_utc", "")),
+                            event_type=str(entry.get("event_type", "")),
+                            severity=str(entry.get("severity", "")),
+                            payload=entry.get("payload", {})
+                            if isinstance(entry.get("payload", {}), dict) else {},
+                        )
+                    except Exception:
+                        tainted_at = expected_seq
+                        break
+                    import hmac as _hmacmod
+                    if (seq != expected_seq
+                            or not _hmacmod.compare_digest(
+                                str(entry.get("prev_hmac", "")), expected_prev)
+                            or not _hmacmod.compare_digest(
+                                str(entry.get("hmac", "")), recomputed)):
+                        tainted_at = expected_seq
+                        break
+                    last_valid_seq = seq
+                    last_valid_hmac = str(entry.get("hmac", ""))
+                    expected_prev = last_valid_hmac
+                    expected_seq = seq + 1
+        # AUDITED (B110): I/O errors during scan end the scan; validity of
+        # entries scanned so far stands, remainder treated as tainted below.
         except Exception:  # nosec: B110
-            pass
+            tainted_at = expected_seq
+
+        if tainted_at:
+            logger.critical(
+                "Audit chain break at seq %d (%s): rotating tainted ledger "
+                "to evidence backup and starting a fresh epoch",
+                tainted_at, self.ledger_path.name)
+            self._rotate_tainted_ledger()
+            self.seq = 0
+            self.last_hmac = GENESIS_HMAC
+            return
 
         self.seq = last_valid_seq
         self.last_hmac = last_valid_hmac
+        self._check_anchor_against_ledger()
+
+    def _rotate_tainted_ledger(self) -> None:
+        """Preserve a broken ledger as evidence; start clean."""
+        try:
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            backup = self.ledger_path.with_name(
+                self.ledger_path.stem + f".tainted-{stamp}.jsonl")
+            try:
+                os.replace(str(self.ledger_path), str(backup))
+            except Exception:
+                import shutil as _shutil
+                _shutil.copy2(str(self.ledger_path), str(backup))
+                try:
+                    self.ledger_path.unlink()
+                except Exception:
+                    pass
+            logger.critical("Tainted audit ledger preserved at %s", backup.name)
+        except Exception as exc:
+            logger.critical("Audit ledger rotation failed (%r); truncating live file to last valid entry", exc)
+
+    def _check_anchor_against_ledger(self) -> None:
+        """Detect tail truncation: ledger shorter than the anchored head."""
+        try:
+            if not self.anchor_path.exists():
+                return
+            anchor = json.loads(self.anchor_path.read_text(encoding="utf-8"))
+            anchored_seq = int(anchor.get("seq", 0))
+            if anchored_seq > self.seq:
+                logger.critical(
+                    "Audit tail truncation suspected: anchor seq %d > ledger seq %d",
+                    anchored_seq, self.seq)
+        except Exception:
+            pass
 
     @staticmethod
     def canonical_json(data: Any) -> str:

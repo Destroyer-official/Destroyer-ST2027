@@ -2,15 +2,20 @@
 """
 scripts/verify_50x_sovereign_superiority.py
 ============================================
-Automated Empirical Verification Benchmark: 50X Sovereign Defense Superiority
-Conforming to:
+INTERNAL BENCHMARK DRILL (NOT a proof, NOT an audit, NOT a superiority claim):
+self-authored checks across 6 vectors. A self-graded number cannot establish
+"50X security" — there is no defined security metric, and Signal/WhatsApp
+(PQXDH formally analyzed, SPQR Triple Ratchet Oct 2025, independent audits)
+remain the audited choice for real messaging. Keep this file as a regression
+drill only; do not cite its output as comparative evidence.
+Conforming mechanisms checked:
 - NSA CNSA Suite 2.0 (FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87)
 - NIST SP 800-88 Rev 1 & DoD 5220.22-M (Emergency Media Sanitization)
 - NIST SP 800-38D (AES-256-GCM Nonce Uniqueness & Memory Lock)
 - RFC 10024 & RFC 8773 (Post-Quantum Hybrid Key Exchange with PSK)
 
-Quantifies and verifies the 50X Security Advantage of ST2027 over consumer
-messaging protocols (Signal / WhatsApp / Telegram) across 6 core vectors:
+Scores internal vectors (entropy measurement, diode framing, algorithm levels,
+nonce discipline, memory locking, metadata posture):
 1. Shannon Wire Entropy & Constant-Rate Traffic Camouflage
 2. Unidirectional Simplex Optical Diode Transit (Zero Reverse Vector)
 3. Cryptographic Strength & Post-Quantum Security Margin (Cat-5 vs Cat-3)

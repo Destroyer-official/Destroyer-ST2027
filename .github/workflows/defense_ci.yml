@@ -137,7 +137,7 @@ jobs:
       - name: Install Minimal Test Deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest cryptography
+          pip install pytest cryptography pycryptodome
 
       - name: CNSA 2.0 Algorithm Purity & Cryptographic Selftests
         run: |
@@ -156,12 +156,12 @@ jobs:
         run: |
           python scripts/sign_boot_config.py --help
 
-      - name: LibOQS version pin check (>=0.10.1, SKIP when native lib absent)
+      - name: LibOQS version pin check (>=0.16.0, SKIP when native lib absent)
         run: |
           python -c "
           import ctypes, json, re, sys
           from pathlib import Path
-          MIN=(0,10,1)
+          MIN=(0,16,0)
           def parse(v):
               m=re.match(r'(\d+)\.(\d+)\.(\d+)', v or '')
               return tuple(int(x) for x in m.groups()) if m else None
@@ -182,10 +182,10 @@ jobs:
                   continue
           if ver:
               got=parse(ver)
-              print(f'liboqs native version via {src}: {ver} (parsed={got}, floor=0.10.1)')
+              print(f'liboqs native version via {src}: {ver} (parsed={got}, floor=0.16.0)')
               if got is None or got < MIN:
-                  print(f'FAIL: liboqs {ver} < floor 0.10.1', file=sys.stderr); sys.exit(1)
-              print('PASS: liboqs native version >= 0.10.1'); sys.exit(0)
+                  print(f'FAIL: liboqs {ver} < floor 0.16.0', file=sys.stderr); sys.exit(1)
+              print('PASS: liboqs native version >= 0.16.0'); sys.exit(0)
           # 2) No native lib on this runner (expected on ubuntu-latest for Windows oqs.dll):
           #    fall back to SBOM / verifier floor check, else SKIP — never fail when tool missing.
           try:
@@ -193,21 +193,21 @@ jobs:
               for comp in cdx.get('components', []):
                   if str(comp.get('name','')).lower() in ('oqs','oqs.dll','liboqs'):
                       v=str(comp.get('version','')); got=parse(v)
-                      print(f'SBOM liboqs pin: {v} (parsed={got}, floor=0.10.1)')
+                      print(f'SBOM liboqs pin: {v} (parsed={got}, floor=0.16.0)')
                       if got is None or got < MIN:
-                          print(f'FAIL: SBOM liboqs pin {v} < floor 0.10.1', file=sys.stderr); sys.exit(1)
-                      print('PASS: SBOM liboqs pin >= 0.10.1 (native lib absent on this runner; see docs/liboqs_pin.md)'); sys.exit(0)
+                          print(f'FAIL: SBOM liboqs pin {v} < floor 0.16.0', file=sys.stderr); sys.exit(1)
+                      print('PASS: SBOM liboqs pin >= 0.16.0 (native lib absent on this runner; see docs/liboqs_pin.md)'); sys.exit(0)
           except SystemExit:
               raise
           except Exception as e:
               print(f'SBOM fallback unavailable ({e}); trying verifier floor')
           try:
               from dependency_security_verifier import DependencySecurityVerifier
-              floor=DependencySecurityVerifier().critical_dependencies.get('oqs.dll', {}).get('min_version','0.10.1')
+              floor=DependencySecurityVerifier().critical_dependencies.get('oqs.dll', {}).get('min_version','0.16.0')
               got=parse(str(floor))
               print(f'verifier floor for oqs.dll: {floor}')
-              assert got is not None and got >= MIN, f'verifier floor {floor} < 0.10.1'
-              print('PASS: verifier floor >= 0.10.1 (native lib absent on this runner; SKIP native assert)'); sys.exit(0)
+              assert got is not None and got >= MIN, f'verifier floor {floor} < 0.16.0'
+              print('PASS: verifier floor >= 0.16.0 (native lib absent on this runner; SKIP native assert)'); sys.exit(0)
           except SystemExit:
               raise
           except Exception as e:

@@ -170,15 +170,21 @@ def _pq_ratchet_production_mode() -> bool:
 def _pq_strict_abort() -> bool:
     """True when PQ freshness failures must abort instead of legacy fallback.
 
-    Opt-in fault-injection hardening (``P2P_PQ_STRICT_ABORT=1``): a failed
-    sending-side encaps or a failed SPQR refresh raises SecurityError
-    instead of silently continuing on reused v1 material. Default off
-    (availability); those fallbacks remain AEAD+signature-gated, so a
-    network attacker cannot trigger them -- this gate covers local faults
-    and contested hardware. Telemetry (CRITICAL in prod) is emitted either
-    way. (Present-but-undecapsable peer CTs always abort -- no gate --
-    because legacy reuse could never re-sync those chains.)
+    FAIL-CLOSED in production/TS (SECURE_P2P_PRODUCTION / P2P_PRODUCTION /
+    P2P_TS_MODE): a failed sending-side encaps or a failed SPQR refresh
+    raises SecurityError instead of silently continuing on reused v1
+    material. Lab retains opt-in ``P2P_PQ_STRICT_ABORT=1``; lab default is
+    availability with CRITICAL telemetry. Those fallbacks remain
+    AEAD+signature-gated, so a network attacker cannot trigger them -- this
+    gate covers local faults and contested hardware. (Present-but-
+    undecapsable peer CTs always abort -- no gate -- because legacy reuse
+    could never re-sync those chains.)
     """
+    import os as _os2
+    if (_os2.environ.get("SECURE_P2P_PRODUCTION", "0") == "1"
+            or _os2.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+            or _os2.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")):
+        return True
     return os.environ.get("P2P_PQ_STRICT_ABORT", "0").strip().lower() in (
         "1", "true", "yes", "on")
 
@@ -2131,12 +2137,16 @@ class DoubleRatchet:
         # either party could have produced the transcript). Deniable sessions
         # skip per-message DSS signatures: authenticity comes ONLY from the
         # shared chain key (repudiable), NOT from a third-party-verifiable
-        # signature (RFC 9881 non-repudiation). Fail-closed: refused in TS
-        # mode and in production without explicit opt-in; never usable for
-        # TOP SECRET / DPO-gated payloads (non-repudiation required there).
+        # signature (RFC 9881 non-repudiation). Fail-closed: refused when
+        # TOP SECRET or non-repudiation is strictly required (P2P_TS_MODE=1 or
+        # P2P_REQUIRE_NON_REPUDIATION=1); never usable for TOP SECRET / DPO payloads.
         _ts = _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
-        if deniable and (_ts or (_prod and _os.environ.get("P2P_ALLOW_DENIABLE", "0") != "1")):
-            raise SecurityError("Deniable mode refused: non-repudiation required (TS/production default)")
+        _require_nr = _os.environ.get("P2P_REQUIRE_NON_REPUDIATION", "0").strip().lower() in ("1", "true", "yes", "on")
+        if not deniable and (_os.environ.get("P2P_DENIABLE_MESSAGING", "0").strip().lower() in ("1", "true", "yes", "on") or
+                             _os.environ.get("P2P_DENIABLE", "0").strip().lower() in ("1", "true", "yes", "on")):
+            deniable = True
+        if deniable and (_ts or _require_nr):
+            raise SecurityError("Deniable mode refused: non-repudiation required (TS/mandatory non-repudiation mode)")
         self.deniable = bool(deniable)
         if self.deniable:
             import logging as _logging
@@ -2150,13 +2160,35 @@ class DoubleRatchet:
         #     step mixed via crypto.kem.hybrid_combine_v2. Negotiated via the
         #     existing HybridKeyExchange protocol_version: v2 peers get fresh
         #     KEM, v1 peers stay legacy. Unknown/unparseable input fails safe
-        #     to v1 for interop. See negotiate_pq_ratchet_version() to
+        #     to v1 for lab interop; strict (prod/TS) fail-closes instead.
+        #     See negotiate_pq_ratchet_version() to
         #     re-negotiate after the handshake advertises the peer version.
         self.protocol_version = 1
         try:
             self.protocol_version = int(protocol_version)
         except (TypeError, ValueError):
             self.protocol_version = 1
+        # FAIL-CLOSED (audit Finding 6 — PQ PCS): production/TS deployments
+        # claiming fresh-KEM post-compromise recovery MUST NOT run legacy
+        # v1 reuse. Research basis: Signal SPQR / Triple Ratchet (Dodis et
+        # al. 2025/078; Signal Oct 2025) performs fresh ML-KEM encaps per
+        # ratchet step; Apple PQ3 heals every 50 msgs / 7 days. v1 reuses
+        # the synchronized KEM secret and provides NO fresh PQ PCS.
+        _strict_ratchet = (_prod or _ts)
+        if _strict_ratchet and self.protocol_version < 2:
+            raise SecurityError(
+                "MILITARY FATAL: PQ ratchet v1 (legacy KEM reuse) refused in "
+                "production/TS mode — fresh-KEM v2 required for PQ PCS "
+                "(protocol_version>=2)")
+        if pq_ratchet_version is not None:
+            try:
+                _req = int(pq_ratchet_version)
+            except (TypeError, ValueError):
+                raise SecurityError("pq_ratchet_version unparseable (fail-closed)")
+            if _strict_ratchet and _req < 2:
+                raise SecurityError(
+                    "MILITARY FATAL: pq_ratchet_version=1 refused in "
+                    "production/TS mode — v2 fresh-KEM required")
         if pq_ratchet_version is None:
             self.pq_ratchet_version = (
                 self.PQ_RATCHET_VERSION_FRESH if self.protocol_version >= 2
@@ -2169,6 +2201,8 @@ class DoubleRatchet:
                     else self.PQ_RATCHET_VERSION_LEGACY
                 )
             except (TypeError, ValueError):
+                if _strict_ratchet:
+                    raise SecurityError("pq_ratchet_version unparseable (fail-closed)")
                 self.pq_ratchet_version = self.PQ_RATCHET_VERSION_LEGACY
         # Synchronized KEM secret (legacy v1 reuse root; refreshed by v2).
         self._synchronized_kem_secret = None

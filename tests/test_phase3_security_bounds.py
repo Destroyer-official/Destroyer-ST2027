@@ -265,6 +265,32 @@ def test_deniable_session_roundtrip_and_ts_refusal(monkeypatch):
         monkeypatch.delenv("P2P_TS_MODE", raising=False)
 
 
+def test_deniable_session_production_and_mandatory_nr_refusal(monkeypatch):
+    import secrets
+    from double_ratchet import DoubleRatchet, SecurityError
+    root = secrets.token_bytes(32)
+    # In production, deniable mode must be permitted for repudiable tactical messaging
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    monkeypatch.setenv("P2P_ALLOW_CLASSICAL", "1")
+    a = DoubleRatchet(root, is_initiator=True, enable_pq=False,
+                      threshold_security=False, hardware_binding=False,
+                      protocol_version=2, deniable=True)
+    b = DoubleRatchet(root, is_initiator=False, enable_pq=False,
+                      threshold_security=False, hardware_binding=False,
+                      protocol_version=2, deniable=True)
+    a.set_remote_public_key(b.get_public_key())
+    b.set_remote_public_key(a.get_public_key())
+    ct = a.encrypt(b"repudiable-in-production")
+    assert b.decrypt(ct) == b"repudiable-in-production"
+
+    # Strict fail-closed when non-repudiation is explicitly required
+    monkeypatch.setenv("P2P_REQUIRE_NON_REPUDIATION", "1")
+    with pytest.raises(SecurityError, match="Deniable mode refused: non-repudiation required"):
+        DoubleRatchet(root, is_initiator=True, enable_pq=False,
+                      threshold_security=False, hardware_binding=False,
+                      protocol_version=2, deniable=True)
+
+
 def test_handshake_binding_roundtrip_and_strict_refusal(monkeypatch):
     from double_ratchet import DoubleRatchet, SecurityError
     a, b = _mkpair()
@@ -290,6 +316,119 @@ def test_hqc_refused_without_explicit_opt_in(monkeypatch):
     monkeypatch.delenv("P2P_ENABLE_VULN_HQC", raising=False)
     with pytest.raises(RuntimeError):
         LibOQS_HQC_256()
+
+
+def _write_ed25519_signed_config(tmp_path):
+    """Create config.json + .sig + certs pub in an isolated cwd dir."""
+    import json
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives import serialization
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"mode": "lab-test"}), encoding="utf-8")
+    sk = ed25519.Ed25519PrivateKey.generate()
+    sig = sk.sign(cfg.read_bytes())
+    (tmp_path / "config.json.sig").write_bytes(sig)
+    certs = tmp_path / "certs"
+    certs.mkdir(exist_ok=True)
+    pub = sk.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo)
+    (certs / "config_signer.pub").write_bytes(pub)
+
+
+_CONFIG_PROBE = (
+    "import sys, traceback\n"
+    "from config import ConfigManager, ConfigurationError\n"
+    "try:\n"
+    "    ConfigManager('config.json')\n"
+    "    print('LOADED')\n"
+    "except ConfigurationError as e:\n"
+    "    print('REFUSED:' + str(e))\n"
+    "    sys.exit(3)\n"
+    "except Exception as e:\n"
+    "    print('ERROR:' + type(e).__name__)\n"
+    "    traceback.print_exc()\n"
+    "    sys.exit(4)\n"
+)
+
+
+def test_config_ed25519_accepted_in_lab_refused_in_prod(tmp_path):
+    import os
+    import subprocess
+    import sys
+    _write_ed25519_signed_config(tmp_path)
+    probe = tmp_path / "_probe.py"
+    probe.write_text(_CONFIG_PROBE, encoding="utf-8")
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    base_env = dict(os.environ, PYTHONPATH=repo_root)
+    lab = subprocess.run([sys.executable, str(probe)],
+                         capture_output=True, text=True, cwd=str(tmp_path),
+                         env=base_env)
+    assert "LOADED" in lab.stdout, lab.stdout + lab.stderr
+    prod_env = dict(base_env, P2P_PRODUCTION="1")
+    prod = subprocess.run([sys.executable, str(probe)],
+                          capture_output=True, text=True, cwd=str(tmp_path),
+                          env=prod_env)
+    assert prod.returncode == 3, prod.stdout + prod.stderr
+    assert "legacy Ed25519 refused" in prod.stdout, prod.stdout
+
+
+def test_audit_recovery_rotates_tainted_ledger(tmp_path, monkeypatch):
+    import json
+    from remote_siem_forwarder import TamperEvidentAuditChain
+    monkeypatch.delenv("P2P_SIEM_KEY", raising=False)
+    ledger = tmp_path / "chain.jsonl"
+    anchor = tmp_path / "chain.anchor.json"
+    c = TamperEvidentAuditChain(ledger_path=ledger, anchor_path=anchor)
+    c.append_event("a", "INFO", {"n": 1})
+    c.append_event("b", "INFO", {"n": 2})
+    # Forge the tail entry in place.
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    entry = json.loads(lines[1])
+    entry["payload"] = {"n": "FORGED"}
+    ledger.write_text("\n".join([lines[0], json.dumps(entry)]) + "\n",
+                      encoding="utf-8")
+    # Reopen: taint detected, evidence rotated, fresh epoch live.
+    c2 = TamperEvidentAuditChain(ledger_path=ledger, anchor_path=anchor)
+    assert c2.seq == 0
+    backups = list(tmp_path.glob("chain.tainted-*.jsonl"))
+    assert len(backups) == 1
+    ok, count, _ = c2.verify_ledger()
+    assert not ok and count == 0  # live file empty after rotation
+    c2.append_event("c", "INFO", {"n": 3})
+    ok, count, _ = c2.verify_ledger()
+    assert ok and count == 1
+
+
+def test_audit_recovery_detects_truncation(tmp_path, monkeypatch):
+    import logging
+    from remote_siem_forwarder import TamperEvidentAuditChain, logger as _modlog
+    monkeypatch.delenv("P2P_SIEM_KEY", raising=False)
+    ledger = tmp_path / "t.jsonl"
+    anchor = tmp_path / "t.anchor.json"
+    c = TamperEvidentAuditChain(ledger_path=ledger, anchor_path=anchor)
+    c.append_event("a", "INFO", {})
+    c.append_event("b", "INFO", {})
+    c.export_head_anchor()
+    # Attacker deletes the tail entry.
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    ledger.write_text(lines[0] + "\n", encoding="utf-8")
+    # Dedicated handler: independent of root-logger config set by other suites.
+    records = []
+    class _Cap(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+    hdl = _Cap(level=logging.CRITICAL)
+    _modlog.addHandler(hdl)
+    old_level = _modlog.level
+    _modlog.setLevel(logging.CRITICAL)
+    try:
+        c2 = TamperEvidentAuditChain(ledger_path=ledger, anchor_path=anchor)
+    finally:
+        _modlog.removeHandler(hdl)
+        _modlog.setLevel(old_level)
+    assert c2.seq == 1
+    assert any("truncation" in r.getMessage() for r in records)
 
 
 def test_audit_chain_key_is_secret_and_persistent(tmp_path, monkeypatch):

@@ -355,8 +355,9 @@ class LibOQS_FrodoKEM_1344:
 def is_hqc_available() -> bool:
     """Check if HQC-256 is supported, enabled, and authorized in this build.
 
-    Vendored oqs.dll is 0.10.1, affected by HQC key-recovery issues fixed
-    upstream in 0.12.0 (CVE-2024-54137) and 0.14.0 (CVE-2025-52473). The HQC
+    Vendored oqs.dll predates liboqs 0.16.0, affected by HQC key-recovery issues fixed
+    upstream in 0.12.0 (CVE-2024-54137) and 0.14.0 (CVE-2025-52473) plus XMSS OOB
+    (CVE-2026-44518/CVE-2026-46344, fixed 0.16.0; only 0.16.0 supported). The HQC
     diversity leg therefore stays DISABLED by default and the caller falls back
     to McEliece-8192128f. Explicit opt-in for lab evaluation only:
     P2P_ENABLE_VULN_HQC=1 (logged as CRITICAL). Re-enable by default after the
@@ -368,7 +369,7 @@ def is_hqc_available() -> bool:
                 import logging as _logging
                 _logging.getLogger(__name__).critical(
                     "P2P_ENABLE_VULN_HQC=1: HQC-256 leg explicitly enabled on vulnerable "
-                    "oqs 0.10.1 (CVE-2024-54137/CVE-2025-52473). Lab evaluation only."
+                    "oqs <0.16.0 (CVE-2024-54137/CVE-2025-52473). Lab evaluation only."
                 )
             # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
             except Exception:  # nosec: B110

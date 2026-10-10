@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-10T09:22:47.046338+00:00",
+  "timestamp_utc": "2026-10-10T13:18:37.780119+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -39,8 +39,8 @@
       "sha3_512": "aacf4ab3624eecc2ae9b847e98c1ce6e7660145fd6f282185c193c8e1a2df0af7db0469339f114c3325aaf7b790333d82c2cd911c3234b2bb979063c2830fdb2"
     },
     "pqc_algorithms.py": {
-      "size_bytes": 349217,
-      "sha3_512": "d5db3fdd7daf43caf7aec86bbd24e1eea0a6249def87b5ca134fb5d36fd403f00496554d88fc3178785985c162cfcd19123560cef29c851bab9fd6393d2144c3"
+      "size_bytes": 347967,
+      "sha3_512": "55532bdf08d3eb07d95d5c6ad2c04c5aa1ca1f43393b0eb2bb1b9d162d482a54b7c3481a3a6bddb3fed909ab7c126d8f25b2aef93d82d94a23f64366e21e7d53"
     },
     "metadata_resistance.py": {
       "size_bytes": 34621,
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "cd53c1bf6f34401ab64e70209325767e56f12d18096f61591cdc73514ed5e448af183b884063cda2795fc43a476f1366df139135a73502b6145ff4a3ae7e211e",
+  "source_tree_merkle_root": "84b9df681293e9fc9308b56a7c07b27d0bd74ea916f91226e090624287b222cfeb6252408c7009233a682c54d32618ea316dba45ff855e65206b0099bc35c539",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "0c04585470f60ae2cf265c8d872c70b6ab2bc3bcab534436a0f8fc72d546c7863f071fb57358afd1dc692edc0c2722904babd8db29c80ca97a8ab83646ee9295",
@@ -73,8 +73,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "894dc21d0fddec0f30effb7621abf6fb15f87e73ababb5ddf9a6d73c249ace11ae1e4b47a353fbe50e8532736716bad4f125e1e39fac80a66ad193d777d744f4",
-      "actual_sha3_512": "894dc21d0fddec0f30effb7621abf6fb15f87e73ababb5ddf9a6d73c249ace11ae1e4b47a353fbe50e8532736716bad4f125e1e39fac80a66ad193d777d744f4",
+      "expected_sha3_512": "27b75bcc25e3d525353705b7d0c1ce67bd3dc72627771bd50321068cafdb437c816357ac367ec34c6e99364900015d718867541a07be1a3d4ffd15e70d72dc11",
+      "actual_sha3_512": "27b75bcc25e3d525353705b7d0c1ce67bd3dc72627771bd50321068cafdb437c816357ac367ec34c6e99364900015d718867541a07be1a3d4ffd15e70d72dc11",
       "matched": true
     },
     "ts_runtime.py": {
@@ -83,8 +83,8 @@
       "matched": true
     },
     "dependency_security_verifier.py": {
-      "expected_sha3_512": "bd59e1169ba069228411cb38a592fc1729a49d0ee30823b86b774ddc10db8cfe9c372133dad36bc0d4fdc85763022dc9e9c805d1873631a3c4422d7ce8b70604",
-      "actual_sha3_512": "bd59e1169ba069228411cb38a592fc1729a49d0ee30823b86b774ddc10db8cfe9c372133dad36bc0d4fdc85763022dc9e9c805d1873631a3c4422d7ce8b70604",
+      "expected_sha3_512": "f03f39056075d62b966c761d281ef2c87485391ae5987fcf30fbc3d56d014d736c6ae35afb0b340d1e38cf53a107e17fc1911747e8e3836662be9e1a21e5d581",
+      "actual_sha3_512": "f03f39056075d62b966c761d281ef2c87485391ae5987fcf30fbc3d56d014d736c6ae35afb0b340d1e38cf53a107e17fc1911747e8e3836662be9e1a21e5d581",
       "matched": true
     }
   }

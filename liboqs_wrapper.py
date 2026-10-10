@@ -420,9 +420,11 @@ class LibOQS_McEliece_8192128f:
 class LibOQS_HQC_256:
     """HQC-256 KEM implementation using liboqs.
 
-    FAIL-CLOSED on the vendored oqs.dll 0.10.1: upstream 0.12.0/0.14.0 fix HQC
+    FAIL-CLOSED below liboqs 0.16.0: upstream 0.12.0/0.14.0 fix HQC
     key-recovery issues (CVE-2024-54137, CVE-2025-52473; HQC disabled by
-    default since 0.13.0 per CVE-2025-48946). Instantiation is refused unless
+    default since 0.13.0 per CVE-2025-48946) and 0.16.0 fixes XMSS OOB
+    (CVE-2026-44518, CVE-2026-46344; only 0.16.0 supported upstream).
+    Instantiation is refused unless
     P2P_ENABLE_VULN_HQC=1 is explicitly set (logged CRITICAL). This single
     choke point covers all callers, including direct LibOQS_HQC_256()
     instantiations that bypass triple_hybrid_kem.is_hqc_available().

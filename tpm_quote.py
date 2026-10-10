@@ -49,11 +49,16 @@ class AttestationVerificationError(Exception):
     """Raised when hardware TPM attestation or identity binding verification fails."""
 
 
+class HardwareAttestationError(RuntimeError):
+    """Raised when hardware attestation / physical TPM is unavailable in production (fail-closed)."""
+
+
 __all__ = [
     "QUOTE_VERSION",
     "QUOTE_ALG",
     "PCRMismatchError",
     "AttestationVerificationError",
+    "HardwareAttestationError",
     "sign_quote",
     "sign",
     "verify_quote",
@@ -795,9 +800,12 @@ def read_hardware_pcrs(pcr_indices: Optional[List[int]] = None) -> Dict[int, str
     # If physical hardware read failed or was partial, check production enforcement
     from utils.helpers import is_env_true
     is_prod = is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
+    allow_sim = is_env_true("P2P_ALLOW_SIMULATED_TPM") or is_env_true("P2P_ALLOW_DEGRADED_TPM")
     fail_on_sw = is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK")
-    if is_prod and fail_on_sw:
-        raise RuntimeError("MILITARY FATAL: Physical TPM 2.0 PCR read failed under P2P_FAIL_ON_SOFTWARE_FALLBACK=1")
+    if is_prod and not allow_sim:
+        raise HardwareAttestationError("MILITARY FATAL: Physical TPM 2.0 / HSM hardware attestation failed in production (fail-closed)")
+    if fail_on_sw:
+        raise HardwareAttestationError("MILITARY FATAL: Physical TPM 2.0 PCR read failed under P2P_FAIL_ON_SOFTWARE_FALLBACK=1")
         
     # Return deterministic secondary simulation measurements (branded degraded)
     seed = (os.environ.get("P2P_DEVICE_ID", "DEFAULT_DEVICE_001") + "_SIMULATED_PCR_BANK").encode("utf-8")

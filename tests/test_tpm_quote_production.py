@@ -173,6 +173,16 @@ class TestTPMQuoteProduction(unittest.TestCase):
         )
         self.assertFalse(ok_tampered)
 
+    def test_08_production_missing_hardware_tpm_fails_closed(self):
+        """In production mode, missing physical hardware TPM fails closed with HardwareAttestationError."""
+        from unittest import mock
+        from tpm_quote import HardwareAttestationError
+        with mock.patch.dict(os.environ, {"P2P_PRODUCTION": "1", "P2P_ALLOW_SIMULATED_TPM": "0"}):
+            with mock.patch("platform_hsm_interface._windows_tbs_read_pcrs", return_value={}, create=True):
+                with self.assertRaises(HardwareAttestationError):
+                    read_hardware_pcrs([0, 1, 2, 7])
+
+
 
 if __name__ == "__main__":
     unittest.main()

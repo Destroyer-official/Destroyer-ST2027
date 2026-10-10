@@ -66,8 +66,8 @@ fn usage() -> ! {
         "secure-transmit {VERSION} — standalone data-plane executor\n\
          \n\
          keygen [--out PATH]              print fresh 32B frame key (hex)\n\
-         kex-listen  --bind ADDR --out-key PATH [--psk HEX|--psk-file PATH] [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
-         kex-connect --to ADDR --out-key PATH [--psk HEX|--psk-file PATH] [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
+         kex-listen  --bind ADDR --out-key PATH --psk-file PATH [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
+         kex-connect --to ADDR --out-key PATH --psk-file PATH [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
          send   --key-file PATH|--key-stdin --state PATH --to ADDR --msg TEXT\n\
          recv   --key-file PATH|--key-stdin --state PATH --bind ADDR [--count N] [--timeout-ms MS]\n\
          send-file --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH\n\
@@ -91,10 +91,10 @@ fn usage() -> ! {
          and directional nonce separation. Flat wire timing and constant Shannon entropy\n\
          defeats Signals Intelligence (SIGINT) flow correlation and timing analysis.\n\
          \n\
-         Security: --seq and --key HEX are REFUSED. Seq comes only from the\n\
-         locked --state file (monotonic, persisted before encrypt). Key NEVER\n\
-         appears in argv: provision via --key-file (0600), --key-stdin, or\n\
-         native quantum-resistant kex-listen/kex-connect with ML-KEM-1024 + X25519."
+         Security: --seq, --key HEX and --psk HEX are REFUSED. Seq comes only from the\n\
+         locked --state file (monotonic, persisted before encrypt). Keys/PSK NEVER\n\
+         appear in argv (visible via ps): provision via --key-file (0600), --key-stdin,\n\
+         --psk-file, or native quantum-resistant kex-listen/kex-connect with ML-KEM-1024 + X25519."
     );
     std::process::exit(2);
 }
@@ -120,6 +120,9 @@ fn reject_forbidden_cli(args: &[String]) {
     }
     if get_flag(args, "--seq").is_some() {
         fail("refusing --seq (nonce must come from locked --state, never user input)");
+    }
+    if get_flag(args, "--psk").is_some() {
+        fail("refusing --psk on command line (secret in ps argv); use --psk-file");
     }
 }
 
@@ -375,7 +378,34 @@ fn write_key_file(out: &str, hex: &str) {
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(out, hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
+        // Windows/NTFS has no Unix mode bits: enforce owner-only ACL
+        // best-effort (icacls inheritance removal), then verify the file is
+        // not world-readable. Fail-closed on ACL hardening failure so
+        // session keys never rest on disk with loose permissions.
+        // Residual: SSD wear-leveling/swap/hibernation can retain copies —
+        // a facility duty (see trust_anchor ephemeral doctrine); prefer
+        // --key-stdin + locked memory / HSM custody for TOP SECRET.
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_NONE: u32 = 0;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .share_mode(FILE_SHARE_NONE)
+            .open(out)
+            .unwrap_or_else(|_| fail("key out unwritable"));
+        f.write_all(hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
+        f.sync_all().unwrap_or_else(|_| fail("key out sync failed"));
+        drop(f);
+        let acl_ok = std::process::Command::new("icacls")
+            .args([out, "/inheritance:r", "/grant:r", &format!("{}:F", std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string()))])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !acl_ok {
+            let _ = std::fs::remove_file(out);
+            fail("key out ACL hardening failed (icacls owner-only); nothing written");
+        }
     }
 }
 
@@ -395,8 +425,21 @@ fn cmd_send(args: &[String]) {
     let seq = reserve_send_seq(&state, &key_id, 1);
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
-    let frame = aead::seal(&key, seq, DIR_SEND, FTYPE_MSG, msg.as_bytes())
+    // TRAFFIC-SHAPING (audit Finding 3): pad every send frame to its
+    // quantum (256/512/1232) so wire length reveals only the quantum, not
+    // the true payload length. Header len field carries the TRUE length;
+    // padding is zero bytes stripped on open_indexed after tag verify.
+    // Residual: seq/ftype stay clear as AAD (needed to parse); message
+    // COUNT is hidden only under constant-rate channel/chaff cover —
+    // use `channel` mode for TOP SECRET.
+    let (quantum, pad) = frame::pad_to_quantum(msg.len())
+        .unwrap_or_else(|| fail("payload exceeds largest quantum (1205B)"));
+    let mut padded = Vec::with_capacity(msg.len() + pad);
+    padded.extend_from_slice(msg.as_bytes());
+    padded.resize(msg.len() + pad, 0u8);
+    let frame = aead::seal_with_len(&key, seq, DIR_SEND, FTYPE_MSG, msg.len() as u16, &padded)
         .unwrap_or_else(|_| fail("seal failed"));
+    debug_assert_eq!(frame.len(), quantum);
     if frame.len() > MAX_DATAGRAM {
         fail("sealed frame exceeds IPv6 MTU budget (1280B)");
     }
@@ -616,9 +659,16 @@ fn cmd_send_file(args: &[String]) {
             .unwrap_or_else(|_| fail("bind failed"));
         let mut total = 0usize;
         for (i, chunk) in chunks.iter().enumerate() {
-            let frame = aead::seal(&key, seq0.wrapping_add(i as u64), DIR_SEND,
-                                   FTYPE_MSG, chunk)
+            // Quantum padding per chunk (same rationale as cmd_send).
+            let (quantum, pad) = frame::pad_to_quantum(chunk.len())
+                .unwrap_or_else(|| fail("chunk exceeds largest quantum"));
+            let mut padded = Vec::with_capacity(chunk.len() + pad);
+            padded.extend_from_slice(chunk);
+            padded.resize(chunk.len() + pad, 0u8);
+            let frame = aead::seal_with_len(&key, seq0.wrapping_add(i as u64), DIR_SEND,
+                                   FTYPE_MSG, chunk.len() as u16, &padded)
             .unwrap_or_else(|_| fail("seal failed"));
+            debug_assert_eq!(frame.len(), quantum);
             if frame.len() > MAX_DATAGRAM {
                 fail("sealed frame exceeds IPv6 MTU budget (1280B)");
             }
@@ -1397,7 +1447,7 @@ fn kex_auth_required() -> bool {
 
 fn require_kex_auth(psk_present: bool) {
     if kex_auth_required() && !psk_present {
-        fail("kex PSK required in production (set --psk or --psk-file); unauthenticated KEX refused (MITM protection)");
+        fail("kex PSK required in production (set --psk-file); unauthenticated KEX refused (MITM protection)");
     }
     if !psk_present {
         eprintln!("WARNING: kex running WITHOUT PSK — key is NOT authenticated. You MUST compare SAS out-of-band before use (lab only).");

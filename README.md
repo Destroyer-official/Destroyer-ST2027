@@ -22,9 +22,9 @@
 
 Modern peer-to-peer and client-server communication channels operating across adversarial public packet networks face two existential threats: contemporary high-rate signals intelligence (traffic analysis, timing correlation, deep packet inspection, and metadata harvesting) and the emergent cryptanalytic threat of quantum computers capable of Shor's and Grover's algorithms (Harvest-Now-Decrypt-Later).
 
-This repository presents the reference implementation, defense specifications, formal verification proofs, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, NIST P-384 ECDH is retained strictly as the auxiliary classical leg within the standards-track IETF RFC 10024 hybrid key encapsulation mechanism (`SecP384r1MLKEM1024`). 
+This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses X25519 + ML-KEM-1024 as an interop leg that is NEVER trusted alone (both halves required, classical-only refused). X25519 is not the CNSA L5 leg. 
 
-The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing**, **constant-rate cell shaping (50ms interval)**, **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**, and **AES-256-CTR stream whitening**. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are modeled in **ProVerif 2.05** symbolic models (executed green by `test_proverif_st2027.py`); memory and frame properties are covered by Kani proof harnesses (execution requires the `cargo kani` + CBMC toolchain) and deterministic property doubles green under `cargo test`.
+The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) travels as AES-GCM AAD in clear with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum — `seq`/`ftype` remain observable, and message COUNT is hidden only under constant-rate `channel`/chaff cover. There is no AES-CTR whitening layer on the Rust path. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are analyzed in **ProVerif 2.05 symbolic models with explicit scope limits** (skeleton `handshake_model.pv` not proven / not CI-enforced; deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 5); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — none executed here/CI) and deterministic property doubles green under `cargo test`.
 
 > [!NOTE]
 > **Research Monograph Navigation:** The complete scientific, architectural, and operational documentation for ST2027 is structured into seven interconnected research tracks. For immediate access to foundational specifications, mathematical proofs, FIPS policies, and module engineering charters, see [Section 6: Comprehensive Research Monograph & Master Documentation Compendium](#6-comprehensive-research-monograph--master-documentation-compendium) or the [Master Documentation Portal](docs/README.md).
@@ -85,6 +85,23 @@ To preserve complete engineering truth and auditability, this repository maintai
 
 **Messenger-path honesty (research prototype):** the messaging path (`hybrid_kex.py` + `double_ratchet.py` + `secure_p2p.py`) is a Signal-style **hybrid-transition prototype** (X25519 + ML-KEM + ChaCha20-Poly1305 + Falcon-verify/ML-DSA) — it is **NOT CNSA-pure** and is **NOT audited**. Only `noise_pq.py` + `secure_transmit_2027.py` enforce the strict CNSA 2.0 session set (ML-KEM-1024 / ML-DSA-87 / AES-256-GCM / SHA-384 / HKDF-SHA384). For real messaging today, use Signal (audited, loss-tolerant, PQ handshake + ratchet).
 
+**Security gates (fail-closed; every escape hatch in one table):** production (`P2P_PRODUCTION=1`, sticky at import) refuses weaker paths unless the listed opt-in is explicitly set. Setting an opt-in in production is an intentional downgrade — log it, time-limit it, and remove it.
+
+| Gate | Default | Production behavior | Explicit opt-in (use = downgrade) |
+|---|---|---|---|
+| Classical-only ratchet (`enable_pq=False`) | Refused in prod | `SecurityError` | `P2P_ALLOW_CLASSICAL=1` |
+| Deniable sessions (no per-message sig) | Refused in TS; refused in prod | `SecurityError` | `P2P_ALLOW_DENIABLE=1` (non-TS only) |
+| PQXDH v1 combiner | Refused in prod/TS | `SecurityError`, min v2 | none (lab interop only) |
+| Unpinned peers (TOFU) | Refused in prod/TS | `SecurityError`, pin required | none (lab only) |
+| Missing `unified_secure_pipeline` | Refused in prod | `RuntimeError`, no legacy path | none (lab only) |
+| Rust KEX without PSK | Refused in prod/TS | fail, `--psk` required | none (lab: verify SAS OOB) |
+| TLS `verify_certs=False` / TLS < 1.3 | Refused in prod | `ValueError` / TLS 1.3 floor | none (lab only) |
+| Config without CNSA sig (Ed25519-only) | Refused in prod (sticky) | `ConfigurationError` | none (lab only) |
+| HQC-256 (vuln oqs.dll) | Refused everywhere | `RuntimeError` | `P2P_ENABLE_VULN_HQC=1` (reserve only) |
+| DPO same-channel approvals | Allowed (lab); distinct enforced if both given | — | `P2P_DPO_REQUIRE_CHANNELS=1` to require |
+| Handshake-bound AD | Opt-in, warn in prod | warning once | `P2P_REQUIRE_HANDSHAKE_BINDING=1` to require |
+| DPO for TOP SECRET | Always required | `AuthorizationError` otherwise | none |
+
 The security architecture is formally specified against a multidimensional threat matrix addressing physical, network, system, and algorithmic attack surfaces:
 
 ```
@@ -107,7 +124,7 @@ The security architecture is formally specified against a multidimensional threa
 
 2. **Global Passive & Traffic Analysis Adversary:**
    - *Threat:* Backbone interceptors and state-level ISPs monitoring packet arrival times, packet intervals, and byte counts to perform statistical flow correlation.
-   - *Defense:* Constant-rate transmission clock (1 cell per 50.0 ms = 20 Hz); uniform cell quantization (1232 bytes total wire frame); automatic generation of cryptographically indistinguishable cover/chaff cells during idle intervals; AES-256-CTR keystream stream whitening stripping all plaintext headers ([transport_anonymity.py](transport_anonymity.py)).
+   - *Defense (bounded, not absolute):* Constant-rate transmission clock (1 cell per 50.0 ms = 20 Hz); uniform cell quantization (1232 bytes total wire frame); automatic generation of cover/chaff cells during idle intervals on the Python anonymity path (header inside AES-GCM, [transport_anonymity.py](transport_anonymity.py)). Rust data-plane frames pad payload length to quanta but `seq|len|ftype` travel as AES-GCM AAD in clear — length is hidden to quantum granularity, `seq`/`ftype` are not; count hiding requires constant-rate `channel` cover. No AES-CTR whitening layer is claimed. A scheduler interval is not wire constancy under Tor/TLS buffering; GPA with full vantage is explicitly out of scope.
 
 3. **Cryptanalytic Quantum Adversary:**
    - *Threat:* Storage of encrypted network transmissions today for decryption by future Cryptanalytically Relevant Quantum Computers (CRQC).
@@ -127,21 +144,26 @@ The security architecture is formally specified against a multidimensional threa
 |                                2027 TOP SECRET COMMUNICATIONS STACK                                     |
 +=========================================================================================================+
 | [PILLAR 5] TRUST ANCHOR & OPERATIONAL KEY MANAGEMENT (trust_anchor.py)                                   |
-|   ├── Offline 3-of-5 Threshold ML-DSA-87 Hardware Root CA (multi-signature quorum: >=3 of 5 custodian sigs, RFC 9881 Profile) |
+|   ├── 3-of-5 Threshold ML-DSA-87 Root CA (NOT Shamir secret sharing: 5 independent ML-DSA-87 custodian  |
+|   │   keys, cert valid only with >=3 distinct sigs, RFC 9881 pure profile; "offline" by ceremony policy, |
+|   │   enforced in software as quorum verification, not as physical air-gap proof)                         |
 |   ├── Monotonic Revocation Broadcast (Distributed in-band inside uniform 1232B anonymity cells)         |
 |   └── Strict Amnesia / Zero-Plaintext-Disk Profile (Fail-closed on any non-volatile key persistence)    |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 4] NETWORK TRANSPORT & ANONYMITY (transport_anonymity.py & spo_dpo.py)                         |
 |   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS resolution or Interface-Pinned Sovereign APN)    |
 |   ├── Constant-Rate (50ms tick) Constant-Size (1232B cell / 1280B IPv6 MTU) Traffic Shaping             |
-|   ├── Stream Whitening (AES-256-CTR Uniform Masking, zero cleartext magic bytes or length headers)      |
+|   ├── Python anonymity cells: header inside AES-GCM (no CTR whitening claimed); Rust frames: quanta-  |
+|   │   padded, header as AAD in clear (seq/ftype observable — see Section 2 adversary bounds)            |
 |   └── Cryptographic Dual-Person Authorization Pre-Transmit Co-Signing (ML-DSA-87 Dual Signatures)       |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 3] CRYPTOGRAPHY & PROTOCOL ARCHITECTURE (noise_pq.py, cnsa_purity.py, crypto_selftest.py)      |
-|   ├── Noise_XXhfs + ML-KEM-1024 + P-384 ECDH + ML-DSA-87 Protocol Handshake                             |
+|   ├── Noise_XXhfs + ML-KEM-1024 + P-384 ECDH + ML-DSA-87 handshake (UNPROVEN custom sig substitution,    |
+|   │   unofficial hfs draft — NOT Signal/Noise/MLS compatible; Python path only)                          |
+|   ├── Rust data-plane KEM is SEPARATE: X25519 + ML-KEM-1024 hybrid (interop leg, never alone)             |
 |   ├── CNSA 2.0 Pure Tokenizer & Runtime Policy (Strict rejection of non-CNSA algorithm suites)          |
 |   ├── FIPS 140-3 Section 10 Power-Up Self-Tests & Pairwise Consistency Tests (OpenSSL vs PyCryptodome)  |
-|   └── Formal ProVerif 2.05 Proofs (Secrecy, Mutual Auth, Forward Secrecy, Post-Compromise Security)     |
+|   └── ProVerif 2.05 symbolic analyses, model-scoped (NOT a system proof — see Section 5)                |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 2] OPERATING SYSTEM & EXECUTION RUNTIME (ts_runtime.py, ts_rt Rust cdylib, ts_attest.py)       |
 |   ├── seL4 Verified Microkernel Gating OR Signed AO Waiver with Live VBS/HVCI/SecureBoot Enforcement     |
@@ -151,9 +173,11 @@ The security architecture is formally specified against a multidimensional threa
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 1] HARDWARE & PHYSICAL SECURITY LAYER (ts_hw_layer.py & cng_platform.py)                        |
 |   ├── FIPS 140-3 Validated Cryptographic Provider Check (OSSL_PROVIDER_load("fips") + CMVP Record)     |
-|   ├── Non-Exportable Hardware Key Custody (Windows CNG TPM 2.0 Platform Provider & PKCS#11 Tokens)       |
+|   ├── TPM device key is ECDSA-P256 (NOT post-quantum, attestation-identity only — never covers data/   |
+|   │   session keys); ML-DSA-87 hardware custody only via PKCS#11 HSM (see cng_platform.py, trust_anchor.py) |
 |   ├── Physical RED / BLACK Interface Separation (psutil live NIC bind enforcement, no wildcards)        |
-|   ├── TEMPEST / SCIF Facility Accreditation Registry (NATO SDIP-27/28/29 Evaluation Records)             |
+|   ├── TEMPEST/SCIF host-state probe ONLY (checks facility records/host posture — NOT RF-emanation        |
+|   │   certification; SDIP-27/28/29 attenuation requires accredited lab/facility, never software)          |
 |   ├── Active Multi-Trigger Zeroization Mesh (Debugger, TPM PCR drift, Heartbeat loss, ML-DSA-87 duress) |
 |   └── Hardware Optical Data Diode Gate (Simplex UDP-only unacknowledged transfer framing)                |
 +=========================================================================================================+
@@ -164,7 +188,7 @@ The security architecture is formally specified against a multidimensional threa
 - **FIPS 140-3 Cryptographic Module Gate:** Dynamically validates that OpenSSL 3.1+ FIPS Provider (e.g. CMVP Certificate #4985) is loaded into the process memory space. If the provider is missing or fails integrity verification, initialization aborts with `TSRequiredError`.
 - **Non-Exportable Hardware Key Storage:** Leverages Windows Cryptography Next Generation (CNG) `Microsoft Platform Crypto Provider` and PKCS#11 HSM middleware. Private signing keys are bound to physical TPM 2.0 silicon; keys are physically incapable of being exported or read into general-purpose RAM.
 - **Physical RED/BLACK Network Separation:** Validates physical network adapter assignments via `psutil`. Binds strictly to accredited RED (plaintext processing) or BLACK (ciphertext transport) interfaces. Binds to wildcard addresses (`0.0.0.0`, `::`) are explicitly rejected.
-- **TEMPEST & SCIF Facility Registry:** Evaluates host facility environmental records against NATO SDIP-27/3 (Level A equipment), SDIP-28/3 (Zone 0/1 facilities), and SDIP-29 separation distances.
+- **TEMPEST & SCIF Facility Registry (host-state probe ONLY):** Checks host facility records against NATO SDIP-27/28/29 labels. Software cannot certify RF emanations, shielding effectiveness, or separation distances — those require accredited lab/facility evaluation.
 - **Active Multi-Trigger Zeroization Mesh:** Real-time tamper engine listening to debugger attachment (`CheckRemoteDebuggerPresent`), TPM PCR register deviation, heartbeat timeout, and authenticated ML-DSA-87 signed duress messages. Implements volatile in-memory zeroization via OS-level memory locking (`VirtualLock`/`mlock`) and compiler memory fences (`compiler_fence(SeqCst)`) across all registered buffers.
 
 ### Pillar 2: Operating System & Execution Runtime Layer
@@ -172,25 +196,26 @@ The security architecture is formally specified against a multidimensional threa
 - **Platform Verification:** Enforces execution on an attested **seL4 microkernel** (providing mathematical proofs of functional correctness and spatial/temporal isolation) OR an Authorizing Official (AO) signed cryptographic waiver paired with live-verified Virtualization-Based Security (VBS), Hypervisor-Protected Code Integrity (HVCI), and UEFI Secure Boot.
 - **Deterministic Native Core (`ts_rt`):** Zero-dependency Rust `cdylib` providing OS-locked memory pages (`VirtualLock`/`mlock`), volatile memory zeroization with memory barriers (`core::sync::atomic::compiler_fence(SeqCst)`), branchless 64-bit anti-replay bitmap, and constant-time memory comparisons (`tsrt_ct_equal`).
 - **Anti-DMA Bus Protection:** Scans PCI/PCIe device enumeration tables for exposed external DMA buses (Thunderbolt, USB4, IEEE 1394, PCMCIA). Halts execution if Kernel DMA Protection / IOMMU isolation is not actively enforced.
-- **Platform Attestation (IETF RATS RFC 9334):** Generates TPM-signed evidence envelopes containing measured boot PCR values [0..7], verifying system software integrity before session establishment.
+- **Platform Attestation (IETF RATS RFC 9334, enrollment-bound):** Generates TPM-signed evidence envelopes containing measured posture. The verifier MUST bind `kid` to an enrolled trust anchor (`trusted_keys`) — a valid signature under a self-supplied key alone proves nothing about device identity (see `ts_attest.py`). Full TPM-quote/PCR-whitelist appraisal remains an operator-verifier duty.
 
 ### Pillar 3: Cryptography & Protocol Architecture Layer
 - **Source Modules:** [`noise_pq.py`](noise_pq.py), [`cnsa_purity.py`](cnsa_purity.py), [`crypto_selftest.py`](crypto_selftest.py), [`rust_data_plane/src/kem.rs`](rust_data_plane/src/kem.rs)
-- **Handshake Protocol:** Implements `Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384` delivering mutual authentication, forward secrecy, and identity hiding:
+- **Handshake Protocol (Python, UNPROVEN custom profile):** Implements `Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384` (unofficial hfs draft + custom ML-DSA sig substitution replacing es/se, verify-before-derive, fixed lengths). NOT Signal/Noise/MLS compatible, no reduction to PQNoise, M2 ~5.35x amplification — never expose over unauthenticated UDP without cookie/return-routability gate; runs over TCP/TLS outer envelope here:
   $$\text{SharedSecret} = \text{HKDF-SHA384}(\text{ECDH}(P_{384}) \parallel \text{ML-KEM-1024-Decaps}(ct), \text{Transcript})$$
+  Rust data-plane KEM (`rust_data_plane/src/kem.rs`) is SEPARATE: X25519 + ML-KEM-1024 hybrid, both halves required.
 - **CNSA Suite 2.0 Purity Policy:** Strict tokenizer rejects non-compliant algorithms (Falcon, McEliece, Kyber, Dilithium, ChaCha20, RSA, DSA). Permits only FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, AES-256-GCM, SHA-384/512, and HKDF-SHA384.
 - **FIPS 140-3 Known Answer Tests (KAT):** Executes cryptographic self-tests at startup, comparing OpenSSL against PyCryptodome and RFC 7748 test vectors for AES-256-GCM, HKDF, SHA-384, P-384, and ML-KEM/ML-DSA Pairwise Consistency Tests (PCT).
 
 ### Pillar 4: Network Transport & Anonymity Layer
 - **Source Modules:** [`transport_anonymity.py`](transport_anonymity.py), [`spo_dpo.py`](spo_dpo.py), [`rust_data_plane/src/net.rs`](rust_data_plane/src/net.rs)
 - **Transport Architecture:** Direct UDP/IPv6 datagrams with 1232-byte constant-size cells (fitting the 1280-byte IPv6 minimum MTU without fragmentation) or Tor v3 onion routing over SOCKS5 TCP proxies.
-- **Constant-Rate / Constant-Size Traffic Shaping:** Emits exactly one 1232-byte frame every 50.0 ms (20 packets/sec). When real payload data is absent, cryptographically indistinguishable chaff cells (`0xFF` type tag) are emitted.
-- **Stream Whitening:** Every wire cell is masked with an AES-256-CTR keystream initialized from ephemeral session secrets, ensuring all packets appear as uniform pseudo-random noise with no cleartext magic headers.
+- **Constant-Rate / Constant-Size Traffic Shaping (bounded):** Emits exactly one 1232-byte frame every 50.0 ms (20 packets/sec) on the shaping path. When idle, chaff cells are emitted. Python chaff/data cells are indistinguishable (header inside AES-GCM); Rust `0xFF` chaff vs `0x01` data `ftype` is observable as AAD — count hiding requires constant-rate `channel` cover. No CTR whitening claimed.
+- **No stream whitening claimed:** no AES-CTR masking layer; confidentiality is AES-256-GCM + quanta padding.
 - **Cryptographic Dual-Person Authorization (DPA):** High-consequence command execution requires Dual-Person Operation. Two distinct cryptographic approvals signed with independent ML-DSA-87 tokens must be co-signed and validated before transmission.
 
 ### Pillar 5: Trust Infrastructure & Key Management Layer
 - **Source Modules:** [`trust_anchor.py`](trust_anchor.py), [`scripts/witnessed_key_ceremony.py`](scripts/witnessed_key_ceremony.py)
-- **Offline 3-of-5 Threshold ML-DSA-87 Root CA:** Trust anchors are governed by an offline threshold Root CA. Root certificates and policy updates require at least 3 valid ML-DSA-87 signatures from 5 designated hardware key custodians.
+- **3-of-5 Threshold ML-DSA-87 Root CA (multi-signature, NOT Shamir; offline by policy):** Trust anchors are governed by 5 independent ML-DSA-87 custodian keys; certificates/updates require >=3 distinct sigs (RFC 9881 pure profile). "Offline" is a ceremony policy enforced as quorum verification, not a software proof of air-gap.
 - **Threshold Revocation Broadcast:** Certificate Revocation Lists (CRLs) and emergency peer revocations are threshold-signed with monotonic sequence counters and distributed in-band inside uniform anonymity cells.
 - **Zero-Plaintext-Disk Profile:** In Top-Secret mode, private key material, decrypted payloads, and ephemeral ratchets are held strictly in locked RAM (`VirtualLock`) or hardware tokens. Writing plaintext secrets to non-volatile disk triggers an immediate security halt.
 
@@ -239,23 +264,23 @@ The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the d
 
 ---
 
-## 5. Machine-Checked Formal Verification
+## 5. Machine-Checked Formal Analysis (Scope-Limited, Not a System Proof)
 
-Cryptographic protocols in ST2027 are mathematically proven using automated formal verification tools.
+Symbolic models check the MODEL, not the running system. `handshake_model.pv` is a skeleton (intended properties NOT yet proven, NOT CI-enforced). The deployed `st2027_handshake.pv` / `st2027_pcs.pv` results below hold inside the symbolic model with documented abstractions (crypto assumed perfect, AES-GCM nonce discipline outside the symbolic proof) — they are not a proof of the implementation. Kani harnesses are DEFINED, none EXECUTED here/CI (no Kani/CBMC toolchain); only deterministic property doubles run under `cargo test`.
 
 ```
 +---------------------------------------------------------------------------------------------------------+
-|                                    FORMAL VERIFICATION EVIDENCE SUMMARY                                 |
+|                              FORMAL ANALYSIS EVIDENCE SUMMARY (MODEL-SCOPED)                            |
 +---------------------------------------------------------------------------------------------------------+
-| ProVerif 2.05 Applied Pi-Calculus Proofs (XXhfs handshake + PCS epochs):                                    |
+| ProVerif 2.05 Applied Pi-Calculus Analyses (XXhfs handshake + PCS epochs, model scope only):              |
 |   ├── docs/formal/st2027_handshake.pv                                                                   |
-|   │   ├── Query not attacker(secret_payload)                      ==> PROVEN TRUE (Secrecy)             |
-|   │   ├── Query inj-event(S_Accepts) ==> inj-event(C_Accepts)       ==> PROVEN TRUE (Mutual Auth)        |
-|   │   ├── Query event(C_VerifiedM2) ==> event(S_SentM2)             ==> PROVEN TRUE (M2 authenticity)    |
-|   │   ├── Query inj-event(R_Receives) ==> inj-event(C_Sends)        ==> PROVEN TRUE (No forgery/replay)  |
-|   │   └── Query not attacker(initiator static key)                 ==> PROVEN TRUE (M1 identity privacy)|
+|   │   ├── Query not attacker(secret_payload)                      ==> HOLDS IN MODEL (Secrecy)           |
+|   │   ├── Query inj-event(S_Accepts) ==> inj-event(C_Accepts)       ==> HOLDS IN MODEL (Mutual Auth)      |
+|   │   ├── Query event(C_VerifiedM2) ==> event(S_SentM2)             ==> HOLDS IN MODEL (M2 authenticity)  |
+|   │   ├── Query inj-event(R_Receives) ==> inj-event(C_Sends)        ==> HOLDS IN MODEL (No forgery/replay)|
+|   │   └── Query not attacker(initiator static key)                 ==> HOLDS IN MODEL (M1 identity privacy)|
 |   └── docs/formal/st2027_pcs.pv                                                                         |
-|       └── Query not attacker(epoch-2 payload) under Epoch-1 total compromise ==> PROVEN TRUE (PCS heal) |
+|       └── Query not attacker(epoch-2 payload) under Epoch-1 total compromise ==> HOLDS IN MODEL (PCS heal) |
 +---------------------------------------------------------------------------------------------------------+
 | Kani Rust Bounded Model Checking: DEFINED harnesses + EXECUTED doubles (audited 2026-09-29):                         |
 |   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (needs `cargo kani` + CBMC)      |
@@ -265,7 +290,8 @@ Cryptographic protocols in ST2027 are mathematically proven using automated form
 |   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. DEFINED (needs `cargo kani` + CBMC)      |
 |   ├── 7 property doubles green under `cargo test` (same properties, deterministic sweeps) .. EXECUTED GREEN    |
 |   └── NOTE: no Kani proof has been EXECUTED in this environment or CI (no Kani/CBMC toolchain installed).      |
-|       "PROVEN" applies to the ProVerif symbolic models above, not to these harnesses.                         |
+|       "HOLDS IN MODEL" applies to the ProVerif symbolic models above, not to the implementation                 |
+|       and not to these harnesses. A model proof is not a system proof.                                          |
 +---------------------------------------------------------------------------------------------------------+
 ```
 
@@ -317,18 +343,18 @@ The ST2027 documentation suite is authored as an interconnected defense research
 ### 6.1 Research Track 1: System Foundations, Architectural Specifications & Comparative Analyses
 1. **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md):** Foundational system thesis, threat models (Dolev-Yao, Global Passive SIGINT, Quantum Adversary, Physical Probes), architectural trust boundaries, and strict isolation between 2027 production target and legacy prototypes.
 2. **[`docs/SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md`](docs/SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md):** Master engineering specification for sovereign military transport; defines 50ms wire cell pacing, zero return-wire simplex optical diode protocols, and fail-closed state machines.
-3. **[`docs/COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md`](docs/COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md):** Exhaustive white paper providing quantitative 50X security superiority proofs against Signal, WhatsApp, Telegram, and commercial Cross-Domain Solutions (CDS).
-4. **[`docs/ST2027_SPEC.md`](docs/ST2027_SPEC.md):** Technical specification of the 1232-byte wire frame, AES-256-CTR keystream stream whitening, constant-rate drift-compensated pacing clock, and Shannon entropy enforcement ($H > 7.95$ bits/byte).
+3. **[`docs/COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md`](docs/COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md):** Internal comparison essay with a self-authored 50X benchmark drill (`verify_50x_sovereign_superiority.py`) — NOT an independent proof or audit. No defined security metric; do not cite as superiority evidence. For real messaging today, use Signal (audited, analyzed PQXDH/SPQR).
+4. **[`docs/ST2027_SPEC.md`](docs/ST2027_SPEC.md):** Technical specification of the 1232-byte wire frame, constant-rate drift-compensated pacing clock, and Shannon entropy measurement ($H > 7.95$ bits/byte — a measurement, NOT an indistinguishability proof).
 5. **[`docs/ST2027_RESEARCH_SOURCES_2026-09-30.md`](docs/ST2027_RESEARCH_SOURCES_2026-09-30.md):** Comprehensive academic literature survey, RFCs, NIST FIPS papers, NATO STANAG specifications, and cryptanalytic citations.
 6. **[`docs/DEFENSE_HARDENING_MASTER_PLAN.md`](docs/DEFENSE_HARDENING_MASTER_PLAN.md):** Multi-phase defense hardening roadmap, security audit milestones, and system verification criteria.
-7. **[`docs/OPEN_INTERNET_HARDENING_PLAN.md`](docs/OPEN_INTERNET_HARDENING_PLAN.md):** Strategic blueprint for direct peer-to-peer sovereign communications across public IPv6 networks without intermediate relays, detailing cell quantization, stream whitening, and interface binding defense.
+7. **[`docs/OPEN_INTERNET_HARDENING_PLAN.md`](docs/OPEN_INTERNET_HARDENING_PLAN.md):** Strategic blueprint for direct peer-to-peer sovereign communications across public IPv6 networks without intermediate relays, detailing cell quantization, quanta padding, and interface binding defense.
 8. **[`docs/ST2027_IMPLEMENTATION_PLAN.md`](docs/ST2027_IMPLEMENTATION_PLAN.md):** Step-by-step engineering implementation plan detailing phases, component deliveries, and verification gates.
 9. **[`docs/RESTRUCTURE_PLAN.md`](docs/RESTRUCTURE_PLAN.md):** Production codebase restructuring, modularization roadmap, and legacy testbed isolation charter.
 
 ### 6.2 Research Track 2: Post-Quantum Cryptography & Machine-Checked Formal Verification
 1. **[`docs/formal/README.md`](docs/formal/README.md):** Formal verification index, mathematical foundations, and ProVerif execution instructions.
-2. **[`docs/formal/st2027_handshake.pv`](docs/formal/st2027_handshake.pv):** Applied Pi-Calculus model proving secrecy and mutual authentication for `Noise_XXhfs` (`inj-event(S_Accepts)` and `inj-event(R_Receives)` are true).
-3. **[`docs/formal/st2027_pcs.pv`](docs/formal/st2027_pcs.pv):** Applied Pi-Calculus model proving Post-Compromise Security (PCS) self-healing across ratchet epochs.
+2. **[`docs/formal/st2027_handshake.pv`](docs/formal/st2027_handshake.pv):** Applied Pi-Calculus symbolic model scoping secrecy and mutual authentication for `Noise_XXhfs` (model-scoped, with documented crypto/nonce abstractions — not an implementation proof).
+3. **[`docs/formal/st2027_pcs.pv`](docs/formal/st2027_pcs.pv):** Applied Pi-Calculus symbolic model scoping Post-Compromise Security (PCS) self-healing across ratchet epochs (model-scoped).
 4. **[`docs/formal/handshake_model.pv`](docs/formal/handshake_model.pv):** Baseline handshake structural verification model.
 5. **[`rust_data_plane/tests/kani_harness.rs`](rust_data_plane/tests/kani_harness.rs):** 5 `#[kani::proof]` harnesses (`kani_frame_split_reassemble_roundtrip`, `kani_nonce_domain_separation`, `kani_replay_window_monotonic`, `kani_max_stream_bytes_cap`, `kani_nostd_frame_parse_never_panics` — defined; execution requires the Kani + CBMC toolchain) plus 7 deterministic property doubles green under `cargo test` (`frame_split_reassemble_roundtrip_bounded`, `nonce_domain_separation`, `replay_window_monotonic_and_drops`, `ct_eq_and_select_no_secret_branch`, `max_stream_bytes_cap_enforced`, `nostd_frame_parse_never_panics_property_sweep`, `nostd_stack_secret_ct_eq_property_sweep`); the 29-test harness binary additionally re-runs re-exported module unit tests.
 

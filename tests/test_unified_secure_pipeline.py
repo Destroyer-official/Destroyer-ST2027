@@ -380,6 +380,26 @@ class TestFullPipelineSealOpen(unittest.TestCase):
         pipe_init.teardown()
         pipe_resp.teardown()
 
+    def test_stealth_zero_cleartext_framing(self):
+        """Verify that stealth mode completely eliminates cleartext magic bytes on the wire."""
+        pipeline_a = UnifiedSecurePipeline()
+        pipeline_b = UnifiedSecurePipeline()
+        ratchet_a, ratchet_b = self._make_mock_ratchet()
+
+        plaintext = b"STRATEGIC DIRECTIVE: ZERO DPI LEAKAGE VERIFICATION"
+        sealed = pipeline_a.seal(plaintext, ratchet_a, msg_type=PIPELINE_TYPE_NC3, stealth=True)
+
+        # Wire bytes must NOT contain PIPELINE_MAGIC ("ZG") or PIPELINE_VERSION ("ZGDP-V1")
+        self.assertNotEqual(sealed[:2], PIPELINE_MAGIC)
+        self.assertNotIn(PIPELINE_VERSION, sealed)
+        self.assertNotIn(b"ZGDP", sealed)
+        self.assertNotIn(plaintext, sealed)
+
+        # Receiver must seamlessly decrypt and recover both msg_type and plaintext
+        msg_type, recovered = pipeline_b.open(sealed, ratchet_b)
+        self.assertEqual(msg_type, PIPELINE_TYPE_NC3)
+        self.assertEqual(plaintext, recovered)
+
 
 if __name__ == "__main__":
     unittest.main()

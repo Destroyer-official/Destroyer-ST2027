@@ -1,7 +1,7 @@
 # liboqs pin (oqs.dll) — version, hashes, update procedure
 
 Additive pin record. CI-safe: `adversarial-gates` checks the floor
-(≥ 0.10.1) and SKIPs the native assert when the binary is absent from
+(≥ 0.16.0) and SKIPs the native assert when the binary is absent from
 the runner (e.g. Windows `oqs.dll` on `ubuntu-latest`).
 
 ## Current pin
@@ -9,19 +9,22 @@ the runner (e.g. Windows `oqs.dll` on `ubuntu-latest`).
 | Field | Value |
 |---|---|
 | Vendored binary | `oqs.dll` (repo root, Windows; `liboqs_wrapper.py` falls back to `liboqs.so` on Linux) |
-| Embedded version string in binary | `0.14.1-dev` (printable string adjacent to `system`/`OpenSSL` alg table; `OQS_version` export present) |
-| SBOM-declared version | `0.10.1` (`generate_production_sbom.py:259`, `supply_chain_security.py:1112`, `compliance_reports/{spdx,cyclonedx}_sbom.json`) |
-| Verifier floor (`dependency_security_verifier.py` `oqs.dll.min_version`) | `0.10.1` |
+| Embedded version string in binary | `0.14.1-dev` (printable string adjacent to `system`/`OpenSSL` alg table; `OQS_version` export present) — BELOW FLOOR, fail-closed until rebuilt |
+| SBOM-declared version | `0.16.0` target (`generate_production_sbom.py:259`, `supply_chain_security.py:1112`, `compliance_reports/{spdx,cyclonedx}_sbom.json`) |
+| Verifier floor (`dependency_security_verifier.py` `oqs.dll.min_version`) | `0.16.0` (only 0.16.0 supported upstream; <0.16 unsupported) |
 | Verifier upgrade target | `0.16.0` |
-| Blocked algorithms until rebuild | `HQC-128`, `HQC-192`, `HQC-256`, `XMSS-SHA2_10_256` (see verifier `blocked_algorithms` + `triple_hybrid_kem.py` allowlist) |
+| Blocked algorithms until rebuild | `HQC-128`, `HQC-192`, `HQC-256`, `XMSS-SHA2_10_256`, `XMSS-SHA2_16_256`, `XMSSMT-*` (see verifier `blocked_algorithms` + `triple_hybrid_kem.py` allowlist) |
 | Allowed / exercised paths | `Classic-McEliece-8192128f`, `ML-KEM-1024`, `ML-DSA-87` (+ `SLH_DSA_PURE_SHAKE_256f`, Falcon-1024 via wrapper) |
 
-> Note (observed 2026-09-18): the vendored `oqs.dll` embeds
-> `0.14.1-dev` while the SBOM/verifier declare `0.10.1` as the floor.
-> Treat `0.10.1` as the **minimum supported**, not the exact binary
-> identity; the CI pin check asserts `>= 0.10.1` via `OQS_version()` when
-> the native lib is present, else via the SBOM/verifier floor. Rebuild at
-> `0.16.0` to close the gap (see Update procedure).
+> Note (hardened 2026-10-10): the vendored `oqs.dll` embeds
+> `0.14.1-dev` which is BELOW the `0.16.0` floor (upstream supports only
+> 0.16.0; CVE-2024-54137/CVE-2025-52473 HQC + CVE-2026-44518/CVE-2026-46344
+> XMSS fixed in 0.16.0). Treat `0.16.0` as the **minimum supported**;
+> the CI pin check asserts `>= 0.16.0` via `OQS_version()` when
+> the native lib is present, else via the SBOM/verifier floor. The
+> vendored binary MUST be rebuilt at `0.16.0` from an official release
+> (never a -dev snapshot); until then HQC/XMSS stay refused and
+> production loads fail closed on version check (see Update procedure).
 
 ## Hashes (measured 2026-09-18, `oqs.dll`, 3030016 bytes)
 
@@ -81,9 +84,10 @@ randomized-integrity-check fixes; advisory until vendored):
 - <https://eprint.iacr.org/2025/2009> — RIC/masking backport tracking (2025/2009).
 - <https://eprint.iacr.org/2026/924> — RIC/masking backport tracking (2026/924).
 
-Status: **not yet vendored** — `oqs.dll` remains on the `0.10.1` floor /
-`0.14.1-dev` binary with HQC/XMSS disabled. Flip to enforced only after
-the `0.16.0` rebuild + re-verification above. See also
+Status: **FAIL-CLOSED below floor** — `oqs.dll` remains a `0.14.1-dev`
+binary below the `0.16.0` floor with HQC/XMSS disabled and version-gated.
+Rebuild at official `0.16.0` + re-verification above is REQUIRED before
+production trust. See also
 `dependency_security_verifier.py` header comment and
 `generate_production_sbom.py verify_sbom_offline TODO(rekor)` for the
 Cosign/Rekor anchoring plan.

@@ -103,13 +103,17 @@ class DependencySecurityVerifier:
             "oqs.dll": {
                 "verification_level": VerificationLevel.CRITICAL,
                 "expected_algorithms": ["Classic-McEliece-8192128f", "ML-KEM-1024", "ML-DSA-87"],
-                # Vendored binary is 0.10.1 (see generate_production_sbom.py). Upstream
-                # 0.12.0/0.14.0/0.16.0 fix HQC (CVE-2024-54137, CVE-2025-52473) and XMSS
-                # (CVE-2026-44518/CVE-2026-46344). Until the DLL is rebuilt at 0.16.0,
-                # the HQC/XMSS codepaths must stay disabled (see triple_hybrid_kem.py
-                # allowlist); ML-KEM/ML-DSA paths used here are unaffected.
-                "min_version": "0.10.1",
-                "blocked_algorithms": ["HQC-128", "HQC-192", "HQC-256", "XMSS-SHA2_10_256"],
+                # FLOOR 0.16.0 (2026-10 hardening): liboqs only supports 0.16.0
+                # (all <0.16 unsupported per upstream SECURITY.md). 0.12.0/
+                # 0.14.0 fix HQC key-recovery (CVE-2024-54137, CVE-2025-52473;
+                # HQC disabled by default since 0.13.0) and 0.16.0 fixes XMSS
+                # OOB reads (CVE-2026-44518, CVE-2026-46344). Vendored dev
+                # snapshots below 0.16.0 MUST fail closed; HQC/XMSS stay
+                # refused (see liboqs_wrapper.LibOQS_HQC_256 + triple_hybrid
+                # allowlist). Rebuild from official 0.16.0+ release, never
+                # commit binaries long-term; pin from external trust root.
+                "min_version": "0.16.0",
+                "blocked_algorithms": ["HQC-128", "HQC-192", "HQC-256", "XMSS-SHA2_10_256", "XMSS-SHA2_16_256", "XMSSMT-SHA2_20_2_256", "XMSSMT-SHA2_40_2_256"],
                 "upgrade_target": "0.16.0"
             },
             "cryptography": {
