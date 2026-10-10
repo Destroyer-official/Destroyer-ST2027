@@ -208,7 +208,10 @@ mod tests {
         assert_eq!(rx.drops, 1);
         // Scanner listens for any reply: must hear nothing.
         let reply = tx.recv_raw(Duration::from_millis(300)).await;
-        assert!(reply.is_none(), "listener replied to garbage — stealth violated");
+        assert!(
+            reply.is_none(),
+            "listener replied to garbage — stealth violated"
+        );
     }
 
     #[tokio::test]
@@ -294,9 +297,14 @@ mod tests {
         let key = FrameKey::from_bytes([11u8; 32]);
         let mut window = AntiReplayWindow::with_offset(8999);
         for (send_seq, i) in (9000_u64..).zip(0..50u64) {
-            let frame =
-                aead::seal(&key, send_seq, DIR_SEND, FTYPE_MSG, format!("pkt-{i}").as_bytes())
-                    .unwrap();
+            let frame = aead::seal(
+                &key,
+                send_seq,
+                DIR_SEND,
+                FTYPE_MSG,
+                format!("pkt-{i}").as_bytes(),
+            )
+            .unwrap();
             assert!(frame.len() <= 1280, "frame exceeds IPv6 MTU budget");
             tx.send_raw(&frame, rx_addr).await.unwrap();
             let (bytes, _) = rx
@@ -308,7 +316,10 @@ mod tests {
             let seq = aead::peek_seq(&key, &bytes).expect("valid seq unmask");
             assert!(window.check_and_update(seq), "fresh seq rejected");
             let (t, pt) = aead::open(&key, DIR_SEND, &bytes).unwrap();
-            assert_eq!((t, &pt[..]), (FTYPE_MSG, format!("pkt-{i}").into_bytes().as_slice()));
+            assert_eq!(
+                (t, &pt[..]),
+                (FTYPE_MSG, format!("pkt-{i}").into_bytes().as_slice())
+            );
             // Immediate replay of the same datagram must die at the window.
             assert!(!window.check_and_update(seq), "replay accepted");
         }
@@ -349,7 +360,10 @@ mod tests {
         }
         assert!(rx.buckets.len() > MAX_BUCKETS);
         rx.evict_stale_buckets();
-        assert!(rx.buckets.len() <= MAX_BUCKETS, "bucket table over cap after eviction");
+        assert!(
+            rx.buckets.len() <= MAX_BUCKETS,
+            "bucket table over cap after eviction"
+        );
     }
 
     #[tokio::test]
@@ -363,7 +377,8 @@ mod tests {
         let peer = Endpoint::bind("127.0.0.1:0").await.unwrap();
         let mut scanner = Endpoint::bind("127.0.0.1:0").await.unwrap();
         let rx_addr = rx.local_addr().unwrap();
-        let key = FrameKey::from_bytes([13u8; 32]);        let mut window = AntiReplayWindow::new();
+        let key = FrameKey::from_bytes([13u8; 32]);
+        let mut window = AntiReplayWindow::new();
         let mut seq: u64 = 1;
         let mut legit_ok = 0u32;
         for i in 0..200u32 {
@@ -435,7 +450,10 @@ mod tests {
         assert!(rx.drops > 0, "scanner garbage must register drops");
         // Scanner must have heard NOTHING back the entire battle.
         let silence = scanner.recv_raw(Duration::from_millis(400)).await;
-        assert!(silence.is_none(), "we replied to the scanner — stealth dead");
+        assert!(
+            silence.is_none(),
+            "we replied to the scanner — stealth dead"
+        );
     }
 
     #[tokio::test]
@@ -459,6 +477,9 @@ mod tests {
                 _ => break,
             }
         }
-        assert_eq!(received, 100, "unthrottled receiver must not drop high-rate burst packets");
+        assert_eq!(
+            received, 100,
+            "unthrottled receiver must not drop high-rate burst packets"
+        );
     }
 }

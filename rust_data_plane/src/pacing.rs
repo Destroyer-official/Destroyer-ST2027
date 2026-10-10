@@ -173,8 +173,7 @@ mod tests {
                 .expect("build data frame failed");
             assert_eq!(frame.len(), quantum);
 
-            let (seq, ftype, pt) =
-                aead::open_indexed(&key, DIR_RECV, &frame).expect("open failed");
+            let (seq, ftype, pt) = aead::open_indexed(&key, DIR_RECV, &frame).expect("open failed");
             assert_eq!(seq, 555);
             assert_eq!(ftype, FTYPE_MSG);
             assert_eq!(pt, secret_msg);

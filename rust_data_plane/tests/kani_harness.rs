@@ -78,7 +78,10 @@ mod kani_proofs {
         } else {
             (len + frame::CHUNK_MAX - 1) / frame::CHUNK_MAX
         };
-        kani::assert(chunks.len() == expected, "chunk count is ceil(len/CHUNK_MAX)");
+        kani::assert(
+            chunks.len() == expected,
+            "chunk count is ceil(len/CHUNK_MAX)",
+        );
         // Reassembly (sequence-order concatenation) is the identity.
         let mut joined = Vec::new();
         for c in &chunks {
@@ -92,16 +95,16 @@ mod kani_proofs {
     #[kani::proof]
     fn kani_nonce_domain_separation() {
         let seq: u64 = kani::any();
-        kani::assert(
-            aead::DIR_SEND != aead::DIR_RECV,
-            "DIR_SEND != DIR_RECV",
-        );
+        kani::assert(aead::DIR_SEND != aead::DIR_RECV, "DIR_SEND != DIR_RECV");
         let n_send = aead::make_nonce(seq, aead::DIR_SEND);
         let n_recv = aead::make_nonce(seq, aead::DIR_RECV);
         kani::assert(n_send != n_recv, "direction bit separates nonce domains");
         // Layout pins (mirrors src/aead.rs::make_nonce).
         let be = seq.to_be_bytes();
-        kani::assert(&n_send.as_slice()[..8] == &be[..], "seq occupies nonce[0..8]");
+        kani::assert(
+            &n_send.as_slice()[..8] == &be[..],
+            "seq occupies nonce[0..8]",
+        );
         kani::assert(n_send.as_slice()[8] == aead::DIR_SEND, "dir at nonce[8]");
         kani::assert(
             n_send.as_slice()[9..] == [0u8, 0u8, 0u8],
@@ -122,10 +125,7 @@ mod kani_proofs {
         let drops_before = w.drop_count();
         kani::assert(w.check_and_update(base + step), "forward seq accepts");
         // Immediate duplicate MUST drop.
-        kani::assert(
-            !w.check_and_update(base + step),
-            "duplicate seq drops",
-        );
+        kani::assert(!w.check_and_update(base + step), "duplicate seq drops");
         kani::assert(
             w.drop_count() == drops_before.wrapping_add(1),
             "drop counter increments monotonically",
@@ -198,8 +198,7 @@ mod property_doubles {
     fn frame_split_reassemble_roundtrip_bounded() {
         // Edge lens: empty, 1B, quanta boundaries, CHUNK_MAX +/- 1, >1232.
         for len in [
-            0usize, 1, 27, 229, 256, 485, 512, 1204, 1205, 1206, 1232, 1233, 2410, 3615,
-            5000,
+            0usize, 1, 27, 229, 256, 485, 512, 1204, 1205, 1206, 1232, 1233, 2410, 3615, 5000,
         ] {
             let payload = vec![0xA5u8; len];
             let chunks = frame::split_payload(&payload);
@@ -323,7 +322,8 @@ mod property_doubles {
     }
 
     #[test]
-    fn max_stream_bytes_cap_enforced() {        assert_eq!(MAX_STREAM_BYTES, 16 * 1024 * 1024, "cap pinned to 16 MiB");
+    fn max_stream_bytes_cap_enforced() {
+        assert_eq!(MAX_STREAM_BYTES, 16 * 1024 * 1024, "cap pinned to 16 MiB");
         assert!(super::stream_len_ok(0));
         assert!(super::stream_len_ok(MAX_STREAM_BYTES));
         assert!(!super::stream_len_ok(MAX_STREAM_BYTES + 1));
@@ -369,7 +369,8 @@ mod property_doubles {
             }
             let sec_a = super::nostd_microcore::StackSecretBuffer::<32>::from_slice(&a).unwrap();
             let sec_b = super::nostd_microcore::StackSecretBuffer::<32>::from_slice(&b).unwrap();
-            let sec_a_clone = super::nostd_microcore::StackSecretBuffer::<32>::from_slice(&a).unwrap();
+            let sec_a_clone =
+                super::nostd_microcore::StackSecretBuffer::<32>::from_slice(&a).unwrap();
 
             assert!(sec_a.ct_eq(&sec_a_clone));
             assert_eq!(sec_a.ct_eq(&sec_b), a == b);

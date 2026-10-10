@@ -54,10 +54,7 @@ pub fn purge_file<P: AsRef<Path>>(path: P) -> Result<(), PurgeError> {
         let _ = std::fs::set_permissions(p, perms);
     }
 
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(p)?;
+    let mut file = OpenOptions::new().read(true).write(true).open(p)?;
 
     file.lock_exclusive()?;
 

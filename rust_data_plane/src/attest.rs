@@ -42,7 +42,9 @@ pub struct TrustAnchorStore {
 impl TrustAnchorStore {
     /// Empty store (refuses everything until enrolled).
     pub fn new() -> Self {
-        Self { devices: HashMap::new() }
+        Self {
+            devices: HashMap::new(),
+        }
     }
 
     /// Enroll (or re-enroll) a device pin. `kid` is normalized to
@@ -148,7 +150,10 @@ fn normalize_kid(kid: &str) -> Result<String, CoreError> {
     if kid.is_empty() || kid.len() > 64 {
         return Err(CoreError::Malformed);
     }
-    let norm: String = kid.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect();
+    let norm: String = kid
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
     if norm.is_empty() || norm.len() > 64 {
         return Err(CoreError::Malformed);
     }
@@ -156,7 +161,10 @@ fn normalize_kid(kid: &str) -> Result<String, CoreError> {
 }
 
 fn now_secs() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -210,7 +218,10 @@ mod tests {
             ts: now_secs(),
             now: None,
         };
-        assert_eq!(appraise(&store, &ev, &vk, domain).unwrap_err(), CoreError::KeyMismatch);
+        assert_eq!(
+            appraise(&store, &ev, &vk, domain).unwrap_err(),
+            CoreError::KeyMismatch
+        );
         // Unknown kid: no TOFU path exists here.
         let sig = sk.sign(domain, msg);
         let ev2 = Evidence {
@@ -223,7 +234,10 @@ mod tests {
             ts: now_secs(),
             now: None,
         };
-        assert_eq!(appraise(&store, &ev2, &vk, domain).unwrap_err(), CoreError::UnknownIdentity);
+        assert_eq!(
+            appraise(&store, &ev2, &vk, domain).unwrap_err(),
+            CoreError::UnknownIdentity
+        );
         // Stale + nonce-mismatch fail closed.
         let ev3 = Evidence {
             kid: "DEV-01",
@@ -235,7 +249,10 @@ mod tests {
             ts: now_secs() - 3600.0,
             now: None,
         };
-        assert_eq!(appraise(&store, &ev3, &vk, domain).unwrap_err(), CoreError::Stale);
+        assert_eq!(
+            appraise(&store, &ev3, &vk, domain).unwrap_err(),
+            CoreError::Stale
+        );
         let other = [0x99u8; 32];
         let ev4 = Evidence {
             kid: "DEV-01",
@@ -247,6 +264,9 @@ mod tests {
             ts: now_secs(),
             now: None,
         };
-        assert_eq!(appraise(&store, &ev4, &vk, domain).unwrap_err(), CoreError::NonceMismatch);
+        assert_eq!(
+            appraise(&store, &ev4, &vk, domain).unwrap_err(),
+            CoreError::NonceMismatch
+        );
     }
 }

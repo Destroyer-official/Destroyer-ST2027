@@ -18,7 +18,9 @@ use ml_dsa::{
 };
 
 use crate::ct::ct_eq;
-use crate::policy::{CoreError, DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
+use crate::policy::{
+    CoreError, DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG,
+};
 
 /// ML-DSA-87 signing key. The inner `SigningKey` wipes itself on drop
 /// (upstream `Drop` impl); this wrapper never exposes it.
@@ -84,7 +86,9 @@ impl Mldsa87VerifyingKey {
         let mut m = Vec::with_capacity(domain.len() + message.len());
         m.extend_from_slice(domain);
         m.extend_from_slice(message);
-        self.inner.verify(&m, &sig).map_err(|_| CoreError::BadSignature)
+        self.inner
+            .verify(&m, &sig)
+            .map_err(|_| CoreError::BadSignature)
     }
 
     /// Constant-time enrollment-pin equality (for trust-anchor stores).
@@ -148,7 +152,10 @@ mod tests {
     fn malformed_inputs_fail_closed() {
         let (_, vk) = Mldsa87SigningKey::generate().expect("keygen");
         let t = [0u8; 48];
-        assert_eq!(vk.verify(DOMAIN_SIG_RESPONDER, &t, &[0u8; 10]).unwrap_err(), CoreError::Malformed);
+        assert_eq!(
+            vk.verify(DOMAIN_SIG_RESPONDER, &t, &[0u8; 10]).unwrap_err(),
+            CoreError::Malformed
+        );
         assert!(Mldsa87VerifyingKey::from_bytes(&[0u8; 100]).is_err());
         // Pin encode round-trips through enrollment parse.
         let raw = vk.to_bytes();

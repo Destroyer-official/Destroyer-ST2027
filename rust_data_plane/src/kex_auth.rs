@@ -30,7 +30,7 @@ use hkdf::Hkdf;
 use sha2::{Digest, Sha384};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
-use crate::auth::{Mldsa87VerifyingKey, verify_initiator, verify_responder};
+use crate::auth::{verify_initiator, verify_responder, Mldsa87VerifyingKey};
 use crate::kem::{EphemeralKeys, HYBRID_SS};
 use crate::policy::{
     CoreError, DOMAIN_KEX_SESSION, MLKEM1024_CT, MLKEM1024_PK, SAS_LEN, TRANSCRIPT_LEN, X25519_PK,
@@ -100,8 +100,13 @@ impl KexSession {
 }
 
 /// Transcript = SHA-384(responder_bundle || initiator_bundle).
-pub fn transcript(responder_bundle: &[u8], initiator_bundle: &[u8]) -> Result<[u8; TRANSCRIPT_LEN], CoreError> {
-    if responder_bundle.len() != RESPONDER_BUNDLE_LEN || initiator_bundle.len() != INITIATOR_BUNDLE_LEN {
+pub fn transcript(
+    responder_bundle: &[u8],
+    initiator_bundle: &[u8],
+) -> Result<[u8; TRANSCRIPT_LEN], CoreError> {
+    if responder_bundle.len() != RESPONDER_BUNDLE_LEN
+        || initiator_bundle.len() != INITIATOR_BUNDLE_LEN
+    {
         return Err(CoreError::Malformed);
     }
     let mut h = Sha384::new();
@@ -128,7 +133,11 @@ fn verify_sig_legs(
 }
 
 /// Derive session key bound to transcript (+PSK salt when present).
-fn derive(transcript: &[u8; TRANSCRIPT_LEN], hybrid_ss: &[u8; HYBRID_SS], psk: Option<&[u8; 32]>) -> ([u8; 32], [u8; SAS_LEN]) {
+fn derive(
+    transcript: &[u8; TRANSCRIPT_LEN],
+    hybrid_ss: &[u8; HYBRID_SS],
+    psk: Option<&[u8; 32]>,
+) -> ([u8; 32], [u8; SAS_LEN]) {
     let salt: &[u8] = match psk {
         Some(p) => &p[..],
         None => DOMAIN_KEX_SESSION,
@@ -138,7 +147,8 @@ fn derive(transcript: &[u8; TRANSCRIPT_LEN], hybrid_ss: &[u8; HYBRID_SS], psk: O
     info.extend_from_slice(DOMAIN_KEX_SESSION);
     info.extend_from_slice(transcript);
     let mut key = [0u8; 32];
-    hk.expand(&info, &mut key).expect("HKDF-SHA384 32B expand cannot fail");
+    hk.expand(&info, &mut key)
+        .expect("HKDF-SHA384 32B expand cannot fail");
     // SAS = SHA-384(key || transcript)[..16].
     let mut h = Sha384::new();
     h.update(key);
@@ -169,11 +179,22 @@ pub fn responder_complete(
     // Verify-before-derive: sig legs (if any) BEFORE decaps-derived use.
     let psk: Option<&[u8; 32]> = match auth {
         AuthMaterial::Psk(p) => Some(*p),
-        AuthMaterial::Signatures { responder_vk, responder_sig, initiator_vk, initiator_sig } => {
+        AuthMaterial::Signatures {
+            responder_vk,
+            responder_sig,
+            initiator_vk,
+            initiator_sig,
+        } => {
             verify_sig_legs(&t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
             None
         }
-        AuthMaterial::Both { psk, responder_vk, responder_sig, initiator_vk, initiator_sig } => {
+        AuthMaterial::Both {
+            psk,
+            responder_vk,
+            responder_sig,
+            initiator_vk,
+            initiator_sig,
+        } => {
             verify_sig_legs(&t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
             Some(*psk)
         }
@@ -184,7 +205,11 @@ pub fn responder_complete(
         .decapsulate(&eph, &initiator_bundle[32..])
         .map_err(|_| CoreError::Malformed)?;
     let (session_key, sas) = derive(&t, &hybrid, psk);
-    Ok(KexSession { session_key, transcript: t, sas })
+    Ok(KexSession {
+        session_key,
+        transcript: t,
+        sas,
+    })
 }
 
 /// Initiator phase 1: encapsulate to the responder bundle.
@@ -200,8 +225,8 @@ pub fn initiator_begin(
     }
     let mut x = [0u8; 32];
     x.copy_from_slice(&responder_bundle[..32]);
-    let (ml_ct, hybrid, eph_pub) =
-        EphemeralKeys::encapsulate(&x, &responder_bundle[32..]).map_err(|_| CoreError::Malformed)?;
+    let (ml_ct, hybrid, eph_pub) = EphemeralKeys::encapsulate(&x, &responder_bundle[32..])
+        .map_err(|_| CoreError::Malformed)?;
     let mut ib = Vec::with_capacity(INITIATOR_BUNDLE_LEN);
     ib.extend_from_slice(&eph_pub);
     ib.extend_from_slice(&ml_ct);
@@ -220,17 +245,32 @@ pub fn initiator_finish(
     let t = transcript(responder_bundle, initiator_bundle)?;
     let psk: Option<&[u8; 32]> = match auth {
         AuthMaterial::Psk(p) => Some(*p),
-        AuthMaterial::Signatures { responder_vk, responder_sig, initiator_vk, initiator_sig } => {
+        AuthMaterial::Signatures {
+            responder_vk,
+            responder_sig,
+            initiator_vk,
+            initiator_sig,
+        } => {
             verify_sig_legs(&t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
             None
         }
-        AuthMaterial::Both { psk, responder_vk, responder_sig, initiator_vk, initiator_sig } => {
+        AuthMaterial::Both {
+            psk,
+            responder_vk,
+            responder_sig,
+            initiator_vk,
+            initiator_sig,
+        } => {
             verify_sig_legs(&t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
             Some(*psk)
         }
     };
     let (session_key, sas) = derive(&t, hybrid, psk);
-    Ok(KexSession { session_key, transcript: t, sas })
+    Ok(KexSession {
+        session_key,
+        transcript: t,
+        sas,
+    })
 }
 
 #[cfg(test)]
@@ -280,15 +320,22 @@ mod tests {
         let sr = sk_r.sign(crate::policy::DOMAIN_SIG_RESPONDER, &t);
         let si = sk_i.sign(crate::policy::DOMAIN_SIG_INITIATOR, &t);
         let legs = AuthMaterial::Signatures {
-            responder_vk: &vk_r, responder_sig: &sr,
-            initiator_vk: &vk_i, initiator_sig: &si,
+            responder_vk: &vk_r,
+            responder_sig: &sr,
+            initiator_vk: &vk_i,
+            initiator_sig: &si,
         };
         // Full SIG-only sessions agree.
         let s_init = initiator_finish(&rb, &ib, &hybrid, &legs).unwrap();
         let s_resp = responder_complete(
             &resp_keys,
             &ib,
-            &AuthMaterial::Signatures { responder_vk: &vk_r, responder_sig: &sr, initiator_vk: &vk_i, initiator_sig: &si },
+            &AuthMaterial::Signatures {
+                responder_vk: &vk_r,
+                responder_sig: &sr,
+                initiator_vk: &vk_i,
+                initiator_sig: &si,
+            },
         )
         .unwrap();
         assert_eq!(s_init.session_key(), s_resp.session_key());
@@ -296,8 +343,15 @@ mod tests {
         let mut bad = sr.clone();
         bad[0] ^= 1;
         assert!(initiator_finish(
-            &rb, &ib, &hybrid,
-            &AuthMaterial::Signatures { responder_vk: &vk_r, responder_sig: &bad, initiator_vk: &vk_i, initiator_sig: &si },
+            &rb,
+            &ib,
+            &hybrid,
+            &AuthMaterial::Signatures {
+                responder_vk: &vk_r,
+                responder_sig: &bad,
+                initiator_vk: &vk_i,
+                initiator_sig: &si
+            },
         )
         .is_err());
         // Malformed bundles fail closed.

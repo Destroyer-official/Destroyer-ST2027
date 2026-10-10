@@ -108,11 +108,18 @@ impl fmt::Display for FecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FecError::DivisionByZero => write!(f, "FEC arithmetic error: division by zero"),
-            FecError::TooManyChunks => write!(f, "FEC parameter error: K + M exceeds 255 in GF(2^8)"),
-            FecError::InsufficientChunks { needed, got } => {
-                write!(f, "FEC decode error: needed {needed} chunks, but only received {got}")
+            FecError::TooManyChunks => {
+                write!(f, "FEC parameter error: K + M exceeds 255 in GF(2^8)")
             }
-            FecError::SingularMatrix => write!(f, "FEC matrix error: non-invertible matrix encountered"),
+            FecError::InsufficientChunks { needed, got } => {
+                write!(
+                    f,
+                    "FEC decode error: needed {needed} chunks, but only received {got}"
+                )
+            }
+            FecError::SingularMatrix => {
+                write!(f, "FEC matrix error: non-invertible matrix encountered")
+            }
             FecError::ChunkSizeMismatch => write!(f, "FEC chunk error: chunk size mismatch"),
             FecError::InvalidChunkIndex => write!(f, "FEC chunk error: chunk index out of range"),
         }
@@ -123,8 +130,8 @@ impl std::error::Error for FecError {}
 
 /// Systematic Cauchy-Reed-Solomon Encoder/Decoder.
 pub struct CauchyReedSolomon {
-    k: usize, // Data chunks
-    m: usize, // Parity chunks
+    k: usize,               // Data chunks
+    m: usize,               // Parity chunks
     cauchy_matrix: Vec<u8>, // M x K matrix in row-major order
 }
 
@@ -150,7 +157,11 @@ impl CauchyReedSolomon {
             }
         }
 
-        Ok(Self { k, m, cauchy_matrix })
+        Ok(Self {
+            k,
+            m,
+            cauchy_matrix,
+        })
     }
 
     pub fn k(&self) -> usize {

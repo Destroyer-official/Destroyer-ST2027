@@ -124,7 +124,7 @@ The security architecture is formally specified against a multidimensional threa
 
 2. **Global Passive & Traffic Analysis Adversary:**
    - *Threat:* Backbone interceptors and state-level ISPs monitoring packet arrival times, packet intervals, and byte counts to perform statistical flow correlation.
-   - *Defense (bounded, not absolute):* Constant-rate transmission clock (1 cell per 50.0 ms = 20 Hz); uniform cell quantization (1232 bytes total wire frame); automatic generation of cover/chaff cells during idle intervals on the Python anonymity path (header inside AES-GCM, [transport_anonymity.py](transport_anonymity.py)). Rust data-plane frames pad payload length to quanta but `seq|len|ftype` travel as AES-GCM AAD in clear — length is hidden to quantum granularity, `seq`/`ftype` are not; count hiding requires constant-rate `channel` cover. No AES-CTR whitening layer is claimed. A scheduler interval is not wire constancy under Tor/TLS buffering; GPA with full vantage is explicitly out of scope.
+   - *Defense (bounded, not absolute):* Constant-rate transmission clock (1 cell per 50.0 ms = 20 Hz); uniform cell quantization (1232 bytes total wire frame); automatic generation of cover/chaff cells during idle intervals on the Python anonymity path (header inside AES-GCM, [transport_anonymity.py](transport_anonymity.py)). Rust data-plane frames pad payload length to quanta AND mask `seq|len|ftype` on the wire via a tag-derived PRF (`SHA256("ST2027-HEADER-MASK-v1" || hp_key || tag)[..11]`, tag still authenticating the unmasked header as AAD — [rust_data_plane/src/aead.rs](rust_data_plane/src/aead.rs)); only the quantum size class stays observable, and message COUNT is hidden only under constant-rate `channel`/chaff cover. The handshake-transport path (`noise_pq.py` framing, mirrored in `session.rs` for Python interop) still carries its 8-byte sequence prefix in clear — bulk transit belongs on the whitened data-plane frames. A scheduler interval is not wire constancy under Tor/TLS buffering; GPA with full vantage is explicitly out of scope.
 
 3. **Cryptanalytic Quantum Adversary:**
    - *Threat:* Storage of encrypted network transmissions today for decryption by future Cryptanalytically Relevant Quantum Computers (CRQC).
@@ -153,8 +153,8 @@ The security architecture is formally specified against a multidimensional threa
 | [PILLAR 4] NETWORK TRANSPORT & ANONYMITY (transport_anonymity.py & spo_dpo.py)                         |
 |   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS resolution or Interface-Pinned Sovereign APN)    |
 |   ├── Constant-Rate (50ms tick) Constant-Size (1232B cell / 1280B IPv6 MTU) Traffic Shaping             |
-|   ├── Python anonymity cells: header inside AES-GCM (no CTR whitening claimed); Rust frames: quanta-  |
-|   │   padded, header as AAD in clear (seq/ftype observable — see Section 2 adversary bounds)            |
+|   ├── Python anonymity cells: header inside AES-GCM; Rust frames: quanta-      |
+|   │   padded + tag-derived header masking (only size class observable)          |
 |   └── Cryptographic Dual-Person Authorization Pre-Transmit Co-Signing (ML-DSA-87 Dual Signatures)       |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 3] CRYPTOGRAPHY & PROTOCOL ARCHITECTURE (noise_pq.py, cnsa_purity.py, crypto_selftest.py)      |
@@ -209,8 +209,8 @@ The security architecture is formally specified against a multidimensional threa
 ### Pillar 4: Network Transport & Anonymity Layer
 - **Source Modules:** [`transport_anonymity.py`](transport_anonymity.py), [`spo_dpo.py`](spo_dpo.py), [`rust_data_plane/src/net.rs`](rust_data_plane/src/net.rs)
 - **Transport Architecture:** Direct UDP/IPv6 datagrams with 1232-byte constant-size cells (fitting the 1280-byte IPv6 minimum MTU without fragmentation) or Tor v3 onion routing over SOCKS5 TCP proxies.
-- **Constant-Rate / Constant-Size Traffic Shaping (bounded):** Emits exactly one 1232-byte frame every 50.0 ms (20 packets/sec) on the shaping path. When idle, chaff cells are emitted. Python chaff/data cells are indistinguishable (header inside AES-GCM); Rust `0xFF` chaff vs `0x01` data `ftype` is observable as AAD — count hiding requires constant-rate `channel` cover. No CTR whitening claimed.
-- **No stream whitening claimed:** no AES-CTR masking layer; confidentiality is AES-256-GCM + quanta padding.
+- **Constant-Rate / Constant-Size Traffic Shaping (bounded):** Emits exactly one 1232-byte frame every 50.0 ms (20 packets/sec) on the shaping path. When idle, chaff cells are emitted. Python chaff/data cells are indistinguishable (header inside AES-GCM); Rust data-plane frames mask `seq|len|ftype` on the wire as `(header XOR SHA256("ST2027-HEADER-MASK-v1" || hp_key || tag)[..11])` with the tag still authenticating the unmasked header as AAD (`rust_data_plane/src/aead.rs`: `seal`/`open_indexed`, `peek_seq` requires the session key) — only the quantum size class (256/512/1232) remains observable, and message COUNT is hidden only under constant-rate `channel`/chaff cover. No AES-CTR layer is claimed.
+- **No stream whitening beyond the above:** confidentiality is AES-256-GCM + quanta padding + tag-derived header masking.
 - **Cryptographic Dual-Person Authorization (DPA):** High-consequence command execution requires Dual-Person Operation. Two distinct cryptographic approvals signed with independent ML-DSA-87 tokens must be co-signed and validated before transmission.
 
 ### Pillar 5: Trust Infrastructure & Key Management Layer

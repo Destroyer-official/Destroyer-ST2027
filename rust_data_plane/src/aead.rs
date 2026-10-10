@@ -1,7 +1,12 @@
 //! Data-plane AEAD: AES-256-GCM (CNSA 2.0 suite) over framed packets.
 //!
-//! Frame: `[seq: u64 BE | len: u16 BE | ftype: u8 | ciphertext | tag: 16B]`.
-//! The 16-byte GHASH tag covers header + ciphertext (AAD = header).
+//! Wire frame: `[masked_header: 11B | ciphertext | tag: 16B]`, where
+//! `masked_header = (seq: u64 BE | len: u16 BE | ftype: u8) XOR
+//! SHA256("ST2027-HEADER-MASK-v1" || hp_key || tag)[..11]`.
+//! The 16-byte GHASH tag covers the UNMASKED header + ciphertext
+//! (AAD = unmasked header, recovered via the tag-derived mask before
+//! verification). seq/len/ftype are pseudorandom on the wire; only the
+//! quantum size class (256/512/1232) remains observable.
 //! Nonce discipline: `seq_BE(8) || dir(1) || 0x00(3)` — strictly monotonic
 //! per (key, direction); reuse is impossible while the replay window owns seq.
 //! Any tag failure ⇒ caller MUST drop silently (no reply, no log above debug).
@@ -22,8 +27,11 @@ pub const DIR_SEND: u8 = 0x00;
 pub const DIR_RECV: u8 = 0x01;
 
 /// 256-bit frame key with derived header protection key. Zeroized on drop.
+/// Fields are private: the cipher key and `hp_key` never leave this module
+/// except inside sealed AEAD calls (no accessor — behavioral tests cover
+/// determinism through seal/open roundtrips instead).
 #[derive(Clone, ZeroizeOnDrop)]
-pub struct FrameKey(pub Key<Aes256Gcm>, pub [u8; 32]);
+pub struct FrameKey(Key<Aes256Gcm>, [u8; 32]);
 
 impl FrameKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -208,7 +216,9 @@ pub fn open_indexed(
         return Err(AeadError);
     }
     let (masked_header, ct) = frame.split_at(11);
-    let tag: &[u8; 16] = frame[frame.len() - 16..].try_into().map_err(|_| AeadError)?;
+    let tag: &[u8; 16] = frame[frame.len() - 16..]
+        .try_into()
+        .map_err(|_| AeadError)?;
     let mask = compute_header_mask(&key.1, tag);
     let mut header = [0u8; 11];
     for i in 0..11 {
@@ -222,7 +232,10 @@ pub fn open_indexed(
     let cipher = Aes256Gcm::new(&key.0);
     let pt = cipher.decrypt(
         &make_nonce(seq, dir),
-        Payload { msg: ct, aad: &header },
+        Payload {
+            msg: ct,
+            aad: &header,
+        },
     )?;
     let len = u16::from_be_bytes([header[8], header[9]]) as usize;
     if len > pt.len() {
@@ -253,10 +266,7 @@ mod tests {
         let ct = cipher
             .encrypt(&nonce, Payload { msg: b"", aad: b"" })
             .unwrap();
-        assert_eq!(
-            ct,
-            hex_to_bytes("530f8afbc74536b9a963b4f1c4cb738b")
-        );
+        assert_eq!(ct, hex_to_bytes("530f8afbc74536b9a963b4f1c4cb738b"));
         let pt = cipher
             .decrypt(&nonce, Payload { msg: &ct, aad: b"" })
             .unwrap();
@@ -306,12 +316,15 @@ mod tests {
 
     #[test]
     fn hkdf_derive_is_deterministic_and_salted_by_info() {
+        // Determinism + info-sensitivity through behavior (fields are
+        // private by design, so no byte-level key comparison here).
         let secret = [9u8; 32];
         let a = FrameKey::derive(&secret, b"destroyer/frame/v1");
         let b = FrameKey::derive(&secret, b"destroyer/frame/v1");
         let c = FrameKey::derive(&secret, b"destroyer/frame/v2");
-        assert_eq!(a.0.as_slice(), b.0.as_slice());
-        assert_ne!(a.0.as_slice(), c.0.as_slice());
+        let f1 = seal(&a, 5, DIR_SEND, FTYPE_MSG, b"probe").unwrap();
+        assert!(open(&b, DIR_SEND, &f1).is_ok());
+        assert!(open(&c, DIR_SEND, &f1).is_err());
     }
 
     #[test]

@@ -21,6 +21,12 @@
 //! - liboqs upstream supports ONLY 0.16.0 (<0.16 unsupported;
 //!   HQC CVE-2024-54137/2025-52473, XMSS CVE-2026-44518/46344). The Rust
 //!   core uses pure-Rust `ml-kem`/`ml-dsa` crates and never loads `oqs.dll`.
+//! - `ml-dsa` crate floor: CVE-2026-22705 (Decompose timing side-channel,
+//!   fixed ≥0.1.0-rc.3) and the hint-duplicate regression (fixed
+//!   ≥0.1.0-rc.4). Locked `ml-dsa 0.1.1` satisfies both; downgrading the
+//!   pin below 0.1.0-rc.4 is a version-floor violation — treat
+//!   `cargo audit`/`cargo deny` findings on these crates as release
+//!   blockers, and re-check NVD/RustSec before every release cut.
 //!
 //! Every error is deliberately coarse (`CoreError`) — no oracle detail.
 
@@ -61,7 +67,9 @@ impl fmt::Display for CoreError {
         match self {
             CoreError::AuthRequired => write!(f, "authentication required (PSK and/or ML-DSA)"),
             CoreError::ClassicalOnlyRefused => write!(f, "classical-only refused"),
-            CoreError::LegacyRatchetRefused => write!(f, "legacy KEM-reuse ratchet refused (fresh v2 only)"),
+            CoreError::LegacyRatchetRefused => {
+                write!(f, "legacy KEM-reuse ratchet refused (fresh v2 only)")
+            }
             CoreError::Malformed => write!(f, "malformed cryptographic input"),
             CoreError::BadSignature => write!(f, "signature verification failed"),
             CoreError::UnknownIdentity => write!(f, "unknown device identity"),
@@ -117,7 +125,10 @@ mod tests {
     #[test]
     fn error_display_is_coarse() {
         // No key material, no offsets, no distinguishing detail.
-        assert_eq!(format!("{}", CoreError::BadSignature), "signature verification failed");
+        assert_eq!(
+            format!("{}", CoreError::BadSignature),
+            "signature verification failed"
+        );
         assert_eq!(format!("{}", CoreError::KeyMismatch), "device key mismatch");
         assert!(format!("{}", CoreError::AuthRequired).len() > 8);
     }

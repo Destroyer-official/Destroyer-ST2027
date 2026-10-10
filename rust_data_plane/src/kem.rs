@@ -89,17 +89,12 @@ impl EphemeralKeys {
         if peer_ml_ek.len() != MLKEM_PK {
             return Err(KemError::BadLength);
         }
-        let ek_arr: [u8; MLKEM_PK] = peer_ml_ek
-            .try_into()
-            .map_err(|_| KemError::BadLength)?;
+        let ek_arr: [u8; MLKEM_PK] = peer_ml_ek.try_into().map_err(|_| KemError::BadLength)?;
         let ek_key: Key<EncapsulationKey<MlKem1024>> = ek_arr.into();
-        let ek =
-            EncapsulationKey::<MlKem1024>::new(&ek_key).map_err(|_| KemError::BadLength)?;
+        let ek = EncapsulationKey::<MlKem1024>::new(&ek_key).map_err(|_| KemError::BadLength)?;
         let eph = StaticSecret::from(os_random_32()?);
         let eph_pub = PublicKey::from(&eph).to_bytes();
-        let x_ss = eph
-            .diffie_hellman(&PublicKey::from(*peer_x_pub))
-            .to_bytes();
+        let x_ss = eph.diffie_hellman(&PublicKey::from(*peer_x_pub)).to_bytes();
         let (ct, ml_ss) = ek.encapsulate();
         let mut hybrid = Zeroizing::new([0u8; HYBRID_SS]);
         hybrid[..32].copy_from_slice(ml_ss.as_slice());
@@ -203,8 +198,7 @@ pub fn compute_sas(session_key: &[u8; 32], transcript_hash: &[u8; 48]) -> String
     let digest = hasher.finalize();
     format!(
         "{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}",
-        digest[0], digest[1], digest[2], digest[3],
-        digest[4], digest[5], digest[6], digest[7]
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
     )
 }
 
@@ -241,8 +235,7 @@ mod tests {
         assert_eq!(&ss_init[..], &ss_resp[..]);
         // Both halves contribute: flipping responder X key changes agreement.
         let other = EphemeralKeys::generate().unwrap();
-        let (_, ss_other, _) =
-            EphemeralKeys::encapsulate(&other.x_public, &resp.ml_ek).unwrap();
+        let (_, ss_other, _) = EphemeralKeys::encapsulate(&other.x_public, &resp.ml_ek).unwrap();
         assert_ne!(&ss_init[..], &ss_other[..]);
     }
 
@@ -309,4 +302,3 @@ mod tests {
         assert_eq!(sas1.len(), 19); // 4 groups of 4 + 3 dashes = 19
     }
 }
-

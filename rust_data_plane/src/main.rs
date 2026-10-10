@@ -35,6 +35,7 @@ use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
 use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
+use destroyer_core::keystore;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler};
@@ -105,9 +106,7 @@ fn fail(msg: &str) -> ! {
 }
 
 fn get_flag(args: &[String], name: &str) -> Option<String> {
-    args.windows(2)
-        .find(|w| w[0] == name)
-        .map(|w| w[1].clone())
+    args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone())
 }
 
 fn has_flag(args: &[String], name: &str) -> bool {
@@ -126,21 +125,30 @@ fn reject_forbidden_cli(args: &[String]) {
     }
 }
 
-fn parse_key_hex(h: &str) -> [u8; 32] {
-    let h = h.trim();
-    if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
-        fail("key must be 64 hex chars (32 bytes)");
-    }
+/// Load a 32-byte PSK from `--psk-file` into a stack array for HKDF-salt
+/// use. The file itself is read through the hardened `keystore` path
+/// (0600 / no-symlink enforced — previously unchecked), then copied out
+/// once; callers MUST `zeroize` the array when the KEX completes (done at
+/// the end of `cmd_kex_listen` / `cmd_kex_connect`).
+fn load_psk_file(path: &str) -> [u8; 32] {
+    let guard = keystore::read_key_file(path)
+        .unwrap_or_else(|_| fail("psk file unreadable or permission-hardening failed"));
     let mut out = [0u8; 32];
-    for (i, chunk) in h.as_bytes().chunks(2).enumerate() {
-        out[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap_or(""), 16)
-            .unwrap_or_else(|_| fail("key must be 64 hex chars (32 bytes)"));
-    }
+    out.copy_from_slice(guard.as_bytes());
     out
 }
 
 /// Load frame key bytes from --key-file or --key-stdin (exactly one).
-/// Returns (locked key guard, key_id). Key file should be 0600 on Unix.
+/// Returns (locked key guard, key_id). File branch delegates to the
+/// single-sourced `keystore::read_key_file`: symlink/reparse refused via
+/// `symlink_metadata` (the old `metadata().is_symlink()` check was dead
+/// code — followed metadata never reports symlink — and is now replaced
+/// by a real refusal), 0600 enforced, 128-byte cap fail-closed.
+/// Exit behavior is unchanged (non-zero + one-line stderr, nothing
+/// signaled to the peer); permission failures now name the cause.
+/// The guard page-locks (best-effort) a heap-stable copy, wipes + unlocks
+/// on drop; callers copy out once via as_bytes() then drop at the same
+/// points where the raw array was previously zeroized (identical lifetime).
 /// The guard page-locks (best-effort) a heap-stable copy, wipes + unlocks
 /// on drop; callers copy out once via as_bytes() then drop at the same
 /// points where the raw array was previously zeroized (identical lifetime).
@@ -152,36 +160,20 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
         fail("exactly one of --key-file PATH or --key-stdin is required");
     }
     let mut hex_z: Zeroizing<String> = if let Some(path) = from_file {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(&path)
-            .unwrap_or_else(|_| fail("key file unreadable"));
-        let meta = file.metadata().unwrap_or_else(|_| fail("key file metadata unreadable"));
-        if meta.file_type().is_symlink() {
-            fail("key file must not be a symlink");
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if meta.permissions().mode() & 0o077 != 0 {
-                fail("key file must be 0600 (group/other readable refused)");
+        // Single-sourced hardened read: symlink/reparse refused (via
+        // `symlink_metadata`, NOT the dead `metadata().is_symlink()` check
+        // this replaces), 0600 enforced, content parsed straight into the
+        // page-locked guard — no intermediate hex `String` of the secret.
+        let out = keystore::read_key_file(&path).unwrap_or_else(|e| match e {
+            destroyer_core::policy::CoreError::FilePermissions => {
+                fail("key file permission hardening failed (must be 0600, no symlinks)")
             }
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            let attrs = meta.file_attributes();
-            // Refuse reparse points (symlinks/mount points)
-            if attrs & 0x400 != 0 {
-                fail("key file must not be a reparse point or symlink");
-            }
-        }
-        let mut s = String::with_capacity(128);
-        file.read_to_string(&mut s).unwrap_or_else(|_| fail("key file read failed"));
-        // Zeroize the file buffer copy held by Rust String after parse.
-        let z = Zeroizing::new(s.clone());
-        s.zeroize();
-        z
+            _ => fail("key file unreadable"),
+        });
+        let digest = Sha384::digest(out.as_bytes());
+        let mut key_id = [0u8; 16];
+        key_id.copy_from_slice(&digest[..16]);
+        return (out, key_id);
     } else {
         let mut s = String::with_capacity(128);
         std::io::stdin()
@@ -199,7 +191,8 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
 }
 
 fn state_path(args: &[String]) -> String {
-    get_flag(args, "--state").unwrap_or_else(|| fail("missing --state PATH (monotonic nonce state required)"))
+    get_flag(args, "--state")
+        .unwrap_or_else(|| fail("missing --state PATH (monotonic nonce state required)"))
 }
 
 /// In-memory session state mirror (persisted as 48-byte record).
@@ -227,7 +220,9 @@ fn decode_state(buf: &[u8; STATE_LEN], expect_key_id: &[u8; 16]) -> SessionState
     let mut key_id = [0u8; 16];
     key_id.copy_from_slice(&buf[8..24]);
     if &key_id != expect_key_id {
-        fail("state file bound to a different key (key_id mismatch) — use matching --state or rekey");
+        fail(
+            "state file bound to a different key (key_id mismatch) — use matching --state or rekey",
+        );
     }
     let mut u = [0u8; 8];
     u.copy_from_slice(&buf[24..32]);
@@ -236,7 +231,12 @@ fn decode_state(buf: &[u8; STATE_LEN], expect_key_id: &[u8; 16]) -> SessionState
     let recv_last = u64::from_le_bytes(u);
     u.copy_from_slice(&buf[40..48]);
     let recv_bitmap = u64::from_le_bytes(u);
-    SessionState { key_id, send_seq, recv_last, recv_bitmap }
+    SessionState {
+        key_id,
+        send_seq,
+        recv_last,
+        recv_bitmap,
+    }
 }
 
 fn open_locked_state(path: &str) -> File {
@@ -247,14 +247,17 @@ fn open_locked_state(path: &str) -> File {
         .truncate(false)
         .open(path)
         .unwrap_or_else(|_| fail("state file unopenable"));
-    f.lock_exclusive().unwrap_or_else(|_| fail("state file lock failed"));
+    f.lock_exclusive()
+        .unwrap_or_else(|_| fail("state file lock failed"));
     f
 }
 
 fn read_state_locked(f: &mut File, key_id: &[u8; 16]) -> SessionState {
     let mut buf = Vec::new();
-    f.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
-    f.read_to_end(&mut buf).unwrap_or_else(|_| fail("state read failed"));
+    f.seek(SeekFrom::Start(0))
+        .unwrap_or_else(|_| fail("state seek failed"));
+    f.read_to_end(&mut buf)
+        .unwrap_or_else(|_| fail("state read failed"));
     if buf.is_empty() {
         // Fresh state: random send start (2^-64 collision on re-create),
         // empty recv window. Persisted below by caller.
@@ -266,7 +269,12 @@ fn read_state_locked(f: &mut File, key_id: &[u8; 16]) -> SessionState {
         if send_seq == u64::MAX {
             send_seq = 0;
         }
-        return SessionState { key_id: *key_id, send_seq, recv_last: 0, recv_bitmap: 0 };
+        return SessionState {
+            key_id: *key_id,
+            send_seq,
+            recv_last: 0,
+            recv_bitmap: 0,
+        };
     }
     if buf.len() != STATE_LEN {
         fail("state file corrupt (bad length) — rekey with fresh key+state");
@@ -278,9 +286,12 @@ fn read_state_locked(f: &mut File, key_id: &[u8; 16]) -> SessionState {
 
 fn write_state_locked(f: &mut File, st: &SessionState) {
     let enc = encode_state(st);
-    f.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
-    f.write_all(&enc).unwrap_or_else(|_| fail("state write failed"));
-    f.set_len(STATE_LEN as u64).unwrap_or_else(|_| fail("state truncate failed"));
+    f.seek(SeekFrom::Start(0))
+        .unwrap_or_else(|_| fail("state seek failed"));
+    f.write_all(&enc)
+        .unwrap_or_else(|_| fail("state write failed"));
+    f.set_len(STATE_LEN as u64)
+        .unwrap_or_else(|_| fail("state truncate failed"));
     f.sync_all().unwrap_or_else(|_| fail("state sync failed"));
 }
 
@@ -293,7 +304,9 @@ fn reserve_send_seq(path: &str, key_id: &[u8; 16], count: u64) -> u64 {
     let mut f = open_locked_state(path);
     let mut st = read_state_locked(&mut f, key_id);
     let start = st.send_seq;
-    let end = start.checked_add(count).unwrap_or_else(|| fail("sequence exhausted — rekey required"));
+    let end = start
+        .checked_add(count)
+        .unwrap_or_else(|| fail("sequence exhausted — rekey required"));
     if start == u64::MAX || (end == 0 && count > 0) {
         fail("sequence exhausted — rekey required");
     }
@@ -314,13 +327,20 @@ fn load_recv_window(path: &str, key_id: &[u8; 16]) -> (File, AntiReplayWindow) {
     (f, w)
 }
 
-fn persist_recv_window(f: &mut File, key_id: &[u8; 16], send_seq_preserve: u64, w: &AntiReplayWindow) {
+fn persist_recv_window(
+    f: &mut File,
+    key_id: &[u8; 16],
+    send_seq_preserve: u64,
+    w: &AntiReplayWindow,
+) {
     // Re-read send_seq under the same lock to avoid clobbering a
     // concurrent reservation (recv holds the lock for the session, so
     // this is normally unchanged; defense in depth).
-    f.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
+    f.seek(SeekFrom::Start(0))
+        .unwrap_or_else(|_| fail("state seek failed"));
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf).unwrap_or_else(|_| fail("state read failed"));
+    f.read_to_end(&mut buf)
+        .unwrap_or_else(|_| fail("state read failed"));
     let cur_send = if buf.len() == STATE_LEN {
         let mut arr = [0u8; STATE_LEN];
         arr.copy_from_slice(&buf);
@@ -330,7 +350,12 @@ fn persist_recv_window(f: &mut File, key_id: &[u8; 16], send_seq_preserve: u64, 
         send_seq_preserve
     };
     let (last, bitmap) = w.parts();
-    let st = SessionState { key_id: *key_id, send_seq: cur_send, recv_last: last, recv_bitmap: bitmap };
+    let st = SessionState {
+        key_id: *key_id,
+        send_seq: cur_send,
+        recv_last: last,
+        recv_bitmap: bitmap,
+    };
     write_state_locked(f, &st);
 }
 
@@ -362,51 +387,26 @@ fn hex_of(b: &[u8]) -> String {
     s
 }
 
+/// Write a session-key hex file. Delegates to the single-sourced
+/// `keystore::write_key_file_truncate` (0600 / share-NONE / owner-only
+/// `icacls`, ACL failure deletes + errors). Operator-facing fail strings
+/// preserved: write/sync problems report as before, ACL failure keeps its
+/// explicit message.
 fn write_key_file(out: &str, hex: &str) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(out)
-            .unwrap_or_else(|_| fail("key out unwritable"));
-        f.write_all(hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
-        f.sync_all().unwrap_or_else(|_| fail("key out sync failed"));
-    }
-    #[cfg(not(unix))]
-    {
-        // Windows/NTFS has no Unix mode bits: enforce owner-only ACL
-        // best-effort (icacls inheritance removal), then verify the file is
-        // not world-readable. Fail-closed on ACL hardening failure so
-        // session keys never rest on disk with loose permissions.
-        // Residual: SSD wear-leveling/swap/hibernation can retain copies —
-        // a facility duty (see trust_anchor ephemeral doctrine); prefer
-        // --key-stdin + locked memory / HSM custody for TOP SECRET.
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_SHARE_NONE: u32 = 0;
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .share_mode(FILE_SHARE_NONE)
-            .open(out)
-            .unwrap_or_else(|_| fail("key out unwritable"));
-        f.write_all(hex.as_bytes()).unwrap_or_else(|_| fail("key out unwritable"));
-        f.sync_all().unwrap_or_else(|_| fail("key out sync failed"));
-        drop(f);
-        let acl_ok = std::process::Command::new("icacls")
-            .args([out, "/inheritance:r", "/grant:r", &format!("{}:F", std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string()))])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !acl_ok {
-            let _ = std::fs::remove_file(out);
-            fail("key out ACL hardening failed (icacls owner-only); nothing written");
+    keystore::write_key_file_truncate(out, hex).unwrap_or_else(|e| {
+        match e {
+            destroyer_core::policy::CoreError::Malformed => fail("key out unwritable"),
+            #[cfg(not(unix))]
+            destroyer_core::policy::CoreError::FilePermissions => {
+                // Distinguish ACL-hardening failure (file already removed)
+                // from plain write failure for operator diagnosis.
+                fail("key out ACL hardening failed (icacls owner-only); nothing written")
+            }
+            // All other failures are permission-hardening failures by
+            // construction (the only CoreError this path can return).
+            _ => fail("key out unwritable"),
         }
-    }
+    });
 }
 
 fn cmd_send(args: &[String]) {
@@ -484,9 +484,11 @@ fn cmd_recv(args: &[String]) {
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
     // Snapshot send_seq to preserve across write-throughs.
     let send_preserve: u64 = {
-        sf.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
+        sf.seek(SeekFrom::Start(0))
+            .unwrap_or_else(|_| fail("state seek failed"));
         let mut buf = Vec::new();
-        sf.read_to_end(&mut buf).unwrap_or_else(|_| fail("state read failed"));
+        sf.read_to_end(&mut buf)
+            .unwrap_or_else(|_| fail("state read failed"));
         if buf.len() == STATE_LEN {
             let mut arr = [0u8; STATE_LEN];
             arr.copy_from_slice(&buf);
@@ -527,8 +529,7 @@ fn cmd_recv(args: &[String]) {
                         ep.note_auth_drop();
                         continue;
                     }
-                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes)
-                    else {
+                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes) else {
                         ep.note_auth_drop();
                         continue;
                     };
@@ -558,8 +559,7 @@ fn cmd_recv(args: &[String]) {
 fn cmd_selftest() {
     // Deterministic checks over the exact modules this binary executes.
     let key = FrameKey::from_bytes([0x5Au8; 32]);
-    let f = aead::seal(&key, 7, DIR_SEND, FTYPE_MSG, b"selftest-vector")
-        .expect("seal");
+    let f = aead::seal(&key, 7, DIR_SEND, FTYPE_MSG, b"selftest-vector").expect("seal");
     let (t, pt) = aead::open(&key, DIR_SEND, &f).expect("open");
     assert_eq!(t, FTYPE_MSG);
     assert_eq!(&pt[..], b"selftest-vector");
@@ -573,7 +573,12 @@ fn cmd_selftest() {
     assert!(!w.check(7), "replay accepted");
     assert!(f.len() <= MAX_DATAGRAM, "quantum exceeds MTU");
     // State codec roundtrip (no I/O): magic + key binding enforced.
-    let st = SessionState { key_id: [0xABu8; 16], send_seq: 41, recv_last: 7, recv_bitmap: 0b11 };
+    let st = SessionState {
+        key_id: [0xABu8; 16],
+        send_seq: 41,
+        recv_last: 7,
+        recv_bitmap: 0b11,
+    };
     let enc = encode_state(&st);
     assert_eq!(enc.len(), STATE_LEN);
     let dec = decode_state(&enc, &[0xABu8; 16]);
@@ -584,7 +589,14 @@ fn cmd_selftest() {
     let probe = [0u8; 32];
     let probe_locked = destroyer_core::memlock::lock_slice(&probe);
     destroyer_core::memlock::unlock_slice(&probe);
-    eprintln!("selftest: memlock-probe {}", if probe_locked { "locked" } else { "unlocked-best-effort" });
+    eprintln!(
+        "selftest: memlock-probe {}",
+        if probe_locked {
+            "locked"
+        } else {
+            "unlocked-best-effort"
+        }
+    );
 
     // Cauchy-Reed-Solomon FEC self-check
     let crs = CauchyReedSolomon::new(3, 2).expect("crs new");
@@ -592,7 +604,9 @@ fn cmd_selftest() {
     let d1 = vec![5u8, 6, 7, 8];
     let d2 = vec![9u8, 10, 11, 12];
     let parities = crs.encode(&[&d0, &d1, &d2]).expect("crs encode");
-    let recovered = crs.decode(&[(0, &d0), (3, &parities[0]), (4, &parities[1])]).expect("crs decode");
+    let recovered = crs
+        .decode(&[(0, &d0), (3, &parities[0]), (4, &parities[1])])
+        .expect("crs decode");
     assert_eq!(&recovered[0], &d0);
     assert_eq!(&recovered[1], &d1);
     assert_eq!(&recovered[2], &d2);
@@ -608,7 +622,8 @@ fn cmd_selftest() {
 
     // Hybrid KEM (ML-KEM-1024 + X25519) self-check
     let resp = EphemeralKeys::generate().expect("kem keygen");
-    let (ml_ct, ss_init, eph_pub) = EphemeralKeys::encapsulate(&resp.x_public, &resp.ml_ek).expect("encaps");
+    let (ml_ct, ss_init, eph_pub) =
+        EphemeralKeys::encapsulate(&resp.x_public, &resp.ml_ek).expect("encaps");
     let ss_resp = resp.decapsulate(&eph_pub, &ml_ct).expect("decaps");
     assert_eq!(&ss_init[..], &ss_resp[..]);
     let k_init = kem::derive_session_key(&ss_init, b"selftest-kex");
@@ -677,8 +692,14 @@ fn cmd_send_file(args: &[String]) {
                 }
                 padded.extend_from_slice(&pad_bytes);
             }
-            let frame = aead::seal_with_len(&key, seq0.wrapping_add(i as u64), DIR_SEND,
-                                   FTYPE_MSG, chunk.len() as u16, &padded)
+            let frame = aead::seal_with_len(
+                &key,
+                seq0.wrapping_add(i as u64),
+                DIR_SEND,
+                FTYPE_MSG,
+                chunk.len() as u16,
+                &padded,
+            )
             .unwrap_or_else(|_| fail("seal failed"));
             debug_assert_eq!(frame.len(), quantum);
             if frame.len() > MAX_DATAGRAM {
@@ -691,8 +712,12 @@ fn cmd_send_file(args: &[String]) {
         }
         total
     });
-    println!("sent chunks={} bytes={} wire={}B digest={digest}",
-             chunks.len(), bytes.len(), wire_total);
+    println!(
+        "sent chunks={} bytes={} wire={}B digest={digest}",
+        chunks.len(),
+        bytes.len(),
+        wire_total
+    );
 }
 
 fn cmd_recv_file(args: &[String]) {
@@ -714,9 +739,11 @@ fn cmd_recv_file(args: &[String]) {
     drop(kb);
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
     let send_preserve: u64 = {
-        sf.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
+        sf.seek(SeekFrom::Start(0))
+            .unwrap_or_else(|_| fail("state seek failed"));
         let mut buf = Vec::new();
-        sf.read_to_end(&mut buf).unwrap_or_else(|_| fail("state read failed"));
+        sf.read_to_end(&mut buf)
+            .unwrap_or_else(|_| fail("state read failed"));
         if buf.len() == STATE_LEN {
             let mut arr = [0u8; STATE_LEN];
             arr.copy_from_slice(&buf);
@@ -755,8 +782,7 @@ fn cmd_recv_file(args: &[String]) {
                         ep.note_auth_drop();
                         continue;
                     }
-                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes)
-                    else {
+                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes) else {
                         ep.note_auth_drop();
                         continue;
                     };
@@ -795,13 +821,18 @@ fn cmd_recv_file(args: &[String]) {
         Some(out_bytes)
     });
     let Some(data) = data else {
-        eprintln!("file refused: missing/tampered/out-of-order chunks \
-                   (nothing written)");
+        eprintln!(
+            "file refused: missing/tampered/out-of-order chunks \
+                   (nothing written)"
+        );
         std::process::exit(4);
     };
     let digest = hex_of(&Sha256::digest(&data));
     std::fs::write(&out, &data).unwrap_or_else(|_| fail("output unwritable"));
-    println!("received chunks={want} bytes={} digest={digest}", data.len());
+    println!(
+        "received chunks={want} bytes={} digest={digest}",
+        data.len()
+    );
 }
 
 const DIODE_MAGIC: &[u8; 4] = b"STDD";
@@ -909,7 +940,9 @@ fn cmd_diode_send(args: &[String]) {
     // Cauchy-RS encoding
     let crs = CauchyReedSolomon::new(k, m).unwrap_or_else(|e| fail(&e.to_string()));
     let data_refs: Vec<&[u8]> = data_chunks.iter().map(|c| c.as_slice()).collect();
-    let parity_chunks = crs.encode(&data_refs).unwrap_or_else(|e| fail(&e.to_string()));
+    let parity_chunks = crs
+        .encode(&data_refs)
+        .unwrap_or_else(|e| fail(&e.to_string()));
 
     // Random transfer ID
     let mut transfer_id = [0u8; 16];
@@ -942,7 +975,11 @@ fn cmd_diode_send(args: &[String]) {
             };
             let chunk_len = if is_data && chunk_idx == k - 1 {
                 let rem = (total_len as usize) % DIODE_CHUNK_SIZE;
-                if rem == 0 { DIODE_CHUNK_SIZE } else { rem }
+                if rem == 0 {
+                    DIODE_CHUNK_SIZE
+                } else {
+                    rem
+                }
             } else {
                 DIODE_CHUNK_SIZE
             };
@@ -961,8 +998,14 @@ fn cmd_diode_send(args: &[String]) {
             chunk_packet.extend_from_slice(&hdr.encode());
             chunk_packet.extend_from_slice(payload_chunk);
 
-            let frame = aead::seal(&key, seq0.wrapping_add(chunk_idx as u64), DIR_SEND, FTYPE_MSG, &chunk_packet)
-                .unwrap_or_else(|_| fail("seal failed"));
+            let frame = aead::seal(
+                &key,
+                seq0.wrapping_add(chunk_idx as u64),
+                DIR_SEND,
+                FTYPE_MSG,
+                &chunk_packet,
+            )
+            .unwrap_or_else(|_| fail("seal failed"));
             total += frame.len();
             ep.send_raw(&frame, to)
                 .await
@@ -993,9 +1036,11 @@ fn cmd_diode_recv(args: &[String]) {
 
     let (mut sf, mut window) = load_recv_window(&state, &key_id);
     let send_preserve: u64 = {
-        sf.seek(SeekFrom::Start(0)).unwrap_or_else(|_| fail("state seek failed"));
+        sf.seek(SeekFrom::Start(0))
+            .unwrap_or_else(|_| fail("state seek failed"));
         let mut buf = Vec::new();
-        sf.read_to_end(&mut buf).unwrap_or_else(|_| fail("state read failed"));
+        sf.read_to_end(&mut buf)
+            .unwrap_or_else(|_| fail("state read failed"));
         if buf.len() == STATE_LEN {
             let mut arr = [0u8; STATE_LEN];
             arr.copy_from_slice(&buf);
@@ -1062,15 +1107,19 @@ fn cmd_diode_recv(args: &[String]) {
                     if pt.len() < DIODE_HEADER_LEN + DIODE_CHUNK_SIZE {
                         continue;
                     }
-                    let chunk_payload = pt[DIODE_HEADER_LEN..DIODE_HEADER_LEN + DIODE_CHUNK_SIZE].to_vec();
+                    let chunk_payload =
+                        pt[DIODE_HEADER_LEN..DIODE_HEADER_LEN + DIODE_CHUNK_SIZE].to_vec();
 
-                    let entry = transfers.entry(hdr.transfer_id).or_insert_with(|| DiodeTransferState {
-                        total_len: hdr.total_len,
-                        k: hdr.k_data as usize,
-                        m: hdr.m_parity as usize,
-                        sha384: hdr.sha384,
-                        chunks: HashMap::new(),
-                    });
+                    let entry =
+                        transfers
+                            .entry(hdr.transfer_id)
+                            .or_insert_with(|| DiodeTransferState {
+                                total_len: hdr.total_len,
+                                k: hdr.k_data as usize,
+                                m: hdr.m_parity as usize,
+                                sha384: hdr.sha384,
+                                chunks: HashMap::new(),
+                            });
 
                     entry.chunks.insert(hdr.chunk_idx as usize, chunk_payload);
 
@@ -1120,7 +1169,13 @@ fn cmd_diode_recv(args: &[String]) {
                             continue;
                         }
 
-                        return Some((transfer_id, full_file, computed_digest, entry.chunks.len(), k + m));
+                        return Some((
+                            transfer_id,
+                            full_file,
+                            computed_digest,
+                            entry.chunks.len(),
+                            k + m,
+                        ));
                     }
                 }
             }
@@ -1135,7 +1190,12 @@ fn cmd_diode_recv(args: &[String]) {
     std::fs::write(&out, &data).unwrap_or_else(|_| fail("output unwritable"));
     println!(
         "diode-recv SUCCESS transfer_id={} out={} bytes={} received_chunks={}/{} sha384={}",
-        hex_of(&transfer_id), out, data.len(), chunks_got, total_chunks, hex_of(&digest)
+        hex_of(&transfer_id),
+        out,
+        data.len(),
+        chunks_got,
+        total_chunks,
+        hex_of(&digest)
     );
 }
 
@@ -1154,7 +1214,10 @@ fn cmd_stream_chaff(args: &[String]) {
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
         .unwrap_or(10);
     let quantum: usize = get_flag(args, "--quantum")
-        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)")))
+        .map(|s| {
+            s.parse()
+                .unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)"))
+        })
         .unwrap_or(1232);
 
     if quantum != 256 && quantum != 512 && quantum != 1232 {
@@ -1189,9 +1252,7 @@ fn cmd_stream_chaff(args: &[String]) {
             }
             emitted += 1;
         }
-        println!(
-            "stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms"
-        );
+        println!("stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms");
     });
 }
 
@@ -1215,7 +1276,10 @@ fn cmd_channel(args: &[String]) {
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
         .unwrap_or(50);
     let quantum: usize = get_flag(args, "--quantum")
-        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)")))
+        .map(|s| {
+            s.parse()
+                .unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)"))
+        })
         .unwrap_or(1232);
     if quantum != 256 && quantum != 512 && quantum != 1232 {
         drop(kb);
@@ -1478,13 +1542,7 @@ fn cmd_kex_listen(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
-    let psk_bytes = if let Some(path) = get_flag(args, "--psk-file") {
-        let s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("psk file unreadable"));
-        let b = parse_key_hex(s.trim());
-        Some(b)
-    } else {
-        None
-    };
+    let mut psk_bytes = get_flag(args, "--psk-file").map(|path| load_psk_file(&path));
     require_kex_auth(psk_bytes.is_some());
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -1507,18 +1565,26 @@ fn cmd_kex_listen(args: &[String]) {
             let mut bundle = Vec::with_capacity(32 + MLKEM_PK);
             bundle.extend_from_slice(&resp_keys.x_public);
             bundle.extend_from_slice(&resp_keys.ml_ek);
-            socket.write_all(&bundle).await.map_err(|_| "bundle write failed")?;
+            socket
+                .write_all(&bundle)
+                .await
+                .map_err(|_| "bundle write failed")?;
 
             // 3. Receive initiator bundle: eph_pub (32) || ml_ct (MLKEM_CT)
             let mut init_bundle = vec![0u8; 32 + MLKEM_CT];
-            socket.read_exact(&mut init_bundle).await.map_err(|_| "initiator bundle read failed")?;
+            socket
+                .read_exact(&mut init_bundle)
+                .await
+                .map_err(|_| "initiator bundle read failed")?;
 
             let mut eph_pub = [0u8; 32];
             eph_pub.copy_from_slice(&init_bundle[..32]);
             let ml_ct = &init_bundle[32..];
 
             // 4. Decapsulate hybrid shared secret
-            let hybrid_ss = resp_keys.decapsulate(&eph_pub, ml_ct).map_err(|_| "decapsulate failed")?;
+            let hybrid_ss = resp_keys
+                .decapsulate(&eph_pub, ml_ct)
+                .map_err(|_| "decapsulate failed")?;
 
             // 5. Compute transcript hash over both bundles: SHA-384(resp_bundle || init_bundle)
             let mut transcript_hasher = Sha384::new();
@@ -1534,12 +1600,26 @@ fn cmd_kex_listen(args: &[String]) {
             );
 
             // 7. Mutual Key Confirmation tag exchange
-            let resp_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-RESPONDER-CONFIRM", &transcript_hash);
-            let init_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-INITIATOR-CONFIRM", &transcript_hash);
+            let resp_tag = kem::compute_confirmation_tag(
+                &frame_key,
+                b"ST2027-RESPONDER-CONFIRM",
+                &transcript_hash,
+            );
+            let init_tag = kem::compute_confirmation_tag(
+                &frame_key,
+                b"ST2027-INITIATOR-CONFIRM",
+                &transcript_hash,
+            );
 
-            socket.write_all(&resp_tag).await.map_err(|_| "responder confirmation tag write failed")?;
+            socket
+                .write_all(&resp_tag)
+                .await
+                .map_err(|_| "responder confirmation tag write failed")?;
             let mut recv_init_tag = [0u8; 32];
-            socket.read_exact(&mut recv_init_tag).await.map_err(|_| "initiator confirmation tag read failed")?;
+            socket
+                .read_exact(&mut recv_init_tag)
+                .await
+                .map_err(|_| "initiator confirmation tag read failed")?;
             if !kem::constant_time_eq_32(&recv_init_tag, &init_tag) {
                 return Err("initiator confirmation tag mismatch (MITM detected)");
             }
@@ -1562,6 +1642,10 @@ fn cmd_kex_listen(args: &[String]) {
     } else {
         println!("kex-listen SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
     }
+    // Wipe the PSK stack copy now that derivation is complete.
+    if let Some(ref mut b) = psk_bytes {
+        b.zeroize();
+    }
 }
 
 fn cmd_kex_connect(args: &[String]) {
@@ -1574,13 +1658,7 @@ fn cmd_kex_connect(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
-    let psk_bytes = if let Some(path) = get_flag(args, "--psk-file") {
-        let s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("psk file unreadable"));
-        let b = parse_key_hex(s.trim());
-        Some(b)
-    } else {
-        None
-    };
+    let mut psk_bytes = get_flag(args, "--psk-file").map(|path| load_psk_file(&path));
     require_kex_auth(psk_bytes.is_some());
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -1596,7 +1674,10 @@ fn cmd_kex_connect(args: &[String]) {
 
             // 1. Receive responder bundle: resp_x_pub (32) || resp_ml_ek (MLKEM_PK)
             let mut resp_bundle = vec![0u8; 32 + MLKEM_PK];
-            socket.read_exact(&mut resp_bundle).await.map_err(|_| "bundle read failed")?;
+            socket
+                .read_exact(&mut resp_bundle)
+                .await
+                .map_err(|_| "bundle read failed")?;
 
             let mut resp_x_pub = [0u8; 32];
             resp_x_pub.copy_from_slice(&resp_bundle[..32]);
@@ -1610,7 +1691,10 @@ fn cmd_kex_connect(args: &[String]) {
             let mut init_bundle = Vec::with_capacity(32 + MLKEM_CT);
             init_bundle.extend_from_slice(&eph_pub);
             init_bundle.extend_from_slice(&ml_ct);
-            socket.write_all(&init_bundle).await.map_err(|_| "initiator bundle write failed")?;
+            socket
+                .write_all(&init_bundle)
+                .await
+                .map_err(|_| "initiator bundle write failed")?;
 
             // 4. Compute transcript hash over both bundles: SHA-384(resp_bundle || init_bundle)
             let mut transcript_hasher = Sha384::new();
@@ -1626,16 +1710,30 @@ fn cmd_kex_connect(args: &[String]) {
             );
 
             // 6. Mutual Key Confirmation tag exchange
-            let resp_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-RESPONDER-CONFIRM", &transcript_hash);
-            let init_tag = kem::compute_confirmation_tag(&frame_key, b"ST2027-INITIATOR-CONFIRM", &transcript_hash);
+            let resp_tag = kem::compute_confirmation_tag(
+                &frame_key,
+                b"ST2027-RESPONDER-CONFIRM",
+                &transcript_hash,
+            );
+            let init_tag = kem::compute_confirmation_tag(
+                &frame_key,
+                b"ST2027-INITIATOR-CONFIRM",
+                &transcript_hash,
+            );
 
             let mut recv_resp_tag = [0u8; 32];
-            socket.read_exact(&mut recv_resp_tag).await.map_err(|_| "responder confirmation tag read failed")?;
+            socket
+                .read_exact(&mut recv_resp_tag)
+                .await
+                .map_err(|_| "responder confirmation tag read failed")?;
             if !kem::constant_time_eq_32(&recv_resp_tag, &resp_tag) {
                 return Err("responder confirmation tag mismatch (MITM detected)");
             }
 
-            socket.write_all(&init_tag).await.map_err(|_| "initiator confirmation tag write failed")?;
+            socket
+                .write_all(&init_tag)
+                .await
+                .map_err(|_| "initiator confirmation tag write failed")?;
 
             let sas = kem::compute_sas(&frame_key, &transcript_hash);
             let hex = hex_of(&frame_key);
@@ -1654,6 +1752,10 @@ fn cmd_kex_connect(args: &[String]) {
         println!("kex-connect SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
     } else {
         println!("kex-connect SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+    }
+    // Wipe the PSK stack copy now that derivation is complete.
+    if let Some(ref mut b) = psk_bytes {
+        b.zeroize();
     }
 }
 

@@ -102,7 +102,11 @@ impl<const N: usize> StackSecretBuffer<N> {
     #[inline(never)]
     pub fn ct_eq(&self, other: &Self) -> bool {
         let mut diff: u8 = if self.len == other.len { 0 } else { 1 };
-        let max_len = if self.len > other.len { self.len } else { other.len };
+        let max_len = if self.len > other.len {
+            self.len
+        } else {
+            other.len
+        };
         let bound = if max_len < N { max_len } else { N };
 
         for i in 0..bound {
@@ -126,7 +130,11 @@ impl<const N: usize> StackSecretBuffer<N> {
     pub fn ct_copy_if(&mut self, source: &Self, condition: bool) {
         let mask: u8 = if condition { 0xFF } else { 0x00 };
         let mask = black_box(mask);
-        let n = if self.len > source.len { self.len } else { source.len };
+        let n = if self.len > source.len {
+            self.len
+        } else {
+            source.len
+        };
         let n = if n < N { n } else { N };
 
         for i in 0..n {
@@ -156,15 +164,21 @@ impl<const N: usize> Drop for StackSecretBuffer<N> {
         // Multi-pass DoD compliant memory wiping on drop
         // Pass 1: 0x00
         for b in self.data.iter_mut() {
-            unsafe { ptr::write_volatile(b, 0x00); }
+            unsafe {
+                ptr::write_volatile(b, 0x00);
+            }
         }
         // Pass 2: 0xFF
         for b in self.data.iter_mut() {
-            unsafe { ptr::write_volatile(b, 0xFF); }
+            unsafe {
+                ptr::write_volatile(b, 0xFF);
+            }
         }
         // Pass 3: 0x00
         for b in self.data.iter_mut() {
-            unsafe { ptr::write_volatile(b, 0x00); }
+            unsafe {
+                ptr::write_volatile(b, 0x00);
+            }
         }
         self.len = 0;
     }
@@ -209,8 +223,7 @@ pub fn parse_stack_frame_in_place(buf: &[u8]) -> Result<ParsedStackFrame<'_>, Mi
 
     // 1. Unpack Header fields big-endian
     let seq = u64::from_be_bytes([
-        buf[0], buf[1], buf[2], buf[3],
-        buf[4], buf[5], buf[6], buf[7],
+        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
     ]);
     let payload_len = u16::from_be_bytes([buf[8], buf[9]]);
     let frame_type = buf[10];
@@ -239,7 +252,7 @@ pub fn parse_stack_frame_in_place(buf: &[u8]) -> Result<ParsedStackFrame<'_>, Mi
 
     let payload = &buf[payload_start..payload_end];
     let padding = &buf[payload_end..pad_end];
-    
+
     // Tag is the last 16 bytes
     let tag_slice = &buf[pad_end..pad_end + NOSTD_TAG_LEN];
     let tag: &[u8; NOSTD_TAG_LEN] = match tag_slice.try_into() {
@@ -327,17 +340,14 @@ mod tests {
         let flags = 0x80;
         let pad_len = 64;
 
-        let encoded_len = encode_stack_frame(
-            &mut frame_buf,
-            seq,
-            ftype,
-            flags,
-            payload,
-            pad_len,
-            &tag,
-        ).expect("Encoding failed");
+        let encoded_len =
+            encode_stack_frame(&mut frame_buf, seq, ftype, flags, payload, pad_len, &tag)
+                .expect("Encoding failed");
 
-        assert_eq!(encoded_len, NOSTD_HEADER_LEN + payload.len() + (pad_len as usize) + NOSTD_TAG_LEN);
+        assert_eq!(
+            encoded_len,
+            NOSTD_HEADER_LEN + payload.len() + (pad_len as usize) + NOSTD_TAG_LEN
+        );
         assert_eq!(frame_buf.len, encoded_len);
 
         // Parse back in place
@@ -379,9 +389,12 @@ mod tests {
 
     #[test]
     fn test_stack_secret_ct_eq() {
-        let sec1 = StackSecretBuffer::<32>::from_slice(b"thirty-two-bytes-secret-key-1111").unwrap();
-        let sec2 = StackSecretBuffer::<32>::from_slice(b"thirty-two-bytes-secret-key-1111").unwrap();
-        let sec3 = StackSecretBuffer::<32>::from_slice(b"thirty-two-bytes-secret-key-2222").unwrap();
+        let sec1 =
+            StackSecretBuffer::<32>::from_slice(b"thirty-two-bytes-secret-key-1111").unwrap();
+        let sec2 =
+            StackSecretBuffer::<32>::from_slice(b"thirty-two-bytes-secret-key-1111").unwrap();
+        let sec3 =
+            StackSecretBuffer::<32>::from_slice(b"thirty-two-bytes-secret-key-2222").unwrap();
 
         assert!(sec1.ct_eq(&sec2));
         assert!(!sec1.ct_eq(&sec3));
@@ -389,7 +402,8 @@ mod tests {
 
     #[test]
     fn test_stack_secret_ct_copy_if() {
-        let mut dst = StackSecretBuffer::<32>::from_slice(b"initial-destination-buffer-00000").unwrap();
+        let mut dst =
+            StackSecretBuffer::<32>::from_slice(b"initial-destination-buffer-00000").unwrap();
         let src = StackSecretBuffer::<32>::from_slice(b"new-secret-source-value-11111111").unwrap();
 
         // Copy with condition = false

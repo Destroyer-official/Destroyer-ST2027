@@ -17,7 +17,15 @@
 //!   transcript-bound, PSK-or-MLDSA, SAS out-of-band).
 //! - `ratchet`: fresh-KEM-per-step PCS ratchet (SPQR-style, no v1 reuse).
 //! - `attest`: enrollment-bound RATS verifier (no TOFU path).
+//! - `handshake`: Noise_XXhfs P-384+ML-KEM-1024+ML-DSA-87 handshake,
+//!   byte-identical to the `noise_pq.py` reference profile.
+//! - `session`: post-handshake transport + pipeline (frame key, ratchet
+//!   root) matching `noise_pq` transport framing.
+//! - `pki`: 3-of-5 threshold ML-DSA-87 verification, byte-identical TBS
+//!   to `trust_anchor.py`.
 //! - `keystore`: sealed key-file custody (0600 / exclusive / no argv).
+//! - `ffi`: thin PyO3 control-plane bindings (orchestration only; secrets
+//!   stay in Rust holders).
 //!
 //! Data-plane modules (existing, audited path): framing, AEAD, replay,
 //! padding, chaff, silent-drop networking, FEC, pacing, purge.
@@ -31,19 +39,23 @@ pub mod auth;
 pub mod chaff;
 pub mod ct;
 pub mod fec;
+pub mod ffi;
 pub mod frame;
+pub mod handshake;
 pub mod kem;
 pub mod kex_auth;
 pub mod keystore;
 pub mod memlock;
 pub mod net;
 pub mod nostd_microcore;
-pub mod pad;
 pub mod pacing;
+pub mod pad;
+pub mod pki;
 pub mod policy;
 pub mod purge;
 pub mod ratchet;
 pub mod replay;
+pub mod session;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};
 use crate::frame::{pad_to_quantum, FTYPE_CHAFF, FTYPE_MSG};
@@ -134,16 +146,15 @@ impl SecureEngine {
     /// Seal + pad one outbound message into a fixed-quantum wire frame.
     /// Returns (quantum, frame_bytes). Caller sends exactly quantum bytes.
     pub fn seal_msg(&mut self, ftype: u8, payload: Vec<u8>) -> PyResult<(usize, Vec<u8>)> {
-        let key = self.key.as_ref().ok_or_else(|| {
-            PyValueError::new_err("no session: call establish_session first")
-        })?;
+        let key = self
+            .key
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("no session: call establish_session first"))?;
         if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF {
             return Err(PyValueError::new_err("unknown frame type"));
         }
-        let (quantum, _pad) =
-            pad_to_quantum(payload.len()).ok_or_else(|| {
-                PyValueError::new_err("payload exceeds largest quantum (1205B)")
-            })?;
+        let (quantum, _pad) = pad_to_quantum(payload.len())
+            .ok_or_else(|| PyValueError::new_err("payload exceeds largest quantum (1205B)"))?;
         let true_len = payload.len();
         let mut padded = payload;
         padded.resize(quantum - crate::frame::FRAME_OVERHEAD, 0u8);
@@ -230,7 +241,10 @@ impl NativeHybridKex {
 
     /// Return our ephemeral public keys: (x25519_pub_32B, mlkem1024_ek_1568B).
     pub fn get_public_keys(&self) -> PyResult<(Vec<u8>, Vec<u8>)> {
-        let keys = self.keys.as_ref().ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
+        let keys = self
+            .keys
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
         Ok((keys.x_public.to_vec(), keys.ml_ek.clone()))
     }
 
@@ -274,7 +288,10 @@ impl NativeHybridKex {
         peer_ml_ct: Vec<u8>,
         transcript_hash: Vec<u8>,
     ) -> PyResult<Vec<u8>> {
-        let keys = self.keys.as_ref().ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
+        let keys = self
+            .keys
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
         if peer_eph_x_pub.len() != 32 {
             return Err(PyValueError::new_err("peer_eph_x_pub must be 32 bytes"));
         }
@@ -287,7 +304,8 @@ impl NativeHybridKex {
         }
         let mut x_arr = [0u8; 32];
         x_arr.copy_from_slice(&peer_eph_x_pub);
-        let hybrid_ss = keys.decapsulate(&x_arr, &peer_ml_ct)
+        let hybrid_ss = keys
+            .decapsulate(&x_arr, &peer_ml_ct)
             .map_err(|e| PyValueError::new_err(format!("decapsulate failed: {e:?}")))?;
 
         let session_key = if transcript_hash.len() == 48 {
@@ -305,6 +323,6 @@ impl NativeHybridKex {
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SecureEngine>()?;
     m.add_class::<NativeHybridKex>()?;
+    ffi::register(m)?;
     Ok(())
 }
-

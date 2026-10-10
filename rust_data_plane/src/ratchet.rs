@@ -76,7 +76,14 @@ impl PcsRatchet {
         root.copy_from_slice(session_key);
         let chain = hkdf32(&root, DOMAIN_RATCHET_CHAIN, b"init")?;
         let bundle = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
-        Ok(Self { root, chain, epoch: 0, send_seq: 0, bundle, skipped: VecDeque::new() })
+        Ok(Self {
+            root,
+            chain,
+            epoch: 0,
+            send_seq: 0,
+            bundle,
+            skipped: VecDeque::new(),
+        })
     }
 
     /// Currently advertised `(x_pub, ek)` pair.
@@ -195,7 +202,8 @@ impl PcsRatchet {
 fn hkdf32(key: &[u8], salt: &[u8], info: &[u8]) -> Result<[u8; 32], CoreError> {
     let hk = Hkdf::<Sha384>::new(Some(salt), key);
     let mut out = [0u8; 32];
-    hk.expand(info, &mut out).map_err(|_| CoreError::Malformed)?;
+    hk.expand(info, &mut out)
+        .map_err(|_| CoreError::Malformed)?;
     Ok(out)
 }
 
@@ -205,7 +213,8 @@ fn hkdf64(root: &[u8; 32], pq: &[u8; HYBRID_SS], info: &[u8]) -> Result<[u8; 64]
     ikm[32..].copy_from_slice(&pq[..]);
     let hk = Hkdf::<Sha384>::new(Some(DOMAIN_RATCHET_ROOT), &ikm);
     let mut out = [0u8; 64];
-    hk.expand(info, &mut out).map_err(|_| CoreError::Malformed)?;
+    hk.expand(info, &mut out)
+        .map_err(|_| CoreError::Malformed)?;
     ikm.zeroize();
     Ok(out)
 }
