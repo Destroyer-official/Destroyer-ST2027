@@ -1,6 +1,8 @@
 
 import logging
 import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from platform_hsm_interface import run_hardware_memory_diagnostics, get_hardware_memory_protector
 
 # Configure logging to see output

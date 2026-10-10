@@ -315,9 +315,9 @@ class TestAuditConfirmedRegressions(unittest.TestCase):
         # Wire message with 2-byte signature length = 0 (empty signature)
         wire_msg_empty_sig = header_bytes + (0).to_bytes(2, 'big') + nonce + ciphertext
         with patch.object(ratchet, 'is_initialized', return_value=True):
-            with self.assertRaises(Exception) as cm:
+            with self.assertRaises(SecurityError) as cm:
                 ratchet.decrypt(wire_msg_empty_sig)
-            self.assertIn("SecurityError", str(cm.exception))
+            self.assertTrue(isinstance(cm.exception, SecurityError))
 
     # -------------------------------------------------------------------------
     # Finding 46: TLS Context Post-Quantum Fallback Rejection
