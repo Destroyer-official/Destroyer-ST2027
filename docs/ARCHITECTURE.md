@@ -54,6 +54,15 @@ Maintained for multi-party chat research and experimental comparison (contains n
 [4] Legacy Python Envelope (ChaCha20-Poly1305 / AES-GCM) ............ archive/legacy_prototype/
 ```
 
+### C. Zero-Gap Multi-Layer Defense Pipeline (`unified_secure_pipeline.py`)
+Binds independent cryptographic barriers into an atomic, fail-closed multi-layer pipeline:
+```
+[Layer 1 - Inner] Post-Quantum Double Ratchet (ML-KEM-1024 + McEliece KEM braid; ML-DSA-87 + SLH-DSA dual signatures) ... double_ratchet.py
+[Layer 2 - Outer] Bare-Metal Rust AEAD Envelope (destroyer_core: AES-256-GCM + tag PRF whitening + decoupled replay) ... rust_data_plane/src/lib.rs
+[Layer 3 - Meta]  Fixed Quanta Padding (256/512/1232B) & Hardware Memory Locking (VirtualLock/mlock + ZeroizeOnDrop) ... unified_secure_pipeline.py
+```
+
+
 ## 4. KEM-DEM Data Flow (2027 Top-Secret Path)
 
 ```

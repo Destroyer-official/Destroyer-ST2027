@@ -24,7 +24,7 @@ Modern peer-to-peer and client-server communication channels operating across ad
 
 This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses X25519 + ML-KEM-1024 as an interop leg that is NEVER trusted alone (both halves required, classical-only refused). X25519 is not the CNSA L5 leg. 
 
-The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) travels as AES-GCM AAD in clear with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum — `seq`/`ftype` remain observable, and message COUNT is hidden only under constant-rate `channel`/chaff cover. There is no AES-CTR whitening layer on the Rust path. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are analyzed in **ProVerif 2.05 symbolic models with explicit scope limits** (skeleton `handshake_model.pv` not proven / not CI-enforced; deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 5); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — none executed here/CI) and deterministic property doubles green under `cargo test`.
+The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) is whitened using a tag-derived PRF mask (`ST2027-HEADER-MASK-v1`), authenticated as unmasked AAD by the 16-byte GHASH tag, with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum size class and header fields appear pseudorandom on the wire, while message COUNT is hidden under constant-rate `channel`/chaff cover. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are analyzed in **ProVerif 2.05 symbolic models with explicit scope limits** (skeleton `handshake_model.pv` not proven / not CI-enforced; deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 5); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — none executed here/CI) and deterministic property doubles green under `cargo test`.
 
 > [!NOTE]
 > **Research Monograph Navigation:** The complete scientific, architectural, and operational documentation for ST2027 is structured into seven interconnected research tracks. For immediate access to foundational specifications, mathematical proofs, FIPS policies, and module engineering charters, see [Section 6: Comprehensive Research Monograph & Master Documentation Compendium](#6-comprehensive-research-monograph--master-documentation-compendium) or the [Master Documentation Portal](docs/README.md).
@@ -61,7 +61,9 @@ To preserve complete engineering truth and auditability, this repository maintai
 +---------------------------------------------------------------------------------------------------------+
 | [A] THE 2027 SOVEREIGN DEFENSE PIPELINE (ST2027 - ACTIVE PRODUCTION TARGET)                             |
 |   ├── Python Master Orchestrator: secure_transmit_2027.py                                               |
-|   ├── Standalone Zero-Python Binary: rust_data_plane/src/main.rs (secure-transmit)                      |
+|   ├── Standalone Zero-Python Binary: rust_data_plane/src/main.rs (secure-transmit CLI & daemon)          |
+|   ├── Rust Secure Core & Data Plane: rust_data_plane/src/lib.rs (destroyer_core PyO3 native module)     |
+|   ├── Zero-Gap Defense-in-Depth: unified_secure_pipeline.py (Python Ratchet + Rust Bare-Metal AEAD)     |
 |   ├── Simplex Optical Data Diode: Cauchy-Reed-Solomon GF(2^8) FEC Engine (zero return wire)             |
 |   ├── Hardware-Paced Chaff Clock: PacedScheduler (50ms drift-compensated constant rate wire invariance)|
 |   ├── Native Rust Memory Core: ts_rt/src/lib.rs (VirtualLock, volatile zeroize, ct_equal)                |
@@ -71,6 +73,7 @@ To preserve complete engineering truth and auditability, this repository maintai
 +---------------------------------------------------------------------------------------------------------+
 | [B] QUARANTINED LEGACY RESEARCH TESTBED (archive/legacy_prototype/ - ISOLATED TESTBED)                 |
 |   ├── Historical Source: archive/legacy_prototype/secure_p2.py & secure_p2p.py (13,000 lines)           |
+|   ├── Reference & Backup Baseline: Python modules kept 100% intact as reference and laboratory backup    |
 |   ├── Purpose: Experimental research, multi-party ratchet state models, legacy protocol comparison      |
 |   ├── Contained Draft Primitives: Non-CNSA algorithms (Falcon-1024, McEliece-8192128f, ChaCha20)        |
 |   └── Quarantine Status: Formally isolated; blocked from inclusion in TS production pipelines           |
@@ -473,7 +476,7 @@ The top-level operational entrypoint governing hardware probes, cryptographic ne
 
 ### 2. Standalone Zero-Python Data-Plane Binary (`secure-transmit` in [`rust_data_plane/`](rust_data_plane/))
 A high-performance, self-contained native executable compiled from Rust (`src/main.rs`). Designed for deployment in resource-constrained environments, hardware security appliances, or dedicated forwarding gateways without requiring a Python runtime:
-- **Subcommands:** `keygen`, `send`, `recv`, `send-file`, `recv-file`, `selftest`.
+- **Subcommands:** `auth-keygen`, `auth-sign`, `auth-verify`, `keygen`, `send`, `recv`, `send-file`, `recv-file`, `channel`, `stream-chaff`, `diode-send`, `diode-recv`, `benchmark`, `selftest`.
 - **Chunking Pipeline:** Fragments files into 1205-byte quantum cells, sequence-numbered with monotonic u64 counters, verified end-to-end via streaming SHA-256 digests.
 - **Fail-Closed Mechanics:** Emits exit code 4 upon detecting corrupt datagrams, sequence gaps, or authentication failures without writing incomplete payloads to disk.
 
@@ -487,7 +490,7 @@ A zero-dependency Rust shared library (`ts_rt.dll` / `libts_rt.so`) linked via C
 
 ## 8. Empirical Verification & Automated Test Matrix
 
-The platform is backed by the full automated suite (Python suites plus 80 cargo-test Rust tests: 51 library unit tests + 29-test harness binary) executing green, validating every component from low-level memory zeroization to full network loopback transfers. Fixed historical counts are not cited: the battery grows with the codebase; CI status is the source of truth.
+The platform is backed by the full automated suite (Python suites plus cargo-test Rust tests) executing green, validating every component from low-level memory zeroization to full network loopback transfers. Fixed historical counts are not cited: the battery grows with the codebase; CI status is the source of truth.
 
 ```
 +---------------------------------------------------------------------------------------------------------+
@@ -513,14 +516,14 @@ The platform is backed by the full automated suite (Python suites plus 80 cargo-
 +---------------------------------------------------------------------------------------------------------+
 | Battery 2: Native Rust Data-Plane & Kani Model Checking Battery                                         |
 | Command: cargo test --manifest-path rust_data_plane/Cargo.toml                                          |
-| Status:  Rust battery green: 51 library unit tests + 29-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
+| Status:  Rust battery green: 75 library unit tests + 30-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
 | Coverage:                                                                                               |
-|   ├── Unit Tests (51 passed)           (AEAD vectors, chunking bounds, UDP token bucket, replay bitmap, memlock guard)  |
-|   └── Harness binary (29 passed)       (7 deterministic property doubles + re-exported module unit tests) |
+|   ├── Unit Tests (75 passed)           (Noise-XXhfs, 3-of-5 PKI, SPQR ratchet, ML-DSA/ML-KEM, AEAD vectors, chunking bounds, UDP token bucket, replay bitmap, memlock guard)  |
+|   └── Harness binary (30 passed)       (7 deterministic property doubles + re-exported module unit tests) |
 +---------------------------------------------------------------------------------------------------------+
 | TOTAL SUITE STATUS: full automated battery green (CI is the source of truth; no fixed totals cited)           |
-+---------------------------------------------------------------------------------------------------------+
 ```
+
 
 ---
 

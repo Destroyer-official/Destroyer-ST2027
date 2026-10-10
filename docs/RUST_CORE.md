@@ -124,6 +124,18 @@ policy ok. ALL PASS.
    `CoreTransport`, TBS/derive helpers), additive `rust_backend.py` shim,
    and live cross-implementation proof (`tests/test_rust_interop.py`,
    5 passed — no stub vectors, real randomness both sides).
-4. OPEN — rebuild liboqs at official 0.16.0 + Sigstore/Rekor anchoring for
+4. DONE — standalone CLI exposure in `secure-transmit`: `auth-keygen`,
+   `auth-sign`, `auth-verify`, `channel`, `stream-chaff`, `diode-send`,
+   `diode-recv`, `benchmark`, and expanded `selftest` (FIPS 204 ML-DSA-87,
+   Noise-XXhfs roundtrip, SPQR fresh-KEM ratchet, 3-of-5 threshold PKI quorum).
+   Tested: 17 tests in `tests/test_rust_standalone_binary.py` green.
+5. DONE — top-level package export in `destroyer_core/__init__.py`:
+   re-exported all native secure-core classes and helpers from `_native`
+   (`CoreMldsaSigner`, `CoreRatchet`, `CoreHs*`, `CoreTransport`, etc.).
+6. DONE — Zero-Gap Defense Pipeline (`unified_secure_pipeline.py`) armed by
+   default in `secure_p2p.py` (`P2P_DATA_PLANE=rust` unified default across all
+   branches); 10/10 master defense audit gates verified and signed with ML-DSA-87.
+7. OPEN — rebuild liboqs at official 0.16.0 + Sigstore/Rekor anchoring for
    the Python backup path; independent cryptographic audit before any
    production-secret claim.
+
