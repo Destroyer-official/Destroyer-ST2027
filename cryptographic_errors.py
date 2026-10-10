@@ -557,7 +557,7 @@ class SecureErrorReporter:
             base_steps.extend([
                 "Verify hardware security module integrity",
                 "Test hardware security functions",
-                "Consider fallback to software-only mode if necessary"
+                "Refuse unauthenticated fallback; enforce fail-closed hardware isolation and re-attestation before recovery"
             ])
 
         return base_steps
