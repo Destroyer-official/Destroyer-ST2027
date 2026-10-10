@@ -4,7 +4,7 @@
     "decision_id": "ATO-2028-STRATEGIC-CNSA2-001",
     "authority": "None -- self-assessment prepared FOR Designated Authorizing Official review (DoD RMF / NSA CNSA 2.0 evidence; eMASS + NIAP/CMVP/CSfC steps still required for NSS)",
     "system_name": "Sovereign Military P2P Tactical Mesh (Destroyer-P2P)",
-    "timestamp_utc": "2026-10-10T16:13:33.887847+00:00",
+    "timestamp_utc": "2026-10-10T18:17:46.967369+00:00",
     "fips_199_impact_level": "HIGH-HIGH-HIGH",
     "cryptographic_profile": "NSA-CNSA-2.0-STRICT",
     "cato_pillars_self_assessed": [

@@ -1,7 +1,7 @@
 {
-  "_comment": "Military-Grade Secure P2P PRODUCTION Configuration",
+  "_comment": "High-Assurance Secure P2P PRODUCTION Configuration",
   "_version": "2.0.0",
-  "_classification": "SECRET",
+  "_classification": "UNCLASSIFIED / SYNTHETIC RESEARCH CONFIGURATION",
   "security_level": "MAXIMUM",
   "key_lifetime": 3072,
   "enable_hsm": true,

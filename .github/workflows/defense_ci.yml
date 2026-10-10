@@ -46,6 +46,18 @@ jobs:
         run: |
           python scripts/cavp_algorithm_validator.py
 
+      - name: Install System Cryptographic Dependencies (liboqs)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liboqs-dev || true
+          if [ ! -f /usr/local/lib/liboqs.so ] && [ ! -f /usr/lib/x86_64-linux-gnu/liboqs.so ] && [ ! -f /usr/lib/liboqs.so ]; then
+            git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+            cmake -S /tmp/liboqs -B /tmp/liboqs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local
+            cmake --build /tmp/liboqs/build -j$(nproc)
+            sudo cmake --install /tmp/liboqs/build
+            sudo ldconfig
+          fi
+
       - name: Run Unified Operator In-Process Self-Test (CNSA 2.0 / PQC / DEM)
         env:
           SECURE_P2P_PRODUCTION: "true"
@@ -134,10 +146,10 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Minimal Test Deps
+      - name: Install Pinned Cryptographic Test Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest cryptography pycryptodome
+          pip install --require-hashes -r requirements.txt
 
       - name: CNSA 2.0 Algorithm Purity & Cryptographic Selftests
         run: |

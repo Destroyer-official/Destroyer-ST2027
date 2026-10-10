@@ -2846,8 +2846,13 @@ class DoubleRatchet:
             local_v = int(getattr(self, 'protocol_version', 1))
         except (TypeError, ValueError):
             local_v = 1
-        negotiated = min(local_v, peer_v)
-        if getattr(self, '_strict_ratchet', False) and negotiated < 2:
+        is_strict = (
+            getattr(self, '_strict_ratchet', False)
+            or os.environ.get("P2P_PRODUCTION") in ("1", "true", "True")
+            or os.environ.get("P2P_STRICT_SECURITY") in ("1", "true", "True")
+            or os.environ.get("SECURE_P2P_PRODUCTION") in ("1", "true", "True")
+        )
+        if is_strict and negotiated < 2:
             raise SecurityError(
                 "MILITARY FATAL: Downgrade to PQ ratchet v1 (legacy KEM reuse) refused "
                 "in production/strict mode — fresh-KEM v2 required for PQ PCS."

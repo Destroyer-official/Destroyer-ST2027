@@ -909,13 +909,13 @@ class SecureFileTransferManager:
 
     def scan_file_for_malware(self, file_path: Union[str, Path]) -> Tuple[bool, List[str]]:
         """
-        Pattern-based malware triage (first-pass, ENFORCED: a dirty verdict
-        deletes the file and refuses the transfer at the call sites).
+        Heuristic pattern-based signature triage (first-pass format filter only;
+        NOT an accredited antivirus engine or malware scanner).
 
-        Catches known-bad headers (PE/ELF/class/ZIP) and script patterns in
-        text types. This is triage, not a verdict on novel malware: unknown
-        threats pass this layer and must be caught by endpoint controls.
-        Docstring corrected 2026-09-25 (was mislabeled placeholder).
+        Catches known-bad executable headers (PE/ELF/class/ZIP) and script patterns
+        in text types. A dirty verdict deletes the staged file and refuses the transfer.
+        This is a local static heuristic: operational environments must rely on an
+        approved external EDR/antivirus scanner.
 
         Returns:
             Tuple of (is_clean, scan_results)

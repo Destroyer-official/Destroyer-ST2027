@@ -155,11 +155,11 @@ def test_red_black_valid_separation():
 def test_red_black_refusals():
     black, _if = _black_ip()
     with pytest.raises(ts.TSError):  # RED on external/wildcard
-        ts.verify_red_black(ts.RedBlackConfig(red_bind="0.0.0.0", black_bind=black or "10.0.0.5"))
+        ts.verify_red_black(ts.RedBlackConfig(red_bind="0.0.0.0", black_bind=black or "10.0.0.5"))  # nosec B104 - negative test verifying refusal of wildcard
     with pytest.raises(ts.TSError):  # BLACK on loopback in separated operation
         ts.verify_red_black(ts.RedBlackConfig(red_bind="127.0.0.1", black_bind="127.0.0.1"))
     with pytest.raises(ts.TSError):  # wildcard BLACK
-        ts.enforce_bind("BLACK", "0.0.0.0")
+        ts.enforce_bind("BLACK", "0.0.0.0")  # nosec B104 - negative test verifying refusal of wildcard
     assert ts.enforce_bind("BLACK", "127.0.0.1", strict_black_loopback=False) == "127.0.0.1"
     with pytest.raises(ts.TSError):
         ts.enforce_bind("RED", "8.8.8.8")

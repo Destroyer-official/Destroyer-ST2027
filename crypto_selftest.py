@@ -85,7 +85,7 @@ def _openssl_aesgcm_encrypt(key: bytes, nonce: bytes, aad: bytes, pt: bytes):
 
 
 def _pycryptodome_aesgcm_encrypt(key: bytes, nonce: bytes, aad: bytes, pt: bytes):
-    from Crypto.Cipher import AES
+    from Crypto.Cipher import AES  # nosec B413 - pycryptodome vetted cross-check oracle
     c = AES.new(key, AES.MODE_GCM, nonce=nonce)
     c.update(aad)
     return c.encrypt(pt), c.digest()
@@ -99,8 +99,8 @@ def _openssl_hkdf(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
 
 
 def _pycryptodome_hkdf(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
-    from Crypto.Protocol.KDF import HKDF
-    from Crypto.Hash import SHA384
+    from Crypto.Protocol.KDF import HKDF  # nosec B413 - pycryptodome vetted cross-check oracle
+    from Crypto.Hash import SHA384  # nosec B413 - pycryptodome vetted cross-check oracle
     return HKDF(ikm, length, salt, SHA384, 1, context=info)
 
 
@@ -137,7 +137,7 @@ def _openssl_aesgcm_decrypt(key: bytes, nonce: bytes, aad: bytes, ct: bytes, tag
 
 
 def _pycryptodome_aesgcm_decrypt(key: bytes, nonce: bytes, aad: bytes, ct: bytes, tag: bytes) -> bytes:
-    from Crypto.Cipher import AES
+    from Crypto.Cipher import AES  # nosec B413 - pycryptodome vetted cross-check oracle
     c = AES.new(key, AES.MODE_GCM, nonce=nonce)
     c.update(aad)
     return c.decrypt_and_verify(ct, tag)
@@ -156,7 +156,7 @@ def _kat_hkdf_sha384() -> str:
 
 
 def _kat_hashes() -> str:
-    from Crypto.Hash import SHA384 as P_SHA384, HMAC as P_HMAC
+    from Crypto.Hash import SHA384 as P_SHA384, HMAC as P_HMAC  # nosec B413 - pycryptodome vetted cross-check oracle
     msg = b"ST2027-HASH-KAT" * 64
     if hashlib.sha384(msg).digest() != P_SHA384.new(msg).digest():
         raise SelfTestError("SHA-384 cross-implementation mismatch")
@@ -192,7 +192,7 @@ def _kat_x25519_rfc7748() -> str:
 
 def _kat_p384_ecdh() -> str:
     from cryptography.hazmat.primitives.asymmetric import ec
-    from Crypto.PublicKey import ECC
+    from Crypto.PublicKey import ECC  # nosec B413 - pycryptodome vetted cross-check oracle
     a_priv = int.from_bytes(secrets.token_bytes(48), "big")
     b_priv = int.from_bytes(secrets.token_bytes(48), "big")
     a_ossl = ec.derive_private_key(a_priv, ec.SECP384R1())

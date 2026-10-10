@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-10T16:36:46.057832+00:00",
+  "timestamp_utc": "2026-10-10T18:19:06.402605+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -35,12 +35,12 @@
       "sha3_512": "3e8418d5d6488a29968590efaeaa70ab1865901b9b1b665074fb00f86e5a47ae57c36ea7fa8b1cd1d6cdc2802a0f96361256b012183f7468984eec5278fbf035"
     },
     "audit_logging_system.py": {
-      "size_bytes": 40042,
-      "sha3_512": "aacf4ab3624eecc2ae9b847e98c1ce6e7660145fd6f282185c193c8e1a2df0af7db0469339f114c3325aaf7b790333d82c2cd911c3234b2bb979063c2830fdb2"
+      "size_bytes": 40087,
+      "sha3_512": "3967e9f1e637ddc360d693915a3344f00ce3ba2c99b62045e8271e578eed0b3641dbaa398845064c707c99f5c9717e488d1063a35ac11f98587039803ba76083"
     },
     "pqc_algorithms.py": {
-      "size_bytes": 347967,
-      "sha3_512": "55532bdf08d3eb07d95d5c6ad2c04c5aa1ca1f43393b0eb2bb1b9d162d482a54b7c3481a3a6bddb3fed909ab7c126d8f25b2aef93d82d94a23f64366e21e7d53"
+      "size_bytes": 348051,
+      "sha3_512": "44e1369d0a30f2a0eb66114d794c17f0519bad6135426cb286de560795238638a90c2e890881df4299e9b4b6a5907e1630327cebe6d50658e01eedc9f7e781dc"
     },
     "metadata_resistance.py": {
       "size_bytes": 34621,
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "a3c0c6519b66d2cf654ecca72d1d0245873290b6ea6969bdf7410d15e80fbfda494c4a7d9dcd2372c57dca6445846cbac758b5e7d55a9aa17ea4c33b26860430",
+  "source_tree_merkle_root": "3e176cec5cc85c74e76f2db1426d23017a8080cf1476c4d0f27bf481d40bd853c6186897e7d4f9074214ec5d70062ead86afdf598cc6f99473b88b58c7fe54ff",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "0c04585470f60ae2cf265c8d872c70b6ab2bc3bcab534436a0f8fc72d546c7863f071fb57358afd1dc692edc0c2722904babd8db29c80ca97a8ab83646ee9295",

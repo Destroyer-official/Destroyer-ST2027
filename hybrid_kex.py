@@ -1731,8 +1731,16 @@ class HybridKeyExchange:
                 if pin_status == 'CHANGED':
                     hybrid_kex_logger.critical(f"SECURITY ALERT: Key bundle failed TOFU pin continuity for peer '{peer_id}'! Identity key changed!")
                     return False
+                if pin_status == 'new':
+                    if os.environ.get("P2P_PRODUCTION") == "1" or os.environ.get("P2P_STRICT_SECURITY") == "1":
+                        auth_fps = getattr(self, 'authorized_peer_fingerprints', None)
+                        if auth_fps is not None and fingerprint not in auth_fps:
+                            hybrid_kex_logger.critical(f"FAIL-CLOSED: Peer '{peer_id}' is unknown and not in authorized whitelist under production policy.")
+                            return False
             except Exception as e_pin:
-                hybrid_kex_logger.debug(f"TOFU pin check in KEX: {e_pin}")
+                hybrid_kex_logger.error(f"FAIL-CLOSED: TOFU pin continuity check failed for peer '{peer_id}': {e_pin}")
+                if os.environ.get("P2P_PRODUCTION") == "1" or os.environ.get("P2P_STRICT_SECURITY") == "1":
+                    return False
 
             # First verify Ed25519 prekey signature
             try:
