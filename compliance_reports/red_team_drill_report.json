@@ -2,7 +2,7 @@
   "metadata": {
     "assessment_name": "DoD RMF Red-Team Penetration Assessment",
     "version": "2028.1.0",
-    "timestamp_utc": "2026-10-10T18:17:45.992370+00:00",
+    "timestamp_utc": "2026-10-10T18:29:28.242699+00:00",
     "adversary_threat_tier": "TIER-6 (Nation-State Strategic SIGINT)",
     "overall_status": "DEFENDED"
   },
@@ -10,7 +10,7 @@
     "total_vectors": 5,
     "passed": 5,
     "failed": 0,
-    "duration_seconds": 3.68,
+    "duration_seconds": 3.63,
     "all_passed": true
   },
   "drill_results": [
@@ -18,22 +18,22 @@
       "vector_id": "V1",
       "title": "Timing Attack & Constant-Time Probe",
       "status": "PASS",
-      "details": "Timing delta across early/mid/late tamper offsets: 0.011ms (<5.0ms gate)",
-      "duration_ms": 23.13
+      "details": "Timing delta across early/mid/late tamper offsets: 0.254ms (<5.0ms gate)",
+      "duration_ms": 14.91
     },
     {
       "vector_id": "V2",
       "title": "Network Jamming & Malformed Injection",
       "status": "PASS",
       "details": "9/9 corrupted frames dropped; 0 replies leaked to attacker",
-      "duration_ms": 2449.33
+      "duration_ms": 2366.96
     },
     {
       "vector_id": "V3",
       "title": "Traffic Analysis & Size Correlation Probe",
       "status": "PASS",
       "details": "All 11 variable message sizes padded into discrete quanta {256, 512, 1232}; Chaff length=256B",
-      "duration_ms": 0.09
+      "duration_ms": 0.1
     },
     {
       "vector_id": "V4",
@@ -47,7 +47,7 @@
       "title": "Replay Swarm & Rogue Impersonation Probe",
       "status": "PASS",
       "details": "100% of replayed swarm packets rejected fail-closed (20/20)",
-      "duration_ms": 1211.43
+      "duration_ms": 1246.97
     }
   ]
 }

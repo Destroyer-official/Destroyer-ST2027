@@ -53,7 +53,7 @@ _CAPABILITY_EVIDENCE: Dict[str, List[str]] = {
             "tests/test_2027_defense_hardening.py::mTLS suites"],
     "U.2": ["pqc_algorithms.py (EnhancedMLDSA_87)",
             "tests/test_crypto_root_fixes.py"],
-    "U.3": ["archive/legacy_prototype/secure_p2p.py (fail-closed auth gates)",
+    "U.3": ["secure_p2p.py (fail-closed auth gates)",
             "tests/test_audit_confirmed_regressions.py"],
     "U.4": ["zero_trust_engine.py", "tests/test_2028_national_security_remediations.py"],
     "D.1": ["platform_hsm_interface.py (TBS PCR reads)",
@@ -71,7 +71,7 @@ _CAPABILITY_EVIDENCE: Dict[str, List[str]] = {
     "A.3": ["tests/test_parser_fuzz_gates.py (shell=True eradication probes)"],
     "A.4": ["compliance_reports/spdx_sbom.json",
             "compliance_reports/cyclonedx_sbom.json",
-            "generate_production_sbom.py"],
+            "scripts/generate_production_sbom.py"],
     "DT.1": ["liboqs_wrapper.py (LibOQS_MLKEM_1024)",
              "tests/test_pqxdh_combiner_v2_kat.py"],
     "DT.2": ["pqc_algorithms.py (ML-DSA-87/SLH-DSA)",
@@ -103,7 +103,7 @@ _CAPABILITY_EVIDENCE: Dict[str, List[str]] = {
              "tests/test_security_audit_remediations.py::Item 42"],
     "VA.3": ["continuous_security_monitor.py (5 probes)",
              "verify_deployment.py"],
-    "VA.4": ["generate_oscal_ssp.py", "compliance_reports/oscal_ssp_cnsa2.json"],
+    "VA.4": ["scripts/generate_oscal_ssp.py", "compliance_reports/oscal_ssp_cnsa2.json"],
 }
 
 

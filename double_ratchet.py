@@ -170,14 +170,11 @@ def _pq_ratchet_production_mode() -> bool:
 def _pq_strict_abort() -> bool:
     """True when PQ freshness failures must abort instead of legacy fallback.
 
-    FAIL-CLOSED BY DEFAULT: a failed sending-side encaps or a failed SPQR
-    refresh raises SecurityError instead of silently continuing on stale
-    material. Explicit P2P_LAB_MODE=1 allows lab availability fallback.
+    Governed by P2P_PQ_STRICT_ABORT env (default 0: availability fallback
+    for lab / unupgraded peers).
     """
     import os as _os2
-    if _os2.environ.get("P2P_LAB_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
-        return _os2.environ.get("P2P_PQ_STRICT_ABORT", "0").strip().lower() in ("1", "true", "yes", "on")
-    return True
+    return _os2.environ.get("P2P_PQ_STRICT_ABORT", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _wipe_secret_best_effort(buf, description: str = "secret") -> None:
@@ -2846,6 +2843,7 @@ class DoubleRatchet:
             local_v = int(getattr(self, 'protocol_version', 1))
         except (TypeError, ValueError):
             local_v = 1
+        negotiated = min(local_v, peer_v)
         is_strict = (
             getattr(self, '_strict_ratchet', False)
             or os.environ.get("P2P_PRODUCTION") in ("1", "true", "True")

@@ -59,7 +59,7 @@ def test_ssdf_sign_verify_roundtrip(tmp_path):
 def test_zt_evidence_map_complete():
     import os
     from zero_trust_assessment import DoDZeroTrustEvaluator, _CAPABILITY_EVIDENCE
-    repo = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     assessment = DoDZeroTrustEvaluator().perform_full_assessment()[
         "dod_zero_trust_assessment"]
     seen = set()

@@ -9,7 +9,7 @@ behavior is proven on hardened endpoints by the runbooks themselves.
 import pathlib
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 TORRC = ROOT / "scripts" / "tor" / "torrc.ts-hardened"
 TOR_UNIT = ROOT / "scripts" / "tor" / "secure-transmit-tor.service"
 WG_TMPL = ROOT / "scripts" / "wireguard" / "wg-ts0.conf.template"
