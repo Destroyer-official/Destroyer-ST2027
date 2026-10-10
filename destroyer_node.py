@@ -54,6 +54,27 @@ class DestroyerNode:
         self._chaff_thread = None
         self._chaff_stop_event = None
         self._last_send_time = 0.0
+        self._security_tier = None
+
+    @property
+    def security_tier(self):
+        """Return active operational security tier enforced on this node."""
+        if self._security_tier is None:
+            from security_tiers import SecurityTier
+            return SecurityTier.HIGH
+        return self._security_tier
+
+    def set_security_tier(self, tier) -> None:
+        """Set and enforce operational security tier on DestroyerNode."""
+        from security_tiers import SecurityTier, SecurityTierEngine, SecurityTierViolationError
+        if isinstance(tier, str):
+            tier = SecurityTier(tier.upper())
+        elif not isinstance(tier, SecurityTier):
+            raise TypeError(f"Invalid tier type: {type(tier)}")
+
+        if tier >= SecurityTier.HIGH:
+            self.cookie_difficulty = max(self.cookie_difficulty, 1)
+        self._security_tier = tier
 
     # Upper bound for chunked streams (H24): seal_stream/transmit_large
     # refuse absurd totals instead of building unbounded frame lists.
@@ -277,12 +298,14 @@ class DestroyerNode:
         interval_sec: float = 0.05,
         jitter_sec: float = 0.01,
         poisson: bool = False,
+        use_front: bool = False,
     ) -> None:
         """Start adaptive background cover traffic injection (DAITA / Maybenot defense).
 
         Transmits synthetic CSPRNG chaff frames during idle windows to maintain
         constant wire packet density and destroy packet timing / size correlation.
-        Supports both uniform-jittered and exponential Poisson memoryless scheduling.
+        Supports uniform-jittered, exponential Poisson memoryless scheduling, and
+        Maybenot FRONT burst mitigation.
         """
         if self._chaff_thread is not None and self._chaff_thread.is_alive():
             return
@@ -293,8 +316,25 @@ class DestroyerNode:
             import math
             rng = secrets.SystemRandom()
             rate_lambda = 1.0 / max(0.001, interval_sec)
+
+            front_fsm = None
+            if use_front:
+                try:
+                    from security_tiers import MaybenotTrafficFSM
+                    front_fsm = MaybenotTrafficFSM(
+                        burst_threshold_pkts=3,
+                        burst_window_sec=0.05,
+                        target_quantum_size=256,
+                        front_window_pkts=50,
+                        front_chaff_budget=20,
+                    )
+                except Exception:
+                    front_fsm = None
+
             while not self._chaff_stop_event.is_set():
-                if poisson:
+                if front_fsm is not None and front_fsm.front_chaff_remaining > 0:
+                    delay = rng.uniform(0.005, 0.02)
+                elif poisson:
                     u = rng.uniform(0.0001, 0.9999)
                     delay = max(0.005, min(1.0, -math.log(1.0 - u) / rate_lambda))
                 else:
@@ -305,6 +345,8 @@ class DestroyerNode:
                 if self.udp_sock is not None and self.engine.is_connected():
                     try:
                         self.send_chaff(dest, payload_len=secrets.randbelow(128))
+                        if front_fsm is not None:
+                            front_fsm.on_packet_sent(128)
                     except Exception:
                         pass
 
@@ -460,6 +502,18 @@ class DestroyerNode:
             self.udp_sock = None
             self.udp_addr = None
         self._buckets.clear()
+
+    def destroy(self) -> None:
+        """Explicit memory zeroization and resource cleanup for DestroyerNode."""
+        self.close_udp()
+        for k in list(self._buckets.keys()):
+            self._buckets[k] = [0.0, 0.0]
+        self._buckets.clear()
+        if hasattr(self.engine, "reset"):
+            try:
+                self.engine.reset()
+            except Exception:
+                pass
 
 
 def data_plane_mode() -> str:

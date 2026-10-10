@@ -1594,6 +1594,10 @@ class AntiDowngradePolicyEnforcer:
                     f"but peer proposed {proposed_tier.value}."
                 )
 
+    def enforce(self, proposed_tier: SecurityTier) -> None:
+        """Alias for assert_tier_permitted."""
+        self.assert_tier_permitted(proposed_tier)
+
 
 class EmergencyPurgeCeremony:
     """Sovereign Command & Control: Dual-Operator Emergency Anti-Tamper Purge Ceremony.

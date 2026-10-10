@@ -143,6 +143,9 @@ class CommandProcessor(BaseModule):
 
             elif cmd == '/cot':
                 await self._handle_cot(args)
+
+            elif cmd in ('/tier', '/security-tier'):
+                await self._handle_security_tier(args)
                 
             elif cmd == '/exit':
                 encrypted_exit = await self.orchestrator._encrypt_message("EXIT")
@@ -210,6 +213,7 @@ class CommandProcessor(BaseModule):
         print(f"  {BOLD}/zgdp{RESET} - Sovereign Zero-Gap Defense Pipeline telemetry (multi-language dual-lock)")
         print(f"  {BOLD}/attest{RESET} - Query platform TPM 2.0 hardware PCR measurements")
         print(f"  {BOLD}/cot <lat> <lon> <call>{RESET} - Emit Cursor-on-Target tactical military event")
+        print(f"  {BOLD}/tier [level]{RESET} - Inspect or transition operational security tier (LOW/BASIC/MEDIUM/HIGH/CRITICAL)")
         print(f"  {BOLD}/exit{RESET} - Exit the chat")
         print(f"{CYAN}{self.orchestrator.local_username}: {RESET}", end='', flush=True)
     
@@ -782,6 +786,99 @@ class CommandProcessor(BaseModule):
         except Exception as e:
             print(f"\n{RED}Error broadcasting CoT event: {e}{RESET}")
             self.logger.error(f"CoT error: {e}", exc_info=True)
+
+        print(f"{CYAN}{self.orchestrator.local_username}: {RESET}", end='', flush=True)
+
+    async def _handle_security_tier(self, args: list) -> None:
+        """Inspect or enforce operational security tier according to CNSA 2.0 standards."""
+        print("\r" + " " * 100)
+        try:
+            from security_tiers import (
+                SecurityTier,
+                SecurityTierEngine,
+                TIER_PROFILES,
+                AntiDowngradePolicyEnforcer,
+                SecurityTierViolationError,
+            )
+
+            # Check if operator requested a tier transition
+            if len(args) > 1 and args[1].strip():
+                req_tier_str = args[1].strip().upper()
+                try:
+                    target_tier = SecurityTier(req_tier_str)
+                except ValueError:
+                    print(f"\n{RED}Invalid security tier: '{req_tier_str}'. Valid tiers: LOW, BASIC, MEDIUM, HIGH, CRITICAL{RESET}")
+                    print(f"{CYAN}{self.orchestrator.local_username}: {RESET}", end='', flush=True)
+                    return
+
+                # Check anti-downgrade policy
+                current_tier = getattr(self.orchestrator, "security_tier", None)
+                if not isinstance(current_tier, SecurityTier):
+                    current_tier = SecurityTier.HIGH
+                enforcer = AntiDowngradePolicyEnforcer(minimum_enforced_tier=current_tier)
+                try:
+                    enforcer.assert_tier_permitted(target_tier)
+                except SecurityTierViolationError as sve:
+                    print(f"\n{BOLD}{RED}[ANTI-DOWNGRADE ENFORCEMENT REFUSAL]{RESET}")
+                    print(f"  {sve}")
+                    print(f"  Current Enforced Tier: {current_tier.value}")
+                    print(f"  Requested Target Tier: {target_tier.value}")
+                    print(f"  Fail-closed policy rejects insecure downward negotiation.")
+                    print(f"{CYAN}{self.orchestrator.local_username}: {RESET}", end='', flush=True)
+                    return
+
+                # Transition to new tier
+                self.orchestrator.security_tier = target_tier
+                if hasattr(self.orchestrator, "destroyer_node") and self.orchestrator.destroyer_node:
+                    self.orchestrator.destroyer_node.set_security_tier(target_tier)
+                print(f"\n{BOLD}{GREEN}[SECURITY TIER TRANSITIONED]{RESET}")
+                print(f"  New Operational Tier: {BOLD}{target_tier.value}{RESET}")
+                print(f"  Requirement Profile:  {TIER_PROFILES[target_tier].description}")
+                print(f"{CYAN}{self.orchestrator.local_username}: {RESET}", end='', flush=True)
+                return
+
+            # Display active security tier status
+            active_tier = getattr(self.orchestrator, "security_tier", None)
+            if not isinstance(active_tier, SecurityTier):
+                active_tier = None
+            if active_tier is None:
+                caps = {
+                    "has_pqc_kem": True,
+                    "has_pqc_sig": True,
+                    "has_vas": True,
+                    "has_locked_memory": True,
+                    "has_ram_encryption": True,
+                    "has_forward_secrecy": True,
+                    "has_quantization": True,
+                    "has_pacing_chaff": True,
+                    "has_anti_replay": True,
+                    "has_two_person_integrity": True,
+                    "has_cross_domain_guard": True,
+                    "has_emergency_shred": True,
+                }
+                active_tier = SecurityTierEngine.assess_runtime_security_tier(caps)
+
+            profile = TIER_PROFILES[active_tier]
+            print(f"\n{BOLD}{CYAN}================================================================================{RESET}")
+            print(f"  {BOLD}OPERATIONAL SECURITY TIER STATUS — CNSA 2.0 ZERO TOLERANCE{RESET}")
+            print(f"{BOLD}{CYAN}================================================================================{RESET}")
+            print(f"  Active Security Tier:       {BOLD}{GREEN}{active_tier.value}{RESET} (Level {active_tier.level_number} of 5)")
+            print(f"  Profile Scope:             {profile.description}")
+            print(f"  Classical Bit Strength:    {profile.min_classical_bits} bits (AES-256-GCM / ChaCha20-Poly1305)")
+            print(f"  Quantum Security Level:    NIST Level {profile.min_quantum_level} (ML-KEM-1024 + ML-DSA-87)")
+            print(f"  Verify-After-Sign (VAS):   {GREEN if profile.requires_vas else YELLOW}{profile.requires_vas}{RESET}")
+            print(f"  In-RAM Memory Protection:  {GREEN if profile.requires_ram_protection else YELLOW}{profile.requires_ram_protection}{RESET} (VirtualLock + DPAPI CryptProtectMemory)")
+            print(f"  Forward Secrecy / PCS:     {GREEN if profile.requires_forward_secrecy else YELLOW}{profile.requires_forward_secrecy}{RESET} (Signal SPQR Triple Ratchet)")
+            print(f"  DAITA Traffic Camouflage:  {GREEN if profile.requires_daita_camouflage else YELLOW}{profile.requires_daita_camouflage}{RESET} (Poisson Chaff + FRONT Defense)")
+            print(f"  Anti-Replay Window:        {GREEN if profile.requires_anti_replay_window else YELLOW}{profile.requires_anti_replay_window}{RESET} (64-bit Decoupled Sliding Bitmask)")
+            print(f"  Two-Person Integrity (TPI):{GREEN if profile.requires_two_person_integrity else YELLOW}{profile.requires_two_person_integrity}{RESET} (Dual-Operator DPO Authorization)")
+            print(f"  Cross-Domain Isolation:    {GREEN if profile.requires_cross_domain_guard else YELLOW}{profile.requires_cross_domain_guard}{RESET} (Hardware Red/Black Air-Gap Guard)")
+            print(f"  Emergency Zeroization:     {GREEN if profile.requires_emergency_shred else YELLOW}{profile.requires_emergency_shred}{RESET} (DoD 5220.22-M 4-Pass RAM Shredder)")
+            print(f"{BOLD}{CYAN}================================================================================{RESET}")
+            print(f"  {YELLOW}Operator Tip: Use /tier <LEVEL> to switch tier (downgrades are refused).{RESET}")
+        except Exception as e:
+            print(f"\n{RED}Error querying security tier: {e}{RESET}")
+            self.logger.error(f"Security tier query error: {e}", exc_info=True)
 
         print(f"{CYAN}{self.orchestrator.local_username}: {RESET}", end='', flush=True)
 

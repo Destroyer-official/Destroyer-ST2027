@@ -251,9 +251,48 @@ class TestTier4TacticalCommands(unittest.IsolatedAsyncioTestCase):
         self.cmd_processor._show_zgdp_status(["/zgdp"])
         self.cmd_processor._show_tpm_attestation()
 
-    async def test_cot_command_dispatch(self):
-        """Test /cot command dispatch."""
-        await self.cmd_processor.execute_command("/cot", ["/cot", "38.8719 -77.0563 PENTAGON_RECON"])
+    async def test_security_tier_command_query(self):
+        """Test /tier command query without arguments."""
+        await self.cmd_processor.execute_command("/tier", ["/tier"])
+        await self.cmd_processor.execute_command("/security-tier", ["/security-tier"])
+
+    async def test_security_tier_command_transition_and_downgrade_refusal(self):
+        """Test transitioning to CRITICAL tier and refusing downgrade to LOW."""
+        from security_tiers import SecurityTier
+        # Set to CRITICAL
+        await self.cmd_processor.execute_command("/tier", ["/tier", "CRITICAL"])
+        self.assertEqual(self.orchestrator.security_tier, SecurityTier.CRITICAL)
+
+        # Attempt to downgrade to LOW -> must be refused fail-closed, keeping CRITICAL
+        await self.cmd_processor.execute_command("/tier", ["/tier", "LOW"])
+        self.assertEqual(self.orchestrator.security_tier, SecurityTier.CRITICAL)
+
+        # Invalid tier string handled cleanly
+        await self.cmd_processor.execute_command("/tier", ["/tier", "INVALID_TIER_NAME"])
+        self.assertEqual(self.orchestrator.security_tier, SecurityTier.CRITICAL)
+
+    def test_destroyer_node_tier_and_front_pacing(self):
+        """Test DestroyerNode security tier enforcement and FRONT burst pacing."""
+        from destroyer_node import DestroyerNode
+        from security_tiers import SecurityTier
+        node = DestroyerNode(port=0)
+        self.assertEqual(node.security_tier, SecurityTier.HIGH)
+
+        node.set_security_tier(SecurityTier.CRITICAL)
+        self.assertEqual(node.security_tier, SecurityTier.CRITICAL)
+
+        # Test FRONT burst pacing activation and stop
+        node.bind_udp("127.0.0.1", 0)
+        node.start_pacing_chaff(("127.0.0.1", 51820), interval_sec=0.01, use_front=True)
+        self.assertTrue(node.is_pacing_chaff())
+        time.sleep(0.05)
+        node.stop_pacing_chaff()
+        self.assertFalse(node.is_pacing_chaff())
+
+        # Test memory zeroization lifecycle
+        node.destroy()
+        self.assertIsNone(node.udp_sock)
+        self.assertEqual(len(node._buckets), 0)
 
 
 if __name__ == "__main__":

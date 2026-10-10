@@ -81,6 +81,120 @@ class EntropyInjectionError(EntropyError):
     """Raised when external entropy injection fails."""
 
 
+class NoiseHealthScreen:
+    """SP 800-90B continuous health tests over raw ingest bits.
+
+    Implements the approved Repetition Count Test (RCT, §4.4.1) and Adaptive
+    Proportion Test (APT, §4.4.2) with binary-symbol parameters for an assumed
+    H=1 bit of min-entropy per sample bit (the standard worked example also
+    used by the Linux/Oracle/Summit jitter-RNG submittals):
+      RCT: intermittent cutoff Ci=31 (αi=2^-30), permanent Cp=61 (αp=2^-60)
+      APT: window W=512, intermittent Ci=325, permanent Cp=355
+    State persists across screen() calls (continuous testing, not per-batch).
+
+    Semantics (per §4.3/§4.4):
+      intermittent failure → batch is DISCARDED (never mixed), test state
+        reset, consecutive-intermittent counter incremented; 3 consecutive
+        intermittent failures escalate to permanent.
+      permanent failure → EntropyHealthError (fail-closed; caller must not
+        use the batch and should treat the source as broken).
+
+    Scope honesty: this screens for stuck/catastrophic source failure (all-
+    zeros driver bug, wedged QRNG, replayed buffer) — it is NOT a
+    min-entropy validator and cannot detect a merely weak source. Inputs
+    here are pre-conditioning raw source bytes; the SHA3 pool conditioning
+    downstream would otherwise mask a dead source entirely.
+    """
+
+    RCT_INTERMITTENT = 31
+    RCT_PERMANENT = 61
+    APT_WINDOW = 512
+    APT_INTERMITTENT = 325
+    APT_PERMANENT = 355
+    MAX_CONSECUTIVE_INTERMITTENT = 3
+
+    def __init__(self) -> None:
+        self._rct_last: int = -1
+        self._rct_run: int = 0
+        from collections import deque as _deque
+        self._apt_window = _deque(maxlen=self.APT_WINDOW)
+        self._apt_ones: int = 0
+        self._consecutive_intermittent: int = 0
+
+    def _reset_tests(self) -> None:
+        self._rct_last = -1
+        self._rct_run = 0
+        self._apt_window.clear()
+        self._apt_ones = 0
+
+    def screen(self, data: bytes) -> None:
+        """Screen raw ingest bytes; raises EntropyHealthError on failure.
+
+        Intermittent failures raise with ``err.intermittent is True``: the
+        caller must DISCARD the batch (never mix) but may continue operating.
+        Permanent failures raise with ``intermittent`` falsy: fail-closed,
+        treat the source as broken. Either way a failed batch is never
+        consumed — the raise guarantees it cannot be accidentally mixed.
+        """
+        if not data:
+            return
+        for byte in data:
+            for shift in range(8):
+                self._feed_bit((byte >> shift) & 1)
+
+    def _feed_bit(self, bit: int) -> None:
+        # --- RCT ---
+        if bit == self._rct_last:
+            self._rct_run += 1
+        else:
+            self._rct_last = bit
+            self._rct_run = 1
+        if self._rct_run >= self.RCT_PERMANENT:
+            self._reset_tests()
+            raise EntropyHealthError(
+                "Noise RCT permanent failure: bit stuck "
+                f"(run>={self.RCT_PERMANENT}); source halted")
+        if self._rct_run >= self.RCT_INTERMITTENT:
+            self._note_intermittent(
+                f"Noise RCT intermittent failure (run>={self.RCT_INTERMITTENT})")
+        # --- APT (O(1) running count; exact first-value semantics) ---
+        if len(self._apt_window) == self.APT_WINDOW:
+            evicted = self._apt_window[0]
+            self._apt_ones -= int(evicted)
+        self._apt_window.append(bit)
+        self._apt_ones += int(bit)
+        if len(self._apt_window) == self.APT_WINDOW:
+            first = self._apt_window[0]
+            count = self._apt_ones if first else (self.APT_WINDOW - self._apt_ones)
+            if count >= self.APT_PERMANENT:
+                self._reset_tests()
+                raise EntropyHealthError(
+                    "Noise APT permanent failure "
+                    f"(count>={self.APT_PERMANENT}/{self.APT_WINDOW}); source halted")
+            if count >= self.APT_INTERMITTENT:
+                self._note_intermittent(
+                    f"Noise APT intermittent failure (count>={self.APT_INTERMITTENT})")
+
+    def _note_intermittent(self, msg: str) -> None:
+        self._consecutive_intermittent += 1
+        self._reset_tests()
+        log.warning("%s (consecutive=%d)", msg, self._consecutive_intermittent)
+        if self._consecutive_intermittent >= self.MAX_CONSECUTIVE_INTERMITTENT:
+            self._consecutive_intermittent = 0
+            err = EntropyHealthError(
+                "Noise health: repeated intermittent failures escalated to "
+                "permanent; source halted")
+            err.intermittent = False  # type: ignore[attr-defined]
+            raise err
+        err = EntropyHealthError(msg + "; batch discarded")
+        err.intermittent = True  # type: ignore[attr-defined]
+        raise err
+
+    def note_success(self) -> None:
+        """Reset the consecutive-intermittent counter after clean batches."""
+        self._consecutive_intermittent = 0
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Enums and Data Classes
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -378,6 +492,10 @@ class EntropyManager:
         # Health monitoring
         self._health_callbacks: List[Callable[[EntropyHealthReport], None]] = []
         self._last_health_check: Optional[datetime] = None
+
+        # SP 800-90B continuous noise health screen (RCT+APT over raw ingest
+        # bits; see NoiseHealthScreen). Persists across reseeds by design.
+        self._noise_screen = NoiseHealthScreen()
         
         # HSM integration
         self._hsm_interface = None
@@ -486,9 +604,23 @@ class EntropyManager:
     def _mix_into_pool(self, new_entropy: bytes) -> None:
         """
         Mix new entropy into the pool using SHA3-512 conditioning.
-        
+
+        Raw ingest bytes first pass the SP 800-90B continuous health screen
+        (RCT+APT stuck-source detection). Intermittent failure discards the
+        batch (pool untouched, warning logged); permanent failure raises
+        EntropyHealthError fail-closed. Callers must hold self._lock.
+
         Requirements: 10.4
         """
+        if new_entropy:
+            try:
+                self._noise_screen.screen(bytes(new_entropy))
+            except EntropyHealthError as e:
+                if getattr(e, "intermittent", False):
+                    log.warning("Discarding entropy batch: %s", e)
+                    return
+                raise
+            self._noise_screen.note_success()
         # Combine current pool with new entropy
         combined = bytes(self._pool) + new_entropy
         

@@ -15,11 +15,15 @@ import datetime
 import hashlib
 import hmac
 import json
+import logging
 import os
+import secrets
 import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("siem_audit_chain")
 
 REPO_ROOT = Path(__file__).resolve().parent
 LOG_DIR = REPO_ROOT / "logs"
@@ -28,6 +32,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_AUDIT_LEDGER = LOG_DIR / "siem_chained_audit.jsonl"
 DEFAULT_HEAD_ANCHOR = LOG_DIR / "siem_audit_head.anchor.json"
 GENESIS_HMAC = "0" * 96  # 96 hex characters = 48 bytes (SHA-384)
+AUDIT_HMAC_KEY_BYTES = 48  # HMAC-SHA384 key size
 
 
 class TamperEvidentAuditChain:
@@ -43,21 +48,72 @@ class TamperEvidentAuditChain:
         self.anchor_path = Path(anchor_path)
         self._lock = threading.Lock()
 
-        # Derive or load secret HMAC key
+        # Resolve the chain HMAC key. Tamper-evidence holds ONLY if this key
+        # is secret: a publicly derivable key lets anyone forge the chain.
+        # Precedence: explicit arg > P2P_SIEM_KEY env > persisted key file >
+        # fresh random (persisted 0600, else ephemeral with loud warning).
+        # The old deterministic node-derived default is deliberately REMOVED:
+        # it was computable by anyone reading this source.
         if hmac_key:
-            self.hmac_key = hmac_key
+            self.hmac_key = bytes(hmac_key)
         else:
             env_key = os.environ.get("P2P_SIEM_KEY")
             if env_key:
                 self.hmac_key = env_key.encode("utf-8")
             else:
-                # Deterministic node-specific audit root key for zero-trust tracking
-                node_seed = os.environ.get("P2P_NODE_ID", "sovereign-node-01").encode("utf-8")
-                self.hmac_key = hashlib.sha384(b"P2P_SIEM_AUDIT_KEY_DERIVATION_V1:" + node_seed).digest()
+                self.hmac_key = self._load_or_create_key_file()
 
         self.last_hmac = GENESIS_HMAC
         self.seq = 0
         self._recover_state()
+
+    def _key_file_path(self) -> Path:
+        return self.ledger_path.with_name(self.ledger_path.stem + ".hmac.key")
+
+    def _load_or_create_key_file(self) -> bytes:
+        """Load the persisted chain key (0600) or create one at random.
+
+        A pre-existing non-empty ledger without key material means prior
+        entries were chained under the legacy deterministic key (publicly
+        forgeable): log that once (CRITICAL) and start a new random epoch.
+        """
+        key_path = self._key_file_path()
+        try:
+            raw = key_path.read_bytes()
+            if len(raw) >= 32:
+                return raw
+            logger.warning("Audit chain key file too short; regenerating")
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("Audit chain key file unreadable, regenerating: %r", exc)
+        try:
+            if self.ledger_path.exists() and self.ledger_path.stat().st_size > 0:
+                logger.critical(
+                    "Legacy audit epoch detected: existing ledger predates the "
+                    "secret chain key (prior entries used a publicly derivable "
+                    "key and are NOT tamper-evident). Starting a new random key "
+                    "epoch; retain old ledger for continuity only.")
+        except Exception:
+            pass
+        fresh = secrets.token_bytes(AUDIT_HMAC_KEY_BYTES)
+        try:
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, fresh)
+            finally:
+                os.close(fd)
+            try:
+                os.chmod(str(key_path), 0o600)
+            except Exception:
+                pass
+            return fresh
+        except Exception as exc:
+            logger.critical(
+                "Audit chain key file unwritable (%r); using EPHEMERAL random "
+                "key — chain verifies in-process only, NOT across restarts", exc)
+            return fresh
 
     def _recover_state(self) -> None:
         """Scan existing ledger to recover latest sequence number and HMAC head."""

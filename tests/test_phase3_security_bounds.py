@@ -274,7 +274,8 @@ def test_handshake_binding_roundtrip_and_strict_refusal(monkeypatch):
     bb = b.set_handshake_binding(th)
     assert ba == bb
     assert b.decrypt(a.encrypt(b"bound")) == b"bound"
-    # Strict mode without binding refuses fail-closed.
+    # Strict mode without binding refuses fail-closed (encrypt wraps the
+    # SecurityError as RuntimeError at the public boundary; both mean refuse).
     c, d = _mkpair()
     monkeypatch.setenv("P2P_REQUIRE_HANDSHAKE_BINDING", "1")
     try:
@@ -282,3 +283,79 @@ def test_handshake_binding_roundtrip_and_strict_refusal(monkeypatch):
             c.encrypt(b"unbound refused")
     finally:
         monkeypatch.delenv("P2P_REQUIRE_HANDSHAKE_BINDING", raising=False)
+
+
+def test_hqc_refused_without_explicit_opt_in(monkeypatch):
+    from liboqs_wrapper import LibOQS_HQC_256
+    monkeypatch.delenv("P2P_ENABLE_VULN_HQC", raising=False)
+    with pytest.raises(RuntimeError):
+        LibOQS_HQC_256()
+
+
+def test_audit_chain_key_is_secret_and_persistent(tmp_path, monkeypatch):
+    import json
+    from remote_siem_forwarder import TamperEvidentAuditChain
+    monkeypatch.delenv("P2P_SIEM_KEY", raising=False)
+    a = TamperEvidentAuditChain(ledger_path=tmp_path / "a.jsonl",
+                               anchor_path=tmp_path / "a.anchor.json")
+    b = TamperEvidentAuditChain(ledger_path=tmp_path / "b.jsonl",
+                               anchor_path=tmp_path / "b.anchor.json")
+    # Fresh keys are random per ledger (never the old public derivation).
+    assert a.hmac_key != b.hmac_key
+    assert len(a.hmac_key) == 48
+    key_file = tmp_path / "a.hmac.key"
+    assert key_file.exists()
+    # Restart loads the SAME key (chain continuity).
+    a2 = TamperEvidentAuditChain(ledger_path=tmp_path / "a.jsonl",
+                                anchor_path=tmp_path / "a.anchor.json")
+    assert a2.hmac_key == a.hmac_key
+    # Append + verify roundtrip; tamper breaks the chain.
+    a.append_event("test.event", "INFO", {"k": "v"})
+    ok, count, _ = a.verify_ledger()
+    assert ok and count == 1
+    lines = (tmp_path / "a.jsonl").read_text(encoding="utf-8").splitlines()
+    entry = json.loads(lines[0])
+    entry["payload"] = {"k": "FORGED"}
+    (tmp_path / "a.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+    ok, _, _ = a.verify_ledger()
+    assert not ok
+
+
+def test_noise_screen_rejects_stuck_source():
+    import os
+    from entropy_manager import NoiseHealthScreen, EntropyHealthError
+    s = NoiseHealthScreen()
+    # Healthy randomness passes.
+    s.screen(os.urandom(256))
+    # Fully stuck source trips permanent failure (fail-closed).
+    s2 = NoiseHealthScreen()
+    with pytest.raises(EntropyHealthError):
+        s2.screen(b"\x00" * 128)
+    # Repeated intermittent-level stuck runs escalate to permanent.
+    s3 = NoiseHealthScreen()
+    with pytest.raises(EntropyHealthError):
+        s3.screen(b"\x00" * 4)  # 32 identical bits -> intermittent, discarded
+    with pytest.raises(EntropyHealthError):
+        s3.screen(b"\x00" * 4)
+    try:
+        s3.screen(b"\x00" * 4)
+        raise AssertionError("escalation expected")
+    except EntropyHealthError as e:
+        assert not getattr(e, "intermittent", False)
+
+
+def test_pool_discards_failed_batch():
+    from entropy_manager import EntropyManager, NoiseHealthScreen
+    m = EntropyManager.__new__(EntropyManager)
+    import threading
+    m._lock = threading.RLock()
+    m._pool = bytearray(b"\xab" * 128)
+    m._noise_screen = NoiseHealthScreen()
+    before = bytes(m._pool)
+    # Stuck batch: discarded, pool untouched.
+    m._mix_into_pool(b"\x00" * 128)
+    assert bytes(m._pool) == before
+    # Good batch still mixes afterwards (screen recovered).
+    import os
+    m._mix_into_pool(os.urandom(64))
+    assert bytes(m._pool) != before

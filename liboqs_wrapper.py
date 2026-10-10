@@ -418,8 +418,26 @@ class LibOQS_McEliece_8192128f:
 
 
 class LibOQS_HQC_256:
-    """HQC-256 KEM implementation using liboqs"""
+    """HQC-256 KEM implementation using liboqs.
+
+    FAIL-CLOSED on the vendored oqs.dll 0.10.1: upstream 0.12.0/0.14.0 fix HQC
+    key-recovery issues (CVE-2024-54137, CVE-2025-52473; HQC disabled by
+    default since 0.13.0 per CVE-2025-48946). Instantiation is refused unless
+    P2P_ENABLE_VULN_HQC=1 is explicitly set (logged CRITICAL). This single
+    choke point covers all callers, including direct LibOQS_HQC_256()
+    instantiations that bypass triple_hybrid_kem.is_hqc_available().
+    Re-enable by default only after the DLL is rebuilt at 0.16.0+.
+    """
     def __init__(self):
+        if os.environ.get("P2P_ENABLE_VULN_HQC", "").strip().lower() not in ("1", "true", "yes", "on"):
+            raise RuntimeError(
+                "HQC-256 refused: vendored oqs.dll predates upstream fixes "
+                "(CVE-2024-54137, CVE-2025-52473); set P2P_ENABLE_VULN_HQC=1 "
+                "to override explicitly (agility-reserve use only)")
+        logging.getLogger("liboqs_wrapper").critical(
+            "P2P_ENABLE_VULN_HQC=1: HQC-256 leg explicitly enabled on "
+            "vulnerable oqs.dll (CVE-2024-54137/CVE-2025-52473); use ends when "
+            "the operation completes")
         self.alg_name = b"HQC-256"
         self.kem = liboqs.OQS_KEM_new(self.alg_name)
         if not self.kem: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled into oqs.dll?")
