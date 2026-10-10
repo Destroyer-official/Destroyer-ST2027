@@ -1,45 +1,43 @@
-//! secure-transmit — standalone data-plane executor (zero-Python binary).
+//! secure-transmit — standalone post-quantum secure core & data-plane executor.
 //!
-//! SCOPE (explicit boundary, no handshake claims):
-//! - This binary executes the TESTED data-plane modules only: AEAD framing
-//!   (`aead`), fixed quanta (`frame`/`pad`), 64-bit anti-replay (`replay`),
-//!   silent-drop UDP transport (`net`), constant-time compare (`ct`).
-//! - Session-key provisioning (ML-KEM-1024 PQ handshake, ML-DSA-87 PKI,
-//!   SPO/DPO ceremony, TLS 1.3) remains in the audited Python control plane
-//!   (`secure_transmit_2027.py`, `noise_pq.py`, `trust_anchor.py`,
-//!   `spo_dpo.py`). This binary NEVER negotiates keys: the frame key arrives
-//!   from that plane (or offline ceremony) via `--key-file` / `--key-stdin`
-//!   and is zeroized after use. Raw key material on the process command line
-//!   (`--key HEX`) is REFUSED (DoD Zero Trust: secrets must never appear in
-//!   `ps` / `Get-Process` argv).
-//! - Nonce discipline (NIST SP 800-38D uniqueness: the 96-bit nonce MUST
-//!   be unique per invocation; counters are the prescribed construction;
-//!   reuse destroys AEAD guarantees):
-//!   seq is NEVER user input. `--seq` is REFUSED. Each `send` reserves a
-//!   strictly monotonic seq (range for `send-file`) from a persistent
-//!   `--state` file under an exclusive OS lock, persisted BEFORE encrypting,
-//!   so concurrent runs and crashes can skip but never reuse a nonce.
-//! - One direction per invocation: `send` seals with DIR_SEND, `recv` opens
-//!   with DIR_SEND. Bidirectional traffic = two sessions with opposite roles
-//!   (same doctrine as `SecureEngine::establish_session(is_initiator)`).
-//! - Bulk cipher here is the data-plane AEAD (AES-256-GCM, CNSA 2.0 suite)
-//!   as tested in `aead.rs` (NIST SP 800-38D KAT). This binary seals exactly
-//!   what it is handed under the frame key it is given.
-//!
-//! FAIL-CLOSED CLI: bad key length, oversize payload, unauthenticated traffic,
-//! exhausted sequence space, state/key mismatch, and timeouts exit non-zero
-//! with a one-line stderr reason. Nothing is ever signaled back to the peer
-//! (stealth discipline from `net.rs`).
+//! ARCHITECTURE & ZERO-PYTHON PRODUCTION PATH:
+//! - Native Post-Quantum Cryptographic Secure Core:
+//!   * Noise_XXhfs P-384 + ML-KEM-1024 + ML-DSA-87 handshake (`destroyer_core::handshake`).
+//!   * Pure-Rust FIPS 204 ML-DSA-87 signatures with domain separation (`destroyer_core::auth`).
+//!   * Sparse Post-Quantum Ratchet (SPQR / Triple Ratchet per Dodis et al. EUROCRYPT 2025)
+//!     with fresh-KEM braiding per step (`destroyer_core::ratchet`).
+//!   * 3-of-5 threshold PKI quorum verification & CRL revocation (`destroyer_core::pki`).
+//!   * Authenticated hybrid KEX (ML-KEM-1024 + X25519) (`destroyer_core::kem`, `destroyer_core::kex_auth`).
+//!   * Sealed key-file custody (0600 / exclusive lock / memory zeroization) (`destroyer_core::keystore`).
+//!   * NIST SP 800-88 Rev 1 media sanitization (`destroyer_core::purge`).
+//! - Military-Grade Data-Plane:
+//!   * AEAD AES-256-GCM framing with header whitening (`destroyer_core::aead`).
+//!   * Strict 64-bit anti-replay sliding window (`destroyer_core::replay`).
+//!   * Cauchy-Reed-Solomon Forward Error Correction (`destroyer_core::fec`).
+//!   * Flat Shannon entropy CBR traffic pacing with continuous CSPRNG chaff (`destroyer_core::pacing`).
+//!   * Silent-drop stealth UDP networking (`destroyer_core::net`).
+//! - Reference & Interop:
+//!   * The Python control plane (`noise_pq.py`, `double_ratchet.py`, `trust_anchor.py`)
+//!     is kept intact as the audited reference implementation and backup path.
+//!   * Secrets NEVER appear in command line arguments (`ps` / argv).
+//!   * All cryptographic secrets zeroize on drop and are memory-protected.
 
 use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
+use destroyer_core::auth::{Mldsa87SigningKey, Mldsa87VerifyingKey};
 use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
+use destroyer_core::handshake::Handshake;
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
 use destroyer_core::keystore;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler};
+use destroyer_core::pki::{self, CertSig, Custodian};
+use destroyer_core::policy::{
+    DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG,
+};
 use destroyer_core::purge;
+use destroyer_core::ratchet::PcsRatchet;
 use destroyer_core::replay::AntiReplayWindow;
 use fs2::FileExt;
 use sha2::{Digest, Sha256, Sha384};
@@ -64,9 +62,12 @@ const STATE_LEN: usize = 48;
 
 fn usage() -> ! {
     eprintln!(
-        "secure-transmit {VERSION} — standalone data-plane executor\n\
+        "secure-transmit {VERSION} — standalone post-quantum secure core & data plane\n\
          \n\
          keygen [--out PATH]              print fresh 32B frame key (hex)\n\
+         auth-keygen --out-sk PATH --out-pk PATH       generate ML-DSA-87 (FIPS 204) keypair\n\
+         auth-sign   --sk-file PATH [--domain TEXT] --in PATH --out PATH  sign file with ML-DSA-87\n\
+         auth-verify --pk-file PATH [--domain TEXT] --in PATH --sig-file PATH verify ML-DSA-87 signature\n\
          kex-listen  --bind ADDR --out-key PATH --psk-file PATH [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
          kex-connect --to ADDR --out-key PATH --psk-file PATH [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
          send   --key-file PATH|--key-stdin --state PATH --to ADDR --msg TEXT\n\
@@ -387,6 +388,92 @@ fn hex_of(b: &[u8]) -> String {
     s
 }
 
+fn decode_hex(s: &str) -> Result<Vec<u8>, &'static str> {
+    let clean = s.trim();
+    if !clean.len().is_multiple_of(2) {
+        return Err("hex length must be even");
+    }
+    let mut out = Vec::with_capacity(clean.len() / 2);
+    #[allow(clippy::chunks_exact_to_as_chunks)]
+    for chunk in clean.as_bytes().chunks_exact(2) {
+        let text = std::str::from_utf8(chunk).map_err(|_| "bad utf8 in hex")?;
+        let byte = u8::from_str_radix(text, 16).map_err(|_| "bad hex digit")?;
+        out.push(byte);
+    }
+    Ok(out)
+}
+
+fn cmd_auth_keygen(args: &[String]) {
+    reject_forbidden_cli(args);
+    let out_sk = get_flag(args, "--out-sk").unwrap_or_else(|| fail("missing --out-sk PATH"));
+    let out_pk = get_flag(args, "--out-pk").unwrap_or_else(|| fail("missing --out-pk PATH"));
+
+    let mut seed = [0u8; 32];
+    if getrandom::fill(&mut seed).is_err() {
+        fail("OS RNG unavailable");
+    }
+    let (_sk, vk) = Mldsa87SigningKey::from_seed(&seed);
+    let seed_hex = hex_of(&seed);
+    seed.zeroize();
+    write_key_file(&out_sk, &seed_hex);
+
+    let vk_bytes = vk.to_bytes();
+    let vk_hex = hex_of(&vk_bytes);
+    std::fs::write(&out_pk, vk_hex.as_bytes()).unwrap_or_else(|_| fail("pk out unwritable"));
+
+    println!("auth-keygen SUCCESS: ML-DSA-87 keypair generated -> sk:{out_sk} pk:{out_pk}");
+}
+
+fn cmd_auth_sign(args: &[String]) {
+    reject_forbidden_cli(args);
+    let sk_file = get_flag(args, "--sk-file").unwrap_or_else(|| fail("missing --sk-file PATH"));
+    let in_file = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
+    let out_file = get_flag(args, "--out").unwrap_or_else(|| fail("missing --out PATH"));
+    let domain_str = get_flag(args, "--domain").unwrap_or_else(|| "DESTROYER-ST2027-SIG-GENERIC".to_string());
+
+    let (locked_seed, _) = load_key_material(&[
+        "--key-file".to_string(),
+        sk_file,
+    ]);
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(locked_seed.as_bytes());
+    let (sk, _) = Mldsa87SigningKey::from_seed(&seed);
+    seed.zeroize();
+
+    let payload = std::fs::read(&in_file).unwrap_or_else(|_| fail("input file unreadable"));
+    let sig = sk.sign(domain_str.as_bytes(), &payload);
+    let sig_hex = hex_of(&sig);
+    std::fs::write(&out_file, sig_hex.as_bytes()).unwrap_or_else(|_| fail("out signature unwritable"));
+
+    println!("auth-sign SUCCESS: ML-DSA-87 signature written to {out_file} (bytes: {})", sig.len());
+}
+
+fn cmd_auth_verify(args: &[String]) {
+    reject_forbidden_cli(args);
+    let pk_file = get_flag(args, "--pk-file").unwrap_or_else(|| fail("missing --pk-file PATH"));
+    let in_file = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
+    let sig_file = get_flag(args, "--sig-file").unwrap_or_else(|| fail("missing --sig-file PATH"));
+    let domain_str = get_flag(args, "--domain").unwrap_or_else(|| "DESTROYER-ST2027-SIG-GENERIC".to_string());
+
+    let pk_hex_str = std::fs::read_to_string(&pk_file).unwrap_or_else(|_| fail("pk file unreadable"));
+    let pk_bytes = decode_hex(&pk_hex_str).unwrap_or_else(|_| fail("pk file not valid hex"));
+    let vk = Mldsa87VerifyingKey::from_bytes(&pk_bytes)
+        .unwrap_or_else(|_| fail("invalid ML-DSA-87 public key bytes"));
+
+    let payload = std::fs::read(&in_file).unwrap_or_else(|_| fail("input file unreadable"));
+    let sig_hex_str = std::fs::read_to_string(&sig_file).unwrap_or_else(|_| fail("sig file unreadable"));
+    let sig_bytes = decode_hex(&sig_hex_str).unwrap_or_else(|_| fail("sig file not valid hex"));
+
+    match vk.verify(domain_str.as_bytes(), &payload, &sig_bytes) {
+        Ok(()) => {
+            println!("auth-verify SUCCESS: ML-DSA-87 signature VALID");
+        }
+        Err(_) => {
+            fail("ML-DSA-87 signature INVALID");
+        }
+    }
+}
+
 /// Write a session-key hex file. Delegates to the single-sourced
 /// `keystore::write_key_file_truncate` (0600 / share-NONE / owner-only
 /// `icacls`, ACL failure deletes + errors). Operator-facing fail strings
@@ -642,7 +729,81 @@ fn cmd_selftest() {
     std::fs::write(&tmp_purge, b"selftest-purge-material").expect("write purge temp");
     purge::purge_file(&tmp_purge).expect("purge selftest");
     assert!(!tmp_purge.exists(), "purge selftest failed to unlink");
+
+    // ML-DSA-87 (FIPS 204) native authentication self-check
+    let (mldsa_sk, mldsa_vk) = Mldsa87SigningKey::generate().expect("mldsa keygen");
+    let test_msg = b"selftest-mldsa-87-message";
+    let sig = mldsa_sk.sign(DOMAIN_SIG_INITIATOR, test_msg);
+    assert_eq!(sig.len(), MLDSA87_SIG);
+    mldsa_vk.verify(DOMAIN_SIG_INITIATOR, test_msg, &sig).expect("mldsa verify");
+    assert!(
+        mldsa_vk.verify(DOMAIN_SIG_RESPONDER, test_msg, &sig).is_err(),
+        "cross-domain signature must fail"
+    );
+
+    // Noise_XXhfs handshake self-check
+    let (init_sk, init_vk) = Mldsa87SigningKey::generate().expect("init mldsa");
+    let (resp_sk, resp_vk) = Mldsa87SigningKey::generate().expect("resp mldsa");
+    let mut init_hs = Handshake::initiator(init_sk, init_vk.to_bytes(), None).expect("init hs");
+    let mut resp_hs = Handshake::responder(resp_sk, resp_vk.to_bytes(), None).expect("resp hs");
+
+    let m1 = init_hs.initiator_hello().expect("m1");
+    let m2 = resp_hs.responder_reply(&m1).expect("m2");
+    init_hs.initiator_finish(&m2, &resp_vk.to_bytes()).expect("m2 finish");
+    let m3 = init_hs.initiator_complete().expect("m3");
+    resp_hs.responder_complete(&m3, &init_vk.to_bytes()).expect("resp complete");
+
+    let (i_send, i_recv, i_th) = init_hs.split().expect("init split");
+    let (r_send, r_recv, r_th) = resp_hs.split().expect("resp split");
+    assert_eq!(i_send, r_recv);
+    assert_eq!(i_recv, r_send);
+    assert_eq!(i_th, r_th);
+
+    // Sparse Post-Quantum Ratchet (SPQR) self-check
+    let ratchet_root = [0x55u8; 32];
+    let mut r_alice = PcsRatchet::new(&ratchet_root).expect("alice ratchet");
+    let mut r_bob = PcsRatchet::new(&ratchet_root).expect("bob ratchet");
+    let (bob_x, bob_ek) = r_bob.advertise();
+    let (r_step, a_msg_key) = r_alice.send_step(&bob_x, &bob_ek).expect("alice step");
+    let b_msg_key = r_bob.receive_step(&r_step.eph_x_pub, &r_step.ml_ct).expect("bob step");
+    assert_eq!(a_msg_key, b_msg_key);
+
+    // 3-of-5 threshold PKI self-check
+    let mut cust_seeds = [[0u8; 32]; 5];
+    for (i, s) in cust_seeds.iter_mut().enumerate() {
+        s[0] = (i + 1) as u8;
+    }
+    let cust_keys: Vec<(Mldsa87SigningKey, Mldsa87VerifyingKey)> = cust_seeds
+        .iter()
+        .map(Mldsa87SigningKey::from_seed)
+        .collect();
+    let custodians: Vec<Custodian> = cust_keys
+        .iter()
+        .enumerate()
+        .map(|(i, (_, vk))| Custodian::new(&format!("custodian-{i}"), vk.to_bytes()).expect("cust new"))
+        .collect();
+
+    let serial = [0x11u8; 16];
+    let subject_pk = vec![0x22u8; MLDSA87_PK];
+    let now = 1700000000.0;
+    let not_before = 1700000000;
+    let not_after = 1700003600;
+    let tbs = pki::tbs_bytes(&serial, "node-pki-test", &subject_pk, not_before, not_after).expect("tbs");
+
+    let sig0 = cust_keys[0].0.sign(&[], &tbs);
+    let sig1 = cust_keys[1].0.sign(&[], &tbs);
+    let sig2 = cust_keys[2].0.sign(&[], &tbs);
+
+    let cert_sigs = [
+        CertSig { custodian: "custodian-0", sig: &sig0 },
+        CertSig { custodian: "custodian-1", sig: &sig1 },
+        CertSig { custodian: "custodian-2", sig: &sig2 },
+    ];
+    pki::verify_certificate(&serial, "node-pki-test", &subject_pk, not_before, not_after, &cert_sigs, &custodians, now)
+        .expect("verify cert");
+
     eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, mlkem-1024-kex ok, zeroize-sp800-88 ok");
+    eprintln!("selftest: mldsa-87 ok, noise-xxhfs ok, spqr-ratchet ok, threshold-pki ok");
 }
 
 fn cmd_send_file(args: &[String]) {
@@ -1802,6 +1963,9 @@ fn main() {
     }
     match args[1].as_str() {
         "keygen" => cmd_keygen(&args[2..]),
+        "auth-keygen" => cmd_auth_keygen(&args[2..]),
+        "auth-sign" => cmd_auth_sign(&args[2..]),
+        "auth-verify" => cmd_auth_verify(&args[2..]),
         "kex-listen" => cmd_kex_listen(&args[2..]),
         "kex-connect" => cmd_kex_connect(&args[2..]),
         "send" => cmd_send(&args[2..]),

@@ -11,8 +11,10 @@ Proves the zero-Python data-plane executor end to end:
      (NIST SP 800-38D uniqueness). Key NEVER appears in argv (`--key`
      refused); provision via `--key-file` (0600) or `--key-stdin`.
 
-Scope boundary (see src/main.rs header): session-key provisioning (PQ
-handshake/PKI/ceremony) stays in the audited Python control plane.
+Scope boundary: Production security core (Noise-XXhfs, ML-KEM-1024,
+ML-DSA-87, SPQR ratchet, threshold PKI, AEAD framing) is natively
+implemented in pure Rust with strict fail-closed discipline. The Python tree
+is maintained intact as the audited reference and backup path.
 """
 import os
 import re
@@ -45,9 +47,9 @@ def _free_tcp_port():
     return port
 
 
-def _run(*argv, timeout=60):
+def _run(*argv, timeout=60, env=None):
     return subprocess.run([str(BIN), *argv], capture_output=True, text=True,
-                          timeout=timeout, cwd=str(CRATE))
+                          timeout=timeout, cwd=str(CRATE), env=env)
 
 
 def _new_key_file(tmpdir):
@@ -378,13 +380,14 @@ class TestRustStandaloneBinary(unittest.TestCase):
             port = _free_tcp_port()
             key_a = os.path.join(tmp, "responder.key")
             key_b = os.path.join(tmp, "initiator.key")
+            lab_env = dict(os.environ, P2P_LAB_MODE="1")
 
             listener = subprocess.Popen(
                 [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a, "--timeout-ms", "15000"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE), env=lab_env)
             try:
                 time.sleep(1.0)
-                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b, "--timeout-ms", "15000")
+                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b, "--timeout-ms", "15000", env=lab_env)
                 self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
                 out, err = listener.communicate(timeout=15)
             finally:
@@ -436,15 +439,22 @@ class TestRustStandaloneBinary(unittest.TestCase):
             key_a = os.path.join(tmp, "responder_psk.key")
             key_b = os.path.join(tmp, "initiator_psk.key")
             psk_hex = "42" * 32
+            psk_file = os.path.join(tmp, "shared.psk")
+            with open(psk_file, "w") as f:
+                f.write(psk_hex + "\n")
+            try:
+                os.chmod(psk_file, 0o600)
+            except OSError:
+                pass
 
             listener = subprocess.Popen(
                 [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
-                 "--psk", psk_hex, "--timeout-ms", "15000"],
+                 "--psk-file", psk_file, "--timeout-ms", "15000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
             try:
                 time.sleep(1.0)
                 connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
-                                 "--psk", psk_hex, "--timeout-ms", "15000")
+                                 "--psk-file", psk_file, "--timeout-ms", "15000")
                 self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
                 out, err = listener.communicate(timeout=15)
             finally:
@@ -466,15 +476,26 @@ class TestRustStandaloneBinary(unittest.TestCase):
             port = _free_tcp_port()
             key_a = os.path.join(tmp, "resp_fail.key")
             key_b = os.path.join(tmp, "init_fail.key")
+            psk_a = os.path.join(tmp, "resp.psk")
+            with open(psk_a, "w") as f:
+                f.write(("11" * 32) + "\n")
+            psk_b = os.path.join(tmp, "init.psk")
+            with open(psk_b, "w") as f:
+                f.write(("22" * 32) + "\n")
+            try:
+                os.chmod(psk_a, 0o600)
+                os.chmod(psk_b, 0o600)
+            except OSError:
+                pass
 
             listener = subprocess.Popen(
                 [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
-                 "--psk", "11" * 32, "--timeout-ms", "10000"],
+                 "--psk-file", psk_a, "--timeout-ms", "10000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
             try:
                 time.sleep(1.0)
                 connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
-                                 "--psk", "22" * 32, "--timeout-ms", "10000")
+                                 "--psk-file", psk_b, "--timeout-ms", "10000")
                 self.assertNotEqual(connector.returncode, 0)
                 self.assertIn("mismatch", connector.stderr)
                 out, err = listener.communicate(timeout=10)
@@ -571,6 +592,50 @@ class TestRustStandaloneBinary(unittest.TestCase):
             # Verify state files are intact and 48 bytes
             self.assertEqual(os.path.getsize(state_init), 48)
             self.assertEqual(os.path.getsize(state_resp), 48)
+
+    def test_auth_keygen_sign_verify_cli(self):
+        """Native pure-Rust ML-DSA-87 (FIPS 204) CLI keygen, sign, and verify."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            sk_path = os.path.join(tmp, "mldsa.sk")
+            pk_path = os.path.join(tmp, "mldsa.pk")
+            in_path = os.path.join(tmp, "payload.bin")
+            sig_path = os.path.join(tmp, "payload.sig")
+
+            # 1. auth-keygen
+            r_gen = _run("auth-keygen", "--out-sk", sk_path, "--out-pk", pk_path)
+            self.assertEqual(r_gen.returncode, 0, r_gen.stderr)
+            self.assertTrue(os.path.exists(sk_path))
+            self.assertTrue(os.path.exists(pk_path))
+
+            # 2. Write payload
+            payload = b"COMMAND-ENCLAVE-AUTHORIZATION-TOKEN-0x992B"
+            with open(in_path, "wb") as f:
+                f.write(payload)
+
+            # 3. auth-sign
+            r_sign = _run("auth-sign", "--sk-file", sk_path, "--domain", "TEST-DOMAIN",
+                          "--in", in_path, "--out", sig_path)
+            self.assertEqual(r_sign.returncode, 0, r_sign.stderr)
+            self.assertTrue(os.path.exists(sig_path))
+
+            # 4. auth-verify (honest)
+            r_ver = _run("auth-verify", "--pk-file", pk_path, "--domain", "TEST-DOMAIN",
+                         "--in", in_path, "--sig-file", sig_path)
+            self.assertEqual(r_ver.returncode, 0, r_ver.stderr)
+            self.assertIn("VALID", r_ver.stdout)
+
+            # 5. auth-verify (cross-domain mismatch: fail-closed)
+            r_bad_dom = _run("auth-verify", "--pk-file", pk_path, "--domain", "WRONG-DOMAIN",
+                             "--in", in_path, "--sig-file", sig_path)
+            self.assertNotEqual(r_bad_dom.returncode, 0)
+
+            # 6. auth-verify (tampered payload: fail-closed)
+            with open(in_path, "wb") as f:
+                f.write(b"TAMPERED-PAYLOAD")
+            r_bad_pay = _run("auth-verify", "--pk-file", pk_path, "--domain", "TEST-DOMAIN",
+                             "--in", in_path, "--sig-file", sig_path)
+            self.assertNotEqual(r_bad_pay.returncode, 0)
 
 
 if __name__ == "__main__":

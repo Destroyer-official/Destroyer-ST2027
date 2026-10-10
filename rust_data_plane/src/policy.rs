@@ -89,8 +89,9 @@ impl std::error::Error for CoreError {}
 pub const MLKEM1024_PK: usize = 1568;
 /// ML-KEM-1024 ciphertext size.
 pub const MLKEM1024_CT: usize = 1568;
-/// ML-DSA-87 sizes (FIPS 204). Public 2592, signature 4627.
+/// ML-DSA-87 sizes (FIPS 204). Public 2592, secret 4896, signature 4627.
 pub const MLDSA87_PK: usize = 2592;
+pub const MLDSA87_SK: usize = 4896;
 /// ML-DSA-87 signature size.
 pub const MLDSA87_SIG: usize = 4627;
 /// X25519 public key size (interop leg only, never alone).

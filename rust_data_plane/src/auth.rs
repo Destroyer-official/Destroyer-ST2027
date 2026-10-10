@@ -36,6 +36,13 @@ impl Mldsa87SigningKey {
         Ok((Self { inner: sk }, Mldsa87VerifyingKey { inner: vk }))
     }
 
+    /// Generate deterministically from a 32-byte FIPS 204 seed (xi).
+    pub fn from_seed(seed: &[u8; 32]) -> (Self, Mldsa87VerifyingKey) {
+        let sk = SigningKey::<MlDsa87>::from_seed(seed.into());
+        let vk = sk.verifying_key().clone();
+        (Self { inner: sk }, Mldsa87VerifyingKey { inner: vk })
+    }
+
     /// Sign `domain || message`. Domain MUST be a role-separated constant
     /// from `crate::policy` (prevents cross-role reflection).
     pub fn sign(&self, domain: &[u8], message: &[u8]) -> Vec<u8> {
