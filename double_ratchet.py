@@ -2165,7 +2165,8 @@ class DoubleRatchet:
         # al. 2025/078; Signal Oct 2025) performs fresh ML-KEM encaps per
         # ratchet step; Apple PQ3 heals every 50 msgs / 7 days. v1 reuses
         # the synchronized KEM secret and provides NO fresh PQ PCS.
-        _strict_ratchet = (_prod or _ts)
+        _strict_ratchet = (_prod or _ts or os.environ.get("P2P_STRICT_SECURITY") == "1")
+        self._strict_ratchet = _strict_ratchet
         if _strict_ratchet and self.protocol_version < 2:
             raise SecurityError(
                 "MILITARY FATAL: PQ ratchet v1 (legacy KEM reuse) refused in "
@@ -2846,6 +2847,11 @@ class DoubleRatchet:
         except (TypeError, ValueError):
             local_v = 1
         negotiated = min(local_v, peer_v)
+        if getattr(self, '_strict_ratchet', False) and negotiated < 2:
+            raise SecurityError(
+                "MILITARY FATAL: Downgrade to PQ ratchet v1 (legacy KEM reuse) refused "
+                "in production/strict mode — fresh-KEM v2 required for PQ PCS."
+            )
         self.pq_ratchet_version = (
             self.PQ_RATCHET_VERSION_FRESH if negotiated >= 2
             else self.PQ_RATCHET_VERSION_LEGACY

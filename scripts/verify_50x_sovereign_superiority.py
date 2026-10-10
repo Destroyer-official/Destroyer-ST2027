@@ -24,6 +24,8 @@ nonce discipline, memory locking, metadata posture):
 6. Zero Cloud Metadata & Sovereign P2P Independence
 """
 
+from __future__ import annotations
+
 import math
 import os
 import re
@@ -33,7 +35,7 @@ import time
 import tempfile
 import subprocess
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))

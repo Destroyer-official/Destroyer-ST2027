@@ -5,6 +5,8 @@ Provides message encryption and decryption with double ratchet.
 """
 
 import time
+import struct
+import hmac
 try:
     from ..base import BaseModule
 except (ImportError, ValueError):
@@ -89,14 +91,18 @@ class MessageEncryption(BaseModule):
             if (hasattr(orchestrator, 'quantum_resistance') and 
                 orchestrator.security_verified.get('quantum_resistance', False)):
                 try:
-                    context = f"msg:{len(plaintext)}:{time.time()}".encode('utf-8')
+                    # Deterministic context binding derived from shared hybrid root key and canonical length
+                    raw_len = len(plaintext)
+                    context = f"ST2027::quantum_binding::v2::{raw_len}".encode('utf-8')
                     binding_key = orchestrator.quantum_resistance.hybrid_key_derivation(
                         orchestrator.hybrid_root_key, 
                         context
                     )
 
-                    # Add binding to the message header
-                    enhanced_plaintext = binding_key[:8] + padded_plaintext
+                    # Canonical binding header: Magic b"STQB" (4B) || Length raw_len (4B BE) || Tag (8B)
+                    binding_tag = binding_key[:8]
+                    header = b"STQB" + struct.pack(">I", raw_len) + binding_tag
+                    enhanced_plaintext = header + padded_plaintext
 
                     # Encrypt with enhanced quantum resistance
                     ciphertext = orchestrator.ratchet.encrypt(enhanced_plaintext)
@@ -164,19 +170,31 @@ class MessageEncryption(BaseModule):
             # Decrypt the data
             decrypted_data = orchestrator.ratchet.decrypt(encrypted_data)
 
-            # Check if this is a quantum-enhanced message (has binding prefix)
+            # Check if this is a quantum-enhanced message (has verified binding header)
             if (hasattr(orchestrator, 'quantum_resistance') and 
                 orchestrator.security_verified.get('quantum_resistance', False)):
-                try:
-                    # Try to extract binding prefix (first 8 bytes)
-                    binding_prefix = decrypted_data[:8]
-                    actual_plaintext = decrypted_data[8:]
+                if decrypted_data.startswith(b"STQB") and len(decrypted_data) >= 16:
+                    raw_len = struct.unpack(">I", decrypted_data[4:8])[0]
+                    received_tag = decrypted_data[8:16]
+                    padded_payload = decrypted_data[16:]
 
-                    # Remove padding from the actual plaintext
-                    unpadded_data = orchestrator._remove_random_padding(actual_plaintext)
+                    context = f"ST2027::quantum_binding::v2::{raw_len}".encode('utf-8')
+                    expected_key = orchestrator.quantum_resistance.hybrid_key_derivation(
+                        orchestrator.hybrid_root_key,
+                        context
+                    )
+                    expected_tag = expected_key[:8]
+
+                    if not hmac.compare_digest(received_tag, expected_tag):
+                        self.logger.critical("Quantum-resistant message binding verification failed: tag mismatch")
+                        raise CryptographicOperationError("Quantum-resistant message binding verification failed: tag mismatch")
+
+                    unpadded_data = orchestrator._remove_random_padding(padded_payload)
+                    if len(unpadded_data) != raw_len:
+                        self.logger.critical(f"Plaintext length {len(unpadded_data)} does not match bound length {raw_len}")
+                        raise CryptographicOperationError("Plaintext length mismatch with bound quantum envelope")
+
                     return unpadded_data.decode('utf-8')
-                except Exception as _pad_err:
-                    orchestrator.logger.debug(f"Extraction fallback to standard: {_pad_err}")
 
             # Standard decryption path
             unpadded_data = orchestrator._remove_random_padding(decrypted_data)

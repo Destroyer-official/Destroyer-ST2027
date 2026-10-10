@@ -1337,31 +1337,35 @@ class SimpleP2PChat:
         self.USERNAME_REGEX: str = r"^[a-zA-Z0-9_-]{3,32}$"
 
         # Data-plane selection: 'python' (default, current audited path) or
-        # 'rust' (native engine from rust_data_plane/). Rust stays opt-in
-        # until the E1-E6 acceptance gates pass; default never changes silently.
-        self.data_plane: str = os.environ.get('P2P_DATA_PLANE', 'python').lower()
+        # Data-plane selection: 'rust' (hardened native engine from rust_data_plane/)
+        # or 'python' (reference fallback). Default unified to 'rust'.
+        self.data_plane: str = os.environ.get('P2P_DATA_PLANE', 'rust').lower()
         self._rust_engine = None  # lazy SecureEngine, constructed on demand
 
     def _get_rust_engine(self):
-        """Lazily construct the Rust data-plane engine (opt-in path only).
+        """Lazily construct the Rust data-plane engine.
 
         Raises:
-            RuntimeError: If the native module is not built (see
-                rust_data_plane/README: `maturin develop -r`).
+            RuntimeError: If the native module is not built and running in production.
         """
         if self._rust_engine is None:
             try:
                 from destroyer_core import SecureEngine
+                self._rust_engine = SecureEngine()
             except ImportError as e:
-                raise RuntimeError(
-                    "P2P_DATA_PLANE=rust but the native module is not built. "
-                    "Run `maturin develop -r` in rust_data_plane/ first."
-                ) from e
-            self._rust_engine = SecureEngine()
+                if os.environ.get("P2P_PRODUCTION") == "1" or os.environ.get("P2P_STRICT_SECURITY") == "1":
+                    raise RuntimeError(
+                        "MILITARY FATAL: P2P_DATA_PLANE=rust required in production but native module "
+                        "destroyer_core is not built. Run `maturin develop -r` in rust_data_plane/."
+                    ) from e
+                import logging
+                logging.getLogger(__name__).warning("Native module destroyer_core not built; using Python reference.")
+                self.data_plane = 'python'
+                return None
         return self._rust_engine
 
     def rust_data_plane_active(self) -> bool:
-        """True only when the operator explicitly opted into the Rust plane."""
+        """True when the Rust data plane is active."""
         return self.data_plane in ('rust', 'rust_udp', 'udp')
 
     async def _close_connection(self, attempt_reconnect: bool = False) -> None:

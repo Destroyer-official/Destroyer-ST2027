@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import json
 import sqlite3
@@ -9,7 +11,7 @@ import secrets
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 from collections import deque
 import logging
 

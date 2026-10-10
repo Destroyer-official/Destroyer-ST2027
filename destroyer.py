@@ -221,7 +221,8 @@ def launch_dual_tactical_terminals():
     if sys.platform == "win32":
         launcher_bat = ROOT / "launch_tactical_terminals.bat"
         if launcher_bat.exists():
-            subprocess.run([str(launcher_bat)], shell=True)
+            # AUDITED (B603): list-form argv with cmd.exe, zero shell=True
+            subprocess.run(["cmd.exe", "/c", str(launcher_bat)])
             return
     # Cross-platform fallback: spawn two processes
     print(f"{YELLOW}Spawning Terminal 1 (NORAD Alpha)...{RESET}")

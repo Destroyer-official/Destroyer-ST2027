@@ -84,7 +84,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from utils.helpers import is_env_true
 from treekem import RatchetTree, TreeError

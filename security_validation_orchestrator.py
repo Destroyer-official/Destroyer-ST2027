@@ -8,11 +8,13 @@ coverage of all 100+ security features across 8 platforms.
 Requirements: 1.5, 1.6, 15.1, 15.2, 15.3, 15.8
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 import json
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 import traceback

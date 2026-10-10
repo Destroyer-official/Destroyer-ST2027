@@ -1271,8 +1271,9 @@ pqc_logger.info("[OK] Legacy quantcrypt disabled - using LibOQS secure algorithm
     #     def _constant_time_compare(self, a: bytes, b: bytes) -> bool:
     #         import hmac
     #         return hmac.compare_digest(bytes(a), bytes(b))
-class EnhancedFALCON_1024:
-    """Not implemented"""
+# (Legacy stub replaced by genuine native liboqs implementation at line 4989):
+# class _ShadowedStubFALCON:
+#     """Not implemented"""
     #     """
     #     FALCON-1024 (Fast-Fourier Lattice-based Compact Signatures) implementation.
 

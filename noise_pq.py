@@ -196,6 +196,9 @@ class SymmetricState:
         self._key: Optional[bytearray] = None
         self._n = 0
 
+    def __repr__(self) -> str:
+        return f"<SymmetricState has_key={self._key is not None} n={self._n}>"
+
     def mix_hash(self, data: bytes) -> None:
         self.h = hashlib.sha384(self.h + data).digest()
 
@@ -339,9 +342,9 @@ def _verify(pk: bytes, msg: bytes, sig: bytes, *, is_initiator: bool = False) ->
 class NoiseSession:
     is_initiator: bool
     sig_pk: bytes
-    sig_sk: bytes
-    psk: Optional[bytes] = None
-    sym: Optional[SymmetricState] = field(default=None)
+    sig_sk: bytes = field(repr=False)
+    psk: Optional[bytes] = field(default=None, repr=False)
+    sym: Optional[SymmetricState] = field(default=None, repr=False)
     _e_priv: Optional[object] = field(default=None, repr=False)
     _e_pub: Optional[bytes] = field(default=None, repr=False)
     _f_sk: Optional[bytearray] = field(default=None, repr=False)  # ML-KEM dk (initiator)
@@ -356,6 +359,15 @@ class NoiseSession:
     _recv_started: bool = False
     handshake_hash: Optional[bytes] = None
     _quarantined: bool = False
+
+    def __repr__(self) -> str:
+        role = "Initiator" if self.is_initiator else "Responder"
+        has_psk = self.psk is not None
+        status = "Quarantined" if self._quarantined else ("Ready" if self._m3_done else "Handshaking")
+        return f"<NoiseSession role={role} status={status} has_psk={has_psk} send_n={self._send_n}>"
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     def __post_init__(self) -> None:
         if self.psk is not None:

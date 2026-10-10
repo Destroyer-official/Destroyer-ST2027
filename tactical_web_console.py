@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-TACTICAL WEB CONSOLE — SOVEREIGN DEFENSE COMMAND CENTER
-Zero-Trust, Air-Gapped Local Web Server for ST2027 Operations
-Provides REST APIs for live node telemetry, encrypted in-band chat,
-Cursor-on-Target beacons, Cauchy-RS Simplex Diode, and NIST SP 800-88 Zeroization.
+tactical_web_console.py — LOCAL DEMONSTRATION & TELEMETRY LAB CONSOLE
+
+INTEGRITY & DEMONSTRATION NOTICE:
+This web console is a local development, diagnostic telemetry, and educational
+demonstration interface. It is NOT an accredited military command terminal, NOT
+a hardware-certified optical diode, and NOT an operational NC3 launch console.
+All API responses explicitly identify simulated fixtures and distinguish
+software emulation from physical hardware attestation.
+Binds strictly to localhost (127.0.0.1).
 """
 
 import sys
@@ -73,32 +78,43 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             self._send_json({"error": "Unknown endpoint"}, status=404)
 
     def _send_json(self, data: dict, status: int = 200):
+        if "console_mode" not in data:
+            data["console_mode"] = "LOCAL_DEMO_LAB"
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Localhost restricted origin, not wild-card *
+        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:8443")
         self.end_headers()
         self.wfile.write(body)
 
     def _handle_api_status(self):
         pcrs = {}
+        tpm_hardware_locked = False
         try:
             import tpm_quote
             raw_pcrs = tpm_quote.read_hardware_pcrs([0, 7, 11])
-            pcrs = {
-                "pcr_0": raw_pcrs.get(0, "A721B04DE49274C9F03B831F77C9F772"),
-                "pcr_7": raw_pcrs.get(7, "17705494E462F94F97E75128591934A9"),
-                "pcr_11": raw_pcrs.get(11, "0FE6E8F2110D5D53935C9E7D6F6BF722")
-            }
+            if raw_pcrs and any(raw_pcrs.values()):
+                pcrs = {
+                    "pcr_0": raw_pcrs.get(0, "UNAVAILABLE"),
+                    "pcr_7": raw_pcrs.get(7, "UNAVAILABLE"),
+                    "pcr_11": raw_pcrs.get(11, "UNAVAILABLE")
+                }
+                tpm_hardware_locked = True
         except Exception:
+            pass
+
+        if not pcrs:
             pcrs = {
-                "pcr_0": "A721-B04D-E492-74C9",
-                "pcr_7": "1770-5494-E462-F94F",
-                "pcr_11": "0FE6-E8F2-110D-5D53"
+                "pcr_0": "UNAVAILABLE_NO_HARDWARE_TPM",
+                "pcr_7": "UNAVAILABLE_NO_HARDWARE_TPM",
+                "pcr_11": "UNAVAILABLE_NO_HARDWARE_TPM"
             }
 
         response = {
+            "console_mode": "DEMO_LAB_TELEMETRY",
+            "hardware_backed": tpm_hardware_locked,
             "status": "ARMED_PACED",
             "cadence_ms": 20,
             "quantum_bytes": 1232,
@@ -123,7 +139,7 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             "pcr_0": pcrs.get("pcr_0"),
             "pcr_7": pcrs.get("pcr_7"),
             "pcr_11": pcrs.get("pcr_11"),
-            "tpm_status": "PCR_HARDWARE_ATTESTED_VALID",
+            "tpm_status": "PCR_HARDWARE_ATTESTED_VALID" if tpm_hardware_locked else "TPM_SOFTWARE_EMULATION_OR_UNAVAILABLE",
             "cnsa_suite": "CNSA Suite 2.0 (FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, AES-256-GCM, SHA-384)"
         }
         self._send_json(response)
@@ -132,12 +148,21 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         sender = payload.get("sender", "OPERATOR")
         msg = payload.get("message", "")
         peer = "PENTAGON_BRAVO" if sender == "NORAD_ALPHA" else "NORAD_ALPHA"
-        reply = f"ACK // CELL VERIFIED BY {peer} // AUTHENTICATION VALIDATED"
-        self._send_json({"status": "TRANSMITTED", "sender": sender, "message": msg, "reply": reply})
+        reply = f"ACK // LOCAL SIMULATED LOOPBACK DISPATCHED TO {peer}"
+        self._send_json({
+            "status": "TRANSMITTED_SIMULATED",
+            "simulated": True,
+            "sender": sender,
+            "message": msg,
+            "reply": reply
+        })
 
     def _handle_api_eam(self, payload: dict):
         directive = payload.get("directive", "DEFCON-1 STRATEGIC DIRECTIVE ALPHA")
         originator = payload.get("originator", "NORAD_ALPHA")
+        officer_1_sig = payload.get("officer_1_sig")
+        officer_2_sig = payload.get("officer_2_sig")
+        has_dual = bool(officer_1_sig and officer_2_sig)
         try:
             import hashlib
             from nc3_nuclear_command import EAM_CLASSIFICATION, EAM_PREAMBLE
@@ -148,16 +173,17 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
                 "expires_at": time.time() + 120.0,
                 "originator": originator,
                 "directive": directive,
-                "two_person_rule": "VERIFIED_2_OF_2",
+                "two_person_rule": "VERIFIED_2_OF_2" if has_dual else "SIMULATED_DEMO_FIXTURE",
                 "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
             }
             self._send_json({
-                "status": "EAM_RELEASED_AND_SEALED",
+                "status": "EAM_RELEASED_AND_SEALED" if has_dual else "EAM_SIMULATED_DEMO_FIXTURE",
+                "simulated": not has_dual,
                 "directive": directive,
                 "originator": originator,
                 "classification": EAM_CLASSIFICATION,
                 "validity_seconds": 120.0,
-                "dual_custody": "2-OF-2_VERIFIED",
+                "dual_custody": "2-OF-2_VERIFIED" if has_dual else "SIMULATED_DEMO_FIXTURE (NO_DUAL_SIG_SUPPLIED)",
                 "authenticator_sha3_512": eam_data["authenticator_hash"],
                 "protocol": "DoD Directive S-5210.41M / USSTRATCOM EAP-STRAT"
             })
@@ -225,24 +251,34 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
     def _handle_api_diode_send(self, payload: dict):
         file_name = payload.get("fileName", "INTEL_PAYLOAD.BIN")
         self._send_json({
-            "status": "DIODE_BEAM_COMPLETED",
+            "status": "DIODE_DEMO_TRANSMISSION",
+            "simulated": True,
+            "notice": "Software emulation of Cauchy-RS framing. Physical optical diode required for certified operational deployment.",
             "file": file_name,
             "fec": "Cauchy-Reed-Solomon GF(2^8)",
             "chunks_total": 13,
             "chunks_data": 10,
-            "chunks_parity": 3,
-            "sha384_root": "E9C45501A12B89DF00127491BB435590928FA887B112349018",
-            "optical_isolation": "100% (Zero reverse leak)"
+            "chunks_parity": 3
         })
 
     def _handle_api_zeroize(self, payload: dict):
+        purged = []
+        try:
+            target = REPO_ROOT / "monotonic.state"
+            if target.exists():
+                from secure_memory_wiper import secure_wipe_dod
+                secure_wipe_dod(str(target))
+                purged.append(target.name)
+        except Exception as e:
+            pass
         self._send_json({
-            "status": "PURGE_COMPLETE",
-            "standard": "NIST SP 800-88 Rev 1",
+            "status": "PURGE_COMPLETE" if purged else "PURGE_SIMULATED",
+            "standard": "NIST SP 800-88 Rev 1 / DoD 5220.22-M",
+            "purged_targets": purged,
             "passes": ["0x00 Overwrite", "0xFF Inversion", "CSPRNG Random Overwrite"],
             "fsync": "FLUSHED",
             "unlink": "UNLINKED",
-            "verdict": "FORENSIC MEDIA SANITIZATION VERIFIED"
+            "verdict": "FORENSIC MEDIA SANITIZATION VERIFIED" if purged else "NO_VOLATILE_STATE_FILES_FOUND"
         })
 
     def _handle_api_drill(self, payload: dict):
@@ -256,11 +292,12 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
 
     def _handle_api_sovereignty(self):
         self._send_json({
+            "disclaimer": "Internal engineering benchmark comparison drill; consumer platforms operate audited global infrastructure.",
             "vectors": [
-                {"name": "Central Server Relay", "st2027": "ZERO (P2P)", "signal": "AWS/Cloudflare", "whatsapp": "Meta Data Centers"},
-                {"name": "Traffic Analysis (Chaff)", "st2027": "Continuous H > 7.95", "signal": "Burst Leakage", "whatsapp": "Burst Leakage"},
-                {"name": "Post-Quantum Cryptography", "st2027": "NSA CNSA 2.0 (Cat 5)", "signal": "Hybrid PQXDH", "whatsapp": "Classical Curve25519"},
-                {"name": "Hardware Attestation", "st2027": "TPM 2.0 PCR Sealing", "signal": "None", "whatsapp": "None"},
+                {"name": "Central Server Relay", "st2027": "ZERO (P2P prototype)", "signal": "AWS/Cloudflare (Audited)", "whatsapp": "Meta Data Centers"},
+                {"name": "Traffic Analysis (Chaff)", "st2027": "Continuous H > 7.95 (Lab)", "signal": "Burst Leakage / Sealed Sender", "whatsapp": "Burst Leakage"},
+                {"name": "Post-Quantum Cryptography", "st2027": "ML-KEM-1024 + ML-DSA-87", "signal": "PQXDH (Audited)", "whatsapp": "Signal Protocol (Classical)"},
+                {"name": "Hardware Attestation", "st2027": "TPM 2.0 PCR Sealing (Lab)", "signal": "Platform Keystore", "whatsapp": "Platform Keystore"},
                 {"name": "Emergency Media Sanitization", "st2027": "NIST SP 800-88 3-Pass", "signal": "OS Unlink Only", "whatsapp": "OS Unlink Only"}
             ]
         })
