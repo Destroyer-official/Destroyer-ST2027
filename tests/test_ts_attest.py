@@ -30,6 +30,7 @@ def _unique_key():
 
 def test_live_roundtrip_signed_unhealthy_verdict(monkeypatch, tmp_path):
     cng = _cng_or_skip()
+    monkeypatch.delenv("P2P_LAB_MODE", raising=False)
     for v in ("P2P_TS_MODE", "P2P_PRODUCTION"):
         monkeypatch.delenv(v, raising=False)
     key_name = _unique_key()
@@ -39,7 +40,8 @@ def test_live_roundtrip_signed_unhealthy_verdict(monkeypatch, tmp_path):
         assert env["v"] == 1 and env["kid"] == key_name
         assert len(bytes.fromhex(env["sig"])) == 64
         assert len(bytes.fromhex(env["pub"])) == 72
-        res = ta.appraise_evidence(env, nonce)
+        enrolled = {key_name: env["pub"]}
+        res = ta.appraise_evidence(env, nonce, trusted_keys=enrolled)
         # This dev box is unenforced: the verdict must be VALIDLY SIGNED
         # but UNHEALTHY, with exact reasons — origin and posture separated.
         assert res.healthy is False
@@ -60,17 +62,19 @@ def test_live_roundtrip_signed_unhealthy_verdict(monkeypatch, tmp_path):
 
 def test_tampered_evidence_rejected(monkeypatch):
     cng = _cng_or_skip()
+    monkeypatch.delenv("P2P_LAB_MODE", raising=False)
     for v in ("P2P_TS_MODE", "P2P_PRODUCTION"):
         monkeypatch.delenv(v, raising=False)
     key_name = _unique_key()
     nonce = os.urandom(32)
     try:
         env = ta.produce_evidence(nonce, key_name)
+        enrolled = {key_name: env["pub"]}
         env["posture"] = dict(env["posture"], secure_boot=True)  # forgery attempt
         with pytest.raises(ta.AttestError):
-            ta.appraise_evidence(env, nonce)
+            ta.appraise_evidence(env, nonce, trusted_keys=enrolled)
         with pytest.raises(ta.AttestError):  # wrong challenge nonce
-            ta.appraise_evidence(ta.produce_evidence(nonce, key_name), os.urandom(32))
+            ta.appraise_evidence(ta.produce_evidence(nonce, key_name), os.urandom(32), trusted_keys=enrolled)
     finally:
         try:
             h = cng.open_platform_provider()
@@ -86,15 +90,17 @@ def test_tampered_evidence_rejected(monkeypatch):
 
 def test_stale_evidence_rejected(monkeypatch):
     cng = _cng_or_skip()
+    monkeypatch.delenv("P2P_LAB_MODE", raising=False)
     for v in ("P2P_TS_MODE", "P2P_PRODUCTION"):
         monkeypatch.delenv(v, raising=False)
     key_name = _unique_key()
     nonce = os.urandom(32)
     try:
         env = ta.produce_evidence(nonce, key_name)
+        enrolled = {key_name: env["pub"]}
         with pytest.raises(ta.AttestError):
-            ta.appraise_evidence(env, nonce, now=env["ts"] + 3600.0)
-        ok = ta.appraise_evidence(env, nonce, now=env["ts"] + 10.0)
+            ta.appraise_evidence(env, nonce, now=env["ts"] + 3600.0, trusted_keys=enrolled)
+        ok = ta.appraise_evidence(env, nonce, now=env["ts"] + 10.0, trusted_keys=enrolled)
         assert ok.healthy is False  # fresh but unenforced box
     finally:
         try:
@@ -140,6 +146,33 @@ def test_pubkey_and_envelope_validation():
         ta.produce_evidence(b"short-nonce")
 
 
+def test_unanchored_evidence_rejected_by_default(monkeypatch):
+    """Audit Finding 1 & 4: strict mode is default; unanchored TOFU rejected."""
+    cng = _cng_or_skip()
+    monkeypatch.delenv("P2P_LAB_MODE", raising=False)
+    for v in ("P2P_TS_MODE", "P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+        monkeypatch.delenv(v, raising=False)
+    key_name = _unique_key()
+    nonce = os.urandom(32)
+    try:
+        env = ta.produce_evidence(nonce, key_name)
+        # Calling without trusted_keys MUST fail closed by default
+        with pytest.raises(ta.AttestError) as excinfo:
+            ta.appraise_evidence(env, nonce)
+        assert "trusted_keys enrollment required by default" in str(excinfo.value)
+    finally:
+        try:
+            h = cng.open_platform_provider()
+            try:
+                if cng.device_key_exists(h, key_name):
+                    k = cng.open_device_key(h, key_name)
+                    cng.delete_key(k)
+            finally:
+                cng.close_handle(h)
+        except Exception:
+            pass
+
+
 def test_enrollment_binding_refuses_substituted_key(monkeypatch):
     """Audit Finding 4: self-supplied pub alone must not authorize.
 
@@ -148,6 +181,7 @@ def test_enrollment_binding_refuses_substituted_key(monkeypatch):
     Strict mode without enrollment MUST fail closed.
     """
     cng = _cng_or_skip()
+    monkeypatch.delenv("P2P_LAB_MODE", raising=False)
     for v in ("P2P_TS_MODE", "P2P_PRODUCTION"):
         monkeypatch.delenv(v, raising=False)
     key_name = _unique_key()
@@ -155,7 +189,7 @@ def test_enrollment_binding_refuses_substituted_key(monkeypatch):
     try:
         env = ta.produce_evidence(nonce, key_name)
         enrolled = {key_name: env["pub"]}
-        # Correct enrollment passes (lab).
+        # Correct enrollment passes.
         ok = ta.appraise_evidence(env, nonce, trusted_keys=enrolled)
         assert ok.kid == key_name
         # Attacker substitutes their own pub+sig with healthy posture:
@@ -165,19 +199,12 @@ def test_enrollment_binding_refuses_substituted_key(monkeypatch):
         forged_mix = dict(env)
         forged_mix["sig"] = forged["sig"]
         forged_mix["pub"] = forged["pub"]
-        # Raw TOFU path would verify attacker sig — enrollment must refuse.
+        # Raw check without enrollment fails closed. With enrollment it refuses attacker pub.
         with pytest.raises(ta.AttestError):
             ta.appraise_evidence(forged_mix, nonce, trusted_keys=enrolled)
-        # Strict mode without enrollment fails closed even for honest env.
-        monkeypatch.setenv("P2P_PRODUCTION", "1")
-        try:
-            with pytest.raises(ta.AttestError):
-                ta.appraise_evidence(env, nonce)
-            # Strict + correct enrollment passes.
-            ok2 = ta.appraise_evidence(env, nonce, trusted_keys=enrolled)
-            assert ok2.kid == key_name
-        finally:
-            monkeypatch.delenv("P2P_PRODUCTION", raising=False)
+        # Unenrolled kid refuses.
+        with pytest.raises(ta.AttestError):
+            ta.appraise_evidence(forged, nonce, trusted_keys=enrolled)
     finally:
         try:
             h = cng.open_platform_provider()
@@ -189,6 +216,30 @@ def test_enrollment_binding_refuses_substituted_key(monkeypatch):
                             cng.delete_key(k)
                     except Exception:
                         pass
+            finally:
+                cng.close_handle(h)
+        except Exception:
+            pass
+
+
+def test_lab_mode_explicit_opt_in_allows_tofu(monkeypatch):
+    """Audit Finding 1: Lab mode allows TOFU ONLY when explicitly opted in."""
+    cng = _cng_or_skip()
+    monkeypatch.setenv("P2P_LAB_MODE", "1")
+    key_name = _unique_key()
+    nonce = os.urandom(32)
+    try:
+        env = ta.produce_evidence(nonce, key_name)
+        # In explicit lab mode, unanchored appraisal succeeds for local diagnostics
+        ok = ta.appraise_evidence(env, nonce)
+        assert ok.kid == key_name
+    finally:
+        try:
+            h = cng.open_platform_provider()
+            try:
+                if cng.device_key_exists(h, key_name):
+                    k = cng.open_device_key(h, key_name)
+                    cng.delete_key(k)
             finally:
                 cng.close_handle(h)
         except Exception:

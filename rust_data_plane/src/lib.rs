@@ -149,7 +149,7 @@ impl SecureEngine {
     pub fn open_msg(&mut self, frame: Vec<u8>) -> Option<(u8, Vec<u8>)> {
         let key = self.key.as_ref()?;
         // Step 1: read-only check on unauthenticated header (no mutation).
-        let peeked = aead::peek_seq(&frame)?;
+        let peeked = aead::peek_seq(key, &frame)?;
         if !self.replay.check(peeked) {
             self.replay.note_drop();
             return None;

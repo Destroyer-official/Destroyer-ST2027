@@ -165,11 +165,25 @@ def evaluate_policy(posture: Dict[str, Any]) -> Tuple[bool, List[str]]:
     return (not reasons), reasons
 
 
-def _is_strict_attest() -> bool:
-    """True in production / TS mode: self-supplied device keys refused."""
-    return (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip() == "1"
-            or os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on"))
+def is_lab_mode() -> bool:
+    """True ONLY when explicit lab/testing override is set.
+
+    Production and unconfigured environments run in strict fail-closed mode
+    by default (RFC 9334 RATS verifier policy: identity trust is independent
+    of the evidence itself).
+    """
+    return os.environ.get("P2P_LAB_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_strict_attest() -> bool:
+    """True by default (fail-closed).
+
+    Refuses unanchored self-supplied device keys unless P2P_LAB_MODE=1
+    is explicitly set.
+    """
+    if is_lab_mode():
+        return False
+    return True
 
 
 def appraise_evidence(env: Dict[str, Any], expected_nonce: bytes,
@@ -188,13 +202,15 @@ def appraise_evidence(env: Dict[str, Any], expected_nonce: bytes,
     the evidence itself).
 
     Fail-closed rules:
-      * strict mode (P2P_PRODUCTION / SECURE_P2P_PRODUCTION / P2P_TS_MODE):
-        ``trusted_keys`` is REQUIRED and ``kid`` must be enrolled; the
-        supplied ``pub`` must match the enrolled value with
-        ``hmac.compare_digest``. Any mismatch raises AttestError.
-      * lab mode with ``trusted_keys`` supplied: same checks enforced.
-      * lab mode without ``trusted_keys``: legacy TOFU path preserved for
-        local tests, with an explicit warning log (never use for authz).
+      * default (strict mode): ``trusted_keys`` is REQUIRED and ``kid`` must
+        be enrolled; the supplied ``pub`` must match the enrolled value with
+        ``hmac.compare_digest``. Any mismatch or missing enrollment raises
+        AttestError.
+      * lab mode (explicit P2P_LAB_MODE=1) with ``trusted_keys``: same checks
+        enforced.
+      * lab mode (explicit P2P_LAB_MODE=1) without ``trusted_keys``: legacy
+        TOFU path allowed for local unit diagnostics only, with an explicit
+        warning log (never use for authorization).
     """
     if not isinstance(env, dict):
         raise AttestError("evidence shape violation")
@@ -230,10 +246,10 @@ def appraise_evidence(env: Dict[str, Any], expected_nonce: bytes,
             raise AttestError("enrolled device key corrupt")
         if len(expected_pub) != 72 or not hmac.compare_digest(expected_pub, bytes(pub)):
             raise AttestError("device key mismatch (not the enrolled device)")
-    elif _is_strict_attest():
+    elif is_strict_attest():
         raise AttestError(
             "device identity unanchored: trusted_keys enrollment required "
-            "in production/TS mode (self-supplied pub refused)")
+            "by default (self-supplied pub refused; set P2P_LAB_MODE=1 for lab testing)")
     else:
         log.warning(
             "ts_attest TOFU: appraising self-supplied device key without "

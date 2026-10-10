@@ -436,7 +436,13 @@ fn cmd_send(args: &[String]) {
         .unwrap_or_else(|| fail("payload exceeds largest quantum (1205B)"));
     let mut padded = Vec::with_capacity(msg.len() + pad);
     padded.extend_from_slice(msg.as_bytes());
-    padded.resize(msg.len() + pad, 0u8);
+    if pad > 0 {
+        let mut pad_bytes = vec![0u8; pad];
+        if getrandom::fill(&mut pad_bytes).is_err() {
+            fail("CSPRNG unavailable for padding");
+        }
+        padded.extend_from_slice(&pad_bytes);
+    }
     let frame = aead::seal_with_len(&key, seq, DIR_SEND, FTYPE_MSG, msg.len() as u16, &padded)
         .unwrap_or_else(|_| fail("seal failed"));
     debug_assert_eq!(frame.len(), quantum);
@@ -510,7 +516,7 @@ fn cmd_recv(args: &[String]) {
                 Some(Ok((bytes, _from))) => {
                     // Split discipline: read-only check, then AEAD auth,
                     // then mark + write-through while holding the lock.
-                    let seq = match aead::peek_seq(&bytes) {
+                    let seq = match aead::peek_seq(&key, &bytes) {
                         Some(s) => s,
                         None => {
                             ep.note_auth_drop();
@@ -659,12 +665,18 @@ fn cmd_send_file(args: &[String]) {
             .unwrap_or_else(|_| fail("bind failed"));
         let mut total = 0usize;
         for (i, chunk) in chunks.iter().enumerate() {
-            // Quantum padding per chunk (same rationale as cmd_send).
+            // Quantum padding per chunk with CSPRNG filler.
             let (quantum, pad) = frame::pad_to_quantum(chunk.len())
                 .unwrap_or_else(|| fail("chunk exceeds largest quantum"));
             let mut padded = Vec::with_capacity(chunk.len() + pad);
             padded.extend_from_slice(chunk);
-            padded.resize(chunk.len() + pad, 0u8);
+            if pad > 0 {
+                let mut pad_bytes = vec![0u8; pad];
+                if getrandom::fill(&mut pad_bytes).is_err() {
+                    fail("CSPRNG unavailable for padding");
+                }
+                padded.extend_from_slice(&pad_bytes);
+            }
             let frame = aead::seal_with_len(&key, seq0.wrapping_add(i as u64), DIR_SEND,
                                    FTYPE_MSG, chunk.len() as u16, &padded)
             .unwrap_or_else(|_| fail("seal failed"));
@@ -732,7 +744,7 @@ fn cmd_recv_file(args: &[String]) {
                 None => break,
                 Some(Err(_)) => {} // rate/oversize/io: counted, silent
                 Some(Ok((bytes, _from))) => {
-                    let seq = match aead::peek_seq(&bytes) {
+                    let seq = match aead::peek_seq(&key, &bytes) {
                         Some(s) => s,
                         None => {
                             ep.note_auth_drop();
@@ -1022,7 +1034,7 @@ fn cmd_diode_recv(args: &[String]) {
                 None => break,
                 Some(Err(_)) => {}
                 Some(Ok((bytes, _from))) => {
-                    let seq = match aead::peek_seq(&bytes) {
+                    let seq = match aead::peek_seq(&key, &bytes) {
                         Some(s) => s,
                         None => {
                             ep.note_auth_drop();
@@ -1370,7 +1382,7 @@ fn cmd_channel(args: &[String]) {
                             ep.note_auth_drop();
                             continue;
                         }
-                        let seq = match aead::peek_seq(&bytes) {
+                        let seq = match aead::peek_seq(&key, &bytes) {
                             Some(s) => s,
                             None => {
                                 ep.note_auth_drop();
@@ -1429,15 +1441,11 @@ fn cmd_channel(args: &[String]) {
     });
 }
 
-fn kex_auth_required() -> bool {
-    for (k, want) in [("P2P_PRODUCTION", true), ("SECURE_P2P_PRODUCTION", false), ("P2P_TS_MODE", true), ("ST2027_REQUIRE_PSK", true)] {
+fn is_lab_mode() -> bool {
+    for k in ["P2P_LAB_MODE", "ST2027_LAB_MODE"] {
         if let Ok(v) = std::env::var(k) {
             let v = v.trim().to_lowercase();
-            if want {
-                if v == "1" || v == "true" || v == "yes" || v == "on" {
-                    return true;
-                }
-            } else if v == "1" {
+            if v == "1" || v == "true" || v == "yes" || v == "on" {
                 return true;
             }
         }
@@ -1445,9 +1453,15 @@ fn kex_auth_required() -> bool {
     false
 }
 
+fn kex_auth_required() -> bool {
+    // Military-grade fail-closed: authentication is REQUIRED by default.
+    // Unauthenticated KEX is strictly refused unless explicit lab mode is enabled.
+    !is_lab_mode()
+}
+
 fn require_kex_auth(psk_present: bool) {
     if kex_auth_required() && !psk_present {
-        fail("kex PSK required in production (set --psk-file); unauthenticated KEX refused (MITM protection)");
+        fail("kex PSK required by default (set --psk-file); unauthenticated KEX refused (MITM protection; set P2P_LAB_MODE=1 for lab testing)");
     }
     if !psk_present {
         eprintln!("WARNING: kex running WITHOUT PSK — key is NOT authenticated. You MUST compare SAS out-of-band before use (lab only).");
@@ -1464,10 +1478,7 @@ fn cmd_kex_listen(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
-    let psk_bytes = if let Some(hex) = get_flag(args, "--psk") {
-        let b = parse_key_hex(&hex);
-        Some(b)
-    } else if let Some(path) = get_flag(args, "--psk-file") {
+    let psk_bytes = if let Some(path) = get_flag(args, "--psk-file") {
         let s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("psk file unreadable"));
         let b = parse_key_hex(s.trim());
         Some(b)
@@ -1563,10 +1574,7 @@ fn cmd_kex_connect(args: &[String]) {
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
-    let psk_bytes = if let Some(hex) = get_flag(args, "--psk") {
-        let b = parse_key_hex(&hex);
-        Some(b)
-    } else if let Some(path) = get_flag(args, "--psk-file") {
+    let psk_bytes = if let Some(path) = get_flag(args, "--psk-file") {
         let s = std::fs::read_to_string(&path).unwrap_or_else(|_| fail("psk file unreadable"));
         let b = parse_key_hex(s.trim());
         Some(b)

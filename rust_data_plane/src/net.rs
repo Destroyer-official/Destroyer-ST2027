@@ -304,8 +304,8 @@ mod tests {
                 .await
                 .expect("datagram arrives")
                 .expect("within budget");
-            // Parse seq from header WITHOUT trusting it yet.
-            let seq = u64::from_be_bytes(bytes[..8].try_into().unwrap());
+            // Parse seq from header via peek_seq.
+            let seq = aead::peek_seq(&key, &bytes).expect("valid seq unmask");
             assert!(window.check_and_update(seq), "fresh seq rejected");
             let (t, pt) = aead::open(&key, DIR_SEND, &bytes).unwrap();
             assert_eq!((t, &pt[..]), (FTYPE_MSG, format!("pkt-{i}").into_bytes().as_slice()));
@@ -393,13 +393,17 @@ mod tests {
                             rx.note_auth_drop(); // scanner garbage
                             continue;
                         }
-                        let s = u64::from_be_bytes(bytes[..8].try_into().unwrap());
-                        if !window.check_and_update(s) {
+                        let Some(s) = aead::peek_seq(&key, &bytes) else {
+                            rx.note_auth_drop();
+                            continue;
+                        };
+                        if !window.check(s) {
                             rx.note_auth_drop();
                             continue;
                         }
                         match aead::open(&key, DIR_SEND, &bytes) {
                             Ok((FTYPE_MSG, pt)) => {
+                                window.mark(s);
                                 assert_eq!(pt.len(), size);
                                 assert!(pt.iter().all(|&b| b == (i & 0xFF) as u8));
                                 legit_ok += 1;
