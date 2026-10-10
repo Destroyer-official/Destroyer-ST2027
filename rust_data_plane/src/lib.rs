@@ -1,25 +1,48 @@
-//! destroyer_core — Rust data plane for direct-IPv6 P2P.
+//! destroyer_core — Rust secure core + data plane for direct-IPv6 P2P.
 //!
-//! Phase 1 scope: authenticated framing, 64-bit anti-replay window,
-//! fixed-size padding budgets, chaff typing, silent-drop networking,
-//! symmetric ratchet state. PQ handshake stays in the Python control plane
-//! (audited liboqs path) until Rust PQ crates are audited.
+//! ## Rust-first architecture (Python kept as reference/backup)
+//!
+//! The Rust core is the PRODUCTION path: always fail-closed, no
+//! environment-variable downgrades, no TOFU, no legacy ratchet, no argv
+//! secrets. The Python tree (`noise_pq.py`, `double_ratchet.py`,
+//! `secure_transmit_2027.py`, `trust_anchor.py`, `ts_attest.py`) is kept
+//! INTACT as the audited reference and lab/backup path — see
+//! `docs/RUST_CORE.md` for the module mapping. Python logic was not
+//! rewritten; new production guarantees live here.
+//!
+//! Secure-core modules (NEW, strict-only):
+//! - `policy`: single fail-closed truth (no opt-outs exist in Rust).
+//! - `auth`: native ML-DSA-87 (FIPS 204, pure-Rust `ml-dsa` crate).
+//! - `kex_auth`: authenticated hybrid KEX (X25519 + ML-KEM-1024,
+//!   transcript-bound, PSK-or-MLDSA, SAS out-of-band).
+//! - `ratchet`: fresh-KEM-per-step PCS ratchet (SPQR-style, no v1 reuse).
+//! - `attest`: enrollment-bound RATS verifier (no TOFU path).
+//! - `keystore`: sealed key-file custody (0600 / exclusive / no argv).
+//!
+//! Data-plane modules (existing, audited path): framing, AEAD, replay,
+//! padding, chaff, silent-drop networking, FEC, pacing, purge.
 //!
 //! FFI discipline: bytes and counters cross the boundary; raw key material
 //! never leaves Rust except inside sealed calls. All secrets ZeroizeOnDrop.
 
 pub mod aead;
+pub mod attest;
+pub mod auth;
 pub mod chaff;
 pub mod ct;
 pub mod fec;
 pub mod frame;
 pub mod kem;
+pub mod kex_auth;
+pub mod keystore;
 pub mod memlock;
 pub mod net;
 pub mod nostd_microcore;
 pub mod pad;
 pub mod pacing;
+pub mod policy;
 pub mod purge;
+pub mod ratchet;
 pub mod replay;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};

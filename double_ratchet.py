@@ -170,23 +170,14 @@ def _pq_ratchet_production_mode() -> bool:
 def _pq_strict_abort() -> bool:
     """True when PQ freshness failures must abort instead of legacy fallback.
 
-    FAIL-CLOSED in production/TS (SECURE_P2P_PRODUCTION / P2P_PRODUCTION /
-    P2P_TS_MODE): a failed sending-side encaps or a failed SPQR refresh
-    raises SecurityError instead of silently continuing on reused v1
-    material. Lab retains opt-in ``P2P_PQ_STRICT_ABORT=1``; lab default is
-    availability with CRITICAL telemetry. Those fallbacks remain
-    AEAD+signature-gated, so a network attacker cannot trigger them -- this
-    gate covers local faults and contested hardware. (Present-but-
-    undecapsable peer CTs always abort -- no gate -- because legacy reuse
-    could never re-sync those chains.)
+    FAIL-CLOSED BY DEFAULT: a failed sending-side encaps or a failed SPQR
+    refresh raises SecurityError instead of silently continuing on stale
+    material. Explicit P2P_LAB_MODE=1 allows lab availability fallback.
     """
     import os as _os2
-    if (_os2.environ.get("SECURE_P2P_PRODUCTION", "0") == "1"
-            or _os2.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-            or _os2.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")):
-        return True
-    return os.environ.get("P2P_PQ_STRICT_ABORT", "0").strip().lower() in (
-        "1", "true", "yes", "on")
+    if _os2.environ.get("P2P_LAB_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+        return _os2.environ.get("P2P_PQ_STRICT_ABORT", "0").strip().lower() in ("1", "true", "yes", "on")
+    return True
 
 
 def _wipe_secret_best_effort(buf, description: str = "secret") -> None:
@@ -1992,7 +1983,7 @@ class DoubleRatchet:
 
     # Hybrid KEM ciphertext size: ML-KEM-1024 (1568) + McEliece-8192128f (208) = 1776
     HYBRID_KEM_CIPHERTEXT_SIZE = 1776  # Expected ciphertext size for Hybrid KEM
-    MLKEM1024_CIPHERTEXT_SIZE = 1776   # Alias for backward compatibility (now uses Hybrid KEM)
+    MLKEM1024_CIPHERTEXT_SIZE = 1568   # NIST FIPS 203 standard ML-KEM-1024 ciphertext size
 
     # Domain separation strings for KDF - Enhanced with version and algorithm info
     KDF_INFO_DH = b"DR_DH_RATCHET_X25519_v2"
@@ -4380,8 +4371,9 @@ class DoubleRatchet:
 
         try:
             # Verify KEM ciphertext integrity, including length
+            expected_ct_len = getattr(self.kem, 'ciphertext_size', self.MLKEM1024_CIPHERTEXT_SIZE) if self.kem is not None else self.MLKEM1024_CIPHERTEXT_SIZE
             verify_key_material(ciphertext,
-                                expected_length=self.MLKEM1024_CIPHERTEXT_SIZE,
+                                expected_length=expected_ct_len,
                                 description="KEM ciphertext for DR")
             # Log the received KEM ciphertext
             logger.debug(f"Received KEM ciphertext for processing: {format_binary(ciphertext)}")
