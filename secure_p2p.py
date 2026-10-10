@@ -95,9 +95,9 @@ else:
     _REPO_ROOT = _DIR
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-NATIVE_BIN = Path(_REPO_ROOT) / "rust_data_plane" / "target" / "release" / "secure-transmit.exe"
+NATIVE_BIN = Path(_REPO_ROOT) / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
 if not NATIVE_BIN.exists():
-    NATIVE_BIN = Path(_REPO_ROOT) / "rust_data_plane" / "target" / "release" / "secure-transmit"
+    NATIVE_BIN = Path(_REPO_ROOT) / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
 
 # ANSI Terminal Styling (destroyer_tactical_p2p parity)
 RESET = "\033[0m"
@@ -8565,7 +8565,7 @@ class SecureP2PChat:
             if ciphertext and len(ciphertext) > 0:
                 log.debug(f"[ENCRYPT] Encryption successful, ciphertext length: {len(ciphertext)} bytes")
                 # Opt-in outer envelope: Rust AEAD over ratchet ciphertext.
-                if os.environ.get('P2P_DATA_PLANE', 'python').lower() in ('rust', 'rust_udp', 'udp'):
+                if os.environ.get('P2P_DATA_PLANE', 'rust').lower() in ('rust', 'rust_udp', 'udp'):
                     node = self._rust_plane()
                     if node is None:
                         return _deny("[ENCRYPT] Rust plane required but unavailable -- dropping message")
@@ -8651,7 +8651,7 @@ class SecureP2PChat:
             # Opt-in outer envelope first: if this is a Rust-sealed stream,
             # open it (replay-checked) to recover the ratchet ciphertext.
             ratchet_input = encrypted_data
-            if os.environ.get('P2P_DATA_PLANE', 'python').lower() in ('rust', 'rust_udp', 'udp'):
+            if os.environ.get('P2P_DATA_PLANE', 'rust').lower() in ('rust', 'rust_udp', 'udp'):
                 node = self._rust_plane()
                 if node is not None:
                     opened = node.open_stream(bytes(encrypted_data))
@@ -10901,9 +10901,9 @@ class SecureP2PChat:
             interval = int(tokens[2]) if len(tokens) > 2 else 15
             count = int(tokens[3]) if len(tokens) > 3 else 100
             try:
-                native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe")
+                native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe" if os.name == "nt" else "secure-transmit")
                 if not os.path.exists(native_bin):
-                    native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit")
+                    native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "debug", "secure-transmit.exe" if os.name == "nt" else "secure-transmit")
                 key_p = getattr(self, 'key_path', None) or os.path.join(self.base_dir, "session.key")
                 state_p = getattr(self, 'state_path', None) or os.path.join(self.base_dir, "monotonic.state")
                 if os.path.exists(native_bin) and os.path.exists(key_p):
@@ -10939,9 +10939,9 @@ class SecureP2PChat:
             bind_ep, peer_ep = tokens[0], tokens[1]
             role = tokens[2] if len(tokens) > 2 else ("initiator" if getattr(self, 'is_ratchet_initiator', True) else "responder")
             try:
-                native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe")
+                native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe" if os.name == "nt" else "secure-transmit")
                 if not os.path.exists(native_bin):
-                    native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit")
+                    native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "debug", "secure-transmit.exe" if os.name == "nt" else "secure-transmit")
                 key_p = getattr(self, 'key_path', None) or os.path.join(self.base_dir, "session.key")
                 state_p = getattr(self, 'state_path', None) or os.path.join(self.base_dir, "monotonic.state")
                 if not os.path.exists(key_p):

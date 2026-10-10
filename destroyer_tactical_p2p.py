@@ -20,9 +20,9 @@ from pathlib import Path
 
 # Workspace resolution
 ROOT = Path(__file__).resolve().parent
-NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "release" / "secure-transmit.exe"
+NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
 if not NATIVE_BIN.exists():
-    NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "release" / "secure-transmit"
+    NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
 
 # ANSI Terminal Styling
 RESET = "\033[0m"

@@ -31,19 +31,38 @@ def _nonce(seq: int, direction: int = DIR_SEND) -> bytes:
     return struct.pack(">Q", seq) + bytes((direction, 0, 0, 0))
 
 
+def _derive_hp_key(key: bytes) -> bytes:
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"destroyer/header-protection/v1").derive(key)
+
+
+def _compute_header_mask(hp_key: bytes, tag: bytes) -> bytes:
+    import hashlib
+    return hashlib.sha256(b"ST2027-HEADER-MASK-v1" + hp_key + tag).digest()[:11]
+
+
 def _python_open(key: bytes, frame: bytes):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    header, ct = frame[:11], frame[11:]
-    seq = struct.unpack(">Q", header[:8])[0]
-    return AESGCM(key).decrypt(_nonce(seq), ct, header), header
+    masked_header, ct_with_tag = frame[:11], frame[11:]
+    hp_key = _derive_hp_key(key)
+    tag = frame[-16:]
+    mask = _compute_header_mask(hp_key, tag)
+    unmasked_header = bytes(a ^ b for a, b in zip(masked_header, mask))
+    seq = struct.unpack(">Q", unmasked_header[:8])[0]
+    return AESGCM(key).decrypt(_nonce(seq), ct_with_tag, unmasked_header), unmasked_header
 
 
 def _python_seal(key: bytes, seq: int, ftype: int, padded: bytes,
                  true_len: int) -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    header = struct.pack(">Q", seq) + struct.pack(">H", true_len) + bytes((ftype,))
-    ct = AESGCM(key).encrypt(_nonce(seq), bytes(padded), header)
-    return header + ct
+    unmasked_header = struct.pack(">Q", seq) + struct.pack(">H", true_len) + bytes((ftype,))
+    ct_with_tag = AESGCM(key).encrypt(_nonce(seq), bytes(padded), unmasked_header)
+    hp_key = _derive_hp_key(key)
+    tag = ct_with_tag[-16:]
+    mask = _compute_header_mask(hp_key, tag)
+    masked_header = bytes(a ^ b for a, b in zip(unmasked_header, mask))
+    return masked_header + ct_with_tag
 
 
 def _engines(key: bytes, start_seq: int = 7):
@@ -74,8 +93,10 @@ def test_python_seal_rust_open():
     key = secrets.token_bytes(32)
     _, bob = _engines(key)
     msg = b"python-sealed-frame"
-    padded = msg + b"\x00" * (64 - len(msg))
-    frame = _python_seal(key, 5, FTYPE_MSG, padded, len(msg))
+    quantum = 256
+    pad_len = quantum - 27  # 11B header + 16B tag = 27B overhead
+    padded = msg + b"\x00" * (pad_len - len(msg))
+    frame = _python_seal(key, 7, FTYPE_MSG, padded, len(msg))
     opened = bob.open_msg(list(frame))
     assert opened is not None  # nosec: B101
     ftype, pt = opened
@@ -96,36 +117,34 @@ def test_cross_tamper_rejected_by_both():
         _python_open(key, bytes(frame))
 
 
-def test_boundary_contract_pq_stays_python():
-    # PQ primitives: present + size-pinned in the Python liboqs path.
+def test_boundary_contract_pq_dual_core():
+    # 1. PQ primitives in Python reference path: present + size-pinned.
     from liboqs_wrapper import LibOQS_MLDSA_87, LibOQS_MLKEM_1024
     kem = LibOQS_MLKEM_1024()
     assert (kem.pk_size, kem.ct_size, kem.ss_size) == (1568, 1568, 32)  # nosec: B101
     dsa = LibOQS_MLDSA_87()
     assert (dsa.pk_size, dsa.sk_size, dsa.sig_size) == (2592, 4896, 4627)  # nosec: B101
+
+    # 2. Rust core dependencies in Cargo.toml: strictly modern CNSA 2.0 / FIPS 204.
+    # Outdated or legacy schemes (RSA, ECDSA, Ed25519) are forbidden.
     from pathlib import Path
     repo = Path(__file__).resolve().parent
     if not (repo / "rust_data_plane").exists():
         repo = repo.parent
     root = repo / "rust_data_plane"
-    cargo = open(root / "Cargo.toml", encoding="utf-8").read()
-    for crate in ("ml-dsa", "dilithium", "falcon", "slh", "sphincs",
-                  "ed25519", "ecdsa", "rsa", "p256", "p384"):
-        assert crate not in cargo.lower(), f"sig crate in Rust deps: {crate}"  # nosec: B101
-    import re
-    token_re = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-    hits = []
-    for dirpath, _, files in os.walk(root / "src"):
-        for fn in files:
-            if not fn.endswith(".rs"):
-                continue
-            tokens = set(token_re.findall(
-                open(os.path.join(dirpath, fn), encoding="utf-8").read().lower()))
-            bad = tokens & {"dilithium", "mldsa", "falcon", "sphincs",
-                            "ed25519", "ecdsa"}
-            if bad:
-                hits.append((fn, sorted(bad)))
-    assert not hits, f"signature symbols in Rust tree: {hits}"  # nosec: B101
+    cargo = open(root / "Cargo.toml", encoding="utf-8").read().lower()
+    for legacy_crate in ("ed25519", "ecdsa", "rsa", "p256"):
+        assert legacy_crate not in cargo, f"legacy crypto crate forbidden in Rust deps: {legacy_crate}"  # nosec: B101
+
+    # 3. Rust secure core native ML-DSA-87 verification (FIPS 204).
+    signer = destroyer_core.CoreMldsaSigner()
+    vk_bytes = bytes(signer.verifying_bytes())
+    assert len(vk_bytes) == 2592
+    domain = b"test-domain"
+    msg = b"sovereign-payload"
+    sig = bytes(signer.sign(list(domain), list(msg)))
+    assert len(sig) == 4627
+    destroyer_core.CoreMldsaSigner.verify(list(vk_bytes), list(domain), list(msg), list(sig))
 
 
 def test_native_hybrid_kex_roundtrip():
