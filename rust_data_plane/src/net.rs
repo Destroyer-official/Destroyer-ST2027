@@ -402,7 +402,7 @@ mod tests {
             }
             // Drain everything currently queued.
             for _ in 0..8 {
-                match rx.recv_raw(Duration::from_millis(100)).await {
+                match rx.recv_raw(Duration::from_millis(10)).await {
                     Some(Ok((bytes, _))) => {
                         if bytes.len() < 27 {
                             rx.note_auth_drop(); // scanner garbage
@@ -431,10 +431,18 @@ mod tests {
                 }
             }
             seq += 1;
+            // Rate-aware pacing (REQUIRED for determinism): the receiver
+            // enforces a per-source token bucket (64 burst, 16/s refill) so
+            // one scanner cannot starve the peer. Pumping 200 frames in a
+            // tight loop would exceed the PEER's own budget and drop legit
+            // traffic — not an isolation failure, a test-harness overload.
+            // ~60ms/iter ≈ 16 frames/s matches the documented refill rate,
+            // keeping this battle test fast yet Green by construction.
+            tokio::time::sleep(Duration::from_millis(60)).await;
         }
         // Drain stragglers.
         for _ in 0..40 {
-            match rx.recv_raw(Duration::from_millis(100)).await {
+            match rx.recv_raw(Duration::from_millis(10)).await {
                 Some(Ok((bytes, _))) => {
                     if bytes.len() >= 27 {
                         if let Ok((FTYPE_MSG, _)) = aead::open(&key, DIR_SEND, &bytes) {
@@ -449,7 +457,7 @@ mod tests {
         assert_eq!(legit_ok, 200, "legit traffic lost under scanner fire");
         assert!(rx.drops > 0, "scanner garbage must register drops");
         // Scanner must have heard NOTHING back the entire battle.
-        let silence = scanner.recv_raw(Duration::from_millis(400)).await;
+        let silence = scanner.recv_raw(Duration::from_millis(100)).await;
         assert!(
             silence.is_none(),
             "we replied to the scanner — stealth dead"

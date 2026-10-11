@@ -188,13 +188,14 @@ class SovereignSuperiorityBenchmark:
         """
         print("[*] Vector 3: Evaluating Post-Quantum Security Margin & Algorithms...")
         with tempfile.TemporaryDirectory() as tmp:
+            _hex, psk_f = make_key_file(tmp)
             key_a = os.path.join(tmp, "resp.key")
             key_b = os.path.join(tmp, "init.key")
             port = free_tcp_port()
 
             p_listen = subprocess.Popen(
                 [str(RUST_BIN), "kex-listen", "--bind", f"127.0.0.1:{port}",
-                 "--out-key", key_a, "--timeout-ms", "15000"],
+                 "--out-key", key_a, "--psk-file", psk_f, "--timeout-ms", "15000"],
                 cwd=str(CRATE),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -203,7 +204,7 @@ class SovereignSuperiorityBenchmark:
             time.sleep(1.0)
             p_conn = subprocess.run(
                 [str(RUST_BIN), "kex-connect", "--to", f"127.0.0.1:{port}",
-                 "--out-key", key_b, "--timeout-ms", "15000"],
+                 "--out-key", key_b, "--psk-file", psk_f, "--timeout-ms", "15000"],
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,

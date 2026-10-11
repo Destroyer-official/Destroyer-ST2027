@@ -43,6 +43,15 @@ class DestroyerNode:
                 f"trace={traceback.format_exc(limit=3)}"
             ) from e
         self.engine = SecureEngine()
+        try:
+            from destroyer_core import CoreAcdEngine, CoreZeroTrustEngine
+            self.acd_engine = CoreAcdEngine()
+            self.zt_engine = CoreZeroTrustEngine()
+            self.has_native_security_suite = True
+        except ImportError:
+            self.acd_engine = None
+            self.zt_engine = None
+            self.has_native_security_suite = False
         self.udp_sock = None
         self.udp_addr = None
         self._buckets = {}
@@ -51,6 +60,7 @@ class DestroyerNode:
         self.cookie_gate = None
         self.cookie_difficulty = 0
         self.cookie_required = False
+        self._using_native_cookie_gate = False
         self._chaff_thread = None
         self._chaff_stop_event = None
         self._last_send_time = 0.0
@@ -420,8 +430,14 @@ class DestroyerNode:
         require_cookie: bool = False,
     ) -> None:
         """Enable stateless anti-amplification and anti-DoS cookie challenge gate."""
-        from noise_pq import StatelessCookieGate
-        self.cookie_gate = StatelessCookieGate(rotation_interval=rotation_interval)
+        try:
+            from destroyer_core import CoreCookieGate
+            self.cookie_gate = CoreCookieGate(rotation_interval=rotation_interval)
+            self._using_native_cookie_gate = True
+        except ImportError:
+            from noise_pq import StatelessCookieGate
+            self.cookie_gate = StatelessCookieGate(rotation_interval=rotation_interval)
+            self._using_native_cookie_gate = False
         self.cookie_difficulty = difficulty_bits
         self.cookie_required = require_cookie
 
@@ -518,7 +534,7 @@ class DestroyerNode:
 
 def data_plane_mode() -> str:
     """Return active data plane mode: 'rust_udp', 'rust', or 'python'."""
-    val = os.environ.get("P2P_DATA_PLANE", "python").strip().lower()
+    val = os.environ.get("P2P_DATA_PLANE", "rust").strip().lower()
     if val in ("rust_udp", "udp"):
         return "rust_udp"
     if val in ("rust", "rust_stream"):

@@ -91,3 +91,61 @@ production trust. See also
 `dependency_security_verifier.py` header comment and
 `generate_production_sbom.py verify_sbom_offline TODO(rekor)` for the
 Cosign/Rekor anchoring plan.
+
+## Runtime enforcement (2026-10-11 hardening — floor is now REAL)
+
+The sidecar/SBOM checks verify INTEGRITY, never the live binary's version,
+so `verify_liboqs_native_version()` (`dependency_security_verifier.py`)
+queries `OQS_version()` and compares the single-sourced floor, enforced at
+`liboqs_wrapper.py` load time:
+
+| Mode | Below-floor binary (`0.14.1-dev` today) |
+|---|---|
+| production/TS (`P2P_PRODUCTION`/`SECURE_P2P_PRODUCTION=1`/`P2P_TS_MODE`) | `ImportError` — Python PQ path dead until rebuild (verified: exit 1, `FATAL … production/TS load refused`) |
+| lab | `CRITICAL` log + `LIBOQS_BELOW_FLOOR=True`, load continues (ML-KEM/ML-DSA paths unaffected by the fixed HQC/XMSS CVEs; HQC/XMSS legs refused regardless) |
+
+Strict-mode semantics are IDENTICAL to the orchestrator's canonical check
+(`secure_transmit_2027.py:558`) by design — uniform mode perception, no
+surprises. KNOWN GAP (P1, pre-existing, repo-wide): most `SECURE_P2P_PRODUCTION`
+gates test `== "1"` while CI sets `"true"`, so CI's "prod" selftest runs lab
+paths. Normalize to one 4-value helper repo-wide AND set CI to `"1"` (or vice
+versa) — a maintainer decision with test implications; do NOT fix piecemeal.
+
+## Evidence (2026-10-11, this machine)
+
+* `cargo audit` (RustSec DB 2026-10-09, 1296 advisories, 105 locked crates):
+  **0 vulnerabilities, 0 warnings** — pins `ml-dsa 0.1.1` (covers
+  CVE-2026-22705 + hint-dup), `ml-kem 0.3.2`, `p384` 0.14.0 all clean.
+* Bandit on `liboqs_wrapper.py` + `dependency_security_verifier.py`:
+  **0 issues** (4 justified `nosec` suppressions).
+* Rebuild BLOCKED on this box: no C toolchain (`cl`/`gcc`/`clang`),
+  no CMake, no Visual Studio — rebuild must happen on a build host or in
+  CI (ubuntu runner + `apt install cmake ninja-build gcc`), then follow
+  the update procedure above. Do NOT vendor another `-dev` snapshot:
+  rebuild from the official `0.16.0` tag only.
+
+## External anchoring ceremony (Sigstore/Rekor — NOT yet executable here)
+
+Blocked on this box by (1) corrupted system pip (`pip._internal.operations.
+build.metadata` missing — local installs impossible; repair the Python
+installation, out of scope for this repo) and (2) headless OIDC (keyless
+signing needs a browser or CI ambient credentials). The correct venue is
+CI, which already requests `id-token: write`. Exact ceremony for the
+release job (reviewed, merge when a green run is observed):
+
+```yaml
+- uses: sigstore/gh-action-sigstore-python@v3
+  with:
+    inputs: compliance_reports/spdx_sbom.json
+- run: |
+    sigstore verify identity \
+      --bundle compliance_reports/spdx_sbom.json.sigstore \
+      --cert-identity 'https://github.com/Destroyer-official/Destroyer-ST2027/.github/workflows/defense_ci.yml@refs/heads/main' \
+      --cert-oidc-issuer https://token.actions.githubusercontent.com \
+      compliance_reports/spdx_sbom.json
+```
+
+Until Rekor inclusion is proven for a release commit, the in-repo
+ML-DSA-87 `.mldsa87.sig` sidecars remain LAB-GRADE self-attestation
+(they prove nothing to an outsider holding only the repo) — say so
+wherever they are cited.

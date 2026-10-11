@@ -22,23 +22,28 @@
 //!   * Secrets NEVER appear in command line arguments (`ps` / argv).
 //!   * All cryptographic secrets zeroize on drop and are memory-protected.
 
+use destroyer_core::acd::{ActiveCyberDefenseEngine, DefensivePlaybook, ThreatTrigger};
 use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
 use destroyer_core::auth::{Mldsa87SigningKey, Mldsa87VerifyingKey};
+use destroyer_core::cookie::StatelessCookieGate;
 use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
 use destroyer_core::handshake::Handshake;
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
 use destroyer_core::keystore;
+use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler};
 use destroyer_core::pki::{self, CertSig, Custodian};
-use destroyer_core::policy::{
-    DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG,
-};
+use destroyer_core::policy::{DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
 use destroyer_core::purge;
 use destroyer_core::ratchet::PcsRatchet;
 use destroyer_core::replay::AntiReplayWindow;
+use destroyer_core::zero_trust::{
+    inspect_content_rtb, ClearanceLevel, SecurityRole, ZeroTrustEngine, PERM_CRITICAL_RELEASE,
+    PERM_MESSAGE_SEND,
+};
 use fs2::FileExt;
 use sha2::{Digest, Sha256, Sha384};
 use std::collections::HashMap;
@@ -78,6 +83,14 @@ fn usage() -> ! {
          diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
          stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
          channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
+         cookie-challenge [--ip IP] [--port PORT] [--payload TEXT] [--difficulty N]  generate anti-amplification micro-PoW challenge\n\
+         cookie-solve --challenge HEX [--max-iters N]                                solve anti-amplification PoW challenge\n\
+         cookie-verify --solution HEX [--ip IP] [--port PORT] [--payload TEXT]        verify solved PoW cookie challenge\n\
+         threat-eval --peer ID [--trigger TYPE] [--count N] [--threshold N]           simulate and evaluate DoD cATO ACD playbook\n\
+         zero-trust-eval --peer ID [--role ROLE] [--penalty N] [--reward N]           evaluate NIST SP 800-207 continuous trust score\n\
+         cot-beacon [--callsign CALL] [--lat LAT] [--lon LON] [--type TYPE] [--sk-file PATH] [--out PATH]  emit MIL-STD-6090 Cursor-on-Target event\n\
+         tactical-msg [--precedence (Y|Z|O|P|R)] [--clearance LEVEL] [--caveats CAVEAT] --msg TEXT [--scan-rtb]  transmit classified military telegram\n\
+         eam-auth --directive TEXT --officer1-pk PATH --officer1-sig PATH --officer2-pk PATH --officer2-sig PATH  verify NC3 dual-officer EAM\n\
          zeroize --target PATH...|--state PATH|--key-file PATH  NIST SP 800-88 3-pass cryptographic media purge\n\
          selftest                        deterministic module self-checks\n\
          \n\
@@ -429,12 +442,10 @@ fn cmd_auth_sign(args: &[String]) {
     let sk_file = get_flag(args, "--sk-file").unwrap_or_else(|| fail("missing --sk-file PATH"));
     let in_file = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
     let out_file = get_flag(args, "--out").unwrap_or_else(|| fail("missing --out PATH"));
-    let domain_str = get_flag(args, "--domain").unwrap_or_else(|| "DESTROYER-ST2027-SIG-GENERIC".to_string());
+    let domain_str =
+        get_flag(args, "--domain").unwrap_or_else(|| "DESTROYER-ST2027-SIG-GENERIC".to_string());
 
-    let (locked_seed, _) = load_key_material(&[
-        "--key-file".to_string(),
-        sk_file,
-    ]);
+    let (locked_seed, _) = load_key_material(&["--key-file".to_string(), sk_file]);
     let mut seed = [0u8; 32];
     seed.copy_from_slice(locked_seed.as_bytes());
     let (sk, _) = Mldsa87SigningKey::from_seed(&seed);
@@ -443,9 +454,13 @@ fn cmd_auth_sign(args: &[String]) {
     let payload = std::fs::read(&in_file).unwrap_or_else(|_| fail("input file unreadable"));
     let sig = sk.sign(domain_str.as_bytes(), &payload);
     let sig_hex = hex_of(&sig);
-    std::fs::write(&out_file, sig_hex.as_bytes()).unwrap_or_else(|_| fail("out signature unwritable"));
+    std::fs::write(&out_file, sig_hex.as_bytes())
+        .unwrap_or_else(|_| fail("out signature unwritable"));
 
-    println!("auth-sign SUCCESS: ML-DSA-87 signature written to {out_file} (bytes: {})", sig.len());
+    println!(
+        "auth-sign SUCCESS: ML-DSA-87 signature written to {out_file} (bytes: {})",
+        sig.len()
+    );
 }
 
 fn cmd_auth_verify(args: &[String]) {
@@ -453,15 +468,18 @@ fn cmd_auth_verify(args: &[String]) {
     let pk_file = get_flag(args, "--pk-file").unwrap_or_else(|| fail("missing --pk-file PATH"));
     let in_file = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
     let sig_file = get_flag(args, "--sig-file").unwrap_or_else(|| fail("missing --sig-file PATH"));
-    let domain_str = get_flag(args, "--domain").unwrap_or_else(|| "DESTROYER-ST2027-SIG-GENERIC".to_string());
+    let domain_str =
+        get_flag(args, "--domain").unwrap_or_else(|| "DESTROYER-ST2027-SIG-GENERIC".to_string());
 
-    let pk_hex_str = std::fs::read_to_string(&pk_file).unwrap_or_else(|_| fail("pk file unreadable"));
+    let pk_hex_str =
+        std::fs::read_to_string(&pk_file).unwrap_or_else(|_| fail("pk file unreadable"));
     let pk_bytes = decode_hex(&pk_hex_str).unwrap_or_else(|_| fail("pk file not valid hex"));
     let vk = Mldsa87VerifyingKey::from_bytes(&pk_bytes)
         .unwrap_or_else(|_| fail("invalid ML-DSA-87 public key bytes"));
 
     let payload = std::fs::read(&in_file).unwrap_or_else(|_| fail("input file unreadable"));
-    let sig_hex_str = std::fs::read_to_string(&sig_file).unwrap_or_else(|_| fail("sig file unreadable"));
+    let sig_hex_str =
+        std::fs::read_to_string(&sig_file).unwrap_or_else(|_| fail("sig file unreadable"));
     let sig_bytes = decode_hex(&sig_hex_str).unwrap_or_else(|_| fail("sig file not valid hex"));
 
     match vk.verify(domain_str.as_bytes(), &payload, &sig_bytes) {
@@ -735,9 +753,13 @@ fn cmd_selftest() {
     let test_msg = b"selftest-mldsa-87-message";
     let sig = mldsa_sk.sign(DOMAIN_SIG_INITIATOR, test_msg);
     assert_eq!(sig.len(), MLDSA87_SIG);
-    mldsa_vk.verify(DOMAIN_SIG_INITIATOR, test_msg, &sig).expect("mldsa verify");
+    mldsa_vk
+        .verify(DOMAIN_SIG_INITIATOR, test_msg, &sig)
+        .expect("mldsa verify");
     assert!(
-        mldsa_vk.verify(DOMAIN_SIG_RESPONDER, test_msg, &sig).is_err(),
+        mldsa_vk
+            .verify(DOMAIN_SIG_RESPONDER, test_msg, &sig)
+            .is_err(),
         "cross-domain signature must fail"
     );
 
@@ -749,9 +771,13 @@ fn cmd_selftest() {
 
     let m1 = init_hs.initiator_hello().expect("m1");
     let m2 = resp_hs.responder_reply(&m1).expect("m2");
-    init_hs.initiator_finish(&m2, &resp_vk.to_bytes()).expect("m2 finish");
+    init_hs
+        .initiator_finish(&m2, &resp_vk.to_bytes())
+        .expect("m2 finish");
     let m3 = init_hs.initiator_complete().expect("m3");
-    resp_hs.responder_complete(&m3, &init_vk.to_bytes()).expect("resp complete");
+    resp_hs
+        .responder_complete(&m3, &init_vk.to_bytes())
+        .expect("resp complete");
 
     let (i_send, i_recv, i_th) = init_hs.split().expect("init split");
     let (r_send, r_recv, r_th) = resp_hs.split().expect("resp split");
@@ -765,7 +791,9 @@ fn cmd_selftest() {
     let mut r_bob = PcsRatchet::new(&ratchet_root).expect("bob ratchet");
     let (bob_x, bob_ek) = r_bob.advertise();
     let (r_step, a_msg_key) = r_alice.send_step(&bob_x, &bob_ek).expect("alice step");
-    let b_msg_key = r_bob.receive_step(&r_step.eph_x_pub, &r_step.ml_ct).expect("bob step");
+    let b_msg_key = r_bob
+        .receive_step(&r_step.eph_x_pub, &r_step.ml_ct)
+        .expect("bob step");
     assert_eq!(a_msg_key, b_msg_key);
 
     // 3-of-5 threshold PKI self-check
@@ -780,7 +808,9 @@ fn cmd_selftest() {
     let custodians: Vec<Custodian> = cust_keys
         .iter()
         .enumerate()
-        .map(|(i, (_, vk))| Custodian::new(&format!("custodian-{i}"), vk.to_bytes()).expect("cust new"))
+        .map(|(i, (_, vk))| {
+            Custodian::new(&format!("custodian-{i}"), vk.to_bytes()).expect("cust new")
+        })
         .collect();
 
     let serial = [0x11u8; 16];
@@ -788,22 +818,77 @@ fn cmd_selftest() {
     let now = 1700000000.0;
     let not_before = 1700000000;
     let not_after = 1700003600;
-    let tbs = pki::tbs_bytes(&serial, "node-pki-test", &subject_pk, not_before, not_after).expect("tbs");
+    let tbs =
+        pki::tbs_bytes(&serial, "node-pki-test", &subject_pk, not_before, not_after).expect("tbs");
 
     let sig0 = cust_keys[0].0.sign(&[], &tbs);
     let sig1 = cust_keys[1].0.sign(&[], &tbs);
     let sig2 = cust_keys[2].0.sign(&[], &tbs);
 
     let cert_sigs = [
-        CertSig { custodian: "custodian-0", sig: &sig0 },
-        CertSig { custodian: "custodian-1", sig: &sig1 },
-        CertSig { custodian: "custodian-2", sig: &sig2 },
+        CertSig {
+            custodian: "custodian-0",
+            sig: &sig0,
+        },
+        CertSig {
+            custodian: "custodian-1",
+            sig: &sig1,
+        },
+        CertSig {
+            custodian: "custodian-2",
+            sig: &sig2,
+        },
     ];
-    pki::verify_certificate(&serial, "node-pki-test", &subject_pk, not_before, not_after, &cert_sigs, &custodians, now)
-        .expect("verify cert");
+    pki::verify_certificate(
+        &serial,
+        "node-pki-test",
+        &subject_pk,
+        not_before,
+        not_after,
+        &cert_sigs,
+        &custodians,
+        now,
+    )
+    .expect("verify cert");
+
+    // Stateless Anti-Amplification Cookie Gate & micro-PoW self-check
+    let mut cookie_gate = StatelessCookieGate::new(120, 1024);
+    let cookie = cookie_gate.create_cookie("127.0.0.1", 51820, b"selftest-m1");
+    assert!(cookie_gate.verify_cookie(&cookie, "127.0.0.1", 51820, b"selftest-m1"));
+    assert!(!cookie_gate.verify_cookie(&cookie, "127.0.0.2", 51820, b"selftest-m1"));
+    let chal = cookie_gate.create_challenge("127.0.0.1", 51820, b"selftest-m1", 2);
+    let sol = StatelessCookieGate::solve_challenge(&chal, 100_000).expect("solve challenge");
+    assert!(cookie_gate.verify_response(&sol, "127.0.0.1", 51820, b"selftest-m1", 2));
+    assert!(!cookie_gate.verify_response(&sol, "127.0.0.1", 51820, b"selftest-m1", 2), "replay solution rejected");
+
+    // Active Cyber Defense (ACD) self-check
+    let acd = ActiveCyberDefenseEngine::new(2, 5.0, 3, 10.0, 30.0, None);
+    assert!(!acd.is_quarantined("bad-peer"));
+    acd.record_event(ThreatTrigger::ReplayBurst, "bad-peer");
+    let pb = acd.record_event(ThreatTrigger::ReplayBurst, "bad-peer");
+    assert_eq!(pb, Some(DefensivePlaybook::QuarantinePeer));
+    assert!(acd.is_quarantined("bad-peer"));
+
+    // Zero-Trust continuous risk engine self-check
+    let zt = ZeroTrustEngine::new(50);
+    zt.register_peer("operator-node", SecurityRole::Operator);
+    assert!(zt.authorize("operator-node", PERM_MESSAGE_SEND).is_ok());
+    assert!(zt.authorize("operator-node", PERM_CRITICAL_RELEASE).is_err());
+    assert!(zt.is_trusted("operator-node"));
+    let penalty_res = zt.record_penalty("operator-node", 30);
+    assert!(penalty_res.is_err(), "trust drop below 50 must revoke");
+    assert!(!zt.is_trusted("operator-node"));
+
+    // GuardedBuffer memory protection & sanitization self-check
+    let mut gbuf = GuardedBuffer::from_slice(b"secret-selftest-buffer").expect("guarded buf alloc");
+    assert!(gbuf.check_canaries());
+    gbuf.secure_wipe();
+    assert!(gbuf.check_canaries());
+    assert_eq!(gbuf.as_slice()[0], 0x00);
 
     eprintln!("selftest: fec-cauchy ok, pacing-chaff ok, mlkem-1024-kex ok, zeroize-sp800-88 ok");
     eprintln!("selftest: mldsa-87 ok, noise-xxhfs ok, spqr-ratchet ok, threshold-pki ok");
+    eprintln!("selftest: cookie-gate ok, acd-defense ok, zero-trust ok, memory-guard ok");
 }
 
 fn cmd_send_file(args: &[String]) {
@@ -1956,6 +2041,316 @@ fn cmd_zeroize(args: &[String]) {
     println!("ZEROIZE COMPLETE: {purged} file(s) cryptographically sanitized & unlinked (NIST SP 800-88)");
 }
 
+fn cmd_cookie_challenge(args: &[String]) {
+    reject_forbidden_cli(args);
+    let ip = get_flag(args, "--ip").unwrap_or_else(|| "127.0.0.1".to_string());
+    let port: u16 = get_flag(args, "--port")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(51820);
+    let payload = get_flag(args, "--payload")
+        .map(|s| s.into_bytes())
+        .unwrap_or_else(|| b"ST2027-COOKIE-CHALLENGE".to_vec());
+    let difficulty: u8 = get_flag(args, "--difficulty")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+    let epoch_secs: u64 = get_flag(args, "--epoch-secs")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
+
+    let mut gate = if let Some(kf) = get_flag(args, "--key-file") {
+        let psk = load_psk_file(&kf);
+        StatelessCookieGate::with_secret(psk, epoch_secs, 1024)
+    } else {
+        StatelessCookieGate::new(epoch_secs, 1024)
+    };
+    let challenge = gate.create_challenge(&ip, port, &payload, difficulty);
+    let challenge_hex = hex_of(&challenge);
+    println!(
+        "cookie-challenge SUCCESS: ip={ip} port={port} difficulty={difficulty} challenge={}",
+        challenge_hex.trim()
+    );
+}
+
+fn cmd_cookie_solve(args: &[String]) {
+    reject_forbidden_cli(args);
+    let chal_hex = get_flag(args, "--challenge")
+        .unwrap_or_else(|| fail("--challenge HEX is required"));
+    let chal_bytes = decode_hex(&chal_hex).unwrap_or_else(|e| fail(e));
+    let max_iters: u64 = get_flag(args, "--max-iters")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2_000_000);
+
+    let t0 = Instant::now();
+    let solution = match StatelessCookieGate::solve_challenge(&chal_bytes, max_iters) {
+        Some(sol) => sol,
+        None => fail("cookie-solve failed: maximum iterations exceeded"),
+    };
+    let elapsed = t0.elapsed();
+    let sol_hex = hex_of(&solution);
+    println!(
+        "cookie-solve SUCCESS: iterations_cap={max_iters} time={:?} solution={}",
+        elapsed,
+        sol_hex.trim()
+    );
+}
+
+fn cmd_cookie_verify(args: &[String]) {
+    reject_forbidden_cli(args);
+    let sol_hex = get_flag(args, "--solution")
+        .unwrap_or_else(|| fail("--solution HEX is required"));
+    let sol_bytes = decode_hex(&sol_hex).unwrap_or_else(|e| fail(e));
+    let ip = get_flag(args, "--ip").unwrap_or_else(|| "127.0.0.1".to_string());
+    let port: u16 = get_flag(args, "--port")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(51820);
+    let payload = get_flag(args, "--payload")
+        .map(|s| s.into_bytes())
+        .unwrap_or_else(|| b"ST2027-COOKIE-CHALLENGE".to_vec());
+    let difficulty: u8 = get_flag(args, "--difficulty")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+    let epoch_secs: u64 = get_flag(args, "--epoch-secs")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
+
+    let mut gate = if let Some(kf) = get_flag(args, "--key-file") {
+        let psk = load_psk_file(&kf);
+        StatelessCookieGate::with_secret(psk, epoch_secs, 1024)
+    } else {
+        StatelessCookieGate::new(epoch_secs, 1024)
+    };
+    let ok = gate.verify_response(&sol_bytes, &ip, port, &payload, difficulty);
+    if ok {
+        println!("cookie-verify SUCCESS: solution valid for {ip}:{port} (difficulty={difficulty})");
+    } else {
+        fail("cookie-verify FAILED: invalid solution, expired epoch, or replay detected");
+    }
+}
+
+fn cmd_threat_eval(args: &[String]) {
+    reject_forbidden_cli(args);
+    let peer = get_flag(args, "--peer").unwrap_or_else(|| fail("--peer ID is required"));
+    let trigger_name = get_flag(args, "--trigger").unwrap_or_else(|| "replay".to_string());
+    let count: usize = get_flag(args, "--count")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let threshold: usize = get_flag(args, "--threshold")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let quarantine_sec: f64 = get_flag(args, "--quarantine-sec")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300.0);
+
+    let trigger = match trigger_name.to_lowercase().as_str() {
+        "replay" | "replay-burst" => ThreatTrigger::ReplayBurst,
+        "tamper" | "payload-tamper" => ThreatTrigger::TamperDetected,
+        "auth_fail" | "auth-fail" | "flood" => ThreatTrigger::AuthFailureFlood,
+        "traffic" | "traffic-anomaly" => ThreatTrigger::TrafficAnomaly,
+        "fault" | "key-exposure" => ThreatTrigger::FaultDetected,
+        _ => fail("unknown --trigger (use: replay, tamper, auth_fail, traffic, fault)"),
+    };
+
+    let acd = ActiveCyberDefenseEngine::new(
+        threshold,
+        10.0,
+        threshold,
+        30.0,
+        quarantine_sec,
+        None,
+    );
+
+    let mut last_pb = None;
+    for _ in 0..count {
+        last_pb = acd.record_event(trigger, &peer);
+    }
+
+    let quarantined = acd.is_quarantined(&peer);
+    println!(
+        "threat-eval SUCCESS: peer={peer} trigger={trigger_name} events={count} playbook={:?} quarantined={quarantined}",
+        last_pb
+    );
+}
+
+fn cmd_zero_trust_eval(args: &[String]) {
+    reject_forbidden_cli(args);
+    let peer = get_flag(args, "--peer").unwrap_or_else(|| fail("--peer ID is required"));
+    let role_name = get_flag(args, "--role").unwrap_or_else(|| "operator".to_string());
+    let role = match role_name.to_lowercase().as_str() {
+        "admin" => SecurityRole::Admin,
+        "operator" => SecurityRole::Operator,
+        "viewer" => SecurityRole::Viewer,
+        _ => fail("unknown --role (use: admin, operator, viewer)"),
+    };
+    let min_score: u32 = get_flag(args, "--min-score")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let penalty: u32 = get_flag(args, "--penalty")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let reward: u32 = get_flag(args, "--reward")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let perm_check = get_flag(args, "--check-perm");
+
+    let zt = ZeroTrustEngine::new(min_score);
+    zt.register_peer(&peer, role);
+
+    if penalty > 0 {
+        let _ = zt.record_penalty(&peer, penalty);
+    }
+    for _ in 0..reward {
+        let _ = zt.record_success(&peer);
+    }
+
+    let score = zt.trust_score(&peer).unwrap_or(0);
+    let trusted = zt.is_trusted(&peer);
+
+    let perm_res = perm_check.map(|p| {
+        let mask = match p.to_lowercase().as_str() {
+            "send" | "message-send" => PERM_MESSAGE_SEND,
+            "critical" | "critical-release" => PERM_CRITICAL_RELEASE,
+            _ => PERM_MESSAGE_SEND,
+        };
+        zt.authorize(&peer, mask).is_ok()
+    });
+
+    println!(
+        "zero-trust-eval SUCCESS: peer={peer} role={role_name} score={score}/100 trusted={trusted} perm_allowed={:?}",
+        perm_res
+    );
+}
+
+fn cmd_cot_beacon(args: &[String]) {
+    reject_forbidden_cli(args);
+    let callsign = get_flag(args, "--callsign").unwrap_or_else(|| "TACTICAL-ST2027".to_string());
+    let event_type = get_flag(args, "--type").unwrap_or_else(|| "a-f-G-U-C".to_string());
+    let lat: f64 = get_flag(args, "--lat")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(38.8719);
+    let lon: f64 = get_flag(args, "--lon")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(-77.0563);
+    let hae: f64 = get_flag(args, "--hae")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100.0);
+    let status = get_flag(args, "--status").unwrap_or_else(|| "DEFCON-1-ARMED".to_string());
+    let out_path = get_flag(args, "--out");
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let stale_secs = now_secs + 300;
+
+    let uid = format!("COT-ST2027-{:08X}", now_secs ^ (lat.to_bits()));
+
+    let cot_xml = format!(
+        "<?xml version=\"1.0\" standalone=\"yes\"?>\
+<event version=\"2.0\" uid=\"{uid}\" type=\"{event_type}\" time=\"{now_secs}\" start=\"{now_secs}\" stale=\"{stale_secs}\" how=\"m-g\">\
+<point lat=\"{lat:.6}\" lon=\"{lon:.6}\" hae=\"{hae:.1}\" ce=\"5.0\" le=\"10.0\"/>\
+<detail><contact callsign=\"{callsign}\"/><status readiness=\"{status}\"/></detail>\
+</event>"
+    );
+
+    let signed_xml = if let Some(sk_path) = get_flag(args, "--sk-file") {
+        let (locked_seed, _) = load_key_material(&["--key-file".to_string(), sk_path]);
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(locked_seed.as_bytes());
+        let (sk, _) = Mldsa87SigningKey::from_seed(&seed);
+        seed.zeroize();
+        let sig = sk.sign(b"DESTROYER-ST2027-COT-EVENT", cot_xml.as_bytes());
+        let sig_hex = hex_of(&sig);
+        format!(
+            "{cot_xml}<!-- MIL-STD-6090 FIPS 204 SIGNATURE: alg=\"ML-DSA-87\" signer=\"{callsign}\" sig=\"{sig_hex}\" -->"
+        )
+    } else {
+        cot_xml
+    };
+
+    if let Some(ref path) = out_path {
+        std::fs::write(path, signed_xml.as_bytes())
+            .unwrap_or_else(|_| fail("failed to write output CoT XML file"));
+        println!("cot-beacon SUCCESS: MIL-STD-6090 CoT event written to {path}");
+    } else {
+        println!("{signed_xml}");
+    }
+}
+
+fn cmd_tactical_msg(args: &[String]) {
+    reject_forbidden_cli(args);
+    let precedence = get_flag(args, "--precedence").unwrap_or_else(|| "Z".to_string()).to_uppercase();
+    let clearance_str = get_flag(args, "--clearance").unwrap_or_else(|| "TOP_SECRET".to_string()).to_uppercase();
+    let caveats = get_flag(args, "--caveats").unwrap_or_else(|| "NOFORN".to_string()).to_uppercase();
+    let msg = get_flag(args, "--msg").unwrap_or_else(|| fail("missing --msg TEXT"));
+    let scan_rtb = has_flag(args, "--scan-rtb");
+
+    let prec_label = match precedence.as_str() {
+        "Y" | "FLASH_OVERRIDE" => "FLASH_OVERRIDE",
+        "Z" | "FLASH" => "FLASH",
+        "O" | "IMMEDIATE" => "IMMEDIATE",
+        "P" | "PRIORITY" => "PRIORITY",
+        "R" | "ROUTINE" => "ROUTINE",
+        _ => fail("bad --precedence: must be Y, Z, O, P, or R"),
+    };
+
+    let clearance = match clearance_str.as_str() {
+        "UNCLASSIFIED" => ClearanceLevel::Unclassified,
+        "CONFIDENTIAL" => ClearanceLevel::Confidential,
+        "SECRET" => ClearanceLevel::Secret,
+        "TOP_SECRET" => ClearanceLevel::TopSecret,
+        _ => fail("bad --clearance: must be UNCLASSIFIED, CONFIDENTIAL, SECRET, or TOP_SECRET"),
+    };
+
+    if scan_rtb {
+        if let Err(indicator) = inspect_content_rtb(msg.as_bytes()) {
+            if clearance < ClearanceLevel::TopSecret {
+                fail(&format!("RTB SPILLAGE PREVENTED: detected classified indicator '{indicator}' in {clearance_str} message"));
+            }
+        }
+    }
+
+    let wire_telegram = format!("[MMHS PRECEDENCE={prec_label} // {clearance_str} // {caveats}] {msg}");
+    println!("tactical-msg SUCCESS: clearance={clearance_str} precedence={prec_label} caveats={caveats}");
+    println!("telegram: {wire_telegram}");
+}
+
+fn cmd_eam_auth(args: &[String]) {
+    reject_forbidden_cli(args);
+    let directive = get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
+    let of1_pk = get_flag(args, "--officer1-pk").unwrap_or_else(|| fail("missing --officer1-pk PATH"));
+    let of1_sig = get_flag(args, "--officer1-sig").unwrap_or_else(|| fail("missing --officer1-sig PATH"));
+    let of2_pk = get_flag(args, "--officer2-pk").unwrap_or_else(|| fail("missing --officer2-pk PATH"));
+    let of2_sig = get_flag(args, "--officer2-sig").unwrap_or_else(|| fail("missing --officer2-sig PATH"));
+
+    let pk1_hex = std::fs::read_to_string(&of1_pk).unwrap_or_else(|_| fail("officer1-pk unreadable"));
+    let pk2_hex = std::fs::read_to_string(&of2_pk).unwrap_or_else(|_| fail("officer2-pk unreadable"));
+    let pk1_bytes = decode_hex(pk1_hex.trim()).unwrap_or_else(|e| fail(e));
+    let pk2_bytes = decode_hex(pk2_hex.trim()).unwrap_or_else(|e| fail(e));
+
+    if pk1_bytes == pk2_bytes {
+        fail("NC3 TWO-PERSON RULE VIOLATION: Officer 1 and Officer 2 keys are identical (single-custody attempt)");
+    }
+
+    let vk1 = Mldsa87VerifyingKey::from_bytes(&pk1_bytes).unwrap_or_else(|_| fail("invalid officer 1 ML-DSA-87 public key"));
+    let vk2 = Mldsa87VerifyingKey::from_bytes(&pk2_bytes).unwrap_or_else(|_| fail("invalid officer 2 ML-DSA-87 public key"));
+
+    let sig1_hex = std::fs::read_to_string(&of1_sig).unwrap_or_else(|_| fail("officer1-sig unreadable"));
+    let sig2_hex = std::fs::read_to_string(&of2_sig).unwrap_or_else(|_| fail("officer2-sig unreadable"));
+    let sig1_bytes = decode_hex(sig1_hex.trim()).unwrap_or_else(|e| fail(e));
+    let sig2_bytes = decode_hex(sig2_hex.trim()).unwrap_or_else(|e| fail(e));
+
+    let domain = b"DESTROYER-ST2027-NC3-EAM";
+    if vk1.verify(domain, directive.as_bytes(), &sig1_bytes).is_err() {
+        fail("Officer 1 signature verification FAILED");
+    }
+    if vk2.verify(domain, directive.as_bytes(), &sig2_bytes).is_err() {
+        fail("Officer 2 signature verification FAILED");
+    }
+
+    println!("eam-auth SUCCESS: NC3 TWO-PERSON RULE DUAL CUSTODY VERIFIED (DoD S-5210.41M)");
+    println!("authorized_directive: {directive}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -1976,6 +2371,14 @@ fn main() {
         "diode-recv" => cmd_diode_recv(&args[2..]),
         "stream-chaff" => cmd_stream_chaff(&args[2..]),
         "channel" => cmd_channel(&args[2..]),
+        "cookie-challenge" => cmd_cookie_challenge(&args[2..]),
+        "cookie-solve" => cmd_cookie_solve(&args[2..]),
+        "cookie-verify" => cmd_cookie_verify(&args[2..]),
+        "threat-eval" => cmd_threat_eval(&args[2..]),
+        "zero-trust-eval" => cmd_zero_trust_eval(&args[2..]),
+        "cot-beacon" => cmd_cot_beacon(&args[2..]),
+        "tactical-msg" => cmd_tactical_msg(&args[2..]),
+        "eam-auth" => cmd_eam_auth(&args[2..]),
         "zeroize" | "purge" => cmd_zeroize(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),

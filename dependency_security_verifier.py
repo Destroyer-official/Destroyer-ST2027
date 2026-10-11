@@ -17,6 +17,7 @@ Requirements: 10.7, 12.2
 """
 
 import os
+import re
 import sys
 import hashlib
 import hmac
@@ -873,6 +874,82 @@ def verify_liboqs_dll(dll_path: str) -> bool:
     """
     verifier = get_dependency_verifier()
     return verifier.verify_liboqs_dll(dll_path)
+
+def liboqs_version_floor() -> Tuple[int, int, int]:
+    """Single-sourced liboqs floor: parsed from the pinned minimum.
+
+    Only liboqs 0.16.0 is supported upstream (<0.16 unsupported per upstream
+    SECURITY.md; HQC CVE-2024-54137/CVE-2025-52473, XMSS CVE-2026-44518/
+    CVE-2026-46344). Falls back to (0, 16, 0) if the pin is ever unreadable
+    (fail-closed direction: never fall back to a LOWER floor).
+    """
+    try:
+        raw = DependencySecurityVerifier().critical_dependencies.get(
+            "oqs.dll", {}).get("min_version", "0.16.0")
+        parts = re.match(r"^\s*(\d+)\.(\d+)\.(\d+)", str(raw))
+        if parts:
+            return (int(parts.group(1)), int(parts.group(2)), int(parts.group(3)))
+    except Exception:  # nosec: B110 -- fail-closed fallthrough to (0,16,0) floor below; no decision swallowed
+        pass
+    return (0, 16, 0)
+
+
+def parse_oqs_version(version: Any) -> Optional[Tuple[int, int, int]]:
+    """Parse a native version string ('0.14.1-dev' -> (0, 14, 1)).
+
+    A `-dev` snapshot compares by its numeric triple only: it can never
+    satisfy a floor above its own triple, and equality with a `-dev`
+    suffix is NOT acceptance (only official releases count — see the
+    rebuild runbook in docs/liboqs_pin.md).
+    """
+    try:
+        m = re.match(r"^\s*(\d+)\.(\d+)\.(\d+)", str(version or ""))
+        if m:
+            return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except Exception:  # nosec: B110 -- fail-closed fallthrough to None (unverifiable) below; no decision swallowed
+        pass
+    return None
+
+
+def verify_liboqs_native_version(dll_path: str) -> Tuple[Optional[str], bool]:
+    """Query `OQS_version()` from a native liboqs binary and compare floor.
+
+    Returns (raw_version_or_None, meets_floor). NEVER raises: unparseable
+    or unreadable versions report (None, False) and CALLERS enforce
+    (fail-closed in production/TS, loud warning in lab). Loading the
+    library here is safe: the OS reference-counts the already-loaded DLL
+    and no cryptographic operation is performed.
+    """
+    try:
+        lib = ctypes.CDLL(str(dll_path))
+    except Exception as e:
+        logger.error(f"native version query: load failed for {dll_path}: {e}")
+        return (None, False)
+    try:
+        fn = lib.OQS_version
+    except Exception:
+        logger.error("native version query: OQS_version export missing (unverifiable binary)")
+        return (None, False)
+    try:
+        fn.restype = ctypes.c_char_p
+        raw_bytes = fn()
+        raw = (raw_bytes or b"").decode("ascii", errors="replace").strip()
+    except Exception as e:
+        logger.error(f"native version query failed: {e}")
+        return (None, False)
+    if not raw:
+        return (None, False)
+    parsed = parse_oqs_version(raw)
+    floor = liboqs_version_floor()
+    if parsed is None:
+        logger.error(f"native version query: unparseable version {raw!r} (floor {floor})")
+        return (raw, False)
+    if parsed < floor:
+        logger.error(f"native liboqs {raw} below floor "
+                     f"{floor[0]}.{floor[1]}.{floor[2]} (only 0.16.0 supported upstream)")
+        return (raw, False)
+    logger.info(f"native liboqs version check passed: {raw} >= floor")
+    return (raw, True)
 
 def verify_all_dependencies() -> bool:
     """

@@ -640,6 +640,272 @@ impl CoreTransport {
     }
 }
 
+use crate::acd::{ActiveCyberDefenseEngine, DefensivePlaybook, ThreatTrigger};
+use crate::cookie::StatelessCookieGate;
+use crate::zero_trust::{
+    inspect_content_rtb, ClearanceLevel, SecurityRole, ZeroTrustEngine, MIN_TRUST_THRESHOLD,
+};
+
+#[pyclass]
+pub struct CoreCookieGate {
+    inner: StatelessCookieGate,
+}
+
+#[pymethods]
+impl CoreCookieGate {
+    #[new]
+    #[pyo3(signature = (rotation_interval=None, max_cached=None))]
+    pub fn new(rotation_interval: Option<u64>, max_cached: Option<usize>) -> Self {
+        Self {
+            inner: StatelessCookieGate::new(
+                rotation_interval.unwrap_or(crate::cookie::DEFAULT_ROTATION_SECS),
+                max_cached.unwrap_or(8192),
+            ),
+        }
+    }
+
+    pub fn create_cookie(
+        &mut self,
+        client_ip: &str,
+        client_port: u16,
+        m1_prefix: Vec<u8>,
+    ) -> Vec<u8> {
+        self.inner.create_cookie(client_ip, client_port, &m1_prefix)
+    }
+
+    pub fn verify_cookie(
+        &mut self,
+        cookie: Vec<u8>,
+        client_ip: &str,
+        client_port: u16,
+        m1_prefix: Vec<u8>,
+    ) -> bool {
+        self.inner
+            .verify_cookie(&cookie, client_ip, client_port, &m1_prefix)
+    }
+
+    pub fn create_challenge(
+        &mut self,
+        client_ip: &str,
+        client_port: u16,
+        m1_prefix: Vec<u8>,
+        difficulty_bits: u8,
+    ) -> Vec<u8> {
+        self.inner
+            .create_challenge(client_ip, client_port, &m1_prefix, difficulty_bits)
+    }
+
+    pub fn verify_response(
+        &mut self,
+        response: Vec<u8>,
+        client_ip: &str,
+        client_port: u16,
+        m1_prefix: Vec<u8>,
+        difficulty_bits: u8,
+    ) -> bool {
+        self.inner
+            .verify_response(&response, client_ip, client_port, &m1_prefix, difficulty_bits)
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (challenge_payload, max_iterations=None))]
+    pub fn solve_challenge(
+        challenge_payload: Vec<u8>,
+        max_iterations: Option<u64>,
+    ) -> Option<Vec<u8>> {
+        StatelessCookieGate::solve_challenge(&challenge_payload, max_iterations.unwrap_or(2_000_000))
+    }
+
+    #[pyo3(signature = (wire, client_ip, client_port, require_cookie=false, difficulty_bits=0))]
+    pub fn process_incoming_m1(
+        &mut self,
+        wire: Vec<u8>,
+        client_ip: &str,
+        client_port: u16,
+        require_cookie: bool,
+        difficulty_bits: u8,
+    ) -> (String, Vec<u8>) {
+        let (status, payload) = self.inner.process_incoming_m1(
+            &wire,
+            client_ip,
+            client_port,
+            require_cookie,
+            difficulty_bits,
+        );
+        (status.to_string(), payload)
+    }
+}
+
+#[pyclass]
+pub struct CoreAcdEngine {
+    pub(crate) inner: ActiveCyberDefenseEngine,
+}
+
+#[pymethods]
+impl CoreAcdEngine {
+    #[new]
+    #[pyo3(signature = (replay_threshold=None, replay_window_secs=None, auth_fail_threshold=None, auth_fail_window_secs=None, quarantine_duration_secs=None))]
+    pub fn new(
+        replay_threshold: Option<usize>,
+        replay_window_secs: Option<f64>,
+        auth_fail_threshold: Option<usize>,
+        auth_fail_window_secs: Option<f64>,
+        quarantine_duration_secs: Option<f64>,
+    ) -> Self {
+        Self {
+            inner: ActiveCyberDefenseEngine::new(
+                replay_threshold.unwrap_or(3),
+                replay_window_secs.unwrap_or(10.0),
+                auth_fail_threshold.unwrap_or(5),
+                auth_fail_window_secs.unwrap_or(30.0),
+                quarantine_duration_secs.unwrap_or(300.0),
+                None,
+            ),
+        }
+    }
+
+    pub fn is_quarantined(&self, source_id: &str) -> bool {
+        self.inner.is_quarantined(source_id)
+    }
+
+    pub fn is_tactical_cloak_active(&self) -> bool {
+        self.inner.is_tactical_cloak_active()
+    }
+
+    pub fn is_emergency_isolated(&self) -> bool {
+        self.inner.is_emergency_isolated()
+    }
+
+    #[pyo3(signature = (source_id, duration_secs=None))]
+    pub fn quarantine(&self, source_id: &str, duration_secs: Option<f64>) {
+        let dur = duration_secs.map(std::time::Duration::from_secs_f64);
+        self.inner.quarantine(source_id, dur);
+    }
+
+    pub fn record_event(&self, trigger_str: &str, source_id: &str) -> Option<String> {
+        let trigger = match trigger_str {
+            "replay" | "TRIGGER_REPLAY_BURST" => ThreatTrigger::ReplayBurst,
+            "tamper" | "TRIGGER_TAMPER_DETECTED" => ThreatTrigger::TamperDetected,
+            "auth_fail" | "TRIGGER_AUTH_FAILURE_FLOOD" => ThreatTrigger::AuthFailureFlood,
+            "traffic" | "TRIGGER_TRAFFIC_ANOMALY" => ThreatTrigger::TrafficAnomaly,
+            "fault" | "TRIGGER_KEY_EXPOSURE_RISK" => ThreatTrigger::FaultDetected,
+            _ => return None,
+        };
+        self.inner.record_event(trigger, source_id).map(|pb| match pb {
+            DefensivePlaybook::QuarantinePeer => "PLAYBOOK_QUARANTINE_PEER".to_string(),
+            DefensivePlaybook::SeverSessionAndIsolate => "PLAYBOOK_SEVER_SESSION_AND_ISOLATE".to_string(),
+            DefensivePlaybook::BlockSourceAndRekey => "PLAYBOOK_BLOCK_SOURCE_AND_REKEY".to_string(),
+            DefensivePlaybook::ForceTacticalCloak => "PLAYBOOK_FORCE_TACTICAL_CLOAK".to_string(),
+            DefensivePlaybook::PurgeEphemeralState => "PLAYBOOK_PURGE_EPHEMERAL_STATE".to_string(),
+        })
+    }
+}
+
+#[pyclass]
+pub struct CoreZeroTrustEngine {
+    pub(crate) inner: ZeroTrustEngine,
+}
+
+#[pymethods]
+impl CoreZeroTrustEngine {
+    #[new]
+    #[pyo3(signature = (min_threshold=None))]
+    pub fn new(min_threshold: Option<u32>) -> Self {
+        Self {
+            inner: ZeroTrustEngine::new(min_threshold.unwrap_or(MIN_TRUST_THRESHOLD)),
+        }
+    }
+
+    pub fn register_peer(&self, peer_id: &str, role_str: &str) -> PyResult<()> {
+        let role = match role_str.to_lowercase().as_str() {
+            "admin" => SecurityRole::Admin,
+            "operator" => SecurityRole::Operator,
+            "viewer" => SecurityRole::Viewer,
+            _ => return Err(PyValueError::new_err("invalid role: expected admin, operator, or viewer")),
+        };
+        self.inner.register_peer(peer_id, role);
+        Ok(())
+    }
+
+    pub fn authorize(&self, peer_id: &str, perm_mask: u32) -> PyResult<()> {
+        self.inner.authorize(peer_id, perm_mask).map_err(err)
+    }
+
+    pub fn record_success(&self, peer_id: &str) -> PyResult<u32> {
+        self.inner.record_success(peer_id).map_err(err)
+    }
+
+    pub fn record_penalty(&self, peer_id: &str, penalty: u32) -> PyResult<u32> {
+        self.inner.record_penalty(peer_id, penalty).map_err(err)
+    }
+
+    pub fn trust_score(&self, peer_id: &str) -> Option<u32> {
+        self.inner.trust_score(peer_id)
+    }
+
+    pub fn is_trusted(&self, peer_id: &str) -> bool {
+        self.inner.is_trusted(peer_id)
+    }
+
+    pub fn verify_read(
+        &self,
+        subject_clearance: u8,
+        subject_caveats: u32,
+        object_classification: u8,
+        object_caveats: u32,
+    ) -> PyResult<bool> {
+        let sc = ClearanceLevel::from_u8(subject_clearance).map_err(err)?;
+        let oc = ClearanceLevel::from_u8(object_classification).map_err(err)?;
+        Ok(self
+            .inner
+            .verify_read(sc, subject_caveats, oc, object_caveats)
+            .is_ok())
+    }
+
+    pub fn verify_write(
+        &self,
+        subject_clearance: u8,
+        target_classification: u8,
+    ) -> PyResult<bool> {
+        let sc = ClearanceLevel::from_u8(subject_clearance).map_err(err)?;
+        let tc = ClearanceLevel::from_u8(target_classification).map_err(err)?;
+        Ok(self.inner.verify_write(sc, tc).is_ok())
+    }
+
+    pub fn inspect_content(&self, data: &[u8]) -> (bool, Option<String>) {
+        match inspect_content_rtb(data) {
+            Ok(()) => (true, None),
+            Err(marker) => (false, Some(marker.to_string())),
+        }
+    }
+}
+
+#[pyclass]
+pub struct CoreMemoryGuard;
+
+#[pymethods]
+impl CoreMemoryGuard {
+    #[staticmethod]
+    pub fn secure_wipe(buf: &Bound<'_, pyo3::types::PyByteArray>) -> PyResult<()> {
+        unsafe {
+            let slice = buf.as_bytes_mut();
+            let len = slice.len();
+            if len > 0 {
+                let ptr = slice.as_mut_ptr();
+                std::ptr::write_bytes(ptr, 0x00, len);
+                std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+                std::ptr::write_bytes(ptr, 0xFF, len);
+                std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+                let _ = getrandom::fill(slice);
+                std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+                std::ptr::write_bytes(ptr, 0x00, len);
+                std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreMldsaSigner>()?;
     m.add_class::<CoreKexResponder>()?;
@@ -649,6 +915,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreHsInitiator>()?;
     m.add_class::<CoreHsResponder>()?;
     m.add_class::<CoreTransport>()?;
+    m.add_class::<CoreCookieGate>()?;
+    m.add_class::<CoreAcdEngine>()?;
+    m.add_class::<CoreZeroTrustEngine>()?;
+    m.add_class::<CoreMemoryGuard>()?;
     m.add_function(wrap_pyfunction!(transcript_len, m)?)?;
     m.add_function(wrap_pyfunction!(derive_frame_key, m)?)?;
     m.add_function(wrap_pyfunction!(derive_ratchet_root, m)?)?;

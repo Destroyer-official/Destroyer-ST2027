@@ -59,3 +59,39 @@ def require_native() -> Any:
             "destroyer_core._native absent (maturin build -m "
             "rust_data_plane/Cargo.toml); using Python reference path"
         ) from exc
+
+
+def get_cookie_gate(rotation_interval: int = 120, max_cached: int = 8192) -> Any:
+    """Instantiate native Rust StatelessCookieGate if available."""
+    native = require_native()
+    return native.CoreCookieGate(rotation_interval, max_cached)
+
+
+def get_acd_engine(**kwargs) -> Any:
+    """Instantiate native Rust ActiveCyberDefenseEngine if available."""
+    native = require_native()
+    return native.CoreAcdEngine(
+        kwargs.get("replay_threshold", 3),
+        kwargs.get("replay_window_secs", 10.0),
+        kwargs.get("auth_fail_threshold", 5),
+        kwargs.get("auth_fail_window_secs", 30.0),
+        kwargs.get("quarantine_duration_secs", 300.0),
+    )
+
+
+def get_zero_trust_engine(min_threshold: int = 50) -> Any:
+    """Instantiate native Rust ZeroTrustEngine if available."""
+    native = require_native()
+    return native.CoreZeroTrustEngine(min_threshold)
+
+
+def secure_wipe_buffer(buf: bytearray) -> None:
+    """Perform multi-pass DoD 5220.22-M / NIST SP 800-88 cryptographic wipe."""
+    if available():
+        native = require_native()
+        native.CoreMemoryGuard.secure_wipe(buf)
+    else:
+        # Fallback Python wipe
+        for i in range(len(buf)):
+            buf[i] = 0
+

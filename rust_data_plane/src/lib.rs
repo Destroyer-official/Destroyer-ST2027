@@ -33,10 +33,12 @@
 //! FFI discipline: bytes and counters cross the boundary; raw key material
 //! never leaves Rust except inside sealed calls. All secrets ZeroizeOnDrop.
 
+pub mod acd;
 pub mod aead;
 pub mod attest;
 pub mod auth;
 pub mod chaff;
+pub mod cookie;
 pub mod ct;
 pub mod fec;
 pub mod ffi;
@@ -45,6 +47,7 @@ pub mod handshake;
 pub mod kem;
 pub mod kex_auth;
 pub mod keystore;
+pub mod memory_guard;
 pub mod memlock;
 pub mod net;
 pub mod nostd_microcore;
@@ -56,6 +59,7 @@ pub mod purge;
 pub mod ratchet;
 pub mod replay;
 pub mod session;
+pub mod zero_trust;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};
 use crate::frame::{pad_to_quantum, FTYPE_CHAFF, FTYPE_MSG};
@@ -73,6 +77,9 @@ pub struct SecureEngine {
     /// in both directions would reuse (key, nonce) pairs and destroy the
     /// AEAD security of both streams.
     is_initiator: bool,
+    peer_id: Option<String>,
+    acd: Option<acd::ActiveCyberDefenseEngine>,
+    zt: Option<zero_trust::ZeroTrustEngine>,
 }
 
 impl Default for SecureEngine {
@@ -91,6 +98,9 @@ impl SecureEngine {
             key: None,
             send_seq: 0,
             is_initiator: true,
+            peer_id: None,
+            acd: None,
+            zt: None,
         }
     }
 
@@ -182,20 +192,136 @@ impl SecureEngine {
     /// `mark` ONLY on success. Forged seq never shifts state before auth.
     pub fn open_msg(&mut self, frame: Vec<u8>) -> Option<(u8, Vec<u8>)> {
         let key = self.key.as_ref()?;
+
+        // Fast-path defense check: if peer is quarantined or untrusted, drop silently
+        if let (Some(ref peer), Some(ref acd)) = (&self.peer_id, &self.acd) {
+            if acd.is_quarantined(peer) {
+                self.replay.note_drop();
+                return None;
+            }
+        }
+        if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+            if !zt.is_trusted(peer) {
+                self.replay.note_drop();
+                return None;
+            }
+        }
+
         // Step 1: read-only check on unauthenticated header (no mutation).
-        let peeked = aead::peek_seq(key, &frame)?;
+        let peeked = match aead::peek_seq(key, &frame) {
+            Some(p) => p,
+            None => {
+                self.replay.note_drop();
+                if let (Some(ref peer), Some(ref acd)) = (&self.peer_id, &self.acd) {
+                    acd.record_event(acd::ThreatTrigger::TamperDetected, peer);
+                }
+                if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+                    let _ = zt.record_penalty(peer, 15);
+                }
+                return None;
+            }
+        };
+
         if !self.replay.check(peeked) {
             self.replay.note_drop();
+            if let (Some(ref peer), Some(ref acd)) = (&self.peer_id, &self.acd) {
+                acd.record_event(acd::ThreatTrigger::ReplayBurst, peer);
+            }
+            if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+                let _ = zt.record_penalty(peer, 10);
+            }
             return None;
         }
+
         // Step 2: authenticate (seq bound via nonce + AAD header).
-        let (seq, ftype, pt) = aead::open_indexed(key, self.recv_dir(), &frame).ok()?;
+        let (seq, ftype, pt) = match aead::open_indexed(key, self.recv_dir(), &frame) {
+            Ok(res) => res,
+            Err(_) => {
+                self.replay.note_drop();
+                if let (Some(ref peer), Some(ref acd)) = (&self.peer_id, &self.acd) {
+                    acd.record_event(acd::ThreatTrigger::TamperDetected, peer);
+                }
+                if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+                    let _ = zt.record_penalty(peer, 20);
+                }
+                return None;
+            }
+        };
+
         if seq != peeked {
+            self.replay.note_drop();
+            if let (Some(ref peer), Some(ref acd)) = (&self.peer_id, &self.acd) {
+                acd.record_event(acd::ThreatTrigger::TamperDetected, peer);
+            }
+            if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+                let _ = zt.record_penalty(peer, 20);
+            }
             return None;
         }
+
         // Step 3: mutate window ONLY on authentication success.
         self.replay.mark(seq);
+        if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+            let _ = zt.record_success(peer);
+        }
         Some((ftype, pt))
+    }
+
+    /// Bind a peer identifier and enable continuous active cyber defense & zero-trust tracking.
+    pub fn bind_peer(&mut self, peer_id: String) {
+        if self.acd.is_none() {
+            self.acd = Some(acd::ActiveCyberDefenseEngine::default());
+        }
+        if self.zt.is_none() {
+            let zt = zero_trust::ZeroTrustEngine::default();
+            zt.register_peer(&peer_id, zero_trust::SecurityRole::Operator);
+            self.zt = Some(zt);
+        } else if let Some(ref zt) = self.zt {
+            zt.register_peer(&peer_id, zero_trust::SecurityRole::Operator);
+        }
+        self.peer_id = Some(peer_id);
+    }
+
+    /// Attach an existing CoreAcdEngine instance.
+    pub fn attach_acd(&mut self, acd: &ffi::CoreAcdEngine) {
+        self.acd = Some(acd.inner.clone());
+    }
+
+    /// Attach an existing CoreZeroTrustEngine instance.
+    pub fn attach_zero_trust(&mut self, zt: &ffi::CoreZeroTrustEngine) {
+        self.zt = Some(zt.inner.clone());
+    }
+
+    /// Retrieve the currently bound peer identifier, if any.
+    pub fn peer_id(&self) -> Option<String> {
+        self.peer_id.clone()
+    }
+
+    /// Check if the currently bound peer is quarantined under DoD cATO active cyber defense.
+    pub fn is_quarantined(&self) -> bool {
+        if let (Some(ref peer), Some(ref acd)) = (&self.peer_id, &self.acd) {
+            acd.is_quarantined(peer)
+        } else {
+            false
+        }
+    }
+
+    /// Retrieve the real-time NIST SP 800-207 trust score (0..=100) for the bound peer.
+    pub fn trust_score(&self) -> u32 {
+        if let (Some(ref peer), Some(ref zt)) = (&self.peer_id, &self.zt) {
+            zt.trust_score(peer).unwrap_or(0)
+        } else {
+            100
+        }
+    }
+
+    /// Reset session state and clear secrets from memory.
+    pub fn reset(&mut self) {
+        self.key = None;
+        self.send_seq = 0;
+        self.is_connected = false;
+        self.replay = replay::AntiReplayWindow::new();
+        self.peer_id = None;
     }
 
     /// Offer an inbound sequence number to the replay filter.

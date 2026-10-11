@@ -12,6 +12,9 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 from supply_chain_security import SBOMGenerator
 
 def _parse_args(argv=None):
@@ -341,7 +344,7 @@ def verify_sbom_offline(sbom_path=None, pubkey_path=None):
     """
     from liboqs_wrapper import LibOQS_MLDSA_87
 
-    repo_root = Path(__file__).parent.resolve()
+    repo_root = Path(__file__).resolve().parent.parent
     if sbom_path is None:
         targets = [repo_root / "compliance_reports" / "spdx_sbom.json"]
     else:
@@ -387,7 +390,7 @@ def verify_sbom_offline(sbom_path=None, pubkey_path=None):
 
 
 def main(argv=None):
-    repo_root = Path(__file__).parent.resolve()
+    repo_root = Path(__file__).resolve().parent.parent
     # Parse CLI early for --output-dir (additive; default keeps legacy path).
     _cli = _parse_args(argv)
     if _cli.output_dir:
@@ -489,7 +492,7 @@ def main(argv=None):
     # fall back to the local certs/ anchor (WARN: lab-grade if freshly generated).
     try:
         args = _parse_args(argv)
-        certs_dir = Path("certs")
+        certs_dir = repo_root / "certs"
         certs_dir.mkdir(exist_ok=True)
         default_sk_path = certs_dir / "sbom_mldsa87_signer.sk"
         default_pk_path = certs_dir / "sbom_mldsa87_signer.pub"

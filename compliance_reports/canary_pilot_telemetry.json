@@ -1,11 +1,11 @@
 {
-  "deployment_id": "CANARY-1789826047",
+  "deployment_id": "CANARY-1791741392",
   "standards": [
     "NIST SP 800-137 (ISCM)",
     "DoD cATO Active Cyber Defense",
     "NSA CNSA 2.0"
   ],
-  "timestamp_utc": "2026-09-19T13:54:07.415696+00:00",
+  "timestamp_utc": "2026-10-11T17:56:32.250562+00:00",
   "nodes": [
     "CANARY-ALPHA",
     "CANARY-BRAVO"

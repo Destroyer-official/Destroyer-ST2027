@@ -998,7 +998,7 @@ class CAExchange:
     MAX_OCSP_BLOB = 8 * 1024
 
     def _recv_all(self, sock: socket.socket, length: int, max_len: Optional[int] = None,
-                  timeout: float = 10.0) -> bytes:
+                  timeout: float = 30.0) -> bytes:
         """Receive exactly 'length' bytes, bounded and timed.
 
         Args:
@@ -1017,9 +1017,10 @@ class CAExchange:
         data = b''
         has_timeout = hasattr(sock, 'gettimeout') and hasattr(sock, 'settimeout')
         prev_timeout = sock.gettimeout() if has_timeout else None
+        eff_timeout = float(os.environ.get("P2P_RECV_TIMEOUT", str(timeout)))
         try:
             if has_timeout:
-                sock.settimeout(timeout)
+                sock.settimeout(eff_timeout)
             while len(data) < length:
                 try:
                     chunk = sock.recv(min(length - len(data), 65536))

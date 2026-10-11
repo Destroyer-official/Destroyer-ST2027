@@ -508,7 +508,10 @@ def trial_8_live_dual_base_drill():
     print("run_two_terminals_military_test.py over live sockets.")
 
     import subprocess  # nosec: B404
-    cmd = [sys.executable, "-u", os.path.join(BASE_DIR, "run_two_terminals_military_test.py")]
+    script_path = os.path.join(BASE_DIR, "run_two_terminals_military_test.py")
+    if not os.path.exists(script_path):
+        script_path = os.path.join(BASE_DIR, "scratch", "run_two_terminals_military_test.py")
+    cmd = [sys.executable, "-u", script_path]
     print(f"  Executing: {' '.join(cmd)}")
 
     start_time = time.time()

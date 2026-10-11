@@ -60,6 +60,8 @@ pub enum CoreError {
     FilePermissions,
     /// Payload exceeds largest quantum.
     Oversize,
+    /// Zero-Trust continuous risk score dropped below threshold or RBAC unauthorized.
+    ZeroTrustViolation,
 }
 
 impl fmt::Display for CoreError {
@@ -79,6 +81,7 @@ impl fmt::Display for CoreError {
             CoreError::OsRandom => write!(f, "OS randomness unavailable"),
             CoreError::FilePermissions => write!(f, "key file permission hardening failed"),
             CoreError::Oversize => write!(f, "payload exceeds largest quantum"),
+            CoreError::ZeroTrustViolation => write!(f, "zero-trust continuous verification failure"),
         }
     }
 }

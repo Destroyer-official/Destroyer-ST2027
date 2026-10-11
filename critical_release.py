@@ -361,5 +361,5 @@ class CriticalReleaseAuthority:
         """Operational preconditions for a critical ceremony."""
         return (
             os.environ.get("P2P_REQUIRE_AUTH", "true").lower() == "true"
-            and os.environ.get("P2P_DATA_PLANE", "python").lower() in ("rust", "rust_udp", "udp")
+            and os.environ.get("P2P_DATA_PLANE", "rust").lower() in ("rust", "rust_udp", "udp")
         )

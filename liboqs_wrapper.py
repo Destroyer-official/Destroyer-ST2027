@@ -266,6 +266,54 @@ try:
 except Exception as e:
     raise ImportError(f"Failed to load liboqs from {LIBOQS_DLL_PATH}: {e}")
 
+
+# --- Runtime native version gate (fail-closed floor 0.16.0) ---
+# The sidecar/SBOM pin checks verify INTEGRITY, not the live binary's
+# version: a below-floor DLL (current vendored: 0.14.1-dev) would otherwise
+# load silently in every mode. This gate queries OQS_version() from the
+# loaded library and enforces the single-sourced floor:
+#   production/TS -> ImportError (Python PQ path dead until rebuild at
+#                   official 0.16.0; fail-closed, no silent downgrade)
+#   lab           -> CRITICAL log + LIBOQS_BELOW_FLOOR flag (ML-KEM/ML-DSA
+#                   paths used here are unaffected by the fixed HQC/XMSS
+#                   CVEs, but the binary stays untrusted for anything else;
+#                   HQC/XMSS legs remain refused regardless — see below).
+LIBOQS_NATIVE_VERSION: Optional[str] = None
+LIBOQS_BELOW_FLOOR = False
+
+
+def _liboqs_strict_mode() -> bool:
+    return (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip() == "1"
+            or os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on"))
+
+
+try:
+    from dependency_security_verifier import (
+        verify_liboqs_native_version, liboqs_version_floor)
+    _raw, _ok = verify_liboqs_native_version(str(LIBOQS_DLL_PATH))
+    LIBOQS_NATIVE_VERSION = _raw
+    _floor = liboqs_version_floor()
+    _floor_s = f"{_floor[0]}.{_floor[1]}.{_floor[2]}"
+    if _ok:
+        print(f"[OK] liboqs native version {_raw} meets floor {_floor_s}")
+    else:
+        LIBOQS_BELOW_FLOOR = True
+        _msg = (f"liboqs native version {_raw or 'UNVERIFIABLE'} below floor {_floor_s} "
+                f"(only 0.16.0 supported upstream; rebuild at official 0.16.0 per docs/liboqs_pin.md)")
+        if _liboqs_strict_mode():
+            raise ImportError(f"FATAL: {_msg} — production/TS load refused")
+        logger.critical(f"{_msg} — LAB-ONLY load (ML-KEM/ML-DSA paths; HQC/XMSS refused)")
+        print(f"[WARN] {_msg} — continuing LAB-ONLY")
+except ImportError:
+    raise
+except Exception as e:
+    LIBOQS_BELOW_FLOOR = True
+    if _liboqs_strict_mode():
+        raise ImportError(f"FATAL: liboqs native version gate failed closed: {e}")
+    logger.critical(f"liboqs native version gate inconclusive ({e}) — LAB-ONLY load")
+    print(f"[WARN] liboqs native version gate inconclusive ({e}) — continuing LAB-ONLY")
+
 # --- Define C structures and types (Should match oqs.h) ---
 class OQS_KEM(ctypes.Structure):
     _fields_ = [

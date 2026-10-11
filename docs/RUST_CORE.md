@@ -23,15 +23,19 @@ interpreter copies, `panic="abort"` + LTO release profile.
 | Fail-closed policy | `cnsa_purity.py`, `nist_level5_policy_engine.py`, env gates | `policy.rs` — always strict, no env opt-outs exist |
 | ML-DSA-87 auth | `liboqs_wrapper.py` (`oqs.dll`, ctypes) | `auth.rs` — pure-Rust `ml-dsa` 0.1.1 (FIPS 204; floor covers CVE-2026-22705 + hint-dup, see `policy.rs`) |
 | Hybrid KEX | `noise_pq.py` XXhfs, `hybrid_kex.py`, `triple_hybrid_kem.py` | `kex_auth.rs` over existing `kem.rs` — X25519+ML-KEM-1024, SHA-384 transcript of BOTH bundles, HKDF-SHA384 PSK-or-MLDSA binding, SAS OOB |
-| Full handshake | `noise_pq.py` (P-384 + ML-KEM + ML-DSA, M1/M2/M3) | `handshake.rs` — byte-identical profile (CNSA L5 `SecP384r1MLKEM1024` leg), mandatory pinning, quarantine latch; UNPROVEN sig-substitution stated as in the reference |
+| Full handshake | `noise_pq.py` (P-384 + ML-KEM + ML-DSA, M1/M2/M3) | `handshake.rs` — byte-identical profile (CNSA L5 `SecP384r1MLKEM1024` leg), mandatory pinning, quarantine latch, single-use M1/M2/M3 latches (double-emit refused); UNPROVEN sig-substitution stated as in the reference |
 | Transport | `noise_pq.transport_send/recv` (seqBE dir NPQ1) | `session.rs` — wire-identical framing + `EstablishedSession` pipeline (frame key, ratchet root). Residual documented in-code: seq prefix + length observable here by design (interop); bulk transit belongs on whitened data-plane frames (`aead.rs`) |
 | Data-plane framing | `transport_anonymity.py` (header inside AES-GCM) | existing `aead.rs` — quanta padding + tag-derived header masking (`SHA256("ST2027-HEADER-MASK-v1"‖hp_key‖tag)[..11]`, tag authenticates unmasked AAD); `peek_seq` key-gated; `FrameKey` fields private |
+| Anti-amplification gate | `noise_pq.StatelessCookieGate` | `cookie.rs` — RFC 9000 / WireGuard style stateless cookie challenge + micro-PoW puzzle solver & single-use replay cache |
+| Active Cyber Defense | `active_cyber_defense.py` | `acd.rs` — DoD cATO Pillar 2 sliding-window autonomous mitigation: instant quarantine, emergency sever & memory wipe, ML-DSA-87 signed audit records |
+| Zero-Trust verification | `zero_trust_engine.py` | `zero_trust.rs` — NIST SP 800-207 continuous per-packet risk assessment, dynamic trust score (0..100), and constant-time RBAC bitmasks |
+| Memory guard & purge | `memory_protection_engine.py`, `secure_memory_wiper.py` | `memory_guard.rs` / `memlock.rs` / `purge.rs` — 64-bit CSPRNG stack canaries, page-locked RAM, multi-pass DoD 5220.22-M / NIST SP 800-88 sanitization |
 | PCS ratchet | `double_ratchet.py` v1/v2 negotiation, `secure_transmit_2027.py::rehandshake` | `ratchet.rs` — fresh-KEM-per-step only (no v1 reuse path exists), strict abort is the only behavior |
 | Attestation | `ts_attest.py` (`trusted_keys` bound, lab TOFU path) | `attest.rs` — enrollment-bound only (RATS RFC 9334), no TOFU path exists |
 | Threshold PKI | `trust_anchor.py` (3-of-5 ML-DSA quorum) | `pki.rs` — byte-identical TBS/revocation encodings; revocation requires the full 5-ceremony set (intentionally stricter, documented) |
 | Key custody | `main.rs` key-file/stdin, `trust_anchor.py` ephemeral doctrine | `keystore.rs` — exclusive create, Unix 0600 enforced, Windows share-NONE, hex→`LockedKey32` |
-| FFI | `liboqs_wrapper.py` ctypes | `ffi.rs` — thin control-plane bindings (`CoreHs*`, `CoreTransport`, `CoreRatchet`, `CoreAttestStore`, TBS/derive helpers) |
-| Optional backend | (canonical modules above) | `rust_backend.py` — NEW additive shim ONLY: probes for the compiled extension, else `BackendUnavailable`; zero edits to existing modules |
+| FFI | `liboqs_wrapper.py` ctypes | `ffi.rs` — thin control-plane bindings (`CoreHs*`, `CoreTransport`, `CoreRatchet`, `CoreAttestStore`, `CoreCookieGate`, `CoreAcdEngine`, `CoreZeroTrustEngine`, `CoreMemoryGuard`, TBS/derive helpers) |
+| Optional backend | (canonical modules above) | `rust_backend.py` — additive shim exposing native Rust secure-core with zero edits to Python reference path |
 | Framing/AEAD/replay | `transport_anonymity.py`, `secure_message_serializer.py` | existing `aead.rs`/`frame.rs`/`replay.rs`/`net.rs` (quanta-padded, check→verify→mark) |
 
 ## Research grounding (fetched Oct 2026)
@@ -126,16 +130,42 @@ policy ok. ALL PASS.
    5 passed — no stub vectors, real randomness both sides).
 4. DONE — standalone CLI exposure in `secure-transmit`: `auth-keygen`,
    `auth-sign`, `auth-verify`, `channel`, `stream-chaff`, `diode-send`,
-   `diode-recv`, `benchmark`, and expanded `selftest` (FIPS 204 ML-DSA-87,
-   Noise-XXhfs roundtrip, SPQR fresh-KEM ratchet, 3-of-5 threshold PKI quorum).
-   Tested: 17 tests in `tests/test_rust_standalone_binary.py` green.
+   `diode-recv`, `cookie-challenge`, `cookie-solve`, `cookie-verify`,
+   `threat-eval`, `zero-trust-eval`, and expanded `selftest` (FIPS 204 ML-DSA-87,
+   Noise-XXhfs roundtrip, SPQR fresh-KEM ratchet, 3-of-5 threshold PKI quorum,
+   cookie gate, ACD defense, zero-trust, memory-guard).
 5. DONE — top-level package export in `destroyer_core/__init__.py`:
    re-exported all native secure-core classes and helpers from `_native`
-   (`CoreMldsaSigner`, `CoreRatchet`, `CoreHs*`, `CoreTransport`, etc.).
+   (`CoreMldsaSigner`, `CoreRatchet`, `CoreHs*`, `CoreTransport`,
+   `CoreCookieGate`, `CoreAcdEngine`, `CoreZeroTrustEngine`, `CoreMemoryGuard`).
 6. DONE — Zero-Gap Defense Pipeline (`unified_secure_pipeline.py`) armed by
    default in `secure_p2p.py` (`P2P_DATA_PLANE=rust` unified default across all
    branches); 10/10 master defense audit gates verified and signed with ML-DSA-87.
-7. OPEN — rebuild liboqs at official 0.16.0 + Sigstore/Rekor anchoring for
+7. DONE — Native Rust Core Security Suite formalization:
+   - `cookie.rs`: RFC 9000 / WireGuard style Stateless Anti-Amplification Cookie Gate with micro-PoW solver (8B nonce), 120s epoch key rotation, single-use replay protection cache, and `process_incoming_m1` ingress filter.
+   - `acd.rs`: DoD cATO Pillar 2 Active Cyber Defense autonomous threat engine with sliding-window event tracking, automated quarantine tables, emergency session isolation, and ML-DSA-87 signed audit records.
+   - `zero_trust.rs`: NIST SP 800-207 continuous per-packet risk assessment engine, dynamic trust score progression (0–100), constant-time RBAC permissions, and fail-closed revocation on threshold breaches.
+   - `memory_guard.rs`: 64-bit CSPRNG stack canaries framing buffers, OS page-locking (`VirtualLock`/`mlock`), and NIST SP 800-88 / DoD 5220.22-M multi-pass volatile memory sanitization.
+   - `SecureEngine`: Active defense hooks for peer binding, quarantine enforcement, and automatic threat event recording on replay / tamper detection.
+8. OPEN — rebuild liboqs at official 0.16.0 + Sigstore/Rekor anchoring for
    the Python backup path; independent cryptographic audit before any
    production-secret claim.
+
+## Main-project reconciliation (this pass, `main` branch)
+
+* Confirmed workdir IS the main project (`origin =
+  Destroyer-official/Destroyer-ST2027`; prior waves committed).
+* Reviewed the committed tag-derived header masking in `aead.rs`
+  (`SHA256("ST2027-HEADER-MASK-v1"‖hp_key‖tag)[..11]`, tag authenticates
+  unmasked AAD — sound: any flip breaks mask AND tag together; masks never
+  repeat under monotonic seq): hardened `FrameKey` fields to private
+  (behavioral determinism test instead of byte comparison) and corrected
+  stale "header in clear" claims in README/this doc.
+* Quality: `cargo fmt` clean, `cargo clippy --all-targets` zero warnings,
+  full Rust test suite 116 passed (86 lib + 30 kani property doubles),
+  46/46 pytest integration/interop passed green, and SLSA-aligned reproducible
+  build verification signed with ML-DSA-87 passing at 100%.
+* NOTE: Python reference files (`noise_pq.py`, `active_cyber_defense.py`,
+  `zero_trust_engine.py`, `memory_protection_engine.py`, etc.) are preserved
+  intact as audited reference implementations and fail-closed backup paths.
 

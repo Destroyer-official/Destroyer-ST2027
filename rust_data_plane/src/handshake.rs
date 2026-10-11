@@ -289,10 +289,7 @@ fn mlkem_keygen() -> Result<(Vec<u8>, ml_kem::DecapsulationKey<MlKem1024>), Core
 }
 
 /// Split transport keys by role + export transcript (mirrors `split_session`).
-fn finish_split(
-    sym: &SymmetricState,
-    is_initiator: bool,
-) -> Result<SplitKeys, CoreError> {
+fn finish_split(sym: &SymmetricState, is_initiator: bool) -> Result<SplitKeys, CoreError> {
     let (k1, k2, h) = sym.split()?;
     Ok(if is_initiator {
         (k1, k2, h)
@@ -357,6 +354,8 @@ pub struct Handshake {
     sig_pk: Vec<u8>,
     psk: Option<Zeroizing<[u8; 32]>>,
     peer_sig_pk: Option<Vec<u8>>,
+    m1_done: bool,
+    m2_done: bool,
     m3_done: bool,
     split_done: bool,
     quarantined: bool,
@@ -388,6 +387,8 @@ impl Handshake {
             sig_pk,
             psk: psk.map(Zeroizing::new),
             peer_sig_pk: None,
+            m1_done: false,
+            m2_done: false,
             m3_done: false,
             split_done: false,
             quarantined: false,
@@ -413,10 +414,12 @@ impl Handshake {
         Ok(())
     }
 
-    /// M1: `-> e, e1`. Initiator only, fresh session only.
+    /// M1: `-> e, e1`. Initiator only, exactly once per session (a second
+    /// hello would fork the transcript — latched like the Python reference,
+    /// which refuses once `_e_pub` is set).
     pub fn initiator_hello(&mut self) -> Result<Vec<u8>, CoreError> {
         self.check_clean(true)?;
-        if self.e_secret.is_some() || self.ml_dk.is_some() {
+        if self.m1_done || self.e_secret.is_some() || self.ml_dk.is_some() {
             return Err(CoreError::Malformed);
         }
         let (e_sk, e_pub) = p384_keygen()?;
@@ -429,15 +432,18 @@ impl Handshake {
         m1.extend_from_slice(&e_pub);
         m1.extend_from_slice(&ml_ek);
         debug_assert_eq!(m1.len(), M1_LEN);
+        self.m1_done = true;
         Ok(m1)
     }
 
     /// M2: process M1, emit `e_pub || ml_ct || enc(pk) || enc(sig)`.
-    /// Consumes our ephemeral ECDH secret immediately after use (SP 800-227
-    /// zero-dwell, mirroring the Python reference).
+    /// Exactly once per session: like the Python reference (which refuses
+    /// once `_e_pub` is set), a second reply would advance a dirty transcript
+    /// no initiator shares — latched shut. Consumes our ephemeral ECDH
+    /// secret immediately after use (SP 800-227 zero-dwell).
     pub fn responder_reply(&mut self, m1: &[u8]) -> Result<Vec<u8>, CoreError> {
         self.check_clean(false)?;
-        if self.e_secret.is_some() || m1.len() != M1_LEN {
+        if self.m2_done || self.e_secret.is_some() || m1.len() != M1_LEN {
             return Err(CoreError::Malformed);
         }
         let (e_cli, ek_cli) = (&m1[..P384_PUB], &m1[P384_PUB..]);
@@ -493,6 +499,7 @@ impl Handshake {
             self.quarantine();
             return Err(CoreError::Malformed);
         }
+        self.m2_done = true;
         Ok(m2)
     }
 
@@ -592,12 +599,15 @@ impl Handshake {
     }
 
     /// Process M3: decrypt `s`, VERIFY initiator sig BEFORE Split, pin check.
+    /// Requires our M2 first (symmetric handshake key must exist) — an M3
+    /// against a fresh responder state fails closed either way, but the
+    /// explicit latch keeps the state machine total.
     pub fn responder_complete(&mut self, m3: &[u8], expected_pin: &[u8]) -> Result<(), CoreError> {
         self.check_clean(false)?;
         if expected_pin.len() != MLDSA87_PK {
             return Err(CoreError::Malformed);
         }
-        if self.m3_done || m3.len() != M3_LEN {
+        if !self.m2_done || self.m3_done || m3.len() != M3_LEN {
             return Err(CoreError::Malformed);
         }
         let (enc_pk, enc_sig) = (&m3[..MLDSA87_PK + TAG_LEN], &m3[MLDSA87_PK + TAG_LEN..]);
@@ -733,6 +743,30 @@ mod tests {
         r2.responder_complete(&m3b, &pki2).unwrap();
         let (jk_s, _, _) = i2.split().unwrap();
         assert_ne!(ik_s, jk_s);
+    }
+
+    #[test]
+    fn double_emit_latched_shut() {
+        // Second hello on one initiator forks the transcript — refused.
+        let ((ski, pki), _) = identities();
+        let mut i = Handshake::initiator(ski, pki, None).unwrap();
+        let _m1 = i.initiator_hello().unwrap();
+        assert!(i.initiator_hello().is_err());
+        // Second reply on one responder advances a dirty transcript no
+        // initiator shares — refused (matches the Python `_e_pub` latch).
+        let ((_, _), (skr, pkr)) = identities();
+        let mut r = Handshake::responder(skr, pkr, None).unwrap();
+        let ((ski2, pki2), _) = identities();
+        let mut i2 = Handshake::initiator(ski2, pki2, None).unwrap();
+        let m1b = i2.initiator_hello().unwrap();
+        let _m2 = r.responder_reply(&m1b).unwrap();
+        assert!(r.responder_reply(&m1b).is_err());
+        // M3 against a responder that never replied: refused by latch
+        // (decryption would fail closed anyway — no handshake key exists).
+        let ((_, _), (skr9, pkr9)) = identities();
+        let pin9 = pkr9.clone();
+        let mut r9 = Handshake::responder(skr9, pkr9, None).unwrap();
+        assert!(r9.responder_complete(&[0u8; M3_LEN], &pin9).is_err());
     }
 
     #[test]
