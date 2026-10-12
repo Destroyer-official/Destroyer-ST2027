@@ -52,9 +52,17 @@ python -c "import hashlib; d=open('oqs.dll','rb').read(); print('size',len(d)); 
 
 ## Update procedure (rebuild → re-pin)
 
+Windows rebuilds are now automated via the manual-dispatch workflow
+`.github/workflows/oqs-rebuild.yml` (F-01): run it with the target tag
+(default `0.16.0`), download the `oqs-dll-<tag>` artifact (contains the
+fresh `oqs.dll` + `liboqs.commit`), then follow the re-pin steps below.
+The workflow builds from the official tag under MSVC, asserts
+`OQS_version() >= tag` (fail-closed), and records hashes for the table.
+
 1. Build liboqs at the target tag (goal: `0.16.0`) from upstream
    <https://github.com/open-quantum-safe/liboqs> with only the
    allowlisted algs enabled; record commit SHA + build flags.
+   (Or dispatch `oqs-rebuild.yml` and use its artifact.)
 2. Replace `oqs.dll` (and `liboqs.so` for Linux CI if shipped), then
    regenerate sidecars:
    - `oqs.dll.hashes` ← fresh `{sha512, sha3_512, size}` (keep `size` field).

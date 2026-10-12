@@ -706,7 +706,7 @@ python destroyer_tactical_p2p.py web --host 127.0.0.1 --port 8443
 
 Accessible via browser at `http://127.0.0.1:8443`:
 - **Real-Time 50 Hz Hardware Wire Oscilloscope**: Canvas rendering of 20ms cadence and 1232B cell invariance.
-- **Continuous Shannon Entropy Dial**: Real-time measurement tracking $H > 7.95$ bits/byte ($H \approx 7.998$).
+- **Continuous Shannon Entropy Dial**: Real-time chaff-sanity telemetry ($H > 7.95$ bits/byte target; the security property is constant-rate + fixed-size cells, not the entropy statistic).
 - **Dual-Node Enclave Architecture Map**: Real-time link status between NORAD Alpha and Pentagon Bravo.
 - **Mutual Out-of-Band SAS Verification**: Short Authentication String display with confirmation badge.
 - **In-Band Classified Messaging**: Encrypted bidirectional transmission with audio/visual alerts.
@@ -720,7 +720,7 @@ Accessible via browser at `http://127.0.0.1:8443`:
 ST2027 provides 5 independent, fail-closed transport channels engineered for classified information up to TOP SECRET // SCI // NOFORN:
 
 1. **Wire-Camouflaged Tactical Comms Channel**:
-   - Continuous 20ms hardware cadence with constant 1232B cells and CSPRNG chaff ($H > 7.95$ bits/byte).
+   - Continuous 20ms hardware cadence with constant 1232B cells and CSPRNG chaff (uniform-looking cover; entropy is a chaff-sanity figure, not the security claim).
    - Zero packet timing, burst frequency, or size leakage to localized or state-level eavesdroppers.
 2. **Simplex Optical Data Diode (Cauchy-RS FEC)**:
    - Unidirectional file streaming across single-strand optical fiber with 30% parity redundancy.

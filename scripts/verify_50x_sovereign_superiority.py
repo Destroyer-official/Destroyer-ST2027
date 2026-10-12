@@ -120,16 +120,22 @@ class SovereignSuperiorityBenchmark:
                 timeout=10
             )
 
+        # F-16 honesty: the stream-chaff binary is fire-and-forget UDP, so we
+        # cannot capture its exact wire bytes here. The entropy figure below is
+        # a CHAFF SANITY check on uniform PRNG material (what the pacing layer
+        # emits), NOT the security argument. Security = constant-rate +
+        # fixed-size cells + AES-256-GCM; the pass/fail gate is the binary
+        # exit code plus the sanity floor.
         stream_chaff = os.urandom(5 * 1232)
         st2027_entropy = shannon_entropy(stream_chaff)
         passed = (st2027_entropy >= 7.95 and p.returncode == 0)
 
         return {
-            "name": "Traffic Analysis & Entropy Camouflage",
+            "name": "Traffic Analysis & Entropy Camouflage (chaff sanity, not a security metric)",
             "consumer_entropy": f"{consumer_entropy:.2f} bits/byte (High Leaks)",
-            "st2027_entropy": f"{st2027_entropy:.4f} bits/byte (Thermodynamic Camouflage)",
+            "st2027_entropy": f"{st2027_entropy:.4f} bits/byte (chaff sanity; security = AES-256-GCM + constant rate)",
             "passed": passed,
-            "advantage": ">50X Signal-to-Noise Ratio (Zero metadata timing correlation)"
+            "advantage": "Constant-rate + fixed-size cells defeat timing/size SIGINT (cover vs data indistinguishable at the wire)"
         }
 
     def test_vector_2_simplex_diode_airgap(self) -> Dict[str, Any]:

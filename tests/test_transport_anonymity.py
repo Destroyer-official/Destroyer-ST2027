@@ -186,6 +186,34 @@ def test_obfs_key_derivation_is_deterministic():
     assert other != first
 
 
+def test_f06_ack_deadline_scales_with_payload():
+    """F-06: ack wait must cover the drain time of the queued cells.
+
+    Small payloads keep a short wait (fast fail on dead peer); large
+    payloads get a wait at least as long as their cell count times the
+    tick, capped by the OUT_QUEUE_CAP bound. The old fixed 30 s killed
+    anything past ~0.7 MB.
+    """
+    # 1 KiB payload: ~1 cell of drain + margin — well under the old 30 s floor.
+    small = ta._send_ack_wait_s(1024)
+    assert 60.0 <= small < 62.0
+    # 5 MiB payload: ceil(5 MiB / 1024) = 5120 cells, but capped at
+    # OUT_QUEUE_CAP (1024) cells so the wait stays bounded.
+    big = ta._send_ack_wait_s(5 * 1024 * 1024)
+    assert big >= ta.OUT_QUEUE_CAP * ta.TICK_S + 60.0
+    # Monotonic: larger payload never gets a shorter wait.
+    assert ta._send_ack_wait_s(200 * 1024) >= small
+
+
+def test_f06_recv_absolute_cap_covers_50mb():
+    """F-06: absolute receive window must span a full 50 MB transfer."""
+    cap = ta._recv_absolute_wait_s()
+    cells_50mb = (50 * 1024 * 1024 + 1023) // 1024
+    assert cap >= cells_50mb * ta.TICK_S
+    # Idle window is the fixed doctrine value, refreshed only by DATA.
+    assert ta.IDLE_REFRESH_S == 120.0
+
+
 def test_obfs_derivation_is_symmetric_for_both_ends():
     import secure_transmit_2027 as st
 

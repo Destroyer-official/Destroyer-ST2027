@@ -7,7 +7,9 @@ observing the wire sees ONLY:
   - Fixed 1,232-byte UDP datagrams (IPv6 MTU compliant)
   - Constant interval timing (15ms or 50ms per tick)
   - CSPRNG chaff when no real payload is queued
-  - Shannon entropy H >= 7.95 bits/byte
+  - Uniform-looking chaff (Shannon H ~7.95+ as a CHAFF SANITY check; the
+    security property is constant-rate + fixed-size + AES-256-GCM, never
+    the entropy statistic itself)
 
 Traffic analysis becomes impossible because:
   1. No correlation between user activity and wire timing

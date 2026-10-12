@@ -1,0 +1,113 @@
+name: Rebuild oqs.dll (liboqs 0.16.0, Windows)
+
+# F-01: the vendored oqs.dll embeds 0.14.1-dev, below the 0.16.0 floor.
+# This workflow rebuilds it from the official 0.16.0 tag on a Windows
+# runner (MSVC + CMake available), runs the version assert, and uploads
+# the binary as a workflow artifact. A maintainer then follows the
+# re-pin procedure in docs/liboqs_pin.md (sidecars, SBOM bumps, hashes).
+# Manual dispatch only: rebuilds are deliberate release activities.
+
+on:
+  workflow_dispatch:
+    inputs:
+      liboqs_tag:
+        description: 'liboqs git tag to build (must be >= 0.16.0)'
+        required: true
+        default: '0.16.0'
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild-windows-oqs:
+    name: Build liboqs ${{ inputs.liboqs_tag }} → oqs.dll
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install CMake (comes with windows-latest, pin for reproducibility)
+        uses: lukka/get-cmake@v4
+        with:
+          cmakeVersion: '~3.31.0'
+
+      - name: Clone liboqs at pinned tag
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "${{ inputs.liboqs_tag }}" \
+            https://github.com/open-quantum-safe/liboqs.git "$RUNNER_TEMP/liboqs"
+          cd "$RUNNER_TEMP/liboqs"
+          git rev-parse HEAD > "$GITHUB_WORKSPACE/liboqs.commit"
+
+      - name: Configure (shared DLL, install to local prefix)
+        shell: bash
+        run: |
+          cmake -S "$RUNNER_TEMP/liboqs" -B "$RUNNER_TEMP/liboqs/build" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/oqs-prefix" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build and install
+        shell: bash
+        run: |
+          cmake --build "$RUNNER_TEMP/liboqs/build" --config Release --parallel
+          cmake --install "$RUNNER_TEMP/liboqs/build" --config Release
+
+      - name: Locate and stage oqs.dll
+        shell: bash
+        run: |
+          dll=$(find "$RUNNER_TEMP/oqs-prefix" -name 'oqs.dll' | head -n1)
+          if [ -z "$dll" ]; then
+            echo "FAIL: oqs.dll not found under install prefix" >&2
+            exit 1
+          fi
+          cp "$dll" "$GITHUB_WORKSPACE/oqs.dll"
+          ls -la "$GITHUB_WORKSPACE/oqs.dll"
+
+      - name: Version assert (OQS_version >= input tag, fail-closed)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ctypes, re, sys, os
+          min_tag = os.environ.get("LIBOQS_TAG", "0.16.0")
+          def parse(v):
+              m = re.match(r"(\d+)\.(\d+)\.(\d+)", v or "")
+              return tuple(int(x) for x in m.groups()) if m else None
+          lib = ctypes.CDLL(os.path.join(os.environ["GITHUB_WORKSPACE"], "oqs.dll"))
+          if not hasattr(lib, "OQS_version"):
+              print("FAIL: OQS_version export missing", file=sys.stderr); sys.exit(1)
+          lib.OQS_version.restype = ctypes.c_char_p
+          ver = (lib.OQS_version() or b"").decode(errors="replace")
+          got = parse(ver)
+          floor = parse(min_tag)
+          print(f"built oqs.dll reports {ver} (parsed={got}, floor={floor})")
+          if got is None or got < floor:
+              print(f"FAIL: built liboqs {ver} < required {min_tag}", file=sys.stderr)
+              sys.exit(1)
+          print("PASS: rebuilt oqs.dll meets version floor")
+          PY
+        env:
+          LIBOQS_TAG: ${{ inputs.liboqs_tag }}
+
+      - name: Hash the rebuilt binary (record for re-pin)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          d = open("oqs.dll", "rb").read()
+          print("size:", len(d))
+          for name in ("sha256", "sha512", "sha3_256", "sha3_512"):
+              print(f"{name}: {hashlib.new(name, d).hexdigest()}")
+          PY
+
+      - name: Upload oqs.dll artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oqs-dll-${{ inputs.liboqs_tag }}
+          path: |
+            oqs.dll
+            liboqs.commit
+          if-no-files-found: error
+          retention-days: 30

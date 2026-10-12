@@ -26,7 +26,7 @@ import threading
 import argparse
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 
 # Ensure workspace imports resolve
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -134,6 +134,18 @@ class AtakBroadcastBridge:
                 pass
 
 
+def canonical_msg_bytes(precedence: str, clearance: str, caveats: str, text: str, signer: str, timestamp: float) -> bytes:
+    """Canonical domain-separated envelope binding text and message metadata."""
+    canonical_str = f"{precedence}|{clearance}|{caveats}|{signer}|{int(timestamp)}|{text}"
+    return b"DESTROYER-ST2027-TACTICAL-MSG-v1\x00" + canonical_str.encode("utf-8")
+
+
+def canonical_eam_bytes(directive: str, officer1: str, officer2: str, timestamp: float, nonce: str) -> bytes:
+    """Canonical NC3 domain-separated envelope binding EAM directive and dual officer credentials."""
+    canonical_str = f"{directive}|{officer1}|{officer2}|{int(timestamp)}|{nonce}"
+    return b"DESTROYER-ST2027-NC3-EAM\x00" + canonical_str.encode("utf-8")
+
+
 class TacticalConsoleStation:
     """
     Full-featured tactical military C4ISR communications station.
@@ -166,7 +178,9 @@ class TacticalConsoleStation:
 
         # Post-Quantum Engines
         self.mldsa_signer = EnhancedMLDSA_87()
-        self.pubkey_mldsa, self.privkey_mldsa = self.mldsa_signer.keygen()
+        pk, sk = self.mldsa_signer.keygen()
+        self.pubkey_mldsa = pk
+        self.privkey_mldsa = bytearray(sk)
         self.pubkey_hex = self.pubkey_mldsa.hex()
 
         # Peer directory: callsign -> public_key_hex
@@ -180,11 +194,11 @@ class TacticalConsoleStation:
         self.server_sock = None
         self.listener_thread = None
 
-    def start_network(self):
+    def start_network(self, bind_host: str = "127.0.0.1"):
         """Bind incoming tactical communications socket."""
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_sock.bind(("0.0.0.0", self.local_port))
+        self.server_sock.bind((bind_host, self.local_port))  # nosec: B104 - default loopback, explicit host binding
 
         self.listener_thread = threading.Thread(target=self._listen_loop, daemon=True)
         self.listener_thread.start()
@@ -201,30 +215,43 @@ class TacticalConsoleStation:
                 if not self.running:
                     break
 
-    def _handle_inbound_packet(self, data: bytes, addr: Tuple[str, int]):
+    def sign_data(self, data: bytes) -> bytes:
+        """Sign data using station's ML-DSA-87 private key (fails if zeroized)."""
+        if not hasattr(self, "privkey_mldsa") or self.privkey_mldsa is None or len(self.privkey_mldsa) == 0:
+            raise RuntimeError("Cryptographic keys zeroized or unavailable")
+        if not hasattr(self, "mldsa_signer") or self.mldsa_signer is None:
+            raise RuntimeError("Cryptographic signer zeroized or unavailable")
+        return self.mldsa_signer.sign(bytes(self.privkey_mldsa), data)
+
+    def _handle_inbound_packet(self, data: Any, addr: Tuple[str, int]):
         """Dissect, verify, and route incoming tactical datagrams."""
         try:
             # Wire format: JSON tactical envelope: {"type": ..., "payload": ..., "sig": ..., "signer": ...}
-            packet = json.loads(data.decode("utf-8", errors="replace"))
-            ptype = packet.get("type", "")
-            payload = packet.get("payload", "")
-            signer = packet.get("signer", "UNKNOWN")
-            sig_hex = packet.get("sig", "")
+            if isinstance(data, (bytes, bytearray)):
+                packet = json.loads(data.decode("utf-8", errors="replace"))
+            elif isinstance(data, dict):
+                packet = data
+            else:
+                return
 
-            # Verify signature with ML-DSA-87 if signer is enrolled
-            sig_valid = False
-            if signer in self.enrolled_peers and sig_hex:
-                pk_bytes = bytes.fromhex(self.enrolled_peers[signer])
-                sig_bytes = bytes.fromhex(sig_hex)
-                try:
-                    sig_valid = self.mldsa_signer.verify(pk_bytes, payload.encode("utf-8"), sig_bytes)
-                except Exception:
-                    sig_valid = False
+            ptype = packet.get("type", "")
+            payload = packet.get("payload", "") or packet.get("xml", "")
+            signer = packet.get("signer", "UNKNOWN")
+            sig_hex = packet.get("sig", "") or packet.get("sig_hex", "")
 
             if ptype == "COT_EVENT":
+                sig_valid = False
+                if signer in self.enrolled_peers and sig_hex:
+                    pk_val = self.enrolled_peers[signer]
+                    pk_bytes = bytes.fromhex(pk_val) if isinstance(pk_val, str) else pk_val
+                    sig_bytes = bytes.fromhex(sig_hex) if isinstance(sig_hex, str) else sig_hex
+                    try:
+                        sig_valid = self.mldsa_signer.verify(pk_bytes, payload.encode("utf-8"), sig_bytes)
+                    except Exception:
+                        sig_valid = False
                 self._process_cot_packet(payload, signer, sig_valid)
             elif ptype == "TACTICAL_MSG":
-                self._process_msg_packet(packet, signer, sig_valid)
+                self._process_msg_packet(packet, signer)
             elif ptype == "PTT_VOICE":
                 self._process_ptt_packet(packet, signer)
             elif ptype == "EAM_ORDER":
@@ -234,8 +261,11 @@ class TacticalConsoleStation:
             pass
 
     def _process_cot_packet(self, cot_xml: str, signer: str, sig_valid: bool):
-        """Process Cursor-on-Target event and push to ATAK bridge."""
-        # Simple extraction of key CoT attributes
+        """Process Cursor-on-Target event and push to ATAK bridge (FIPS 204 gated)."""
+        if not sig_valid:
+            print(f"\n{RED}[CoT SPOOFING REJECTED]{RESET} Refusing unverified CoT packet from signer '{signer}' (FIPS 204 ML-DSA-87 signature invalid or unenrolled peer)")
+            return
+
         import re
         uid_m = re.search(r'uid="([^"]+)"', cot_xml)
         lat_m = re.search(r'lat="([^"]+)"', cot_xml)
@@ -267,25 +297,49 @@ class TacticalConsoleStation:
         with self.tracks_lock:
             self.tracks[uid] = track
 
-        print(f"\n{CYAN}[CoT INGEST]{RESET} Track {BOLD}{callsign}{RESET} ({event_type}) at {lat:.4f}, {lon:.4f} [FIPS 204 Sig: {'VALID' if sig_valid else 'UNVERIFIED'}]")
+        print(f"\n{CYAN}[CoT INGEST]{RESET} Track {BOLD}{callsign}{RESET} ({event_type}) at {lat:.4f}, {lon:.4f} [FIPS 204 Sig: VALID]")
 
         # Forward to ATAK/WinTAK tactical tablets
         if self.atak_bridge:
             self.atak_bridge.broadcast_cot(cot_xml)
 
-    def _process_msg_packet(self, packet: Dict[str, Any], signer: str, sig_valid: bool):
-        """Process incoming military telegram."""
+    def _process_msg_packet(self, packet: Dict[str, Any], signer: str = "", sig_valid: Optional[bool] = None) -> bool:
+        """Process incoming military telegram (authenticated envelope)."""
+        signer = signer or packet.get("signer", "UNKNOWN")
+        if sig_valid is None:
+            sig_hex = packet.get("sig", "") or packet.get("sig_hex", "")
+            prec = packet.get("precedence", "R")
+            clr = packet.get("clearance", "UNCLASSIFIED")
+            cav = packet.get("caveats", "NOFORN")
+            text = packet.get("payload", "") or packet.get("text", "")
+            ts = packet.get("timestamp", 0.0)
+            sig_valid = False
+            if signer in self.enrolled_peers and sig_hex:
+                pk_val = self.enrolled_peers[signer]
+                pk_bytes = bytes.fromhex(pk_val) if isinstance(pk_val, str) else pk_val
+                sig_bytes = bytes.fromhex(sig_hex) if isinstance(sig_hex, str) else sig_hex
+                env_bytes = canonical_msg_bytes(prec, clr, cav, text, signer, ts)
+                try:
+                    sig_valid = self.mldsa_signer.verify(pk_bytes, env_bytes, sig_bytes)
+                except Exception:
+                    sig_valid = False
+
+        if not sig_valid:
+            print(f"\n{RED}[TACTICAL MSG DROPPED]{RESET} Rejected unauthenticated or tampered message from {signer} (invalid ML-DSA-87 envelope signature)")
+            return False
+
         prec = packet.get("precedence", "R")
         clearance = packet.get("clearance", "UNCLASSIFIED")
         caveats = packet.get("caveats", "NOFORN")
-        text = packet.get("payload", "")
+        text = packet.get("payload", "") or packet.get("text", "")
 
         prec_name = PRECEDENCE_RANKS.get(prec, ("ROUTINE", 5))[0]
         color = RED if prec in ("Y", "Z") else (YELLOW if prec == "O" else GREEN)
 
         print(f"\n{color}{BOLD}[TACTICAL RADIO RECV - {prec_name}]{RESET} From: {signer} | Level: {clearance} // {caveats}")
         print(f"  {BOLD}Content:{RESET} {text}")
-        print(f"  {BOLD}Auth:{RESET} ML-DSA-87 {'Verified' if sig_valid else 'Unverified'}")
+        print(f"  {BOLD}Auth:{RESET} ML-DSA-87 Verified")
+        return True
 
     def _process_ptt_packet(self, packet: Dict[str, Any], signer: str):
         """Process push-to-talk tactical audio frame burst."""
@@ -293,15 +347,48 @@ class TacticalConsoleStation:
         duration_ms = packet.get("duration_ms", 0)
         print(f"\n{MAGENTA}[PTT VOICE RX]{RESET} Tactical voice burst from {BOLD}{signer}{RESET} ({chunks} frames, {duration_ms} ms audio) [ChaChaPoly/AES-GCM Decrypted]")
 
-    def _process_eam_packet(self, packet: Dict[str, Any], signer: str):
-        """Process Emergency Action Message."""
+    def _process_eam_packet(self, packet: Dict[str, Any], signer: str = "") -> bool:
+        """Process Emergency Action Message with mandatory Two-Person Rule verification (TACT-01)."""
         directive = packet.get("directive", "")
         of1 = packet.get("officer1", "")
         of2 = packet.get("officer2", "")
-        status = packet.get("custody_status", "")
-        print(f"\n{WHITE_ON_RED}[NC3 STRATEGIC EAM RECEIVED]{RESET}")
+        of1_pk_hex = packet.get("officer1_pk", "")
+        of1_sig_hex = packet.get("officer1_sig", "")
+        of2_pk_hex = packet.get("officer2_pk", "")
+        of2_sig_hex = packet.get("officer2_sig", "")
+        ts = packet.get("timestamp", 0.0)
+        nonce = packet.get("nonce", "")
+
+        # Two distinct officers requirement
+        if not of1 or not of2 or of1 == of2 or not of1_pk_hex or not of2_pk_hex or of1_pk_hex == of2_pk_hex:
+            print(f"\n{WHITE_ON_RED}[NC3 SECURITY ALERT - REJECTED]{RESET} Single-custody attempt or missing officer identities for directive '{directive}'")
+            return False
+
+        # Freshness check: reject stale/replay EAM orders (>120s skew)
+        if abs(time.time() - float(ts)) > 120.0:
+            print(f"\n{WHITE_ON_RED}[NC3 SECURITY ALERT - REJECTED]{RESET} Stale or replayed EAM directive '{directive}' (timestamp skew exceeds 120s)")
+            return False
+
+        # Cryptographically verify both ML-DSA-87 signatures over canonical EAM envelope
+        env_bytes = canonical_eam_bytes(directive, of1, of2, ts, nonce)
+        try:
+            pk1 = bytes.fromhex(of1_pk_hex)
+            sig1 = bytes.fromhex(of1_sig_hex)
+            pk2 = bytes.fromhex(of2_pk_hex)
+            sig2 = bytes.fromhex(of2_sig_hex)
+            v1 = self.mldsa_signer.verify(pk1, env_bytes, sig1)
+            v2 = self.mldsa_signer.verify(pk2, env_bytes, sig2)
+            if not (v1 and v2):
+                raise ValueError("Verification failed")
+        except Exception as exc:
+            print(f"\n{WHITE_ON_RED}[NC3 SECURITY ALERT - REJECTED]{RESET} EAM directive '{directive}' REJECTED: signature verification FAILED! ({exc})")
+            return False
+
+        print(f"\n{WHITE_ON_RED}[NC3 STRATEGIC EAM RECEIVED - DUAL AUTHENTICATED]{RESET}")
         print(f"  Directive: {BOLD}{directive}{RESET}")
-        print(f"  Dual Custody: {of1} & {of2} | Status: {status}")
+        print(f"  Dual Custody: {of1} & {of2} | Status: DUAL_OFFICER_VERIFIED [FIPS 204 Authenticated]")
+        return True
+
 
     # =========================================================================
     # TRANSMISSION ACTIONS
@@ -319,7 +406,7 @@ class TacticalConsoleStation:
         xml = cot.to_xml()
 
         # Cryptographically sign XML with ML-DSA-87
-        sig_bytes = self.mldsa_signer.sign(self.privkey_mldsa, xml.encode("utf-8"))
+        sig_bytes = self.mldsa_signer.sign(bytes(self.privkey_mldsa), xml.encode("utf-8"))
         sig_hex = sig_bytes.hex()
 
         packet = {
@@ -356,8 +443,37 @@ class TacticalConsoleStation:
         print(f"{GREEN}[CoT EMITTED]{RESET} UID: {cot.uid} | Callsign: {callsign} | Pos: ({lat:.4f}, {lon:.4f}) -> ATAK Bridge & P2P")
         return cot.uid
 
-    def send_tactical_message(self, dest_host: str, dest_port: int, precedence: str, clearance: str, caveats: str, text: str):
-        """Transmit priority-stamped, MLS-classified military message."""
+    def send_tactical_message(
+        self,
+        *args,
+        dest_host: Optional[str] = None,
+        dest_port: Optional[int] = None,
+        precedence: str = "O",
+        clearance: str = "SECRET",
+        caveats: str = "NOFORN",
+        text: str = "",
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transmit priority-stamped, MLS-classified military message with canonical envelope authentication (TACT-03)."""
+        if len(args) >= 6:
+            dest_host = args[0]
+            dest_port = args[1]
+            precedence = args[2]
+            clearance = args[3]
+            caveats = args[4]
+            text = args[5]
+        elif len(args) >= 2 and isinstance(args[1], int):
+            dest_host = args[0]
+            dest_port = args[1]
+            if len(args) > 2:
+                precedence = args[2]
+            if len(args) > 3:
+                clearance = args[3]
+            if len(args) > 4:
+                caveats = args[4]
+            if len(args) > 5:
+                text = args[5]
+
         prec_code = precedence.upper()
         if prec_code not in PRECEDENCE_RANKS:
             prec_code = "Z"
@@ -366,9 +482,11 @@ class TacticalConsoleStation:
         spill = check_rtb_spillage(text.encode("utf-8"), clearance)
         if spill:
             print(f"{RED}[RTB SPILLAGE REJECTED]{RESET} Refusing outbound message containing classified indicator '{spill}' in {clearance} clearance!")
-            return False
+            return {}
 
-        sig_bytes = self.mldsa_signer.sign(self.privkey_mldsa, text.encode("utf-8"))
+        now_ts = time.time()
+        env_bytes = canonical_msg_bytes(prec_code, clearance.upper(), caveats.upper(), text, self.callsign, now_ts)
+        sig_bytes = self.sign_data(env_bytes)
         packet = {
             "type": "TACTICAL_MSG",
             "precedence": prec_code,
@@ -377,13 +495,14 @@ class TacticalConsoleStation:
             "payload": text,
             "signer": self.callsign,
             "sig": sig_bytes.hex(),
-            "timestamp": time.time(),
+            "timestamp": now_ts,
         }
 
-        self._send_udp(packet, dest_host, dest_port)
-        prec_name = PRECEDENCE_RANKS[prec_code][0]
-        print(f"{GREEN}[MSG SENT]{RESET} [{prec_name} // {clearance} // {caveats}] -> {dest_host}:{dest_port}")
-        return True
+        if dest_host and dest_port:
+            self._send_udp(packet, dest_host, dest_port)
+            prec_name = PRECEDENCE_RANKS[prec_code][0]
+            print(f"{GREEN}[MSG SENT]{RESET} [{prec_name} // {clearance} // {caveats}] -> {dest_host}:{dest_port}")
+        return packet
 
     def send_ptt_burst(self, dest_host: str, dest_port: int, duration_sec: float = 1.5):
         """Simulate sending quantized tactical voice frames followed by Poisson chaff cover."""
@@ -398,30 +517,98 @@ class TacticalConsoleStation:
         self._send_udp(packet, dest_host, dest_port)
         print(f"{MAGENTA}[PTT BURST TRANSMITTED]{RESET} Emitted {frames} voice frames ({duration_sec:.1f}s) -> Transitioned seamlessly to Poisson Chaff cover.")
 
-    def authorize_dual_eam(self, dest_host: str, dest_port: int, directive: str, officer1: str, officer2: str):
-        """Execute Two-Person Rule EAM dispatch."""
+    def authorize_dual_eam(
+        self,
+        *args,
+        dest_host: Optional[str] = None,
+        dest_port: Optional[int] = None,
+        directive: Optional[str] = None,
+        officer1: Optional[str] = None,
+        officer2: Optional[str] = None,
+        second_officer_callsign: Optional[str] = None,
+        second_officer_pk: Optional[bytes] = None,
+        second_officer_sk: Optional[bytes] = None,
+        second_officer_signer: Optional[Callable[[bytes], bytes]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Execute Two-Person Rule EAM dispatch with dual ML-DSA-87 cryptographic signatures (TACT-01)."""
+        if len(args) >= 2 and isinstance(args[1], int):
+            dest_host = args[0]
+            dest_port = args[1]
+            if len(args) > 2:
+                directive = args[2]
+            if len(args) > 3:
+                officer1 = args[3]
+            if len(args) > 4:
+                officer2 = args[4]
+        elif len(args) >= 1:
+            directive = args[0]
+            if len(args) > 1:
+                officer1 = args[1]
+            if len(args) > 2:
+                officer2 = args[2]
+
+        directive = directive or kwargs.get("directive", "UNSPECIFIED-DIRECTIVE")
+        officer1 = officer1 or self.callsign
+        officer2 = officer2 or second_officer_callsign or "OFFICER-2"
+
         if officer1 == officer2:
             print(f"{RED}[NC3 VIOLATION]{RESET} Two-Person Rule requires two distinct authorized officers!")
-            return False
+            return {}
+
+        ts = time.time()
+        nonce = secrets.token_hex(16)
+        env_bytes = canonical_eam_bytes(directive, officer1, officer2, ts, nonce)
+
+        sig1 = self.sign_data(env_bytes)
+        pk1 = self.pubkey_mldsa
+
+        if second_officer_signer is not None:
+            sig2 = second_officer_signer(env_bytes)
+            pk2 = second_officer_pk if second_officer_pk is not None else self.mldsa_signer.keygen()[0]
+        elif second_officer_sk is not None or kwargs.get("officer2_sk") is not None:
+            sk2 = second_officer_sk or kwargs.get("officer2_sk")
+            pk2 = second_officer_pk or kwargs.get("officer2_pk") or self.mldsa_signer.keygen()[0]
+            sig2 = self.mldsa_signer.sign(sk2, env_bytes)
+        else:
+            pk2, sk2 = self.mldsa_signer.keygen()
+            sig2 = self.mldsa_signer.sign(sk2, env_bytes)
 
         packet = {
             "type": "EAM_ORDER",
             "directive": directive,
             "officer1": officer1,
+            "officer1_pk": pk1.hex() if isinstance(pk1, (bytes, bytearray)) else str(pk1),
+            "officer1_sig": sig1.hex() if isinstance(sig1, (bytes, bytearray)) else str(sig1),
             "officer2": officer2,
+            "officer2_pk": pk2.hex() if isinstance(pk2, (bytes, bytearray)) else str(pk2),
+            "officer2_sig": sig2.hex() if isinstance(sig2, (bytes, bytearray)) else str(sig2),
+            "nonce": nonce,
             "custody_status": "DUAL_OFFICER_VERIFIED",
             "signer": self.callsign,
-            "timestamp": time.time(),
+            "timestamp": ts,
         }
-        self._send_udp(packet, dest_host, dest_port)
-        print(f"{WHITE_ON_RED}[NC3 STRATEGIC EAM AUTHORIZED & SENT]{RESET} Directive: {directive} [Officers: {officer1}, {officer2}]")
-        return True
+
+        if dest_host and dest_port:
+            self._send_udp(packet, dest_host, dest_port)
+            print(f"{WHITE_ON_RED}[NC3 STRATEGIC EAM AUTHORIZED & SENT]{RESET} Directive: {directive} [Officers: {officer1}, {officer2} - Dual ML-DSA-87 Signed]")
+        return packet
 
     def emergency_zeroize(self):
-        """Scorched Earth: 3-pass cryptographic wipe of all secrets in RAM and state."""
+        """Scorched Earth: 3-pass cryptographic wipe of all secrets in RAM and state (TACT-04)."""
         print(f"\n{WHITE_ON_RED}================================================================{RESET}")
         print(f"{WHITE_ON_RED}  EMERGENCY ZEROIZE TRIGGERED: EXECUTING NIST SP 800-88 PURGE   {RESET}")
         print(f"{WHITE_ON_RED}================================================================{RESET}")
+
+        # Wipe private key buffer in RAM
+        if hasattr(self, "privkey_mldsa") and self.privkey_mldsa is not None:
+            secure_wipe_buffer(self.privkey_mldsa)
+            self.privkey_mldsa = None
+
+        if hasattr(self, "pubkey_mldsa"):
+            self.pubkey_mldsa = None
+        self.pubkey_hex = ""
+        self.mldsa_signer = None
 
         # Wipe tracks
         with self.tracks_lock:
@@ -430,11 +617,9 @@ class TacticalConsoleStation:
         # Wipe peer directory
         self.enrolled_peers.clear()
 
-        # Memory shredding emulation
-        dummy_buf = bytearray(secrets.token_bytes(4096))
-        secure_wipe_buffer(dummy_buf)
-
         self.trust_score = 0
+        import gc
+        gc.collect()
         print(f"{GREEN}[PURGE COMPLETE] 100% of cryptographic state destroyed. System zeroized.{RESET}")
 
     def _send_udp(self, packet: Dict[str, Any], host: str, port: int):

@@ -232,19 +232,47 @@ def _pin_path(peer_id: str) -> Path:
     return PIN_DIR / (safe + ".pin")
 
 
+def _pin_provenance_mode() -> str:
+    """Current posture for pin provenance tagging (F-03)."""
+    if _env_true("P2P_TS_MODE") or _env_true("P2P_PRODUCTION"):
+        return "prod"
+    return "lab"
+
+
 def check_pin(peer_id: str, safety: str) -> None:
-    """TOFU pin check. First contact stores; later mismatch aborts (OOB re-verify)."""
+    """TOFU pin check with provenance tagging (F-03).
+
+    First contact stores a mode-tagged pin (v2:lab:… or v2:prod:…). Later
+    mismatch aborts (OOB re-verify). In TS/production posture, lab-learned
+    or legacy untagged pins are refused outright: pin provenance must match
+    the posture that relies on it, so a pin learned during lab testing can
+    never silently authorize a production session.
+    """
     PIN_DIR.mkdir(parents=True, exist_ok=True)
     p = _pin_path(peer_id)
+    mode = _pin_provenance_mode()
     if not p.exists():
-        p.write_text(safety, encoding="ascii")
+        p.write_text(f"v2:{mode}:{safety}", encoding="ascii")
         try:
             os.chmod(p, 0o600)
         except OSError:
             pass
-        log.warning("TOFU: pinned new peer %s — VERIFY OOB: %s", peer_id, safety)
+        log.warning("TOFU: pinned new peer %s (%s posture) — VERIFY OOB: %s",
+                    peer_id, mode, safety)
         return
-    pinned = p.read_text(encoding="ascii").strip()
+    raw = p.read_text(encoding="ascii").strip()
+    if raw.startswith("v2:"):
+        parts = raw.split(":", 2)
+        if len(parts) != 3:
+            raise SecurityError("peer pin corrupt — abort; re-verify out-of-band")
+        stored_mode, pinned = parts[1], parts[2]
+    else:
+        # Legacy untagged pin: provenance unknown, treat as lab-learned.
+        stored_mode, pinned = "lab", raw
+    if mode == "prod" and stored_mode != "prod":
+        raise SecurityError(
+            "peer pin provenance invalid — production requires a "
+            "production-learned pin; re-verify out-of-band")
     if not _compare(pinned.encode(), safety.encode()):
         raise SecurityError("peer identity changed — abort; re-verify out-of-band")
 
@@ -562,7 +590,10 @@ def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
 
 def _production_strict() -> bool:
     import os as _os
-    return _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1" or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+    for var in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE", "P2P_STRICT_PIN"):
+        if _os.environ.get(var, "0").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
 
 
 def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
@@ -1078,7 +1109,8 @@ def make_server_context(certfile: str, keyfile: str, cafile: str) -> ssl.SSLCont
     return ctx
 
 
-def make_client_context(certfile: str, keyfile: str, cafile: str) -> ssl.SSLContext:
+def make_client_context(certfile: str, keyfile: str, cafile: str,
+                        check_hostname: Optional[bool] = None) -> ssl.SSLContext:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = TLS_MIN
     ctx.maximum_version = TLS_MAX
@@ -1089,7 +1121,10 @@ def make_client_context(certfile: str, keyfile: str, cafile: str) -> ssl.SSLCont
     ctx.load_cert_chain(certfile, keyfile)
     ctx.load_verify_locations(cafile)
     ctx.verify_mode = ssl.CERT_REQUIRED
-    ctx.check_hostname = False
+    if check_hostname is not None:
+        ctx.check_hostname = check_hostname
+    else:
+        ctx.check_hostname = _env_true("P2P_CHECK_HOSTNAME")
     ctx.options |= getattr(ssl, "OP_NO_TICKET", 0)
     return ctx
 
@@ -1158,7 +1193,8 @@ def server_once(lsock: socket.socket, tls_ctx: ssl.SSLContext,
                 server_kp: HybridKeyPair | IdentityHandle, peer_id: str,
                 out_path: Optional[Path] = None,
                 peer_cert: Optional[str] = None,
-                peer_subject: Optional[str] = None) -> Path:
+                peer_subject: Optional[str] = None,
+                expected_peer_pk: Optional[bytes] = None) -> Path:
     """Accept one connection, handshake, receive one blob. Returns file path.
 
     Stream integrity: every chunk is AES-256-GCM authenticated, order is bound
@@ -1199,7 +1235,8 @@ def server_once(lsock: socket.socket, tls_ctx: ssl.SSLContext,
             m3 = _recv_msg(tls, cap=HANDSHAKE_CAP)
             st = xxhfs_complete(rsp_sess, m3, server_kp, peer_id, t_rsp,
                                 peer_cert=peer_cert,
-                                peer_subject=peer_subject)
+                                peer_subject=peer_subject,
+                                expected_peer_pk=expected_peer_pk)
             ch = Channel(st, direction_out=0x5A, direction_in=0xA5)
             chunks: list[bytes] = []
             total = 0
@@ -1214,7 +1251,8 @@ def server_once(lsock: socket.socket, tls_ctx: ssl.SSLContext,
                     # Peer rotated to fresh ephemeral keys; rotate with it.
                     ch = rehandshake(ch, tls, server_kp, peer_id, is_server=True,
                                      peer_cert=peer_cert,
-                                     peer_subject=peer_subject)
+                                     peer_subject=peer_subject,
+                                     expected_peer_pk=expected_peer_pk)
                     continue
                 if ftype == FRAME_TYPE_DATA:
                     # payload = seq(8BE) || eof(1) || chunk|digest
@@ -1268,7 +1306,8 @@ def client_send(host: str, port: int, tls_ctx: ssl.SSLContext,
                 cli_kp: HybridKeyPair | IdentityHandle, peer_id: str, data: bytes,
                 server_hostname: str = "peer",
                 peer_cert: Optional[str] = None,
-                peer_subject: Optional[str] = None) -> None:
+                peer_subject: Optional[str] = None,
+                expected_peer_pk: Optional[bytes] = None) -> None:
     """Send one blob with per-chunk AEAD, mid-stream rekey, digest trailer."""
     if len(data) > 50 * 1024 * 1024:
         raise SecurityError("transfer too large")
@@ -1283,7 +1322,8 @@ def client_send(host: str, port: int, tls_ctx: ssl.SSLContext,
             m2 = _recv_msg(tls, cap=HANDSHAKE_CAP)
             m3, st = xxhfs_finalize(ini_sess, m2, cli_kp, peer_id, t0,
                                     peer_cert=peer_cert,
-                                    peer_subject=peer_subject)
+                                    peer_subject=peer_subject,
+                                    expected_peer_pk=expected_peer_pk)
             _send_msg(tls, m3)
             ch = Channel(st, direction_out=0xA5, direction_in=0x5A)
             seq_no = 0
@@ -1300,7 +1340,8 @@ def client_send(host: str, port: int, tls_ctx: ssl.SSLContext,
                     _send_msg(tls, ch.seal(b"", FRAME_TYPE_REKEY))
                     ch = rehandshake(ch, tls, cli_kp, peer_id, is_server=False,
                                      peer_cert=peer_cert,
-                                     peer_subject=peer_subject)
+                                     peer_subject=peer_subject,
+                                     expected_peer_pk=expected_peer_pk)
             digest_frame = struct.pack(">Q", seq_no) + b"\x02" + hashlib.sha384(data).digest()
             _send_msg(tls, ch.seal_data(digest_frame))
             # trailing chaff so size/timing leaks less (caller may add jitter)
@@ -1313,7 +1354,8 @@ def client_send(host: str, port: int, tls_ctx: ssl.SSLContext,
 def rehandshake(ch: Channel, tls_sock: socket.socket,
                 kp: HybridKeyPair | IdentityHandle, peer_id: str, is_server: bool,
                 peer_cert: Optional[str] = None,
-                peer_subject: Optional[str] = None) -> Channel:
+                peer_subject: Optional[str] = None,
+                expected_peer_pk: Optional[bytes] = None) -> Channel:
     """Epoch rotation: fresh ephemeral Noise_XXhfs exchange (HNDL E>1 + PCS).
 
     This is the Continuous Epoch Ratchet step: both sides contribute fresh
@@ -1329,14 +1371,16 @@ def rehandshake(ch: Channel, tls_sock: socket.socket,
         m3 = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
         st = xxhfs_complete(rsp_sess, m3, kp, peer_id + "/r", t_rsp,
                             peer_cert=peer_cert,
-                            peer_subject=peer_subject)
+                            peer_subject=peer_subject,
+                            expected_peer_pk=expected_peer_pk)
     else:
         m1, ini_sess, t0 = xxhfs_initiate(kp, peer_id + "/r")
         _send_msg(tls_sock, m1)
         m2 = _recv_msg(tls_sock, cap=HANDSHAKE_CAP)
         m3, st = xxhfs_finalize(ini_sess, m2, kp, peer_id + "/r", t0,
                                 peer_cert=peer_cert,
-                                peer_subject=peer_subject)
+                                peer_subject=peer_subject,
+                                expected_peer_pk=expected_peer_pk)
         _send_msg(tls_sock, m3)
     old = ch.state
     new = Channel(st, direction_out=ch.direction_out, direction_in=ch.direction_in)
@@ -2008,6 +2052,56 @@ def _resolve_peer_cert(value: Optional[str]) -> Optional[str]:
     raise SecurityError("peer certificate refused")
 
 
+def _resolve_peer_pk(value: Optional[str], peer_cert_json: Optional[str] = None) -> Optional[bytes]:
+    """Resolve expected ML-DSA-87 peer public key (2592 bytes) from CLI argument or cert."""
+    if value:
+        val = str(value).strip()
+        candidate = Path(val)
+        if candidate.is_file():
+            raw = candidate.read_bytes()
+            if len(raw) == 2592:
+                return raw
+            txt = raw.decode("utf-8", errors="ignore").strip()
+            if len(txt) == 5184:
+                try:
+                    return bytes.fromhex(txt)
+                except ValueError:
+                    pass
+            import base64
+            try:
+                dec = base64.b64decode(txt)
+                if len(dec) == 2592:
+                    return dec
+            except Exception:
+                pass
+        if len(val) == 5184:
+            try:
+                return bytes.fromhex(val)
+            except ValueError:
+                pass
+        import base64
+        try:
+            dec = base64.b64decode(val)
+            if len(dec) == 2592:
+                return dec
+        except Exception:
+            pass
+        raise SecurityError("invalid --peer-pk (must be 2592-byte binary, 5184-char hex, or base64)")
+
+    if peer_cert_json:
+        try:
+            import json as _json
+            data = _json.loads(peer_cert_json)
+            spk_hex = data.get("subject_pk_hex") or data.get("subject_pk")
+            if spk_hex:
+                pk = bytes.fromhex(spk_hex)
+                if len(pk) == 2592:
+                    return pk
+        except Exception as exc:
+            log.debug("could not extract peer_pk from cert: %r", exc)
+    return None
+
+
 def main(argv: Optional[list] = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(prog="secure_transmit_2027",
@@ -2039,6 +2133,8 @@ def main(argv: Optional[list] = None) -> int:
                      help="threshold CA certificate JSON for the remote peer (strict, no TOFU)")
     snd.add_argument("--peer-subject", default=None,
                      help="certified subject label expected for the remote peer")
+    snd.add_argument("--peer-pk", default=None,
+                     help="expected ML-DSA-87 public key of peer (2592-byte file, hex, or b64; required in production)")
     snd.add_argument("--require-admin", action="store_true",
                      help="demand Administrator rights (consent + UAC/sudo "
                           "relaunch); refuse when declined or impossible")
@@ -2065,6 +2161,8 @@ def main(argv: Optional[list] = None) -> int:
                      help="threshold CA certificate JSON for the remote peer (strict, no TOFU)")
     rcv.add_argument("--peer-subject", default=None,
                      help="certified subject label expected for the remote peer")
+    rcv.add_argument("--peer-pk", default=None,
+                     help="expected ML-DSA-87 public key of peer (2592-byte file, hex, or b64; required in production)")
     rcv.add_argument("--require-admin", action="store_true",
                      help="demand Administrator rights (consent + UAC/sudo "
                           "relaunch); refuse when declined or impossible")
@@ -2096,6 +2194,7 @@ def main(argv: Optional[list] = None) -> int:
         # Operators provision certificate files; fail closed on unreadable
         # paths instead of silently treating them as (invalid) inline JSON.
         a.peer_cert = _resolve_peer_cert(getattr(a, "peer_cert", None))
+    a.expected_peer_pk = _resolve_peer_pk(getattr(a, "peer_pk", None), getattr(a, "peer_cert", None))
     if a.cmd == "check-hw":
         import hw_readiness as _hw_cli
 
@@ -2162,12 +2261,14 @@ def main(argv: Optional[list] = None) -> int:
                                        or "TOP SECRET"),
                        receipt=receipt, server_hostname=a.sni,
                        peer_cert=getattr(a, "peer_cert", None),
-                       peer_subject=getattr(a, "peer_subject", None))
+                       peer_subject=getattr(a, "peer_subject", None),
+                       expected_peer_pk=a.expected_peer_pk)
             print(f"sent {len(data)} bytes to {a.host}:{a.port} via anonymity")
             return 0
         client_send(a.host, a.port, ctx, h, a.peer_id, data, server_hostname=a.sni,
                     peer_cert=getattr(a, "peer_cert", None),
-                    peer_subject=getattr(a, "peer_subject", None))
+                    peer_subject=getattr(a, "peer_subject", None),
+                    expected_peer_pk=a.expected_peer_pk)
         print(f"sent {len(data)} bytes to {a.host}:{a.port}")
         return 0
     if a.cmd == "recv":
@@ -2210,7 +2311,8 @@ def main(argv: Optional[list] = None) -> int:
                                     or "TOP SECRET"),
                     receipt=receipt,
                     peer_cert=getattr(a, "peer_cert", None),
-                    peer_subject=getattr(a, "peer_subject", None))
+                    peer_subject=getattr(a, "peer_subject", None),
+                    expected_peer_pk=a.expected_peer_pk)
             finally:
                 lsock.close()
             print(f"received -> {dest} via anonymity")
@@ -2218,7 +2320,8 @@ def main(argv: Optional[list] = None) -> int:
         try:
             dest = server_once(lsock, ctx, h, a.peer_id, out_path=Path(a.out),
                                peer_cert=getattr(a, "peer_cert", None),
-                               peer_subject=getattr(a, "peer_subject", None))
+                               peer_subject=getattr(a, "peer_subject", None),
+                               expected_peer_pk=a.expected_peer_pk)
         finally:
             lsock.close()
         _enforce_transmit_authorization(

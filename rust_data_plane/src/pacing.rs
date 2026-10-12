@@ -182,6 +182,11 @@ mod tests {
 
     #[test]
     fn test_chaff_frame_shannon_entropy() {
+        // Chaff SANITY check (F-16), not a security metric: a frame from the
+        // chaff builder must look uniform so cover traffic cannot be trivially
+        // distinguished from data by an observer counting byte frequencies.
+        // Cryptographic security of the cell stream comes from AES-256-GCM
+        // (see aead.rs), never from this statistic.
         let key = FrameKey::from_bytes([0x77u8; 32]);
         let frame = build_chaff_frame(&key, 1, 1232).expect("build chaff failed");
         assert_eq!(frame.len(), 1232);
@@ -192,7 +197,7 @@ mod tests {
         let single_entropy = calculate_shannon_entropy(&frame);
         assert!(
             single_entropy > 7.80,
-            "Single frame entropy too low ({single_entropy:.4} bits/byte)"
+            "chaff sanity: single frame entropy too low ({single_entropy:.4} bits/byte)"
         );
 
         // Over an 8-frame burst (~9.8 KB), empirical entropy converges to > 7.95 bits/byte.
@@ -204,7 +209,7 @@ mod tests {
         let burst_entropy = calculate_shannon_entropy(&burst);
         assert!(
             burst_entropy > 7.95,
-            "Burst entropy too low ({burst_entropy:.4} bits/byte), potential pattern leakage"
+            "chaff sanity: burst entropy too low ({burst_entropy:.4} bits/byte), pattern leakage in cover"
         );
     }
 }

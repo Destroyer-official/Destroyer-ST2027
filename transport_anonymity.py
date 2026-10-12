@@ -100,6 +100,30 @@ SEQ_STRUCT = struct.Struct(">Q")
 LEN_STRUCT = struct.Struct(">H")
 OUT_QUEUE_CAP = 1024  # ~1.2 MiB queued plaintext frames, then backpressure
 
+# F-06: idle deadline for the receive loop, refreshed ONLY by non-chaff DATA
+# frames. Cover (chaff) flows continuously by design, so it must never keep
+# a dead transfer alive; only real payload resets the window.
+IDLE_REFRESH_S = 120.0
+
+
+def _send_ack_wait_s(payload_len: int) -> float:
+    """Sender ack deadline after the enqueue loop (F-06).
+
+    The shaper drains one cell per TICK_S. After a blocking enqueue the
+    queue holds at most OUT_QUEUE_CAP cells of outstanding data, so the
+    wait is min(cells outstanding, queue budget) * TICK_S plus a fixed
+    processing/transit margin. The old fixed 30 s failed any payload past
+    ~0.7 MB at the 24 kB/s shaper rate.
+    """
+    cells = (max(int(payload_len), 0) + 1023) // 1024
+    return min(cells + 2, OUT_QUEUE_CAP) * TICK_S + 60.0
+
+
+def _recv_absolute_wait_s(max_payload: int = 50 * 1024 * 1024) -> float:
+    """Absolute receive cap sized for the 50 MB maximum at shaper rate (F-06)."""
+    cells = (max(int(max_payload), 0) + 1023) // 1024
+    return (cells + 2) * TICK_S + 300.0
+
 
 def _compare(a: bytes, b: bytes) -> bool:
     return hmac.compare_digest(a, b)
@@ -656,6 +680,7 @@ def anonymous_send(
     sock_factory: Optional[Callable[[], socket.socket]] = None,
     peer_cert: Optional[str] = None,
     peer_subject: Optional[str] = None,
+    expected_peer_pk: Optional[bytes] = None,
 ) -> Dict[str, Any]:
     """End-to-end anonymous send: overlay plus constant-rate uniform cells.
 
@@ -697,7 +722,8 @@ def anonymous_send(
             m2 = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
             m3, st_state = st.xxhfs_finalize(ini_sess, m2, identity, peer_id, t0,
                                              peer_cert=peer_cert,
-                                             peer_subject=peer_subject)
+                                             peer_subject=peer_subject,
+                                             expected_peer_pk=expected_peer_pk)
             st._send_msg(tls, m3)
             ch = st.Channel(st_state, direction_out=0xA5, direction_in=0x5A)
             # Nonce exchange inside the encrypted channel binds the
@@ -741,7 +767,19 @@ def anonymous_send(
                     seq_no += 1
                     wire = ch.seal_data(payload)
                     if ch.needs_rekey():
-                        raise OverlayError("overlay rejected")
+                        session.send_frame(ch.seal(b"", st.FRAME_TYPE_REKEY))
+                        from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF
+                        from cryptography.hazmat.primitives import hashes as _hashes
+                        new_key = _HKDF(
+                            algorithm=_hashes.SHA384(),
+                            length=32,
+                            salt=b"DESTROYER-ANON-REKEY-SALT-v1",
+                            info=b"DESTROYER-ANON-EPOCH-RATCHET-v1"
+                        ).derive(bytes(ch.state.key()))
+                        ch.state._secure = st.SecureBytes(new_key)
+                        ch.state.msgs_under_key = 0
+                        ch.state.bytes_under_key = 0
+                        ch.state.created = st._now()
                     session.send_frame(wire)
                 digest = _hl.sha384(bytes(data)).digest()
                 session.send_frame(ch.seal_data(
@@ -750,7 +788,10 @@ def anonymous_send(
                 # Drain: keep the fixed rate until the peer acknowledges
                 # delivery via a channel-level ack carried as shaper data.
                 # Bounded wait preserves constant rate; absence fails closed.
-                ack_deadline = time.monotonic() + 30.0
+                # F-06: deadline derived from payload size / shaper rate so
+                # large transfers are not killed at a fixed 30 s.
+                ack_deadline = (time.monotonic()
+                                + _send_ack_wait_s(len(bytes(data))))
                 while time.monotonic() < ack_deadline:
                     frames = session.recv_available(timeout=0.5)
                     for frame in frames:
@@ -823,6 +864,7 @@ def anonymous_recv(
     receipt: Optional[Dict[str, Any]] = None,
     peer_cert: Optional[str] = None,
     peer_subject: Optional[str] = None,
+    expected_peer_pk: Optional[bytes] = None,
 ) -> Any:
     """Anonymous receive side. Cover flows both ways for the whole session."""
     import hashlib as _hl
@@ -851,7 +893,8 @@ def anonymous_recv(
             m3 = st._recv_msg(tls, cap=st.HANDSHAKE_CAP)
             st_state = st.xxhfs_complete(rsp_sess, m3, identity, peer_id, t_rsp,
                                          peer_cert=peer_cert,
-                                         peer_subject=peer_subject)
+                                         peer_subject=peer_subject,
+                                         expected_peer_pk=expected_peer_pk)
             ch = st.Channel(st_state, direction_out=0x5A,
                             direction_in=0xA5)
             peer_len = _st.unpack(">I", _recv_exact(tls, 4, 10.0))[0]
@@ -880,8 +923,14 @@ def anonymous_recv(
                 total = 0
                 seen_eof = False
                 digest: Optional[bytes] = None
-                deadline = time.monotonic() + 120.0
-                while time.monotonic() < deadline:
+                # F-06: absolute cap sized for the 50 MB maximum at shaper
+                # rate, plus an idle deadline refreshed only by non-chaff
+                # DATA frames (cover alone cannot keep a dead transfer alive).
+                _abs_deadline = time.monotonic() + _recv_absolute_wait_s()
+                _idle_deadline = time.monotonic() + IDLE_REFRESH_S
+                while time.monotonic() < _abs_deadline:
+                    if time.monotonic() >= _idle_deadline:
+                        raise OverlayError("overlay rejected")
                     frames = session.recv_available(timeout=0.5)
                     if not frames:
                         continue
@@ -889,8 +938,25 @@ def anonymous_recv(
                         ftype, payload = ch.open(frame)
                         if ftype == st.FRAME_TYPE_CHAFF:
                             continue
+                        if ftype == st.FRAME_TYPE_REKEY:
+                            from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF
+                            from cryptography.hazmat.primitives import hashes as _hashes
+                            new_key = _HKDF(
+                                algorithm=_hashes.SHA384(),
+                                length=32,
+                                salt=b"DESTROYER-ANON-REKEY-SALT-v1",
+                                info=b"DESTROYER-ANON-EPOCH-RATCHET-v1"
+                            ).derive(bytes(ch.state.key()))
+                            ch.state._secure = st.SecureBytes(new_key)
+                            ch.state.msgs_under_key = 0
+                            ch.state.bytes_under_key = 0
+                            ch.state.created = st._now()
+                            _idle_deadline = time.monotonic() + IDLE_REFRESH_S
+                            continue
                         if ftype != st.FRAME_TYPE_DATA:
                             raise OverlayError("overlay rejected")
+                        # Real payload arrived: refresh the idle window.
+                        _idle_deadline = time.monotonic() + IDLE_REFRESH_S
                         if len(payload) < 9:
                             raise OverlayError("overlay rejected")
                         eof = payload[8]

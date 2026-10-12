@@ -51,7 +51,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y liboqs-dev || true
           if [ ! -f /usr/local/lib/liboqs.so ] && [ ! -f /usr/lib/x86_64-linux-gnu/liboqs.so ] && [ ! -f /usr/lib/liboqs.so ]; then
-            git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+            git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
             cmake -S /tmp/liboqs -B /tmp/liboqs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local
             cmake --build /tmp/liboqs/build -j$(nproc)
             sudo cmake --install /tmp/liboqs/build

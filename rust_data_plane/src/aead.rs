@@ -123,7 +123,10 @@ pub fn seal(
         },
     )?;
     // Header Whitening: mask header with PRF(hp_key, tag) so seq, len, ftype
-    // are pseudorandom on wire (entropy > 7.95 bits/byte, zero cleartext leakage).
+    // are pseudorandom on the wire (no cleartext field leakage). The wire
+    // confidentiality/authenticity property comes from AES-256-GCM itself;
+    // any empirical entropy of the masked header is a sanity check only,
+    // never the security argument (F-16).
     let tag: &[u8; 16] = ct[ct.len() - 16..].try_into().unwrap();
     let mask = compute_header_mask(&key.1, tag);
     let mut masked_header = header;

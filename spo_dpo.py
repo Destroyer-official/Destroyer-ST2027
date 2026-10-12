@@ -682,6 +682,14 @@ def require_spo_dpo_for_send(
     classification: str, payload: bytes, receipt: Optional[Dict[str, Any]],
     deniable: bool = False,
 ) -> Dict[str, Any]:
+    """Pre-send gate: receipt must bind this exact payload under SPO/DPO.
+
+    F-02: since v2 receipts, this gate re-verifies the embedded ML-DSA-87
+    approval signatures. A self-minted JSON blob (mode/class/payload_hex
+    with no approvals) is refused for DPO in every posture, including lab.
+    Lab SPO without an approvals block remains tolerated for test harnesses
+    only; TS/production strict mode demands signed SPO receipts too.
+    """
     norm = _canonical_norm(classification)
     want = mode_for_classification(norm)
     if not isinstance(receipt, dict):
@@ -705,6 +713,13 @@ def require_spo_dpo_for_send(
     got = str(got_raw)
     if not _compare(expect.encode("utf-8"), got.encode("utf-8")):
         raise AuthorizationError("authorization rejected")
+    # F-02: DPO always demands verifiable dual signatures; SPO demands them
+    # in strict mode or whenever an approvals block is present (a present
+    # but invalid block must never be silently skipped).
+    if receipt.get("mode") == MODE_DPO:
+        _verify_receipt_approvals(receipt, MODE_DPO)
+    elif _strict_mode() or receipt.get("approvals"):
+        _verify_receipt_approvals(receipt, MODE_SPO)
     return receipt
 
 

@@ -14,7 +14,7 @@
 //!   * AEAD AES-256-GCM framing with header whitening (`destroyer_core::aead`).
 //!   * Strict 64-bit anti-replay sliding window (`destroyer_core::replay`).
 //!   * Cauchy-Reed-Solomon Forward Error Correction (`destroyer_core::fec`).
-//!   * Flat Shannon entropy CBR traffic pacing with continuous CSPRNG chaff (`destroyer_core::pacing`).
+//!   * Constant-rate (CBR) traffic pacing with continuous CSPRNG chaff (`destroyer_core::pacing`).
 //!   * Silent-drop stealth UDP networking (`destroyer_core::net`).
 //! - Reference & Interop:
 //!   * The Python control plane (`noise_pq.py`, `double_ratchet.py`, `trust_anchor.py`)
@@ -45,6 +45,7 @@ use destroyer_core::zero_trust::{
     PERM_MESSAGE_SEND,
 };
 use fs2::FileExt;
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256, Sha384};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -54,6 +55,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::{Zeroize, Zeroizing};
 
+type HmacSha256 = Hmac<Sha256>;
+
 const VERSION: &str = "0.2.0";
 /// Largest user payload accepted by `send` (largest fixed quantum, frame.rs).
 const MAX_PAYLOAD: usize = 1205;
@@ -61,9 +64,13 @@ const MAX_PAYLOAD: usize = 1205;
 /// a single file transfer never exceeds this; larger inputs are refused.
 const MAX_STREAM_BYTES: usize = 16 << 20;
 /// Persistent state file layout: MAGIC(8) || key_id(16) || send_seq(8LE)
-/// || recv_last(8LE) || recv_bitmap(8LE) = 48 bytes.
-const STATE_MAGIC: &[u8; 8] = b"STSTATE1";
-const STATE_LEN: usize = 48;
+/// || recv_last(8LE) || recv_bitmap(8LE) || hmac_tag(32) = 80 bytes.
+/// Authenticated via HMAC-SHA256 with key derived from session key to defeat
+/// sequence rollback / state tampering attacks (audit Finding 04).
+const STATE_MAGIC: &[u8; 8] = b"STSTATE2";
+const STATE_RAW_LEN: usize = 48;
+const STATE_HMAC_LEN: usize = 32;
+const STATE_LEN: usize = 80;
 
 fn usage() -> ! {
     eprintln!(
@@ -88,9 +95,9 @@ fn usage() -> ! {
          cookie-verify --solution HEX [--ip IP] [--port PORT] [--payload TEXT]        verify solved PoW cookie challenge\n\
          threat-eval --peer ID [--trigger TYPE] [--count N] [--threshold N]           simulate and evaluate DoD cATO ACD playbook\n\
          zero-trust-eval --peer ID [--role ROLE] [--penalty N] [--reward N]           evaluate NIST SP 800-207 continuous trust score\n\
-         cot-beacon [--callsign CALL] [--lat LAT] [--lon LON] [--type TYPE] [--sk-file PATH] [--out PATH]  emit MIL-STD-6090 Cursor-on-Target event\n\
-         tactical-msg [--precedence (Y|Z|O|P|R)] [--clearance LEVEL] [--caveats CAVEAT] --msg TEXT [--scan-rtb]  transmit classified military telegram\n\
-         eam-auth --directive TEXT --officer1-pk PATH --officer1-sig PATH --officer2-pk PATH --officer2-sig PATH  verify NC3 dual-officer EAM\n\
+         cot-beacon [--callsign CALL] [--lat LAT] [--lon LON] [--type TYPE] [--sk-file PATH] [--out PATH]  emit MIL-STD-6090 Cursor-on-Target event (demo formatter)\n\
+         tactical-msg [--precedence (Y|Z|O|P|R)] [--clearance LEVEL] [--caveats CAVEAT] --msg TEXT  format classified military telegram (RTB scan always ON; --scan-rtb accepted as no-op)\n\
+         eam-auth --directive TEXT --officer1-pk PATH --officer1-sig PATH --officer2-pk PATH --officer2-sig PATH [--officers-manifest PATH]  verify NC3 dual-officer EAM (optional roster manifest)\n\
          zeroize --target PATH...|--state PATH|--key-file PATH  NIST SP 800-88 3-pass cryptographic media purge\n\
          selftest                        deterministic module self-checks\n\
          \n\
@@ -102,9 +109,10 @@ fn usage() -> ! {
          Forward Error Correction (FEC). ZERO return channel / zero ACKs.\n\
          Reconstructs original file from ANY K chunks even with packet loss.\n\
          \n\
-         channel: Full-duplex hardware-paced enclave link with continuous CSPRNG chaff\n\
-         and directional nonce separation. Flat wire timing and constant Shannon entropy\n\
-         defeats Signals Intelligence (SIGINT) flow correlation and timing analysis.\n\
+          channel: Full-duplex hardware-paced enclave link with continuous CSPRNG chaff\n\
+          and directional nonce separation. Flat wire timing and fixed-size cells\n\
+          defeat Signals Intelligence (SIGINT) flow correlation and timing analysis;\n\
+          chaff uniformity (Shannon H) is a sanity check, not the security argument.\n\
          \n\
          Security: --seq, --key HEX and --psk HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Keys/PSK NEVER\n\
@@ -209,7 +217,7 @@ fn state_path(args: &[String]) -> String {
         .unwrap_or_else(|| fail("missing --state PATH (monotonic nonce state required)"))
 }
 
-/// In-memory session state mirror (persisted as 48-byte record).
+/// In-memory session state mirror (persisted as 80-byte authenticated record).
 struct SessionState {
     key_id: [u8; 16],
     send_seq: u64,
@@ -217,17 +225,36 @@ struct SessionState {
     recv_bitmap: u64,
 }
 
-fn encode_state(st: &SessionState) -> [u8; STATE_LEN] {
+fn compute_state_hmac(key: &[u8; 32], raw: &[u8]) -> [u8; STATE_HMAC_LEN] {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+    mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v1");
+    mac.update(raw);
+    let result = mac.finalize().into_bytes();
+    let mut out = [0u8; STATE_HMAC_LEN];
+    out.copy_from_slice(&result);
+    out
+}
+
+fn verify_state_hmac(key: &[u8; 32], raw: &[u8], expected_tag: &[u8; STATE_HMAC_LEN]) -> bool {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC init");
+    mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v1");
+    mac.update(raw);
+    mac.verify_slice(expected_tag).is_ok()
+}
+
+fn encode_state(st: &SessionState, key: &[u8; 32]) -> [u8; STATE_LEN] {
     let mut b = [0u8; STATE_LEN];
     b[..8].copy_from_slice(STATE_MAGIC);
     b[8..24].copy_from_slice(&st.key_id);
     b[24..32].copy_from_slice(&st.send_seq.to_le_bytes());
     b[32..40].copy_from_slice(&st.recv_last.to_le_bytes());
     b[40..48].copy_from_slice(&st.recv_bitmap.to_le_bytes());
+    let mac = compute_state_hmac(key, &b[..STATE_RAW_LEN]);
+    b[STATE_RAW_LEN..STATE_LEN].copy_from_slice(&mac);
     b
 }
 
-fn decode_state(buf: &[u8; STATE_LEN], expect_key_id: &[u8; 16]) -> SessionState {
+fn decode_state(buf: &[u8; STATE_LEN], key: &[u8; 32], expect_key_id: &[u8; 16]) -> SessionState {
     if &buf[..8] != STATE_MAGIC {
         fail("state file corrupt (bad magic) — rekey with fresh key+state");
     }
@@ -237,6 +264,11 @@ fn decode_state(buf: &[u8; STATE_LEN], expect_key_id: &[u8; 16]) -> SessionState
         fail(
             "state file bound to a different key (key_id mismatch) — use matching --state or rekey",
         );
+    }
+    let mut expected_mac = [0u8; STATE_HMAC_LEN];
+    expected_mac.copy_from_slice(&buf[STATE_RAW_LEN..STATE_LEN]);
+    if !verify_state_hmac(key, &buf[..STATE_RAW_LEN], &expected_mac) {
+        fail("state file authentication failed (HMAC mismatch / rollback detected) — refusing to reuse nonces under this key");
     }
     let mut u = [0u8; 8];
     u.copy_from_slice(&buf[24..32]);
@@ -261,12 +293,29 @@ fn open_locked_state(path: &str) -> File {
         .truncate(false)
         .open(path)
         .unwrap_or_else(|_| fail("state file unopenable"));
+    // F-04: enforce 0600 on newly created state files (unix). The file
+    // holds the authenticated monotonic nonce counter; world-readable
+    // state is an integrity/oracle hazard even though the HMAC protects
+    // the contents.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = f.metadata() {
+            let mode = meta.permissions().mode();
+            if mode & 0o077 != 0 {
+                // Only chmod if we created it fresh (mode still has group/other).
+                // Existing files with correct 0600 are left alone; wider files
+                // from prior versions are tightened once under the exclusive lock.
+                let _ = f.set_permissions(std::fs::Permissions::from_mode(mode & !0o077));
+            }
+        }
+    }
     f.lock_exclusive()
         .unwrap_or_else(|_| fail("state file lock failed"));
     f
 }
 
-fn read_state_locked(f: &mut File, key_id: &[u8; 16]) -> SessionState {
+fn read_state_locked(f: &mut File, key: &[u8; 32], key_id: &[u8; 16]) -> SessionState {
     let mut buf = Vec::new();
     f.seek(SeekFrom::Start(0))
         .unwrap_or_else(|_| fail("state seek failed"));
@@ -283,23 +332,25 @@ fn read_state_locked(f: &mut File, key_id: &[u8; 16]) -> SessionState {
         if send_seq == u64::MAX {
             send_seq = 0;
         }
-        return SessionState {
+        let st = SessionState {
             key_id: *key_id,
             send_seq,
             recv_last: 0,
             recv_bitmap: 0,
         };
+        write_state_locked(f, &st, key);
+        return st;
     }
     if buf.len() != STATE_LEN {
-        fail("state file corrupt (bad length) — rekey with fresh key+state");
+        fail("state file corrupt (bad length / missing authentication) — rekey with fresh key+state");
     }
     let mut arr = [0u8; STATE_LEN];
     arr.copy_from_slice(&buf);
-    decode_state(&arr, key_id)
+    decode_state(&arr, key, key_id)
 }
 
-fn write_state_locked(f: &mut File, st: &SessionState) {
-    let enc = encode_state(st);
+fn write_state_locked(f: &mut File, st: &SessionState, key: &[u8; 32]) {
+    let enc = encode_state(st, key);
     f.seek(SeekFrom::Start(0))
         .unwrap_or_else(|_| fail("state seek failed"));
     f.write_all(&enc)
@@ -311,12 +362,12 @@ fn write_state_locked(f: &mut File, st: &SessionState) {
 
 /// Reserve one send seq: persist N+1 BEFORE encrypting (crash may skip,
 /// never reuse). Returns the seq to seal with.
-fn reserve_send_seq(path: &str, key_id: &[u8; 16], count: u64) -> u64 {
+fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -> u64 {
     if count == 0 {
         fail("reservation count must be >= 1");
     }
     let mut f = open_locked_state(path);
-    let mut st = read_state_locked(&mut f, key_id);
+    let mut st = read_state_locked(&mut f, key, key_id);
     let start = st.send_seq;
     let end = start
         .checked_add(count)
@@ -329,20 +380,21 @@ fn reserve_send_seq(path: &str, key_id: &[u8; 16], count: u64) -> u64 {
         fail("sequence exhausted — rekey required");
     }
     st.send_seq = end;
-    write_state_locked(&mut f, &st);
+    write_state_locked(&mut f, &st, key);
     // Unlock via drop.
     start
 }
 
-fn load_recv_window(path: &str, key_id: &[u8; 16]) -> (File, AntiReplayWindow) {
+fn load_recv_window(path: &str, key: &[u8; 32], key_id: &[u8; 16]) -> (File, AntiReplayWindow) {
     let mut f = open_locked_state(path);
-    let st = read_state_locked(&mut f, key_id);
+    let st = read_state_locked(&mut f, key, key_id);
     let w = AntiReplayWindow::from_parts(st.recv_last, st.recv_bitmap);
     (f, w)
 }
 
 fn persist_recv_window(
     f: &mut File,
+    key: &[u8; 32],
     key_id: &[u8; 16],
     send_seq_preserve: u64,
     w: &AntiReplayWindow,
@@ -358,7 +410,7 @@ fn persist_recv_window(
     let cur_send = if buf.len() == STATE_LEN {
         let mut arr = [0u8; STATE_LEN];
         arr.copy_from_slice(&buf);
-        let cur = decode_state(&arr, key_id);
+        let cur = decode_state(&arr, key, key_id);
         cur.send_seq
     } else {
         send_seq_preserve
@@ -370,7 +422,7 @@ fn persist_recv_window(
         recv_last: last,
         recv_bitmap: bitmap,
     };
-    write_state_locked(f, &st);
+    write_state_locked(f, &st, key);
 }
 
 fn cmd_keygen(args: &[String]) {
@@ -527,7 +579,8 @@ fn cmd_send(args: &[String]) {
         fail("payload exceeds largest quantum (1205B)");
     }
     // Reserve BEFORE encrypt: crash skips, never reuses (NIST SP 800-38D).
-    let seq = reserve_send_seq(&state, &key_id, 1);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
+    let seq = reserve_send_seq(&state, &key_bytes, &key_id, 1);
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
     // TRAFFIC-SHAPING (audit Finding 3): pad every send frame to its
@@ -574,6 +627,7 @@ fn cmd_send(args: &[String]) {
 
 fn cmd_recv(args: &[String]) {
     let (kb, key_id) = load_key_material(args);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind = get_flag(args, "--bind").unwrap_or_else(|| usage());
     let want: u64 = get_flag(args, "--count")
@@ -586,7 +640,7 @@ fn cmd_recv(args: &[String]) {
     drop(kb);
     // Hold the state lock for the whole recv session so concurrent
     // receivers cannot accept the same seq twice.
-    let (mut sf, mut window) = load_recv_window(&state, &key_id);
+    let (mut sf, mut window) = load_recv_window(&state, &key_bytes, &key_id);
     // Snapshot send_seq to preserve across write-throughs.
     let send_preserve: u64 = {
         sf.seek(SeekFrom::Start(0))
@@ -597,7 +651,7 @@ fn cmd_recv(args: &[String]) {
         if buf.len() == STATE_LEN {
             let mut arr = [0u8; STATE_LEN];
             arr.copy_from_slice(&buf);
-            decode_state(&arr, &key_id).send_seq
+            decode_state(&arr, &key_bytes, &key_id).send_seq
         } else {
             0
         }
@@ -643,7 +697,7 @@ fn cmd_recv(args: &[String]) {
                         continue;
                     }
                     window.mark(seq2);
-                    persist_recv_window(&mut sf, &key_id, send_preserve, &window);
+                    persist_recv_window(&mut sf, &key_bytes, &key_id, send_preserve, &window);
                     if ftype == FTYPE_MSG {
                         println!("seq={seq2} {}", String::from_utf8_lossy(&pt));
                         opened += 1;
@@ -678,17 +732,29 @@ fn cmd_selftest() {
     assert!(!w.check(7), "replay accepted");
     assert!(f.len() <= MAX_DATAGRAM, "quantum exceeds MTU");
     // State codec roundtrip (no I/O): magic + key binding enforced.
+    let test_key = [0x5Au8; 32];
     let st = SessionState {
         key_id: [0xABu8; 16],
         send_seq: 41,
         recv_last: 7,
         recv_bitmap: 0b11,
     };
-    let enc = encode_state(&st);
+    let enc = encode_state(&st, &test_key);
     assert_eq!(enc.len(), STATE_LEN);
-    let dec = decode_state(&enc, &[0xABu8; 16]);
+    let dec = decode_state(&enc, &test_key, &[0xABu8; 16]);
     assert_eq!(dec.send_seq, 41);
-    eprintln!("selftest: aead-roundtrip ok, tamper-reject ok, replay ok, mtu ok");
+    // Verify HMAC-SHA256 tamper / rollback detection (Finding 04):
+    let mut tampered_enc = enc;
+    tampered_enc[24] ^= 0x01; // flip sequence counter bit
+    assert!(
+        !verify_state_hmac(
+            &test_key,
+            &tampered_enc[..STATE_RAW_LEN],
+            tampered_enc[STATE_RAW_LEN..].try_into().unwrap()
+        ),
+        "tampered state HMAC must fail verification"
+    );
+    eprintln!("selftest: aead-roundtrip ok, tamper-reject ok, replay ok, mtu ok, state-hmac ok");
     // Page-lock probe (best-effort, reported never failed: containers without
     // lock privilege run wipe-only hygiene by design).
     let probe = [0u8; 32];
@@ -716,11 +782,14 @@ fn cmd_selftest() {
     assert_eq!(&recovered[1], &d1);
     assert_eq!(&recovered[2], &d2);
 
-    // Pacing chaff and entropy self-check
+    // Pacing chaff sanity check (F-16): a chaff frame that decrypts to the
+    // right shape must also look uniform; low Shannon entropy here means the
+    // chaff builder is broken (detectable pattern), NOT a cryptographic
+    // security property. Security rests on AES-256-GCM, not on this metric.
     let chaff = pacing::build_chaff_frame(&key, 99, 1232).expect("chaff build");
     assert_eq!(chaff.len(), 1232);
     let entropy = pacing::calculate_shannon_entropy(&chaff);
-    assert!(entropy > 7.80, "chaff entropy below threshold");
+    assert!(entropy > 7.80, "chaff sanity: frame entropy below uniform-look floor");
     let (c_seq, c_type, _) = aead::open_indexed(&key, DIR_SEND, &chaff).expect("chaff open");
     assert_eq!(c_seq, 99);
     assert_eq!(c_type, frame::FTYPE_CHAFF);
@@ -912,7 +981,8 @@ fn cmd_send_file(args: &[String]) {
         fail("file empty refused");
     }
     // Reserve the full range BEFORE sealing any chunk.
-    let seq0 = reserve_send_seq(&state, &key_id, n);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
+    let seq0 = reserve_send_seq(&state, &key_bytes, &key_id, n);
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -968,6 +1038,7 @@ fn cmd_send_file(args: &[String]) {
 
 fn cmd_recv_file(args: &[String]) {
     let (kb, key_id) = load_key_material(args);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind = get_flag(args, "--bind").unwrap_or_else(|| usage());
     let out = get_flag(args, "--out").unwrap_or_else(|| usage());
@@ -983,7 +1054,7 @@ fn cmd_recv_file(args: &[String]) {
         .unwrap_or(15000);
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
-    let (mut sf, mut window) = load_recv_window(&state, &key_id);
+    let (mut sf, mut window) = load_recv_window(&state, &key_bytes, &key_id);
     let send_preserve: u64 = {
         sf.seek(SeekFrom::Start(0))
             .unwrap_or_else(|_| fail("state seek failed"));
@@ -993,7 +1064,7 @@ fn cmd_recv_file(args: &[String]) {
         if buf.len() == STATE_LEN {
             let mut arr = [0u8; STATE_LEN];
             arr.copy_from_slice(&buf);
-            decode_state(&arr, &key_id).send_seq
+            decode_state(&arr, &key_bytes, &key_id).send_seq
         } else {
             0
         }
@@ -1041,7 +1112,7 @@ fn cmd_recv_file(args: &[String]) {
                         continue;
                     }
                     window.mark(seq2);
-                    persist_recv_window(&mut sf, &key_id, send_preserve, &window);
+                    persist_recv_window(&mut sf, &key_bytes, &key_id, send_preserve, &window);
                     // open_indexed returns true-plaintext (padding stripped).
                     let plain: Vec<u8> = pt;
                     got.push((seq2, plain));
@@ -1197,7 +1268,8 @@ fn cmd_diode_send(args: &[String]) {
     }
 
     let n = (k + m) as u64;
-    let seq0 = reserve_send_seq(&state, &key_id, n);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
+    let seq0 = reserve_send_seq(&state, &key_bytes, &key_id, n);
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
@@ -1271,6 +1343,7 @@ fn cmd_diode_send(args: &[String]) {
 
 fn cmd_diode_recv(args: &[String]) {
     let (kb, key_id) = load_key_material(args);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind = get_flag(args, "--bind").unwrap_or_else(|| usage());
     let out = get_flag(args, "--out").unwrap_or_else(|| usage());
@@ -1280,7 +1353,7 @@ fn cmd_diode_recv(args: &[String]) {
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
-    let (mut sf, mut window) = load_recv_window(&state, &key_id);
+    let (mut sf, mut window) = load_recv_window(&state, &key_bytes, &key_id);
     let send_preserve: u64 = {
         sf.seek(SeekFrom::Start(0))
             .unwrap_or_else(|_| fail("state seek failed"));
@@ -1290,7 +1363,7 @@ fn cmd_diode_recv(args: &[String]) {
         if buf.len() == STATE_LEN {
             let mut arr = [0u8; STATE_LEN];
             arr.copy_from_slice(&buf);
-            decode_state(&arr, &key_id).send_seq
+            decode_state(&arr, &key_bytes, &key_id).send_seq
         } else {
             0
         }
@@ -1345,7 +1418,7 @@ fn cmd_diode_recv(args: &[String]) {
                         continue;
                     }
                     window.mark(seq2);
-                    persist_recv_window(&mut sf, &key_id, send_preserve, &window);
+                    persist_recv_window(&mut sf, &key_bytes, &key_id, send_preserve, &window);
 
                     let Some(hdr) = DiodeHeader::decode(&pt) else {
                         continue;
@@ -1448,6 +1521,7 @@ fn cmd_diode_recv(args: &[String]) {
 fn cmd_stream_chaff(args: &[String]) {
     reject_forbidden_cli(args);
     let (kb, key_id) = load_key_material(args);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let to: SocketAddr = get_flag(args, "--to")
         .unwrap_or_else(|| usage())
@@ -1490,7 +1564,7 @@ fn cmd_stream_chaff(args: &[String]) {
         let mut emitted = 0u64;
         while count == 0 || emitted < count {
             scheduler.wait_next_tick();
-            let seq = reserve_send_seq(&state, &key_id, 1);
+            let seq = reserve_send_seq(&state, &key_bytes, &key_id, 1);
             let frame = pacing::build_chaff_frame(&key, seq, quantum)
                 .unwrap_or_else(|_| fail("build chaff failed"));
             if ep.send_raw(&frame, to).await.is_err() {
@@ -1505,6 +1579,7 @@ fn cmd_stream_chaff(args: &[String]) {
 fn cmd_channel(args: &[String]) {
     reject_forbidden_cli(args);
     let (kb, key_id) = load_key_material(args);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind: SocketAddr = get_flag(args, "--bind")
         .unwrap_or_else(|| usage())
@@ -1567,16 +1642,16 @@ fn cmd_channel(args: &[String]) {
     drop(kb);
 
     let mut state_file = open_locked_state(&state);
-    let initial_st = read_state_locked(&mut state_file, &key_id);
+    let initial_st = read_state_locked(&mut state_file, &key_bytes, &key_id);
     let mut next_send_seq = initial_st.send_seq;
     let mut window = AntiReplayWindow::from_parts(initial_st.recv_last, initial_st.recv_bitmap);
 
     let mut reserved_limit = next_send_seq
         .checked_add(512)
         .unwrap_or_else(|| fail("sequence exhausted"));
-    let mut st = read_state_locked(&mut state_file, &key_id);
+    let mut st = read_state_locked(&mut state_file, &key_bytes, &key_id);
     st.send_seq = reserved_limit;
-    write_state_locked(&mut state_file, &st);
+    write_state_locked(&mut state_file, &st, &key_bytes);
 
     let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
     for m in &msgs {
@@ -1659,7 +1734,7 @@ fn cmd_channel(args: &[String]) {
                             recv_last: last,
                             recv_bitmap: bitmap,
                         };
-                        write_state_locked(&mut state_file, &st);
+                        write_state_locked(&mut state_file, &st, &key_bytes);
                     }
 
                     let seq = next_send_seq;
@@ -1726,7 +1801,7 @@ fn cmd_channel(args: &[String]) {
                                 recv_last: last,
                                 recv_bitmap: bitmap,
                             };
-                            write_state_locked(&mut state_file, &st);
+                            write_state_locked(&mut state_file, &st, &key_bytes);
                         } else if ftype == FTYPE_CHAFF {
                             chaff_received += 1;
                         }
@@ -1742,7 +1817,7 @@ fn cmd_channel(args: &[String]) {
             recv_last: last,
             recv_bitmap: bitmap,
         };
-        write_state_locked(&mut state_file, &st);
+        write_state_locked(&mut state_file, &st, &key_bytes);
 
         println!(
             "channel: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={}",
@@ -2222,6 +2297,13 @@ fn cmd_zero_trust_eval(args: &[String]) {
 
 fn cmd_cot_beacon(args: &[String]) {
     reject_forbidden_cli(args);
+    // F-15 fence: cot-beacon is a FORMATTER that emits demo/lab CoT XML.
+    // It is not an operational C4ISR publisher. Banner on stderr so stdout
+    // stays machine-parseable for tests and tooling.
+    eprintln!(
+        "FORMATTER NOTICE (stderr): cot-beacon emits a MIL-STD-6090 CoT XML document from \
+local inputs; this is a demo/lab formatter, not an operational tactical data link publish."
+    );
     let callsign = get_flag(args, "--callsign").unwrap_or_else(|| "TACTICAL-ST2027".to_string());
     let event_type = get_flag(args, "--type").unwrap_or_else(|| "a-f-G-U-C".to_string());
     let lat: f64 = get_flag(args, "--lat")
@@ -2278,11 +2360,21 @@ fn cmd_cot_beacon(args: &[String]) {
 
 fn cmd_tactical_msg(args: &[String]) {
     reject_forbidden_cli(args);
+    // F-15 fence: tactical-msg is a FORMATTER that renders an MMHS-style
+    // telegram string from local inputs. Banner on stderr (stdout contract
+    // is pinned by tests: returncode 0 + FLASH_OVERRIDE/TOP_SECRET/...).
+    eprintln!(
+        "FORMATTER NOTICE (stderr): tactical-msg formats an MMHS precedence telegram; \
+this is a demo/lab formatter, not an operational message-center transmit."
+    );
     let precedence = get_flag(args, "--precedence").unwrap_or_else(|| "Z".to_string()).to_uppercase();
     let clearance_str = get_flag(args, "--clearance").unwrap_or_else(|| "TOP_SECRET".to_string()).to_uppercase();
     let caveats = get_flag(args, "--caveats").unwrap_or_else(|| "NOFORN".to_string()).to_uppercase();
     let msg = get_flag(args, "--msg").unwrap_or_else(|| fail("missing --msg TEXT"));
-    let scan_rtb = has_flag(args, "--scan-rtb");
+    // F-15: RTB classified-spillage scan is ON BY DEFAULT. --scan-rtb is
+    // retained as an accepted no-op for CLI compatibility (older scripts
+    // that pass the flag keep working; the scan no longer depends on it).
+    let _scan_rtb_compat = has_flag(args, "--scan-rtb");
 
     let prec_label = match precedence.as_str() {
         "Y" | "FLASH_OVERRIDE" => "FLASH_OVERRIDE",
@@ -2301,11 +2393,10 @@ fn cmd_tactical_msg(args: &[String]) {
         _ => fail("bad --clearance: must be UNCLASSIFIED, CONFIDENTIAL, SECRET, or TOP_SECRET"),
     };
 
-    if scan_rtb {
-        if let Err(indicator) = inspect_content_rtb(msg.as_bytes()) {
-            if clearance < ClearanceLevel::TopSecret {
-                fail(&format!("RTB SPILLAGE PREVENTED: detected classified indicator '{indicator}' in {clearance_str} message"));
-            }
+    // F-15: always scan (not gated on the compat flag).
+    if let Err(indicator) = inspect_content_rtb(msg.as_bytes()) {
+        if clearance < ClearanceLevel::TopSecret {
+            fail(&format!("RTB SPILLAGE PREVENTED: detected classified indicator '{indicator}' in {clearance_str} message"));
         }
     }
 
@@ -2316,6 +2407,22 @@ fn cmd_tactical_msg(args: &[String]) {
 
 fn cmd_eam_auth(args: &[String]) {
     reject_forbidden_cli(args);
+    // F-15 fence: eam-auth verifies dual-officer signatures over a directive
+    // string. Banner on stderr (stdout contract pinned by tests).
+    eprintln!(
+        "FORMATTER NOTICE (stderr): eam-auth verifies two ML-DSA-87 officer signatures \
+over a directive; it does not query a personnel system or hardware token store."
+    );
+    // F-15: optional --officers-manifest PATH (JSON/TOML roster of authorized
+    // officer public keys). When absent, verification still proceeds on the
+    // four provided key/sig files, but a stderr warning records that no
+    // roster cross-check was performed (tests invoke without a manifest).
+    if get_flag(args, "--officers-manifest").is_none() {
+        eprintln!(
+            "WARNING (stderr): no --officers-manifest provided; dual-officer signature \
+verification runs without a roster cross-check of officer identity."
+        );
+    }
     let directive = get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
     let of1_pk = get_flag(args, "--officer1-pk").unwrap_or_else(|| fail("missing --officer1-pk PATH"));
     let of1_sig = get_flag(args, "--officer1-sig").unwrap_or_else(|| fail("missing --officer1-sig PATH"));

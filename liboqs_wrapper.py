@@ -283,9 +283,10 @@ LIBOQS_BELOW_FLOOR = False
 
 
 def _liboqs_strict_mode() -> bool:
-    return (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip() == "1"
-            or os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on"))
+    for var in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE", "P2P_STRICT_PIN"):
+        if os.environ.get(var, "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    return False
 
 
 try:

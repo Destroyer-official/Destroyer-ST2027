@@ -118,7 +118,10 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             "status": "ARMED_PACED",
             "cadence_ms": 20,
             "quantum_bytes": 1232,
-            "entropy_shannon": 7.998,
+            # F-16: no fake entropy figure — this status view does not observe
+            # the wire, so it does not invent a Shannon number. Real chaff
+            # sanity checks live in the data-plane selftests.
+            "entropy_shannon": None,
             "sas": "B6CA-0976-AAAD-CA98",
             "nodes": {
                 "alpha": {
@@ -207,13 +210,25 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             pipeline_b, ratchet_b = create_zero_gap_session(shared_secret=b"\x42" * 32, is_initiator=False)
             sealed = pipeline_a.seal(message.encode("utf-8"), ratchet_a, msg_type=PIPELINE_TYPE_NC3)
             msg_type, opened = pipeline_b.open(sealed, ratchet_b)
+
+            def _shannon(data: bytes) -> float:
+                if not data:
+                    return 0.0
+                from collections import Counter
+                import math
+                n = len(data)
+                counts = Counter(data)
+                return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
             self._send_json({
                 "status": "ZGDP_ROUNDTRIP_VERIFIED",
                 "rust_bare_metal_envelope": rust_avail,
                 "sealed_byte_length": len(sealed),
                 "is_quantized": len(sealed) in (256, 512, 1232) or len(sealed) > 500,
                 "cadence_ms": 15,
-                "shannon_entropy": 7.994,
+                # F-16: computed from the real sealed ciphertext, not a
+                # hardcoded constant; this is a sanity figure, not a claim.
+                "shannon_entropy": round(_shannon(sealed), 4),
                 "decrypted_matches": (opened.decode("utf-8") == message),
                 "msg_type": msg_type
             })
