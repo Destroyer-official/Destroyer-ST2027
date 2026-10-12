@@ -46,3 +46,14 @@ This plan provides production-grade, mathematically verified remediations for al
 6. **Phase 6: Full Verification & Master Defense Re-Audit**
    - Run Clippy, Cargo tests, Pytest suites, ProVerif models, reproducible build verifier, and `run_defense_audit.py`.
    - Re-sign all receipts with ML-DSA-87 and push to GitHub.
+7. **Phase 7: Deep Forensic Static Audit Remediation & Tactical Core Hardening**
+   - **TACT-01 (NC3 Two-Person Rule EAM)**: Enforced dual distinct officer ML-DSA-87 signatures over canonical EAM envelopes with fresh nonces and timestamp skew validation (<120s) in `tactical_operator_console.py`.
+   - **TACT-02 (CoT / BFT Track Ingest Integrity)**: Gated BFT table updates and ATAK tablet broadcasting behind FIPS 204 ML-DSA-87 signature verification against enrolled peer keys; unverified tracks dropped fail-closed.
+   - **TACT-03 (Canonical Message Envelope)**: Bound MMHS precedence, security classification markings, and handling caveats into `canonical_msg_bytes()` signed with ML-DSA-87.
+   - **TACT-04 (Emergency Memory Sanitization)**: Converted private keys to mutable `bytearray(sk)` with 3-pass NIST SP 800-88 purge (`0x55`, `0xAA`, `0x00`) via `secure_wipe_buffer()`, nullifying references and triggering garbage collection.
+   - **Bandit B104**: Configured default socket binding to `127.0.0.1` with explicit `# nosec: B104` annotations.
+   - **ST-01 / ST-02 (Peer-PK CLI & Flag Normalization)**: Added `--peer-pk` CLI argument to `snd` and `rcv` subparsers in `secure_transmit_2027.py` and implemented `_resolve_peer_pk()`. Normalized all truthy strings across all production environment flags.
+   - **Finding 04 (Rust State Rollback & Nonce Reuse)**: Upgraded state file layout to 80-byte authenticated structure (`STSTATE2` magic, 48B raw state + 32B HMAC-SHA256 keyed by session key under domain separation `DESTROYER-ST2027-STATE-FILE-AUTH-v1`).
+   - **Finding 06 / ANON-01 (Continuous Epoch Ratchet Rekeying)**: Implemented mid-stream continuous epoch ratcheting via `FRAME_TYPE_REKEY` and synchronized HKDF-SHA384 epoch transitions in `transport_anonymity.py`.
+   - **Finding 01 (CI LibOQS Version Floor)**: Updated `.github/workflows/defense_ci.yml` to clone official `--branch 0.16.0`.
+   - **Comprehensive Automated Regression**: Implemented `tests/test_audit_forensic_remediations.py` covering all findings (8/8 tests passed).
