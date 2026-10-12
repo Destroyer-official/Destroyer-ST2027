@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DESTROYER TACTICAL P2P: UNIFIED SOVEREIGN MILITARY COMMUNICATIONS NODE
+DESTROYER STRATEGIC P2P: SOVEREIGN TOP SECRET COMMUNICATIONS NODE
 Protocol: NSA CNSA Suite 2.0 / FIPS 203 ML-KEM-1024 / FIPS 204 ML-DSA-87
 Data Plane: Hardware-Paced Wire Camouflage & Cauchy-RS Simplex Data Diode
 Zero-Trust: Zero Central Servers, Zero Cloud Relays, Zero Metadata Leaks
@@ -683,7 +683,7 @@ def run_automated_two_terminal_drill():
         print(f"{BOLD}{GREEN}[+] NIST SP 800-88 3-PASS SANITIZATION VERIFIED!{RESET}")
 
         print("\n" + "=" * 80)
-        print("  [VERDICT] SOVEREIGN MILITARY P2P DEFENSE SYSTEM FULLY OPERATIONAL")
+        print("  [VERDICT] SOVEREIGN TOP SECRET STRATEGIC COMMUNICATIONS SYSTEM FULLY OPERATIONAL")
         print("=" * 80 + "\n")
         return True
 
@@ -692,7 +692,7 @@ def run_automated_two_terminal_drill():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Destroyer Tactical P2P — Sovereign Military Node")
+    parser = argparse.ArgumentParser(description="Destroyer Strategic P2P — Sovereign Top Secret Node")
     sub = parser.add_subparsers(dest="command")
 
     # Node command
