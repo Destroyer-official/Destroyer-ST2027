@@ -100,9 +100,13 @@ tactical_manifest.json
 credentials/
 private_keys/
 secrets/
-keys/
+keys/*
 # ...but keys/*.py is SOURCE (manager/storage/generation), not key material.
 # Un-ignore source so it stays tracked; material (*.pem/*.key/sealed) above stays ignored.
+# NOTE: `keys/` alone would ignore the directory itself, which makes `!keys/*.py`
+# ineffective (git cannot re-include paths inside an excluded dir). `keys/*`
+# ignores the *contents* instead, so the negation below works (verified with
+# `git check-ignore -v keys/manager.py` -> `!keys/*.py`).
 !keys/*.py
 certs/
 .env.local
