@@ -14,7 +14,10 @@ import os
 import re
 import unittest
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+# NOTE: this file lives in tests/, so the repo root is the PARENT of __file__'s
+# directory (a previous revision used dirname(__file__) itself, resolving to
+# tests/docs/formal and failing from any CWD).
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FORMAL_DIR = os.path.join(PROJECT_ROOT, "docs", "formal")
 
 
