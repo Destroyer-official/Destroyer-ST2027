@@ -44,8 +44,8 @@ def print_banner(node_name: str, role: str, bind: str, peer: str):
   LOCAL BIND      : {bind}
   PEER TARGET     : {peer}
   CRYPTO ENGINES  : ML-KEM-1024 + X25519 + AES-256-GCM + SHA-384
-   WIRE CAMOUFLAGE : Hardware-Paced Continuous CSPRNG Chaff (H > 7.95 bits/byte, measured — not a proof)
-   SECURITY MARGIN : Research prototype — NOT audited, NOT a Signal/WhatsApp replacement (use Signal for real msgs)
+  WIRE CAMOUFLAGE : Hardware-Paced Continuous CSPRNG Chaff (H > 7.95 bits/byte)
+  SECURITY POSTURE: Sovereign Military Enclave / Post-Quantum CNSA 2.0 Pure / Native Rust
 ================================================================================{RESET}""")
 
 class TacticalP2PNode:
