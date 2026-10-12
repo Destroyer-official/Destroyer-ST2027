@@ -16,6 +16,7 @@ import tempfile
 import shutil
 import base64
 import json
+import secrets
 from pathlib import Path
 
 # Workspace resolution
@@ -53,7 +54,8 @@ class TacticalP2PNode:
     def __init__(self, name: str, role: str, bind_addr: str, peer_addr: str,
                  kex_port: int, channel_port: int, peer_channel_port: int = None,
                  peer_kex_port: int = None, diode_port: int = None,
-                 peer_diode_port: int = None, work_dir: str = None):
+                 peer_diode_port: int = None, work_dir: str = None,
+                 psk_file: str = None):
         self.name = name
         self.role = role.lower()  # "initiator" or "responder"
         self.bind_addr = bind_addr
@@ -65,6 +67,7 @@ class TacticalP2PNode:
         self.diode_port = diode_port or (self.channel_port + 20)
         self.peer_diode_port = peer_diode_port or (self.peer_channel_port + 20)
         self.work_dir = work_dir or tempfile.mkdtemp(prefix=f"st2027_{self.name.lower()}_")
+        self.psk_file = psk_file or os.environ.get("P2P_PSK_FILE")
         self.key_path = os.path.join(self.work_dir, "session.key")
         self.state_path = os.path.join(self.work_dir, "monotonic.state")
         self.channel_proc = None
@@ -87,6 +90,13 @@ class TacticalP2PNode:
 
         print(f"\n{BOLD}[{self.name}]{RESET} {CYAN}[PHASE 1] Initiating Post-Quantum Hybrid Key Exchange (ML-KEM-1024)...{RESET}")
 
+        kex_env = dict(os.environ)
+        extra_args = []
+        if self.psk_file and os.path.exists(self.psk_file):
+            extra_args.extend(["--psk-file", self.psk_file])
+        else:
+            kex_env["P2P_LAB_MODE"] = "1"
+
         if self.role == "responder":
             bind_kex = f"{self.bind_addr}:{self.kex_port}"
             cmd = [
@@ -94,9 +104,9 @@ class TacticalP2PNode:
                 "--bind", bind_kex,
                 "--out-key", self.key_path,
                 "--timeout-ms", str(timeout_sec * 1000)
-            ]
+            ] + extra_args
             print(f"[{self.name}] Listening for peer on {bind_kex}...")
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc = subprocess.Popen(cmd, env=kex_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             out, err = proc.communicate(timeout=timeout_sec)
         else:
             time.sleep(0.3)  # Brief wait for responder socket
@@ -106,9 +116,9 @@ class TacticalP2PNode:
                 "--to", peer_kex,
                 "--out-key", self.key_path,
                 "--timeout-ms", str(timeout_sec * 1000)
-            ]
+            ] + extra_args
             print(f"[{self.name}] Connecting to peer on {peer_kex}...")
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc = subprocess.Popen(cmd, env=kex_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             out, err = proc.communicate(timeout=timeout_sec)
 
         if proc.returncode != 0:
@@ -434,7 +444,8 @@ class TacticalP2PNode:
 def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
                              kex_port: int = None, peer_kex_port: int = None,
                              channel_port: int = None, peer_channel_port: int = None,
-                             diode_port: int = None, peer_diode_port: int = None):
+                             diode_port: int = None, peer_diode_port: int = None,
+                             psk_file: str = None):
     """Run an interactive military tactical terminal."""
     is_loopback = (bind == peer)
 
@@ -467,7 +478,8 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
         channel_port=channel_port,
         peer_channel_port=peer_channel_port,
         diode_port=diode_port,
-        peer_diode_port=peer_diode_port
+        peer_diode_port=peer_diode_port,
+        psk_file=psk_file
     )
 
     # 1. Perform Post-Quantum Key Exchange
@@ -582,6 +594,14 @@ def run_automated_two_terminal_drill():
     print("=" * 80)
 
     tmp_dir = tempfile.mkdtemp(prefix="st2027_drill_")
+    drill_psk = os.path.join(tmp_dir, "tactical_drill.psk")
+    with open(drill_psk, "w", encoding="utf-8") as f:
+        f.write(secrets.token_hex(32) + "\n")
+    try:
+        os.chmod(drill_psk, 0o600)
+    except OSError:
+        pass
+
     try:
         norad = TacticalP2PNode(
             name="NORAD_ALPHA",
@@ -592,7 +612,8 @@ def run_automated_two_terminal_drill():
             peer_kex_port=9200,
             channel_port=9210,
             peer_channel_port=9211,
-            work_dir=os.path.join(tmp_dir, "norad")
+            work_dir=os.path.join(tmp_dir, "norad"),
+            psk_file=drill_psk
         )
         pentagon = TacticalP2PNode(
             name="PENTAGON_BRAVO",
@@ -603,7 +624,8 @@ def run_automated_two_terminal_drill():
             peer_kex_port=9200,
             channel_port=9211,
             peer_channel_port=9210,
-            work_dir=os.path.join(tmp_dir, "pentagon")
+            work_dir=os.path.join(tmp_dir, "pentagon"),
+            psk_file=drill_psk
         )
 
         os.makedirs(norad.work_dir, exist_ok=True)
@@ -661,7 +683,7 @@ def run_automated_two_terminal_drill():
         print(f"{BOLD}{GREEN}[+] NIST SP 800-88 3-PASS SANITIZATION VERIFIED!{RESET}")
 
         print("\n" + "=" * 80)
-        print("  [VERDICT] WORLD'S MOST SECURE P2P DEFENSE SYSTEM FULLY OPERATIONAL")
+        print("  [VERDICT] SOVEREIGN MILITARY P2P DEFENSE SYSTEM FULLY OPERATIONAL")
         print("=" * 80 + "\n")
         return True
 
@@ -685,6 +707,7 @@ def main():
     p_node.add_argument("--peer-channel-port", type=int, default=None, help="Peer channel port")
     p_node.add_argument("--diode-port", type=int, default=None, help="Local simplex diode port")
     p_node.add_argument("--peer-diode-port", type=int, default=None, help="Peer simplex diode port")
+    p_node.add_argument("--psk-file", default=None, help="Pre-shared key file for authenticated KEX")
 
     # Automated drill command
     sub.add_parser("demo", help="Run automated two-terminal military drill")
@@ -709,7 +732,8 @@ def main():
             channel_port=args.channel_port,
             peer_channel_port=args.peer_channel_port,
             diode_port=args.diode_port,
-            peer_diode_port=args.peer_diode_port
+            peer_diode_port=args.peer_diode_port,
+            psk_file=args.psk_file
         )
     elif args.command == "web":
         from tactical_web_console import launch_tactical_web_server
