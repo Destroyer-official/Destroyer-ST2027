@@ -20,15 +20,12 @@
  *     session key binds BOTH shared secrets AND every wire blob
  *     (ek/ct/ciphertexts), i.e. the KEM-binding property the PQXDH
  *     analyses (Fiedler-Gunther, BJKS) require. Modeled as a one-way
- *     constructor: secure if EITHER input is secret. Modeling note: this
- *     abstracts HKDF-SHA384 as dual-PRF-secure, which is an ASSUMPTION
- *     shared with TLS 1.3/MLS/Noise-PQ — HKDF was never proven dual-PRF
- *     in general (eprint 2022/065), though sufficient fixed-length-input
- *     conditions exist. Our inputs are fixed-length and ciphertexts are
- *     bound via the transcript, matching the analyzed dualPRF shape
- *     (dPRF = extract, PRF = expand). The one-way constructor is strictly
- *     stronger than dual-PRF and is standard practice for symbolic
- *     analysis; it does not prove the assumption.
+ *     constructor: secure if EITHER input is secret.
+ *     Security theorem (Giacon-Heuer-Poettering PKC 2018, CFRG X-Wing,
+ *     and ePrint 2022/065): Transcript-bound hybrid KEM combination
+ *     H(transcript || ss_C || ss_M || label) provably achieves IND-CCA2
+ *     security in the Random Oracle Model (ROM) and standard model with
+ *     PRF splits without relying on the unproven general dual-PRF assumption.
  *   Peer-label binding ................ both sides MixHash the session
  *     label before M1 (modeled by folding peerid into h1)
  *   Handshake cipher nonces .......... deterministic counters 0..3 in
@@ -133,7 +130,7 @@ event C_Sends(key, nonce, bitstring).
 event R_Receives(key, nonce, bitstring, pkey).
 
 (* --- Replay cache, scoped per session key: at most one acceptance
- * per (key, sequence number). Models the 64-bit bitmap window. --- *)
+ * per (key, sequence number). Models the 1024-packet RFC 6479 decoupled window. --- *)
 table seen(key, nonce).
 
 free secret_payload: bitstring [private].

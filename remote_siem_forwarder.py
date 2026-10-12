@@ -43,9 +43,22 @@ class TamperEvidentAuditChain:
         ledger_path: Path = DEFAULT_AUDIT_LEDGER,
         anchor_path: Path = DEFAULT_HEAD_ANCHOR,
         hmac_key: Optional[bytes] = None,
+        memory_only: bool = False,
     ):
-        self.ledger_path = Path(ledger_path)
-        self.anchor_path = Path(anchor_path)
+        # memory_only=True: chain lives entirely in process RAM (no ledger
+        # file, no key file, no anchor file). Used by ephemeral/TS/prod
+        # mode when no explicit P2P_SIEM_LEDGER is configured (F-17):
+        # those modes must not leave an unauthenticated default disk
+        # ledger behind. Chain integrity still holds in-process; events
+        # simply do not survive restart.
+        self.memory_only = bool(memory_only)
+        if self.memory_only:
+            self.ledger_path = Path(":memory:")
+            self.anchor_path = Path(":memory:")
+            self._mem_events: List[Dict[str, Any]] = []
+        else:
+            self.ledger_path = Path(ledger_path)
+            self.anchor_path = Path(anchor_path)
         self._lock = threading.Lock()
 
         # Resolve the chain HMAC key. Tamper-evidence holds ONLY if this key
@@ -56,6 +69,8 @@ class TamperEvidentAuditChain:
         # it was computable by anyone reading this source.
         if hmac_key:
             self.hmac_key = bytes(hmac_key)
+        elif self.memory_only:
+            self.hmac_key = secrets.token_bytes(AUDIT_HMAC_KEY_BYTES)
         else:
             env_key = os.environ.get("P2P_SIEM_KEY")
             if env_key:
@@ -65,7 +80,8 @@ class TamperEvidentAuditChain:
 
         self.last_hmac = GENESIS_HMAC
         self.seq = 0
-        self._recover_state()
+        if not self.memory_only:
+            self._recover_state()
 
     def _key_file_path(self) -> Path:
         return self.ledger_path.with_name(self.ledger_path.stem + ".hmac.key")
@@ -287,9 +303,12 @@ class TamperEvidentAuditChain:
                 "hmac": entry_hmac,
             }
 
-            # Append atomic line to ledger
-            with open(self.ledger_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+            # Append atomic line to ledger (or RAM in memory-only mode)
+            if self.memory_only:
+                self._mem_events.append(entry)
+            else:
+                with open(self.ledger_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry) + "\n")
 
             self.last_hmac = entry_hmac
             return entry
@@ -304,12 +323,25 @@ class TamperEvidentAuditChain:
                 "ledger_file": self.ledger_path.name,
                 "hash_algorithm": "HMAC-SHA384",
             }
-            self.anchor_path.write_text(json.dumps(anchor, indent=2), encoding="utf-8")
+            if not self.memory_only:
+                self.anchor_path.write_text(json.dumps(anchor, indent=2), encoding="utf-8")
             return anchor
 
     def verify_ledger(self) -> Tuple[bool, int, str]:
         """Verify the cryptographic integrity of the entire audit chain."""
         with self._lock:
+            if self.memory_only:
+                expected_prev = GENESIS_HMAC
+                expected_seq = 1
+                count = 0
+                for entry in self._mem_events:
+                    seq = entry.get("seq")
+                    if seq != expected_seq or entry.get("prev_hmac") != expected_prev:
+                        return False, count, f"memory-chain break at seq {seq}"
+                    expected_prev = entry.get("hmac")
+                    expected_seq = seq + 1
+                    count += 1
+                return True, count, f"memory chain intact ({count} events)"
             return verify_audit_log_chain(self.ledger_path, self.hmac_key)
 
 

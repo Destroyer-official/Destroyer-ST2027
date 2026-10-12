@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-12T14:32:41.545051+00:00",
+  "timestamp_utc": "2026-10-12T16:33:21.369615+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -68,8 +68,8 @@
   "source_tree_merkle_root": "3e176cec5cc85c74e76f2db1426d23017a8080cf1476c4d0f27bf481d40bd853c6186897e7d4f9074214ec5d70062ead86afdf598cc6f99473b88b58c7fe54ff",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
-      "expected_sha3_512": "0c04585470f60ae2cf265c8d872c70b6ab2bc3bcab534436a0f8fc72d546c7863f071fb57358afd1dc692edc0c2722904babd8db29c80ca97a8ab83646ee9295",
-      "actual_sha3_512": "0c04585470f60ae2cf265c8d872c70b6ab2bc3bcab534436a0f8fc72d546c7863f071fb57358afd1dc692edc0c2722904babd8db29c80ca97a8ab83646ee9295",
+      "expected_sha3_512": "18fdd1ab2c3d690d6f4f6eb9fb884905f5461807a465c5d0b15af8337304f14472816410d82faf93309310344553ab8b9bb2a5e3ab30fd511f7f291a4ddfcd14",
+      "actual_sha3_512": "18fdd1ab2c3d690d6f4f6eb9fb884905f5461807a465c5d0b15af8337304f14472816410d82faf93309310344553ab8b9bb2a5e3ab30fd511f7f291a4ddfcd14",
       "matched": true
     },
     "rust_data_plane/src/main.rs": {

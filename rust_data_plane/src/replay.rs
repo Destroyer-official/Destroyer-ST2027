@@ -1,11 +1,14 @@
-//! 64-bit sequence + 64-packet bitmap sliding window (WireGuard mechanism).
-//! O(1), branchless masks. Duplicate, replayed, or behind-window packets are
+//! 1024-packet sequence sliding window per RFC 6479 (Decoupled IPsec/WireGuard mechanism).
+//! O(1) word-indexed circular bitmap. Duplicate, replayed, or behind-window packets are
 //! rejected; the caller MUST drop them silently (no reply, no log above debug).
+
+pub const WINDOW_WORDS: usize = 16;
+pub const WINDOW_SIZE: u64 = (WINDOW_WORDS as u64) * 64; // 1024 packets per RFC 6479
 
 #[derive(Debug, Clone, Copy)]
 pub struct AntiReplayWindow {
     last_seq: u64,
-    bitmap: u64,
+    bitmap: [u64; WINDOW_WORDS],
     drops: u64,
 }
 
@@ -13,7 +16,7 @@ impl AntiReplayWindow {
     pub fn new() -> Self {
         AntiReplayWindow {
             last_seq: 0,
-            bitmap: 0,
+            bitmap: [0; WINDOW_WORDS],
             drops: 0,
         }
     }
@@ -22,7 +25,7 @@ impl AntiReplayWindow {
     pub fn with_offset(offset: u64) -> Self {
         AntiReplayWindow {
             last_seq: offset,
-            bitmap: 0,
+            bitmap: [0; WINDOW_WORDS],
             drops: 0,
         }
     }
@@ -32,11 +35,20 @@ impl AntiReplayWindow {
     /// `mark(seq)` would be permitted after AEAD authentication.
     #[inline(always)]
     pub fn check(&self, seq: u64) -> bool {
+        if seq == 0 {
+            return false;
+        }
         if seq > self.last_seq {
             true
         } else {
             let diff = self.last_seq - seq;
-            diff < 64 && (self.bitmap & (1 << diff)) == 0
+            if diff >= WINDOW_SIZE {
+                false
+            } else {
+                let word_idx = ((seq / 64) % (WINDOW_WORDS as u64)) as usize;
+                let bit_idx = seq % 64;
+                (self.bitmap[word_idx] & (1u64 << bit_idx)) == 0
+            }
         }
     }
 
@@ -45,15 +57,28 @@ impl AntiReplayWindow {
     /// for duplicates; no-op for behind-window (unreachable via check).
     #[inline(always)]
     pub fn mark(&mut self, seq: u64) {
+        if seq == 0 {
+            return;
+        }
         if seq > self.last_seq {
-            let diff = seq - self.last_seq;
-            self.bitmap = if diff >= 64 { 0 } else { self.bitmap << diff };
-            self.bitmap |= 1;
+            let new_word = seq / 64;
+            let old_word = self.last_seq / 64;
+            let diff_words = new_word.saturating_sub(old_word);
+            if diff_words >= WINDOW_WORDS as u64 {
+                self.bitmap = [0; WINDOW_WORDS];
+            } else {
+                for w in (old_word + 1)..=new_word {
+                    self.bitmap[(w % (WINDOW_WORDS as u64)) as usize] = 0;
+                }
+            }
             self.last_seq = seq;
+            let word_idx = ((seq / 64) % (WINDOW_WORDS as u64)) as usize;
+            self.bitmap[word_idx] |= 1u64 << (seq % 64);
         } else {
             let diff = self.last_seq - seq;
-            if diff < 64 {
-                self.bitmap |= 1 << diff;
+            if diff < WINDOW_SIZE {
+                let word_idx = ((seq / 64) % (WINDOW_WORDS as u64)) as usize;
+                self.bitmap[word_idx] |= 1u64 << (seq % 64);
             }
         }
     }
@@ -64,25 +89,13 @@ impl AntiReplayWindow {
     /// before authentication.
     #[inline(always)]
     pub fn check_and_update(&mut self, seq: u64) -> bool {
-        let accept = if seq > self.last_seq {
-            let diff = seq - self.last_seq;
-            self.bitmap = if diff >= 64 { 0 } else { self.bitmap << diff };
-            self.bitmap |= 1;
-            self.last_seq = seq;
+        if self.check(seq) {
+            self.mark(seq);
             true
         } else {
-            let diff = self.last_seq - seq;
-            if diff >= 64 || (self.bitmap & (1 << diff)) != 0 {
-                false
-            } else {
-                self.bitmap |= 1 << diff;
-                true
-            }
-        };
-        if !accept {
             self.drops = self.drops.wrapping_add(1);
+            false
         }
-        accept
     }
 
     pub fn drop_count(&self) -> u64 {
@@ -97,19 +110,34 @@ impl AntiReplayWindow {
         self.drops = self.drops.wrapping_add(1);
     }
 
-    /// Export persistent recv-window state (last_seq, bitmap).
+    /// Export persistent recv-window state (last_seq, active bitmap word).
     pub fn parts(&self) -> (u64, u64) {
-        (self.last_seq, self.bitmap)
+        let active_word = if self.last_seq > 0 {
+            self.bitmap[((self.last_seq / 64) % (WINDOW_WORDS as u64)) as usize]
+        } else {
+            0
+        };
+        (self.last_seq, active_word)
+    }
+
+    /// Export full 1024-bit RFC 6479 bitmap words.
+    pub fn full_bitmap(&self) -> [u64; WINDOW_WORDS] {
+        self.bitmap
     }
 
     /// Reconstruct from persistent state. Drops counter restarts at 0
     /// (operational metric, not security state).
-    pub fn from_parts(last_seq: u64, bitmap: u64) -> Self {
-        AntiReplayWindow {
+    pub fn from_parts(last_seq: u64, bitmap_word: u64) -> Self {
+        let mut w = AntiReplayWindow {
             last_seq,
-            bitmap,
+            bitmap: [0; WINDOW_WORDS],
             drops: 0,
+        };
+        if last_seq > 0 {
+            let idx = ((last_seq / 64) % (WINDOW_WORDS as u64)) as usize;
+            w.bitmap[idx] = bitmap_word;
         }
+        w
     }
 }
 
@@ -140,26 +168,27 @@ mod tests {
     }
 
     #[test]
-    fn sixty_three_behind_accepts_sixty_four_drops() {
+    fn rfc6479_1024_window_boundaries() {
         let mut w = AntiReplayWindow::new();
-        assert!(w.check_and_update(100));
-        assert!(w.check_and_update(37)); // diff 63 → accept
-        assert!(!w.check_and_update(36)); // diff 64 → drop
+        assert!(w.check_and_update(2000));
+        // Up to 1023 packets behind is inside 1024-packet window:
+        assert!(w.check_and_update(2000 - 1023)); // diff 1023 -> accept
+        assert!(!w.check_and_update(2000 - 1024)); // diff 1024 -> drop
     }
 
     #[test]
     fn jump_ahead_resyncs_window() {
         let mut w = AntiReplayWindow::new();
         assert!(w.check_and_update(1));
-        assert!(w.check_and_update(1000)); // diff ≥ 64 → bitmap reset
-        assert!(!w.check_and_update(1)); // old window gone → drop
-        assert!(w.check_and_update(1001));
+        assert!(w.check_and_update(5000)); // diff >= 1024 -> bitmap reset
+        assert!(!w.check_and_update(1)); // old window gone -> drop
+        assert!(w.check_and_update(5001));
     }
 
     #[test]
-    fn delayed_replay_after_5s_equivalent_drops() {
+    fn delayed_replay_after_traffic_drops() {
         let mut w = AntiReplayWindow::new();
-        for s in 1..=10u64 {
+        for s in 1..=50u64 {
             assert!(w.check_and_update(s));
         }
         assert!(!w.check_and_update(3)); // captured frame replayed later

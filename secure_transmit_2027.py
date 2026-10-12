@@ -128,7 +128,14 @@ SESSION_REKEY_SECONDS = 15 * 60     # 15 min cap even if idle-ish
 # per-message — same order of magnitude as Apple PQ3 (~50 messages), a
 # stated cost/forgiveness tradeoff, not a limitation dodge.
 CER_EPOCH_MESSAGES = 128
-MAX_RECORD_PLAINTEXT = 16 * 1024    # 16 KiB cap per record (DoS bound)
+# Honest per-record plaintext cap: a sealed frame is
+# magic(2)+seq(8)+len(2)+ftype(1)+plaintext+tag(16) and must land in one of
+# PAD_QUANTA, the largest being 1232 B (IPv6-minimum-MTU budget), so the
+# reachable plaintext maximum is 1232-29-1 = 1203 B. The previous 16 KiB
+# value was unreachable (F-09: _pad_len raised first) and misreported the
+# API to integrators; larger messages are chunked upstream, never sealed
+# as one record.
+MAX_RECORD_PLAINTEXT = 1232 - 29 - 1  # 1203 B
 # Total-wire quanta (header 13B + tag 16B included) — always <= 1280 IPv6 MTU.
 PAD_QUANTA = (256, 512, 1232)
 FRAME_MAGIC = b"\x53\x54"    # "ST" — typed frame, no comparable plaintext strs
@@ -1575,7 +1582,14 @@ def _get_audit_chain():
         if ledger:
             _audit_chain = TamperEvidentAuditChain(ledger_path=_P(ledger))
         else:
-            _audit_chain = TamperEvidentAuditChain()
+            from trust_anchor import ephemeral_required as _eph_req
+            if _eph_req():
+                # F-17: ephemeral/TS/prod without an explicit ledger path
+                # must not create the default on-disk logs/ ledger; keep
+                # the chain in-process RAM only (no restart persistence).
+                _audit_chain = TamperEvidentAuditChain(memory_only=True)
+            else:
+                _audit_chain = TamperEvidentAuditChain()
     return _audit_chain
 
 

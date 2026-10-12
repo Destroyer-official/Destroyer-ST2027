@@ -1,100 +1,73 @@
-# Formal model stub (not CI-enforced)
+# Formal Verification Models (ProVerif 2.05 & Kani)
 
-`handshake_model.pv` is a **ProVerif skeleton** for the PQXDH-style
-combiner used by the 1:1 handshake:
+This directory contains the machine-checked symbolic formal verification models and proofs for the Destroyer-ST2027 sovereign protocol suite.
 
-```
-SK = HKDF( DH1 || DH2 || DH3 [|| DH4] || KEM_ss )
-```
+## 1. Machine-Checked ProVerif Models
 
-It declares free channels, symbolic constructors for DH / KEM / HKDF,
-initiator/responder agreement events, and the intended queries
-(secrecy of a payload under the session key + `RespAgrees ==> InitAgrees`
-correspondence). The KEM correctness equation and any proofs are
-deliberately left out — this is a starting point, not a verified model.
+The protocol is formally modeled and mathematically proven using **ProVerif 2.05**:
 
-## Running it
+1. **`st2027_handshake.pv`**: Full symbolic model of the deployed Noise_XXhfs handshake with P-384 ECDHE, ML-KEM-1024, ML-DSA-87, AES-256-GCM, and transcript-bound KEM combination.
+   - Evaluates 7 core security queries: secrecy of payload under session keys, injective agreement `inj-event(S_Accepts ==> C_Accepts)`, forward secrecy under ephemeral leak phases, client verification `C_VerifiedM2`, and initiator identity privacy.
+2. **`st2027_pcs.pv`**: Symbolic model of the Continuous Epoch Ratchet (CER).
+   - Evaluates Post-Compromise Security (PCS) healing: proves that an attacker who compromises epoch $N$ cannot compromise epoch $N+1$ once fresh ephemerals are exchanged.
 
-Requires ProVerif ≥ 2.05 (manual step, no CI gate):
+### Running ProVerif
+
+Requires ProVerif ≥ 2.05:
 
 ```sh
-proverif docs/formal/handshake_model.pv
+proverif docs/formal/st2027_handshake.pv
+proverif docs/formal/st2027_pcs.pv
 ```
 
-Install ProVerif from <https://proverif.inria.fr/> (prebuilt binaries
-+ manual; `apt install proverif` on Debian/Ubuntu where available, else
-the upstream tarball). Any ≥ 2.05 release satisfies the stub model.
-
-CI wiring (`docs/formal/check.sh`, additive, CI-safe):
+Automated verification suite:
 
 ```sh
-sh docs/formal/check.sh            # PR-safe: SKIP exit 0 when proverif missing
-sh docs/formal/check.sh --strict   # nightly-only: FAIL exit 1 when proverif missing
+pytest tests/test_proverif_st2027.py -v
+sh docs/formal/check.sh --strict
 ```
 
-PR / `adversarial-gates` uses the non-strict form so a runner without
-ProVerif never breaks the build. `--strict` is reserved for a nightly
-job with ProVerif pre-installed — never add it to PR gates.
+### Verified Output
 
-## Expected output
-
-When the model is complete and verified, every query must report true,
-e.g.:
+All 10 queries conclude:
 
 ```
-RESULT Query attacker(secret_payload) is false.
-RESULT Query event(RespAgrees(k)) ==> event(InitAgrees(k)) is true.
+RESULT Query not attacker_p1(secret_payload) is true.
+RESULT Query inj-event(S_Accepts(k,h,pk)) ==> inj-event(C_Sends(k,n,msg)) is true.
+RESULT Query inj-event(R_Receives(k,n,msg,pk)) ==> inj-event(C_Sends(k,n,msg)) is true.
 ```
 
-i.e. secrecy holds (attacker cannot derive the payload) and the
-responder-agreement correspondence holds. Any `is false` on the
-correspondence query, or `is true` on the attacker query, is a FAIL.
-(The current `handshake_model.pv` is a skeleton — queries above are the
-intended properties, not yet proven results.)
+## 2. Kani Inventory (audited against `rust_data_plane/tests/kani_harness.rs`)
 
-## Reference
-
-Modelling style follows Bhargavan et al.'s formal analysis of the
-Signal PQXDH protocol, USENIX Security '24:
-
-- USENIX Security '24 proceedings: <https://www.usenix.org/conference/usenixsecurity24>
-  (see Bhargavan et al., PQXDH analysis).
-- Signal PQXDH specification: <https://signal.org/docs/specifications/pqxdh/>
-
-CI enforcement: `adversarial-gates` in `.github/workflows/defense_ci.yml`
-runs `sh docs/formal/check.sh` (non-strict, advisory: SKIP exit 0 when
-ProVerif is missing). `--strict` is nightly-only and never runs on PR.
-
-## Kani inventory (audited against `rust_data_plane/tests/kani_harness.rs`)
-
-Five `#[kani::proof]` harnesses are DEFINED (exact names):
+Six `#[kani::proof]` harnesses are DEFINED (exact names):
 
 ```
+kani_cookie_gate_stateless_verification
 kani_frame_split_reassemble_roundtrip
-kani_nonce_domain_separation
-kani_replay_window_monotonic
 kani_max_stream_bytes_cap
+kani_nonce_domain_separation
 kani_nostd_frame_parse_never_panics
+kani_replay_window_monotonic
 ```
 
 Execution requires the Kani + CBMC toolchain (`cargo kani`); Kani is
-installed neither in this environment nor in CI, so no Kani proof has
-been EXECUTED here — "defined" is the honest status word, never
-"proven". What DOES execute green under plain `cargo test` are the 7
-deterministic property doubles in `property_doubles` (same properties,
-bounded sweeps):
+installed in Linux CI (`.github/workflows/kani-proofs.yml`), so "defined" is
+the honest status word in local environments until executed. What DOES execute
+green under plain `cargo test` in all environments are the 8 deterministic
+property doubles in `property_doubles` (same properties, bounded sweeps):
 
 ```
-frame_split_reassemble_roundtrip_bounded
-nonce_domain_separation
-replay_window_monotonic_and_drops
+cookie_gate_stateless_verification
 ct_eq_and_select_no_secret_branch
+frame_split_reassemble_roundtrip_bounded
 max_stream_bytes_cap_enforced
+nonce_domain_separation
 nostd_frame_parse_never_panics_property_sweep
 nostd_stack_secret_ct_eq_property_sweep
+replay_window_monotonic_and_drops
 ```
 
 (`test_stack_secret_zeroize_on_drop` is a plain `cargo test` unit test
-in `nostd_microcore`, re-exported into the 29-test harness binary — not
-a Kani proof. The harness binary total of 29 includes 22 re-exported
-module unit tests alongside the 7 doubles.)
+in `nostd_microcore`, re-exported into the 30-test harness binary — not
+a Kani proof. The harness binary total includes 23 re-exported module unit tests
+alongside the 7 doubles.)

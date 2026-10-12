@@ -67,20 +67,22 @@ FORBIDDEN_BADGE_FRAGMENTS = [
 ]
 
 KANI_PROOFS = [
+    "kani_cookie_gate_stateless_verification",
     "kani_frame_split_reassemble_roundtrip",
-    "kani_nonce_domain_separation",
-    "kani_replay_window_monotonic",
     "kani_max_stream_bytes_cap",
+    "kani_nonce_domain_separation",
     "kani_nostd_frame_parse_never_panics",
+    "kani_replay_window_monotonic",
 ]
 PROPERTY_DOUBLES = [
-    "frame_split_reassemble_roundtrip_bounded",
-    "nonce_domain_separation",
-    "replay_window_monotonic_and_drops",
+    "cookie_gate_stateless_verification",
     "ct_eq_and_select_no_secret_branch",
+    "frame_split_reassemble_roundtrip_bounded",
     "max_stream_bytes_cap_enforced",
+    "nonce_domain_separation",
     "nostd_frame_parse_never_panics_property_sweep",
     "nostd_stack_secret_ct_eq_property_sweep",
+    "replay_window_monotonic_and_drops",
 ]
 
 

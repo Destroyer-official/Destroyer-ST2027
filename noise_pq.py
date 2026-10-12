@@ -671,11 +671,14 @@ def transport_send(sess: NoiseSession, pt: bytes) -> bytes:
     return struct.pack(">Q", seq) + ct
 
 
+REPLAY_WINDOW_BITS = 1024
+
+
 def _recv_check(sess: NoiseSession, seq: int) -> None:
     """Read-only replay test. Safe on unauthenticated input; no mutation.
 
-    Mirrors secure_transmit_2027.Channel semantics (RFC 6479: advance
-    only on validated S; WireGuard: check only after verified tag).
+    Mirrors RFC 6479 1024-bit sliding window semantics (advance only on
+    validated S; WireGuard: check only after verified tag).
     """
     if seq < 0 or seq >= (1 << 64):
         raise NoiseError("sequence violation")
@@ -684,7 +687,7 @@ def _recv_check(sess: NoiseSession, seq: int) -> None:
     if seq < sess._recv_win_base:
         raise NoiseError("replay rejected")
     off = seq - sess._recv_win_base
-    if off < 64 and ((sess._recv_win_bits >> off) & 1):
+    if off < REPLAY_WINDOW_BITS and ((sess._recv_win_bits >> off) & 1):
         raise NoiseError("replay rejected")
 
 
@@ -696,13 +699,13 @@ def _recv_mark(sess: NoiseSession, seq: int) -> None:
     if seq < sess._recv_win_base:
         return  # validated by _recv_check; nothing to record
     off = seq - sess._recv_win_base
-    if off < 64:
+    if off < REPLAY_WINDOW_BITS:
         sess._recv_win_bits |= (1 << off)
     else:
-        shift = off - 63
-        sess._recv_win_bits = 0 if shift >= 64 else (sess._recv_win_bits >> shift)
+        shift = off - (REPLAY_WINDOW_BITS - 1)
+        sess._recv_win_bits = 0 if shift >= REPLAY_WINDOW_BITS else (sess._recv_win_bits >> shift)
         sess._recv_win_base += shift
-        sess._recv_win_bits |= (1 << 63)
+        sess._recv_win_bits |= (1 << (REPLAY_WINDOW_BITS - 1))
 
 
 def transport_recv(sess: NoiseSession, wire: bytes) -> bytes:

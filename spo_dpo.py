@@ -376,6 +376,101 @@ def _verify_one(
     )
 
 
+def _strict_mode() -> bool:
+    return _env_true("P2P_TS_MODE") or _env_true("P2P_PRODUCTION")
+
+
+def _serialize_approval(pub: bytes, approval: OperationApproval) -> Dict[str, Any]:
+    """Embed one verified approval into a receipt for later re-verification."""
+    return {
+        "pub": bytes(pub).hex(),
+        "label": str(approval.officer_label),
+        "token_ref": str(approval.token_ref),
+        "client_nonce": bytes(approval.client_nonce).hex(),
+        "approved_at": float(approval.approved_at),
+        "sig": bytes(approval.approval_sig).hex(),
+    }
+
+
+def _receipt_base(ch: OperationChallenge, mode: str) -> Dict[str, Any]:
+    """v2 receipt skeleton: server challenge + payload binding, approvals appended."""
+    return {
+        "v": 2,
+        "mode": mode,
+        "op": ch.operation_id,
+        "class": _canonical_norm(ch.classification),
+        "payload_hex": bytes(ch.payload_digest).hex(),
+        "server_nonce": bytes(ch.server_nonce).hex(),
+        "issued_at": float(ch.issued_at),
+        "approvals": [],
+        "ts": _utcnow(),
+    }
+
+
+def _verify_receipt_approvals(receipt: Dict[str, Any], want_mode: str) -> None:
+    """Re-verify embedded ML-DSA-87 approvals against the receipt binding.
+
+    F-02: the receipt is self-authenticating — each approval signature covers
+    (domain, class, op, payload_digest, server_nonce, officer, token, client
+    nonce, timestamp). An unsigned or keyless JSON blob cannot satisfy this
+    gate. Deliberately does NOT call _remember: the ceremony already consumed
+    the approval nonce when the receipt was minted; require-time runs on both
+    ends of the same movement (sender + receiver) and must not false-positive
+    as replay.
+    """
+    approvals = receipt.get("approvals")
+    if not isinstance(approvals, list):
+        raise AuthorizationError("authorization rejected")
+    n_expected = 2 if want_mode == MODE_DPO else 1
+    if len(approvals) != n_expected:
+        raise AuthorizationError("authorization rejected")
+    try:
+        op_id = str(receipt.get("op", ""))
+        norm_class = _canonical_norm(str(receipt.get("class", "")))
+        payload_digest = bytes.fromhex(str(receipt.get("payload_hex", "")))
+        server_nonce = bytes.fromhex(str(receipt.get("server_nonce", "")))
+    except Exception:
+        raise AuthorizationError("authorization rejected")
+    if (not op_id or len(payload_digest) != 64
+            or len(server_nonce) != NONCE_LEN
+            or norm_class not in MIN_MODE_FOR_CLASS):
+        raise AuthorizationError("authorization rejected")
+    pubs: List[bytes] = []
+    now = _utcnow()
+    for appr in approvals:
+        if not isinstance(appr, dict):
+            raise AuthorizationError("authorization rejected")
+        try:
+            pub = bytes.fromhex(str(appr.get("pub", "")))
+            client_nonce = bytes.fromhex(str(appr.get("client_nonce", "")))
+            sig = bytes.fromhex(str(appr.get("sig", "")))
+            approved_at = float(appr.get("approved_at"))
+        except Exception:
+            raise AuthorizationError("authorization rejected")
+        if len(pub) != 2592 or len(client_nonce) != NONCE_LEN or len(sig) < 1000:
+            raise AuthorizationError("authorization rejected")
+        age = now - approved_at
+        if age < -5.0 or age > APPROVAL_LIFETIME_S:
+            raise AuthorizationError("authorization rejected")
+        ch = OperationChallenge(
+            operation_id=op_id,
+            classification=norm_class,
+            payload_digest=payload_digest,
+            server_nonce=server_nonce,
+        )
+        body = _approval_body(
+            ch,
+            str(appr.get("label", "")),
+            str(appr.get("token_ref", "")),
+            client_nonce,
+            approved_at,
+        )
+        _verify_body(pub, body, sig)
+        pubs.append(pub)
+    if want_mode == MODE_DPO and _compare(pubs[0], pubs[1]):
+        raise AuthorizationError("authorization rejected")
+
+
 def authorize_spo(
     ch: OperationChallenge, handle: Any, approval: OperationApproval
 ) -> Dict[str, Any]:
@@ -384,15 +479,11 @@ def authorize_spo(
         raise AuthorizationError("authorization rejected")
     if _hardware_required() and not bool(getattr(handle, "stored_in_hsm", False)):
         raise AuthorizationError("authorization rejected")
-    _verify_one(_pub_bytes(handle), str(getattr(handle, "label", "")), _token_ref(handle), ch, approval)
-    receipt = {
-        "mode": MODE_SPO,
-        "op": ch.operation_id,
-        "class": _canonical_norm(ch.classification),
-        "officer": str(getattr(handle, "label", "")),
-        "payload_hex": bytes(ch.payload_digest).hex(),
-        "ts": _utcnow(),
-    }
+    pub = _pub_bytes(handle)
+    _verify_one(pub, str(getattr(handle, "label", "")), _token_ref(handle), ch, approval)
+    receipt = _receipt_base(ch, MODE_SPO)
+    receipt["officer"] = str(getattr(handle, "label", ""))
+    receipt["approvals"] = [_serialize_approval(pub, approval)]
     _audit("spo_authorized", {"op": receipt["op"]})
     return receipt
 
@@ -530,18 +621,16 @@ def authorize_dpo(
         raise AuthorizationError("authorization rejected")
     _verify_one(pub_one, label_one, ref_one, ch, approval_one)
     _verify_one(pub_two, label_two, ref_two, ch, approval_two)
-    receipt = {
-        "mode": MODE_DPO,
-        "op": ch.operation_id,
-        "class": _canonical_norm(ch.classification),
-        "officer_one": label_one,
-        "officer_two": label_two,
-        "payload_hex": bytes(ch.payload_digest).hex(),
-        "delta": delta,
-        "rdelta": _rdelta,
-        "channels": [_c1, _c2] if (_c1 or _c2) else [],
-        "ts": _utcnow(),
-    }
+    receipt = _receipt_base(ch, MODE_DPO)
+    receipt["officer_one"] = label_one
+    receipt["officer_two"] = label_two
+    receipt["delta"] = delta
+    receipt["rdelta"] = _rdelta
+    receipt["channels"] = [_c1, _c2] if (_c1 or _c2) else []
+    receipt["approvals"] = [
+        _serialize_approval(pub_one, approval_one),
+        _serialize_approval(pub_two, approval_two),
+    ]
     _audit("dpo_authorized", {"op": receipt["op"]})
     return receipt
 

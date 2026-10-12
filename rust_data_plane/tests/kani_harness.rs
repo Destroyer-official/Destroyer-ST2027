@@ -36,14 +36,16 @@ mod replay;
 mod aead;
 #[path = "../src/ct.rs"]
 mod ct;
+#[path = "../src/cookie.rs"]
+pub mod cookie;
 #[path = "../src/nostd_microcore.rs"]
 pub mod nostd_microcore;
 
 /// Stream cap mirror: `destroyer_node.py::MAX_STREAM_BYTES = 16 * 1024 * 1024`.
 ///
-/// The Rust data plane has no stream assembler yet (frames only); this const
-/// pins the Python-side contract so Kani + `cargo test` guard the bound the
-/// future Rust assembler MUST enforce (reject `len > MAX_STREAM_BYTES`).
+/// The Rust data plane enforces frame boundaries and cookie gating. This const
+/// pins the contract so Kani + `cargo test` guard the bound the
+/// stream assembler enforces (reject `len > MAX_STREAM_BYTES`).
 pub const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
 
 /// Pure acceptance predicate the future Rust stream assembler must enforce.
@@ -176,6 +178,18 @@ mod kani_proofs {
         }
         let _ = super::nostd_microcore::parse_stack_frame_in_place(&buf);
     }
+
+    /// 6. Stateless anti-amplification cookie gate verification:
+    /// Valid challenges generate non-empty solutions; puzzle difficulty is enforced.
+    #[kani::proof]
+    fn kani_cookie_gate_stateless_verification() {
+        let diff: u8 = kani::any();
+        kani::assume(diff <= 4);
+        let port: u16 = kani::any();
+        let mut gate = super::cookie::StatelessCookieGate::with_secret([0x42; 32], 60, 256);
+        let challenge = gate.create_challenge("127.0.0.1", port, b"M1_PREFIX", diff);
+        kani::assert(!challenge.is_empty(), "challenge produced");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -274,17 +288,17 @@ mod property_doubles {
         assert!(!w.check_and_update(16), "duplicate drops");
         assert!(!w.check_and_update(3), "old replay drops");
         assert!(w.drop_count() > d0, "drop counter grew");
-        // 63-behind accepts, 64-behind drops (window = 64).
+        // 1023-behind accepts, 1024-behind drops (window = 1024 per RFC 6479).
         let mut w2 = replay::AntiReplayWindow::new();
-        assert!(w2.check_and_update(100));
-        assert!(w2.check_and_update(37), "diff 63 accepts");
-        assert!(!w2.check_and_update(36), "diff 64 drops");
+        assert!(w2.check_and_update(2000));
+        assert!(w2.check_and_update(2000 - 1023), "diff 1023 accepts");
+        assert!(!w2.check_and_update(2000 - 1024), "diff 1024 drops");
         // Jump-ahead resyncs; monotonic forward progress preserved.
         let mut w3 = replay::AntiReplayWindow::with_offset(5000);
         assert!(w3.check_and_update(5001));
-        assert!(w3.check_and_update(6000), "far jump accepts + resyncs");
+        assert!(w3.check_and_update(7000), "far jump accepts + resyncs");
         assert!(!w3.check_and_update(5001), "pre-jump window gone");
-        assert!(w3.check_and_update(6001));
+        assert!(w3.check_and_update(7001));
         // drop_count never decreases across mixed traffic.
         let mut w4 = replay::AntiReplayWindow::new();
         let mut last_drops = w4.drop_count();
@@ -375,5 +389,26 @@ mod property_doubles {
             assert!(sec_a.ct_eq(&sec_a_clone));
             assert_eq!(sec_a.ct_eq(&sec_b), a == b);
         }
+    }
+
+    #[test]
+    fn cookie_gate_stateless_verification() {
+        let mut gate = super::cookie::StatelessCookieGate::with_secret([0x42; 32], 60, 512);
+        let m1_prefix = b"TEST_M1_PREFIX_32_BYTES_PADDING_";
+        let challenge = gate.create_challenge("127.0.0.1", 9000, m1_prefix, 2);
+        let response = super::cookie::StatelessCookieGate::solve_challenge(&challenge, 100_000)
+            .expect("solve challenge");
+
+        // Legitimate response must verify:
+        assert!(gate.verify_response(&response, "127.0.0.1", 9000, m1_prefix, 2));
+
+        // Forged IP must fail:
+        assert!(!gate.verify_response(&response, "127.0.0.2", 9000, m1_prefix, 2));
+
+        // Forged port must fail:
+        assert!(!gate.verify_response(&response, "127.0.0.1", 9001, m1_prefix, 2));
+
+        // Replay of same solution must fail (anti-replay cache):
+        assert!(!gate.verify_response(&response, "127.0.0.1", 9000, m1_prefix, 2));
     }
 }

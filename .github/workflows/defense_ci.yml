@@ -226,9 +226,17 @@ jobs:
               print(f'SKIP: liboqs native lib absent and no SBOM/verifier pin to assert ({e})'); sys.exit(0)
           "
 
-      - name: Formal handshake model (ProVerif, non-strict SKIP when missing)
+      - name: Formal handshake model (ProVerif 2.05 mandatory blocking gate)
         run: |
-          sh docs/formal/check.sh
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq proverif || {
+            echo "Installing ProVerif binary from INRIA..."
+            curl -sSL https://proverif.inria.fr/proverif2.05.tar.gz -o /tmp/proverif.tar.gz || true
+            if [ -f /tmp/proverif.tar.gz ]; then
+              tar -xzf /tmp/proverif.tar.gz -C /tmp/ && sudo cp /tmp/proverif*/proverif /usr/local/bin/ || true
+            fi
+          }
+          sh docs/formal/check.sh --strict
 
       - name: Cosign/Rekor SBOM signature stub (SKIP when cosign or sigs missing)
         run: |
