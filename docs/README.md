@@ -11,6 +11,7 @@ Every behavior stated in this documentation tree maps to verified source code (`
 ```
 docs/
 ├── ARCHITECTURE.md                          # Master system thesis, threat models, 2027 vs legacy stacks
+├── RUST_CORE.md                             # Native Rust Core Architecture & Migration Specification
 ├── README.md                                # This document index & cross-reference guide
 ├── SYSTEM_SECURITY_DOCUMENTATION.md         # Master Engineering Record & Tier 0-7 Architecture (Vol A)
 ├── SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md   # AST Mechanical Logic Flows & Parameter Catalog (Vol C)
@@ -91,7 +92,7 @@ The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`]
 ## 3. Operational Standards & Verification Traceability
 
 ### A. Automated Test Gates (100% Pass)
-The codebase is validated by the full automated battery (Python suites plus 80 cargo-test Rust tests: 51 library unit tests + 29-test harness binary) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
+The codebase is validated by the full automated battery (Python suites plus 118 cargo-test Rust tests: 88 library unit tests + 30-test harness binary: 7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
 ```bash
 # Execute the unified 2027 Top-Secret test battery
 pytest tests/test_ts_hw_layer.py tests/test_ts_runtime.py tests/test_secure_transmit_2027.py \

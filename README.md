@@ -476,7 +476,8 @@ The top-level operational entrypoint governing hardware probes, cryptographic ne
 
 ### 2. Standalone Zero-Python Data-Plane Binary (`secure-transmit` in [`rust_data_plane/`](rust_data_plane/))
 A high-performance, self-contained native executable compiled from Rust (`src/main.rs`). Designed for deployment in resource-constrained environments, hardware security appliances, or dedicated forwarding gateways without requiring a Python runtime:
-- **Subcommands:** `auth-keygen`, `auth-sign`, `auth-verify`, `keygen`, `send`, `recv`, `send-file`, `recv-file`, `channel`, `stream-chaff`, `diode-send`, `diode-recv`, `benchmark`, `selftest`.
+- **Subcommands:** `auth-keygen`, `auth-sign`, `auth-verify`, `keygen`, `send`, `recv`, `send-file`, `recv-file`, `channel`, `stream-chaff`, `diode-send`, `diode-recv`, `cookie-challenge`, `cookie-solve`, `cookie-verify`, `threat-eval`, `zero-trust-eval`, `cot-beacon`, `tactical-msg`, `eam-auth`, `zeroize`, `benchmark`, `selftest`.
+- **Tactical Military Operations:** Emits ML-DSA-87 signed NATO MIL-STD-6090 Cursor-on-Target beacons (`cot-beacon`), enforces MIL-STD-6040 tactical message precedence and NSA RTB dirty-word screening (`tactical-msg`), and executes Two-Person Integrity Emergency Action Message dual-officer authorization verification (`eam-auth`).
 - **Chunking Pipeline:** Fragments files into 1205-byte quantum cells, sequence-numbered with monotonic u64 counters, verified end-to-end via streaming SHA-256 digests.
 - **Fail-Closed Mechanics:** Emits exit code 4 upon detecting corrupt datagrams, sequence gaps, or authentication failures without writing incomplete payloads to disk.
 
@@ -485,6 +486,14 @@ A zero-dependency Rust shared library (`ts_rt.dll` / `libts_rt.so`) linked via C
 - `tsrt_lock_pages`: Locks process memory pages into physical RAM via `VirtualLock` (Windows) or `mlock` (POSIX).
 - `tsrt_zeroize`: Overwrites memory with volatile compiler memory fences preventing dead-code optimization.
 - `tsrt_ct_equal`: Constant-time memory comparison executing in identical CPU clock cycles regardless of secret byte equality.
+
+### 4. Tactical C4ISR Operations Console ([`tactical_operator_console.py`](tactical_operator_console.py))
+A turnkey command-and-control operations terminal designed for tactical field workstations and Joint All-Domain Command and Control (JADC2) integration:
+- **Interactive Operator Terminal:** Command interface for situational awareness, Cursor-on-Target beacon dispatch, and tactical message routing.
+- **ATAK / WinTAK Multicast Bridge:** Broadcasts standard MIL-STD-6090 CoT XML datagrams over UDP multicast (`239.2.3.1:6969`) and unicast port 4242 for immediate situational map rendering on Android and Windows Tactical Assault Kit devices.
+- **Voice-Burst Push-to-Talk (PTT):** Simulates tactical radio voice packet bursts encapsulated with monotonic sequence counters and cryptographic integrity checks.
+- **Two-Person Integrity EAM Authorization:** Dual-custody emergency directive verification gate ensuring no high-consequence order is executed without two verified officer signatures.
+- **Automated Battle-Readiness Drill:** Invoked via `--drill` to execute end-to-end loopback verification of CoT dispatch, tactical messaging, and bridge forwarding in automated CI environments.
 
 ---
 
@@ -510,15 +519,17 @@ The platform is backed by the full automated suite (Python suites plus cargo-tes
 |   ├── test_ts_attest.py                (IETF RATS platform attestation, TPM evidence validation)         |
 |   ├── test_hw_readiness.py             (check-hw CLI probes, UAC non-interactive consent handling)       |
 |   ├── test_runbooks_ps.py              (PowerShell overlay deployment script validation)                 |
-|   ├── test_rust_standalone_binary.py   (secure-transmit send-file / recv-file roundtrip and exit 4)     |
+|   ├── test_rust_standalone_binary.py   (secure-transmit 17 integration tests: send/recv, diode, KEX)    |
+|   ├── test_tactical_operations_suite.py (CoT beacon, MIL-STD-6040 message, RTB filter, EAM dual auth)   |
+|   ├── test_rust_core_security_suite.py (Cookie gate, ACD threat engine, Bell-LaPadula MLS, memory wipe)  |
 |   ├── test_no_marketing_buzzwords.py  (Property test: 0 occurrences of prohibited promotional text)     |
 |   └── test_no_emoji_property.py        (Property test: 0 occurrences of Unicode emoji glyphs)            |
 +---------------------------------------------------------------------------------------------------------+
 | Battery 2: Native Rust Data-Plane & Kani Model Checking Battery                                         |
 | Command: cargo test --manifest-path rust_data_plane/Cargo.toml                                          |
-| Status:  Rust battery green: 75 library unit tests + 30-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
+| Status:  Rust battery green: 88 library unit tests + 30-test harness binary (7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) |
 | Coverage:                                                                                               |
-|   ├── Unit Tests (75 passed)           (Noise-XXhfs, 3-of-5 PKI, SPQR ratchet, ML-DSA/ML-KEM, AEAD vectors, chunking bounds, UDP token bucket, replay bitmap, memlock guard)  |
+|   ├── Unit Tests (88 passed)           (Noise-XXhfs, 3-of-5 PKI, SPQR ratchet, ML-DSA/ML-KEM, AEAD vectors, chunking bounds, UDP token bucket, replay bitmap, memlock guard, cookie gate, ACD defense, zero-trust MLS, memory guard) |
 |   └── Harness binary (30 passed)       (7 deterministic property doubles + re-exported module unit tests) |
 +---------------------------------------------------------------------------------------------------------+
 | TOTAL SUITE STATUS: full automated battery green (CI is the source of truth; no fixed totals cited)           |
@@ -738,12 +749,61 @@ python scripts/verify_50x_sovereign_superiority.py
 # 5. Reproducible Build Verification & Local Provenance (SLSA-Aligned):
 python scripts/verify_reproducible_build.py
 
-# 6. Rust Data Plane Unit & Formal Harness Tests (80/80 Passed):
+# 6. Rust Data Plane Unit & Formal Harness Tests (118/118 Passed):
 cargo test --manifest-path rust_data_plane/Cargo.toml
 
-# 7. Standalone Executable Integration Battery (16/16 Passed):
+# 7. Standalone Executable Integration Battery (17/17 Passed):
 pytest tests/test_rust_standalone_binary.py
+
+# 8. Tactical Operations Integration Suite (6/6 Passed):
+pytest tests/test_tactical_operations_suite.py
+
+# 9. Native Rust Core Security Suite (9/9 Passed):
+pytest tests/test_rust_core_security_suite.py
 ```
+
+### 10.12 Standalone NATO CoT Beacon, MIL-STD-6040 Messaging & EAM Verification (`secure-transmit`)
+
+The native Rust binary supports zero-Python tactical command execution:
+```bash
+# 1. Generate & cryptographically sign MIL-STD-6090 Cursor-on-Target XML track:
+./rust_data_plane/target/release/secure-transmit cot-beacon \
+  --callsign EAGLE-LEAD \
+  --lat 38.8719 \
+  --lon -77.0563 \
+  --sk-file keys/operator.sk \
+  --out /tmp/eagle_lead.xml
+
+# 2. Transmit MIL-STD-6040 tactical message with NSA RTB dirty-word filter:
+./rust_data_plane/target/release/secure-transmit tactical-msg \
+  --precedence Y \
+  --clearance TOP_SECRET \
+  --caveats NOFORN \
+  --msg "RADAR CONTACT CONFIRMED GRID 22B" \
+  --scan-rtb
+
+# 3. Two-Person Integrity Emergency Action Message dual-officer authorization:
+./rust_data_plane/target/release/secure-transmit eam-auth \
+  --directive "DEFCON-1 IMMEDIATE AIR DEFENSE SCRAMBLE" \
+  --officer1-pk keys/officer1.pk --officer1-sig keys/officer1.sig \
+  --officer2-pk keys/officer2.pk --officer2-sig keys/officer2.sig
+```
+
+### 10.13 Tactical C4ISR Field Console & ATAK/WinTAK Gateway (`tactical_operator_console.py`)
+
+A unified field operator terminal connecting tactical users to ATAK/WinTAK and defense radio nets:
+```bash
+# Launch interactive C4ISR operator workstation:
+python tactical_operator_console.py
+
+# Launch non-interactive battle-readiness drill:
+python tactical_operator_console.py --drill
+```
+Capabilities:
+- **Situational Awareness CoT Broadcast:** Automatically emits Cursor-on-Target XML updates to the standard ATAK multicast group `239.2.3.1:6969` and unicast port 4242.
+- **Push-to-Talk (PTT) Simulation:** Simulates encrypted voice burst transmission with sequence monotonicity and replay protection.
+- **MIL-STD-6040 Message Engine:** Routes precedence-tagged tactical orders (`FLASH_OVERRIDE`, `FLASH`, `IMMEDIATE`, `PRIORITY`, `ROUTINE`).
+- **Two-Person Integrity Verification:** Enforces dual-officer co-signing before authorizing high-consequence emergency action directives.
 
 ---
 

@@ -131,7 +131,8 @@ policy ok. ALL PASS.
 4. DONE — standalone CLI exposure in `secure-transmit`: `auth-keygen`,
    `auth-sign`, `auth-verify`, `channel`, `stream-chaff`, `diode-send`,
    `diode-recv`, `cookie-challenge`, `cookie-solve`, `cookie-verify`,
-   `threat-eval`, `zero-trust-eval`, and expanded `selftest` (FIPS 204 ML-DSA-87,
+   `threat-eval`, `zero-trust-eval`, `cot-beacon`, `tactical-msg`, `eam-auth`,
+   `zeroize`, and expanded `selftest` (FIPS 204 ML-DSA-87,
    Noise-XXhfs roundtrip, SPQR fresh-KEM ratchet, 3-of-5 threshold PKI quorum,
    cookie gate, ACD defense, zero-trust, memory-guard).
 5. DONE — top-level package export in `destroyer_core/__init__.py`:
@@ -144,7 +145,7 @@ policy ok. ALL PASS.
 7. DONE — Native Rust Core Security Suite formalization:
    - `cookie.rs`: RFC 9000 / WireGuard style Stateless Anti-Amplification Cookie Gate with micro-PoW solver (8B nonce), 120s epoch key rotation, single-use replay protection cache, and `process_incoming_m1` ingress filter.
    - `acd.rs`: DoD cATO Pillar 2 Active Cyber Defense autonomous threat engine with sliding-window event tracking, automated quarantine tables, emergency session isolation, and ML-DSA-87 signed audit records.
-   - `zero_trust.rs`: NIST SP 800-207 continuous per-packet risk assessment engine, dynamic trust score progression (0–100), constant-time RBAC permissions, and fail-closed revocation on threshold breaches.
+   - `zero_trust.rs`: NIST SP 800-207 continuous per-packet risk assessment engine, Bell-LaPadula Multilevel Security (MLS), dynamic trust score progression (0–100), constant-time RBAC permissions, and NSA RTB dirty word content inspection.
    - `memory_guard.rs`: 64-bit CSPRNG stack canaries framing buffers, OS page-locking (`VirtualLock`/`mlock`), and NIST SP 800-88 / DoD 5220.22-M multi-pass volatile memory sanitization.
    - `SecureEngine`: Active defense hooks for peer binding, quarantine enforcement, and automatic threat event recording on replay / tamper detection.
 8. OPEN — rebuild liboqs at official 0.16.0 + Sigstore/Rekor anchoring for
@@ -162,8 +163,8 @@ policy ok. ALL PASS.
   (behavioral determinism test instead of byte comparison) and corrected
   stale "header in clear" claims in README/this doc.
 * Quality: `cargo fmt` clean, `cargo clippy --all-targets` zero warnings,
-  full Rust test suite 116 passed (86 lib + 30 kani property doubles),
-  46/46 pytest integration/interop passed green, and SLSA-aligned reproducible
+  full Rust test suite 118 passed (88 lib + 30 kani harness binary),
+  all pytest integration/interop suites passed green, and SLSA-aligned reproducible
   build verification signed with ML-DSA-87 passing at 100%.
 * NOTE: Python reference files (`noise_pq.py`, `active_cyber_defense.py`,
   `zero_trust_engine.py`, `memory_protection_engine.py`, etc.) are preserved

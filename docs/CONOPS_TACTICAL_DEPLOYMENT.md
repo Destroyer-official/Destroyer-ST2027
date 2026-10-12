@@ -308,6 +308,37 @@ Accessible at `http://127.0.0.1:8443` featuring:
 - 50X Sovereign Defense Superiority matrix comparison table
 - 100% Air-Gapped Operation with zero external CDNs or cloud dependencies
 
+### SOP-9: Tactical C4ISR Operator Console & ATAK/WinTAK Multicast Gateway
+```bash
+# Launch interactive Tactical C4ISR Operator Console:
+python tactical_operator_console.py
+
+# Launch automated battle-readiness drill:
+python tactical_operator_console.py --drill
+
+# Native Rust CLI Military Subcommands:
+# 1. Generate & sign NATO MIL-STD-6090 Cursor-on-Target beacon:
+./rust_data_plane/target/release/secure-transmit cot-beacon \
+  --callsign VIPER-01 --lat 38.8719 --lon -77.0563 \
+  --sk-file keys/operator.sk --out /tmp/viper_beacon.xml
+
+# 2. Transmit MIL-STD-6040 tactical message with RTB dirty-word filter:
+./rust_data_plane/target/release/secure-transmit tactical-msg \
+  --precedence Y --clearance TOP_SECRET --caveats NOFORN \
+  --msg "HOSTILE SENSOR DETECTED GRID 14S" --scan-rtb
+
+# 3. Cryptographic Two-Person Integrity Emergency Action Message validation:
+./rust_data_plane/target/release/secure-transmit eam-auth \
+  --directive "DEFCON-1 IMMEDIATE AIR DEFENSE SCRAMBLE" \
+  --officer1-pk keys/officer1.pk --officer1-sig keys/officer1.sig \
+  --officer2-pk keys/officer2.pk --officer2-sig keys/officer2.sig
+```
+The console integrates:
+- Real-time MIL-STD-6090 CoT situational awareness dispatcher.
+- Push-to-Talk (PTT) tactical voice burst simulator with cryptographic integrity headers.
+- ATAK/WinTAK multicast bridge emitting on `239.2.3.1:6969` (and unicast port 4242).
+- Two-Person Integrity (TPI) dual-custody authorization for emergency directives.
+
 ---
 
 ## 8. Communications Security (COMSEC) & Emission Security (EMSEC)
