@@ -4,7 +4,7 @@
     "decision_id": "ATO-2028-STRATEGIC-CNSA2-001",
     "authority": "None -- self-assessment prepared FOR Designated Authorizing Official review (DoD RMF / NSA CNSA 2.0 evidence; eMASS + NIAP/CMVP/CSfC steps still required for NSS)",
     "system_name": "Sovereign Military P2P Tactical Mesh (Destroyer-P2P)",
-    "timestamp_utc": "2026-10-13T04:39:26.557262+00:00",
+    "timestamp_utc": "2026-10-13T04:58:05.724337+00:00",
     "fips_199_impact_level": "HIGH-HIGH-HIGH",
     "cryptographic_profile": "NSA-CNSA-2.0-STRICT",
     "cato_pillars_self_assessed": [
@@ -30,7 +30,7 @@
       "gate_id": "G2",
       "title": "NIST ACVP / CAVP Validation",
       "status": "PASS",
-      "details": "13/13 CAVP test vectors verified (0 failures) for FIPS 203/204/205/197"
+      "details": "13/13 CAVP test vectors verified (0 failures) for FIPS 203/204/205/197 [acvp_cavp_validation_report.json]"
     },
     {
       "gate_id": "G3",
