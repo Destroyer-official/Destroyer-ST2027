@@ -75,7 +75,8 @@ class TestTacticalWebConsole(unittest.TestCase):
         })
         handler._handle_api_send({"sender": "NORAD_ALPHA", "message": "DEFCON-1 STATUS CONFIRMED"})
         data = self._parse_response(wfile)
-        self.assertEqual(data.get("status"), "TRANSMITTED")
+        self.assertEqual(data.get("status"), "TRANSMITTED_SIMULATED")
+        self.assertTrue(data.get("simulated"))
         self.assertIn("PENTAGON_BRAVO", data.get("reply", ""))
 
     def test_api_eam_nuclear_directive_endpoint(self):
@@ -83,9 +84,16 @@ class TestTacticalWebConsole(unittest.TestCase):
         directive = "DEFCON-1 AUTHORIZE STRATCOM STRIKE PACKAGE CHARLIE"
         handler, wfile = self._create_handler("POST", "/api/eam", {
             "originator": "NORAD_ALPHA",
-            "directive": directive
+            "directive": directive,
+            "officer_1_sig": "SIG_OFFICER_ALPHA_TEST",
+            "officer_2_sig": "SIG_OFFICER_BRAVO_TEST"
         })
-        handler._handle_api_eam({"originator": "NORAD_ALPHA", "directive": directive})
+        handler._handle_api_eam({
+            "originator": "NORAD_ALPHA",
+            "directive": directive,
+            "officer_1_sig": "SIG_OFFICER_ALPHA_TEST",
+            "officer_2_sig": "SIG_OFFICER_BRAVO_TEST"
+        })
         data = self._parse_response(wfile)
         self.assertEqual(data.get("status"), "EAM_RELEASED_AND_SEALED")
         self.assertEqual(data.get("dual_custody"), "2-OF-2_VERIFIED")
