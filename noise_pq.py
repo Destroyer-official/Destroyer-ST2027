@@ -420,12 +420,51 @@ def _take_ephemeral(sess: NoiseSession) -> bytes:
     return pub
 
 
+_PROD_UNPROVEN_WARNED = False
+
+
+def _warn_unproven_profile_once() -> None:
+    """F-05: one-time runtime disclosure that the profile is UNPROVEN.
+
+    Custom ML-DSA sig-substitution (es/se replaced by signatures over the
+    handshake hash) has no reduction to the hfs draft or PQNoise. Documented
+    in module header, README, ST2027_SPEC, RUST_CORE, and the ProVerif model.
+    This surfaces the same fact at session start under production env flags
+    so operators cannot miss it.
+    """
+    global _PROD_UNPROVEN_WARNED
+    if _PROD_UNPROVEN_WARNED:
+        return
+    import os as _os
+    prod = (
+        _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower()
+        in ("1", "true", "yes", "on")
+        or _os.environ.get("P2P_PRODUCTION", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    if not prod:
+        return
+    import warnings as _warnings
+    _warnings.warn(
+        "noise_pq: Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384 uses an "
+        "UNPROVEN custom ML-DSA-87 signature substitution for es/se "
+        "(no reduction to the Noise hfs draft or PQNoise). Structural tests "
+        "and a ProVerif model cover the skeleton; this is NOT a peer-reviewed "
+        "protocol. Do not treat as a substitute for a formal review before "
+        "NSS deployment.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    _PROD_UNPROVEN_WARNED = True
+
+
 def initiator_hello(sess: NoiseSession) -> bytes:
     """M1: -> e, e1. Preconditions: initiator, fresh session."""
     if sess._quarantined:
         raise NoiseError("session quarantined due to physical fault detection")
     if not sess.is_initiator or sess._e_pub is not None:
         raise NoiseError("handshake state violation")
+    _warn_unproven_profile_once()
     e_pub = _take_ephemeral(sess)
     ml_ek, ml_dk = _mlkem_keygen()
     sess._f_sk = ml_dk
@@ -445,6 +484,7 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
         raise NoiseError("handshake state violation")
     if len(m1) != P384_PUB + MLKEM_EK:
         raise NoiseError("M1 size violation")
+    _warn_unproven_profile_once()
     e_cli, ek_cli = m1[:P384_PUB], m1[P384_PUB:]
     # Noise processing order: mix RECEIVED values first (e_cli, ek_cli) in
     # send order, then generate own ephemeral material. Any other order

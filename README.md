@@ -123,7 +123,7 @@ The security architecture is formally specified against a multidimensional threa
 
 1. **Dolev-Yao Network Adversary:**
    - *Threat:* Full control over the transmission medium; capable of intercepting, altering, reordering, or injecting arbitrary datagrams.
-   - *Defense:* Authenticated Encryption with Associated Data (AEAD) via AES-256-GCM on every wire cell; 64-bit anti-replay sliding window bitmap implemented branchlessly in native Rust ([rust_data_plane/src/replay.rs](rust_data_plane/src/replay.rs)); bidirectional ephemeral key ratcheting.
+   - *Defense:* Authenticated Encryption with Associated Data (AEAD) via AES-256-GCM on every wire cell; 1024-packet RFC 6479 decoupled anti-replay sliding window bitmap (32-word circular ring) implemented in native Rust ([rust_data_plane/src/replay.rs](rust_data_plane/src/replay.rs)); bidirectional ephemeral key ratcheting.
 
 2. **Global Passive & Traffic Analysis Adversary:**
    - *Threat:* Backbone interceptors and state-level ISPs monitoring packet arrival times, packet intervals, and byte counts to perform statistical flow correlation.
@@ -251,7 +251,7 @@ The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the d
 ```
 
 ### Wire Field Definitions
-- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset with persistent monotonic counter synchronization. Validated read-only against the 64-bit sliding window bitmap in native Rust ([rust_data_plane/src/replay.rs](rust_data_plane/src/replay.rs)) prior to authentication, advancing strictly upon successful decryption (RFC 6479).
+- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset with persistent monotonic counter synchronization. Validated read-only against the 1024-packet sliding window bitmap in native Rust ([rust_data_plane/src/replay.rs](rust_data_plane/src/replay.rs)) prior to authentication, advancing strictly upon successful decryption (RFC 6479).
 - **Length (2 bytes, Big-Endian):** Length of the unpadded cleartext payload ($0 \le \text{Length} \le 1205$).
 - **Type (1 byte):** Protocol message discriminator:
   - `0x01`: Handshake Initiation / Key Exchange

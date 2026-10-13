@@ -129,17 +129,39 @@ def run_cavp_validation() -> dict:
 
     # 4. FIPS 197 & NIST SP 800-38D: AES-256-GCM
     print("  [+] Validating FIPS 197 / SP 800-38D: AES-256-GCM...")
-    # NIST SP 800-38D Test Vector (Case 16: Key 256-bit, IV 96-bit, Plaintext 128-bit)
+    # NIST SP 800-38D / McGrew-Viega Test Case 16 (AES-256, 96-bit IV,
+    # 512-bit PT, 160-bit AAD). Compared against the PUBLISHED ciphertext
+    # and tag — not a round-trip (F-04).
     gcm_key = bytes.fromhex("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
     gcm_iv = bytes.fromhex("cafebabefacedbaddecaf888")
     gcm_pt = bytes.fromhex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255")
     gcm_aad = bytes.fromhex("feedfacedeadbeeffeedfacedeadbeefabaddad2")
+    gcm_expected_ct_tag = bytes.fromhex(
+        "522dc1f099567d07f47f37a32a84427d"
+        "643a8cdcbfe5c0c97598a2bd2555d1aa"
+        "8cb08e48590dbb3da7b08b1056828838c"
+        "5f61e6393ba7a0abcc9f662898015ad"
+        "2df7cd675b4f09163b41ebf980a7f638"
+    )
 
     aesgcm = AESGCM(gcm_key)
     ct_with_tag = aesgcm.encrypt(gcm_iv, gcm_pt, gcm_aad)
     decrypted_pt = aesgcm.decrypt(gcm_iv, ct_with_tag, gcm_aad)
 
-    record_test("AES-256-GCM", "NIST_SP800_38D_KAT_Roundtrip", hmac.compare_digest(decrypted_pt, gcm_pt))
+    record_test(
+        "AES-256-GCM",
+        "NIST_SP800_38D_Case16_KAT_Ciphertext_Tag",
+        hmac.compare_digest(ct_with_tag, gcm_expected_ct_tag),
+        {
+            "expected_ct_tag_hex": gcm_expected_ct_tag.hex(),
+            "actual_ct_tag_hex": ct_with_tag.hex(),
+        },
+    )
+    record_test(
+        "AES-256-GCM",
+        "NIST_SP800_38D_Case16_Decrypt_Roundtrip",
+        hmac.compare_digest(decrypted_pt, gcm_pt),
+    )
 
     # Test authentication tag forgery rejection
     bad_ct_tag = bytearray(ct_with_tag)
@@ -181,18 +203,40 @@ def run_cavp_validation() -> dict:
     derived = hkdf.derive(ikm)
     record_test("HKDF-SHA512", "NIST_SP800_56C_Extraction_Expansion_KAT", len(derived) == 64)
 
-    # Summary
+    # Summary — F-04: NEVER claim CMVP submission readiness. This harness
+    # runs self-tests / local KATs only; formal CAVP requires a NIST-lab
+    # validated module and CMVP certificate.
     success_rate = (report["tests_passed"] / report["tests_executed"]) * 100
     report["overall_compliance_status"] = "PASSED" if report["tests_failed"] == 0 else "FAILED"
     report["compliance_percentage"] = success_rate
-    report["fips_140_3_readiness"] = "VERIFIED_FOR_CMVP_SUBMISSION" if report["tests_failed"] == 0 else "DEFICIENCIES_DETECTED"
+    report["fips_140_3_readiness"] = (
+        "LOCAL_SELFTEST_ONLY_NOT_CMVP" if report["tests_failed"] == 0
+        else "DEFICIENCIES_DETECTED"
+    )
+    report["cmvp_claim"] = {
+        "module_is_cmvp_validated": False,
+        "certificate_number": None,
+        "note": (
+            "Local automated KAT harness only. CMVP/FIPS 140-3 certificates "
+            "are issued by NIST labs, not by this repository."
+        ),
+    }
+    # ATO gate (scripts/verify_ato_deployment_package.py) historically read
+    # only acvp_cavp_validation_report.json (produced by acvp_validation_harness
+    # and ML-DSA-signed). Do NOT overwrite that signed artifact here (F-04);
+    # the ATO gate falls back to cavp_validation_report.json which now carries
+    # a compatible summary block.
+    report["summary"] = {
+        "total_tests": report["tests_executed"],
+        "passed": report["tests_passed"],
+        "failed": report["tests_failed"],
+    }
 
     reports_dir = PROJECT_ROOT / "compliance_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_file = reports_dir / "cavp_validation_report.json"
-
-    with open(report_file, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    payload = json.dumps(report, indent=2)
+    report_file.write_text(payload, encoding="utf-8")
 
     print(f"\n[SUCCESS] CAVP / FIPS 140-3 validation report written to: {report_file}")
     print(f"          Tests Executed: {report['tests_executed']} | Passed: {report['tests_passed']} | Failed: {report['tests_failed']} ({success_rate:.1f}%)")

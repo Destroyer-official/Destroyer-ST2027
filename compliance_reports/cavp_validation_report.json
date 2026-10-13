@@ -3,15 +3,15 @@
   "module_name": "SecureP2P Sovereign Cryptographic Module",
   "module_version": "2027.1.0-PILOT",
   "target_security_level": "FIPS 140-3 Level 4 / CNSA 2.0",
-  "evaluation_timestamp": "2026-10-11T17:56:03.403768+00:00",
+  "evaluation_timestamp": "2026-10-13T04:45:36.168168+00:00",
   "operational_environment": {
     "os": "win32",
     "architecture": "little",
     "python_version": "3.14.7",
     "hardware_security": "TPM 2.0 (Physical / Secure Boot PCR 7 Monitored)"
   },
-  "tests_executed": 17,
-  "tests_passed": 17,
+  "tests_executed": 18,
+  "tests_passed": 18,
   "tests_failed": 0,
   "algorithm_results": {
     "ML-KEM-1024": [
@@ -86,7 +86,15 @@
     ],
     "AES-256-GCM": [
       {
-        "test_name": "NIST_SP800_38D_KAT_Roundtrip",
+        "test_name": "NIST_SP800_38D_Case16_KAT_Ciphertext_Tag",
+        "status": "PASS",
+        "details": {
+          "expected_ct_tag_hex": "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad2df7cd675b4f09163b41ebf980a7f638",
+          "actual_ct_tag_hex": "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad2df7cd675b4f09163b41ebf980a7f638"
+        }
+      },
+      {
+        "test_name": "NIST_SP800_38D_Case16_Decrypt_Roundtrip",
         "status": "PASS",
         "details": {}
       },
@@ -125,5 +133,15 @@
   },
   "overall_compliance_status": "PASSED",
   "compliance_percentage": 100.0,
-  "fips_140_3_readiness": "VERIFIED_FOR_CMVP_SUBMISSION"
+  "fips_140_3_readiness": "LOCAL_SELFTEST_ONLY_NOT_CMVP",
+  "cmvp_claim": {
+    "module_is_cmvp_validated": false,
+    "certificate_number": null,
+    "note": "Local automated KAT harness only. CMVP/FIPS 140-3 certificates are issued by NIST labs, not by this repository."
+  },
+  "summary": {
+    "total_tests": 18,
+    "passed": 18,
+    "failed": 0
+  }
 }

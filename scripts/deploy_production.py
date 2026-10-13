@@ -37,7 +37,6 @@ class ProductionDeployer:
     ]
     
     REQUIRED_FILES = [
-        'secure_p2p.py',
         'secure_transmit_2027.py',
         'noise_pq.py',
         'destroyer_node.py',

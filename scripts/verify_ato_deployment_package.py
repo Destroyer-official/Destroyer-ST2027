@@ -102,16 +102,28 @@ class AODecisionEngine:
         return sig_valid
 
     def evaluate_gate_2_acvp_validation(self) -> bool:
-        """Verify ACVP algorithm validation report has zero failures."""
-        report_path = REPORTS_DIR / "acvp_cavp_validation_report.json"
+        """Verify ACVP/CAVP algorithm validation report has zero failures.
+
+        F-04: prefer the signed ACVP harness artifact; fall back to the
+        local CAVP KAT report (cavp_validation_report.json) which now
+        includes a compatible summary block. Never claim CMVP readiness.
+        """
+        primary = REPORTS_DIR / "acvp_cavp_validation_report.json"
+        fallback = REPORTS_DIR / "cavp_validation_report.json"
+        report_path = primary if primary.exists() else fallback
         if not report_path.exists():
-            self._record("G2", "NIST ACVP / CAVP Validation", False, "Missing ACVP report")
+            self._record("G2", "NIST ACVP / CAVP Validation", False, "Missing ACVP/CAVP report")
             return False
 
         try:
             with open(report_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            summary = data.get("summary", {})
+            # Prefer nested summary.*; accept legacy top-level counts.
+            summary = data.get("summary") or {
+                "total_tests": data.get("tests_executed", 0),
+                "passed": data.get("tests_passed", 0),
+                "failed": data.get("tests_failed", 1),
+            }
             total = summary.get("total_tests", 0)
             failed = summary.get("failed", 1)
             passed = summary.get("passed", 0)
@@ -121,7 +133,7 @@ class AODecisionEngine:
                 "G2",
                 "NIST ACVP / CAVP Validation",
                 ok,
-                f"{passed}/{total} CAVP test vectors verified (0 failures) for FIPS 203/204/205/197",
+                f"{passed}/{total} CAVP test vectors verified (0 failures) for FIPS 203/204/205/197 [{report_path.name}]",
             )
             return ok
         except Exception as e:

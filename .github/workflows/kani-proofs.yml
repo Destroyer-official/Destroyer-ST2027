@@ -26,12 +26,12 @@ jobs:
 
     steps:
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
         with:
           fetch-depth: 1
 
       - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b7640ea9039031ef160be18df3ea44b02d6cc85  # stable
 
       - name: Install Kani verifier + CBMC
         run: |

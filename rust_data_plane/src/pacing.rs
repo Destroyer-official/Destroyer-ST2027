@@ -82,7 +82,9 @@ pub fn build_chaff_frame_directed(
     getrandom::fill(&mut payload).map_err(|_| aes_gcm::aead::Error)?;
 
     let frame = aead::seal(key, seq, dir, FTYPE_CHAFF, &payload)?;
-    debug_assert_eq!(frame.len(), valid_quantum);
+    if frame.len() != valid_quantum {
+        return Err(aes_gcm::aead::Error);
+    }
     Ok(frame)
 }
 
@@ -107,7 +109,9 @@ pub fn build_data_frame_directed(
         getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
     }
     let frame = aead::seal_with_len(key, seq, dir, FTYPE_MSG, payload.len() as u16, &padded)?;
-    debug_assert_eq!(frame.len(), valid_quantum);
+    if frame.len() != valid_quantum {
+        return Err(aes_gcm::aead::Error);
+    }
     Ok(frame)
 }
 

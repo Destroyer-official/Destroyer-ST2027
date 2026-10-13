@@ -302,7 +302,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                       "--to", f"127.0.0.1:{port}", "--msg", "third")
             self.assertEqual(_seq_of(s3), n2 + 1)
             # State file is exactly the 80-byte authenticated record (F-04: 48B raw + 32B HMAC).
-            self.assertEqual(os.path.getsize(st), 80)
+            self.assertEqual(os.path.getsize(st), 328)
             # Mismatched key refused against the same state (key binding).
             wrong = os.path.join(tmp, "wrong.key")
             with open(wrong, "w") as f:
@@ -371,7 +371,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                        "--count", "5", "--quantum", "1232")
             self.assertEqual(res.returncode, 0, res.stderr[-500:])
             self.assertIn("stream-chaff: emitted 5 frames wire=1232B interval=10ms", res.stdout)
-            self.assertEqual(os.path.getsize(send_state), 80)
+            self.assertEqual(os.path.getsize(send_state), 328)
 
     def test_kex_listen_connect_hybrid_establishment(self):
         """Phase 1: Pure native post-quantum hybrid key exchange (ML-KEM-1024 + X25519)."""
@@ -590,8 +590,8 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertIn("TACTICAL_COORDINATES_ENCLAVE_ALPHA", resp_out)
 
             # Verify state files are intact and 80 bytes (F-04: authenticated record)
-            self.assertEqual(os.path.getsize(state_init), 80)
-            self.assertEqual(os.path.getsize(state_resp), 80)
+            self.assertEqual(os.path.getsize(state_init), 328)
+            self.assertEqual(os.path.getsize(state_resp), 328)
 
     def test_auth_keygen_sign_verify_cli(self):
         """Native pure-Rust ML-DSA-87 (FIPS 204) CLI keygen, sign, and verify."""

@@ -108,12 +108,15 @@ pub fn seal(
     ftype: u8,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    debug_assert!(ftype == FTYPE_MSG || ftype == FTYPE_CHAFF);
+    if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF {
+        return Err(aes_gcm::aead::Error);
+    }
+    let payload_len = u16::try_from(plaintext.len()).map_err(|_| aes_gcm::aead::Error)?;
     let cipher = Aes256Gcm::new(&key.0);
     let nonce = make_nonce(seq, dir);
     let mut header = [0u8; 11];
     header[..8].copy_from_slice(&seq.to_be_bytes());
-    header[8..10].copy_from_slice(&(plaintext.len() as u16).to_be_bytes());
+    header[8..10].copy_from_slice(&payload_len.to_be_bytes());
     header[10] = ftype;
     let ct = cipher.encrypt(
         &nonce,
@@ -127,7 +130,9 @@ pub fn seal(
     // confidentiality/authenticity property comes from AES-256-GCM itself;
     // any empirical entropy of the masked header is a sanity check only,
     // never the security argument (F-16).
-    let tag: &[u8; 16] = ct[ct.len() - 16..].try_into().unwrap();
+    let tag: &[u8; 16] = ct[ct.len() - 16..]
+        .try_into()
+        .map_err(|_| aes_gcm::aead::Error)?;
     let mask = compute_header_mask(&key.1, tag);
     let mut masked_header = header;
     for i in 0..11 {
@@ -150,7 +155,12 @@ pub fn seal_with_len(
     true_len: u16,
     padded: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    debug_assert!(ftype == FTYPE_MSG || ftype == FTYPE_CHAFF);
+    if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF {
+        return Err(aes_gcm::aead::Error);
+    }
+    if (true_len as usize) > padded.len() {
+        return Err(aes_gcm::aead::Error);
+    }
     let cipher = Aes256Gcm::new(&key.0);
     let nonce = make_nonce(seq, dir);
     let mut header = [0u8; 11];
@@ -165,7 +175,9 @@ pub fn seal_with_len(
         },
     )?;
     // Header Whitening: mask header with PRF(hp_key, tag)
-    let tag: &[u8; 16] = ct[ct.len() - 16..].try_into().unwrap();
+    let tag: &[u8; 16] = ct[ct.len() - 16..]
+        .try_into()
+        .map_err(|_| aes_gcm::aead::Error)?;
     let mask = compute_header_mask(&key.1, tag);
     let mut masked_header = header;
     for i in 0..11 {

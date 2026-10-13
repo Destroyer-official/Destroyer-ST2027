@@ -64,13 +64,14 @@ const MAX_PAYLOAD: usize = 1205;
 /// a single file transfer never exceeds this; larger inputs are refused.
 const MAX_STREAM_BYTES: usize = 16 << 20;
 /// Persistent state file layout: MAGIC(8) || key_id(16) || send_seq(8LE)
-/// || recv_last(8LE) || recv_bitmap(8LE) || hmac_tag(32) = 80 bytes.
-/// Authenticated via HMAC-SHA256 with key derived from session key to defeat
-/// sequence rollback / state tampering attacks (audit Finding 04).
-const STATE_MAGIC: &[u8; 8] = b"STSTATE2";
-const STATE_RAW_LEN: usize = 48;
+/// || recv_last(8LE) || recv_bitmap(256LE: 32 words) || hmac_tag(32) = 328 bytes.
+/// Authenticated via HMAC-SHA256 with key derived from session key via HKDF (S-08)
+/// to defeat sequence rollback / state tampering attacks. Full 32-word bitmap
+/// prevents replay history loss across restarts (S-02).
+const STATE_MAGIC: &[u8; 8] = b"STSTATE3";
+const STATE_RAW_LEN: usize = 296;
 const STATE_HMAC_LEN: usize = 32;
-const STATE_LEN: usize = 80;
+const STATE_LEN: usize = 328;
 
 fn usage() -> ! {
     eprintln!(
@@ -217,16 +218,76 @@ fn state_path(args: &[String]) -> String {
         .unwrap_or_else(|| fail("missing --state PATH (monotonic nonce state required)"))
 }
 
-/// In-memory session state mirror (persisted as 80-byte authenticated record).
+/// Sidecar path for the append-only send-seq high-water journal.
+fn seq_journal_path(state_path: &str) -> String {
+    format!("{state_path}.seqlog")
+}
+
+/// Read the max reserved end-seq from the journal (empty/missing → 0).
+fn seq_journal_high_water(jpath: &str) -> u64 {
+    let Ok(contents) = std::fs::read_to_string(jpath) else {
+        return 0;
+    };
+    let mut max_hw: u64 = 0;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(v) = line.parse::<u64>() {
+            if v > max_hw {
+                max_hw = v;
+            }
+        }
+    }
+    max_hw
+}
+
+/// Append one reservation high-water mark. O_APPEND is atomic for small
+/// writes; sync_all after. Journal is never rewritten (only appended).
+fn seq_journal_append(jpath: &str, end: u64) {
+    use std::io::Write;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(jpath)
+        .unwrap_or_else(|_| fail("seq journal unopenable"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = f.metadata() {
+            let mode = meta.permissions().mode();
+            if mode & 0o077 != 0 {
+                let _ = f.set_permissions(std::fs::Permissions::from_mode(mode & !0o077));
+            }
+        }
+    }
+    writeln!(f, "{end}").unwrap_or_else(|_| fail("seq journal write failed"));
+    f.sync_all().unwrap_or_else(|_| fail("seq journal sync failed"));
+}
+
+/// In-memory session state mirror (persisted as 328-byte authenticated record).
 struct SessionState {
     key_id: [u8; 16],
     send_seq: u64,
     recv_last: u64,
-    recv_bitmap: u64,
+    recv_bitmap: [u64; destroyer_core::replay::WINDOW_WORDS],
+}
+
+/// Derive dedicated HMAC subkey from master key via HKDF-SHA256 (S-08).
+/// Eliminates key reuse across AES-GCM and HMAC-SHA256 primitives.
+fn derive_state_hmac_key(master_key: &[u8; 32]) -> [u8; 32] {
+    use hkdf::Hkdf;
+    let hk = Hkdf::<Sha256>::new(None, master_key);
+    let mut subkey = [0u8; 32];
+    hk.expand(b"DESTROYER-ST2027-STATE-FILE-AUTH-SUBKEY-v1", &mut subkey)
+        .expect("HKDF-SHA256 expand for state HMAC subkey cannot fail");
+    subkey
 }
 
 fn compute_state_hmac(key: &[u8; 32], raw: &[u8]) -> [u8; STATE_HMAC_LEN] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+    let hmac_key = derive_state_hmac_key(key);
+    let mut mac = HmacSha256::new_from_slice(&hmac_key).expect("HMAC can take key of any size");
     mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v1");
     mac.update(raw);
     let result = mac.finalize().into_bytes();
@@ -236,7 +297,8 @@ fn compute_state_hmac(key: &[u8; 32], raw: &[u8]) -> [u8; STATE_HMAC_LEN] {
 }
 
 fn verify_state_hmac(key: &[u8; 32], raw: &[u8], expected_tag: &[u8; STATE_HMAC_LEN]) -> bool {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC init");
+    let hmac_key = derive_state_hmac_key(key);
+    let mut mac = HmacSha256::new_from_slice(&hmac_key).expect("HMAC init");
     mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v1");
     mac.update(raw);
     mac.verify_slice(expected_tag).is_ok()
@@ -248,7 +310,10 @@ fn encode_state(st: &SessionState, key: &[u8; 32]) -> [u8; STATE_LEN] {
     b[8..24].copy_from_slice(&st.key_id);
     b[24..32].copy_from_slice(&st.send_seq.to_le_bytes());
     b[32..40].copy_from_slice(&st.recv_last.to_le_bytes());
-    b[40..48].copy_from_slice(&st.recv_bitmap.to_le_bytes());
+    for i in 0..destroyer_core::replay::WINDOW_WORDS {
+        let start = 40 + i * 8;
+        b[start..start + 8].copy_from_slice(&st.recv_bitmap[i].to_le_bytes());
+    }
     let mac = compute_state_hmac(key, &b[..STATE_RAW_LEN]);
     b[STATE_RAW_LEN..STATE_LEN].copy_from_slice(&mac);
     b
@@ -268,15 +333,19 @@ fn decode_state(buf: &[u8; STATE_LEN], key: &[u8; 32], expect_key_id: &[u8; 16])
     let mut expected_mac = [0u8; STATE_HMAC_LEN];
     expected_mac.copy_from_slice(&buf[STATE_RAW_LEN..STATE_LEN]);
     if !verify_state_hmac(key, &buf[..STATE_RAW_LEN], &expected_mac) {
-        fail("state file authentication failed (HMAC mismatch / rollback detected) — refusing to reuse nonces under this key");
+        fail("state file authentication failed (HMAC mismatch / state corrupt or forged) — refusing to reuse nonces under this key");
     }
     let mut u = [0u8; 8];
     u.copy_from_slice(&buf[24..32]);
     let send_seq = u64::from_le_bytes(u);
     u.copy_from_slice(&buf[32..40]);
     let recv_last = u64::from_le_bytes(u);
-    u.copy_from_slice(&buf[40..48]);
-    let recv_bitmap = u64::from_le_bytes(u);
+    let mut recv_bitmap = [0u64; destroyer_core::replay::WINDOW_WORDS];
+    for (i, word) in recv_bitmap.iter_mut().enumerate() {
+        let start = 40 + i * 8;
+        u.copy_from_slice(&buf[start..start + 8]);
+        *word = u64::from_le_bytes(u);
+    }
     SessionState {
         key_id,
         send_seq,
@@ -336,7 +405,7 @@ fn read_state_locked(f: &mut File, key: &[u8; 32], key_id: &[u8; 16]) -> Session
             key_id: *key_id,
             send_seq,
             recv_last: 0,
-            recv_bitmap: 0,
+            recv_bitmap: [0u64; destroyer_core::replay::WINDOW_WORDS],
         };
         write_state_locked(f, &st, key);
         return st;
@@ -362,12 +431,27 @@ fn write_state_locked(f: &mut File, st: &SessionState, key: &[u8; 32]) {
 
 /// Reserve one send seq: persist N+1 BEFORE encrypting (crash may skip,
 /// never reuse). Returns the seq to seal with.
+///
+/// F-01 (nonce rollback): every reservation is also appended to a sidecar
+/// high-water journal (`<state>.seqlog`). If the state file is restored to
+/// an older snapshot while the journal still records a higher end-seq, the
+/// reservation is refused — a rollback must not successfully encrypt under
+/// a reused counter. Rolling back BOTH files requires a hardware monotonic
+/// counter (out of scope); software-only detection covers the demonstrated
+/// state-file-restore attack.
 fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -> u64 {
     if count == 0 {
         fail("reservation count must be >= 1");
     }
+    let jpath = seq_journal_path(path);
     let mut f = open_locked_state(path);
     let mut st = read_state_locked(&mut f, key, key_id);
+    let journal_hw = seq_journal_high_water(&jpath);
+    if st.send_seq < journal_hw {
+        fail(
+            "state rollback detected (send_seq behind append-only seq journal) — refusing to reuse nonces under this key; rekey with fresh key+state",
+        );
+    }
     let start = st.send_seq;
     let end = start
         .checked_add(count)
@@ -381,6 +465,9 @@ fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -
     }
     st.send_seq = end;
     write_state_locked(&mut f, &st, key);
+    // Journal AFTER successful state persist: crash here leaves journal
+    // behind state (safe — next run catches up); never journaled-ahead.
+    seq_journal_append(&jpath, end);
     // Unlock via drop.
     start
 }
@@ -601,9 +688,12 @@ fn cmd_send(args: &[String]) {
         }
         padded.extend_from_slice(&pad_bytes);
     }
-    let frame = aead::seal_with_len(&key, seq, DIR_SEND, FTYPE_MSG, msg.len() as u16, &padded)
+    let msg_len = u16::try_from(msg.len()).unwrap_or_else(|_| fail("message length exceeds u16"));
+    let frame = aead::seal_with_len(&key, seq, DIR_SEND, FTYPE_MSG, msg_len, &padded)
         .unwrap_or_else(|_| fail("seal failed"));
-    debug_assert_eq!(frame.len(), quantum);
+    if frame.len() != quantum {
+        fail("sealed frame length mismatch with expected quantum");
+    }
     if frame.len() > MAX_DATAGRAM {
         fail("sealed frame exceeds IPv6 MTU budget (1280B)");
     }
@@ -733,16 +823,19 @@ fn cmd_selftest() {
     assert!(f.len() <= MAX_DATAGRAM, "quantum exceeds MTU");
     // State codec roundtrip (no I/O): magic + key binding enforced.
     let test_key = [0x5Au8; 32];
+    let mut test_bitmap = [0u64; destroyer_core::replay::WINDOW_WORDS];
+    test_bitmap[0] = 0b11;
     let st = SessionState {
         key_id: [0xABu8; 16],
         send_seq: 41,
         recv_last: 7,
-        recv_bitmap: 0b11,
+        recv_bitmap: test_bitmap,
     };
     let enc = encode_state(&st, &test_key);
     assert_eq!(enc.len(), STATE_LEN);
     let dec = decode_state(&enc, &test_key, &[0xABu8; 16]);
     assert_eq!(dec.send_seq, 41);
+    assert_eq!(dec.recv_bitmap[0], 0b11);
     // Verify HMAC-SHA256 tamper / rollback detection (Finding 04):
     let mut tampered_enc = enc;
     tampered_enc[24] ^= 0x01; // flip sequence counter bit
@@ -1008,16 +1101,19 @@ fn cmd_send_file(args: &[String]) {
                 }
                 padded.extend_from_slice(&pad_bytes);
             }
+            let chunk_len = u16::try_from(chunk.len()).unwrap_or_else(|_| fail("chunk length exceeds u16"));
             let frame = aead::seal_with_len(
                 &key,
                 seq0.wrapping_add(i as u64),
                 DIR_SEND,
                 FTYPE_MSG,
-                chunk.len() as u16,
+                chunk_len,
                 &padded,
             )
             .unwrap_or_else(|_| fail("seal failed"));
-            debug_assert_eq!(frame.len(), quantum);
+            if frame.len() != quantum {
+                fail("sealed frame length mismatch with expected quantum");
+            }
             if frame.len() > MAX_DATAGRAM {
                 fail("sealed frame exceeds IPv6 MTU budget (1280B)");
             }

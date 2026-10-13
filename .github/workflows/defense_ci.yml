@@ -18,12 +18,12 @@ jobs:
 
     steps:
       - name: Checkout Source Code (Audit Root)
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
         with:
           fetch-depth: 0
 
       - name: Set up Python 3.11 Hermetic Environment
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d  # v5.1.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -42,10 +42,8 @@ jobs:
           pip install bandit
           bandit -r . --exclude "./.venv,./__pycache__,./archive,./redesign,./notupload,./downloads,./logs,./compliance_reports,./.hypothesis,./.pytest_cache,./.git" -f txt --severity-level medium
 
-      - name: Execute NIST CAVP Known Answer Tests (KAT)
-        run: |
-          python scripts/cavp_algorithm_validator.py
-
+      # F-02: liboqs MUST be installed BEFORE the CAVP step. Prior order ran
+      # KATs against a missing native lib and failed CI on every runner.
       - name: Install System Cryptographic Dependencies (liboqs)
         run: |
           sudo apt-get update
@@ -57,6 +55,10 @@ jobs:
             sudo cmake --install /tmp/liboqs/build
             sudo ldconfig
           fi
+
+      - name: Execute NIST CAVP Known Answer Tests (KAT)
+        run: |
+          python scripts/cavp_algorithm_validator.py
 
       - name: Run Unified Operator In-Process Self-Test (CNSA 2.0 / PQC / DEM)
         env:
@@ -71,7 +73,7 @@ jobs:
           python destroyer.py --help
 
       - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b7640ea9039031ef160be18df3ea44b02d6cc85  # stable
 
       - name: Execute Rust Data-Plane Unit & Integration Tests
         run: |
@@ -117,13 +119,14 @@ jobs:
           python scripts/verify_reproducible_build.py
 
       - name: Archive Cryptographic Compliance & Attestation Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3  # v4.3.1
         with:
           name: defense-compliance-attestation-receipts
           path: |
             compliance_reports/signed_reproducible_build_receipt.json
             compliance_reports/reproducible_build_receipt.json
             compliance_reports/cavp_validation_report.json
+            compliance_reports/acvp_cavp_validation_report.json
             compliance_reports/cnsa2_readiness_audit.json
             compliance_reports/sbom/
           retention-days: 90
@@ -136,12 +139,12 @@ jobs:
 
     steps:
       - name: Checkout Source Code (Audit Root)
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
         with:
           fetch-depth: 1
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d  # v5.1.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -238,38 +241,47 @@ jobs:
           }
           sh docs/formal/check.sh --strict
 
-      - name: Cosign/Rekor SBOM signature stub (SKIP when cosign or sigs missing)
+      # F-06: fail-closed supply-chain attestation. Missing cosign, missing
+      # signatures, or a failed verify is a BLOCKING release failure — not a
+      # skip. ML-DSA-87 offline signatures are verified in a prior step; this
+      # step enforces Cosign blob presence + verify and records Rekor status.
+      - name: Cosign SBOM signature (fail-closed) + Rekor transparency note
         run: |
+          set -euo pipefail
           if ! command -v cosign >/dev/null 2>&1; then
-            echo "SKIP: cosign not installed (SBOM Cosign verification not enforced)"
-            exit 0
+            echo "FAIL: cosign not installed — release supply-chain attestation required"
+            exit 1
           fi
-          cosign version || true
-          FOUND_SIG=""
-          for f in compliance_reports/*.sig compliance_reports/sbom/*.sig compliance_reports/*.mldsa87.sig; do
-            if [ -f "$f" ]; then FOUND_SIG="$FOUND_SIG $f"; fi
-          done
-          # Cosign blob sigs use .sig + .pem/.crt bundles; ML-DSA .mldsa87.sig are verified offline, not by cosign.
+          cosign version
           COSIGN_SIG=""
           for f in compliance_reports/*.sig compliance_reports/sbom/*.sig; do
-            if [ -f "$f" ]; then COSIGN_SIG="$COSIGN_SIG $f"; fi
+            if [ -f "$f" ] && [[ "$f" != *.mldsa87.sig ]]; then COSIGN_SIG="$COSIGN_SIG $f"; fi
           done
           if [ -z "$COSIGN_SIG" ]; then
-            echo "SKIP: no Cosign SBOM signatures present (expected compliance_reports/*.sig + .pem; ML-DSA .mldsa87.sig verified offline via generate_production_sbom.py)"
-            echo "Rekor: transparency inclusion check is advisory/offline-only (see generate_production_sbom.py verify_sbom_offline TODO(rekor))"
-            exit 0
+            echo "FAIL: no Cosign SBOM signatures present (expected compliance_reports/*.sig + .pem/.crt)"
+            echo "      ML-DSA offline sigs (*.mldsa87.sig) do not satisfy the Cosign gate"
+            exit 1
           fi
+          VERIFIED=0
           for sig in $COSIGN_SIG; do
             base="${sig%.sig}"
             cert=""
             if [ -f "${base}.pem" ]; then cert="${base}.pem"; elif [ -f "${base}.crt" ]; then cert="${base}.crt"; fi
             if [ -z "$cert" ]; then
-              echo "SKIP: no cosign cert for $sig (expected ${base}.pem); advisory only"
-              continue
+              echo "FAIL: no cosign cert for $sig (expected ${base}.pem or ${base}.crt)"
+              exit 1
             fi
             echo "Verifying $base with cosign (cert=$cert)..."
-            cosign verify-blob --cert "$cert" --signature "$sig" "$base" || echo "WARN: cosign verify failed for $base (advisory stub, not blocking)"
+            if ! cosign verify-blob --cert "$cert" --signature "$sig" "$base"; then
+              echo "FAIL: cosign verify-blob failed for $base"
+              exit 1
+            fi
+            VERIFIED=$((VERIFIED+1))
           done
+          echo "PASS: $VERIFIED Cosign blob signature(s) verified"
+          # Rekor: transparency log inclusion is advisory until a signed
+          # inclusion proof is produced offline (see generate_production_sbom.py
+          # verify_sbom_offline TODO(rekor)). Recorded, not silently skipped.
           echo "Rekor: transparency inclusion check is advisory/offline-only (see generate_production_sbom.py verify_sbom_offline TODO(rekor))"
           exit 0
 
@@ -287,10 +299,10 @@ jobs:
 
     steps:
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d  # v5.1.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -352,7 +364,7 @@ jobs:
 
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3  # v4.3.1
         with:
           name: pytest-results-${{ matrix.os }}
           path: test-results-${{ matrix.os }}.xml

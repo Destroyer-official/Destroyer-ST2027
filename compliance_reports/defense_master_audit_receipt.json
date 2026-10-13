@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2026-10-12T17:13:57.670273+00:00",
-  "commit": "5f6ad410a782d01694efe09b6acbb916339edfe4",
+  "timestamp_utc": "2026-10-13T04:48:32.578501+00:00",
+  "commit": "face4f9177a1f2e7eae23014084bb4eb24c9f92a",
   "audit_version": "ST2027-EVAL-V1",
   "overall_status": "PASS",
   "score": "10/10",
@@ -9,63 +9,63 @@
       "gate_id": "1.1",
       "name": "Rust Data-Plane Strict Clippy & Test Battery",
       "status": "PASS",
-      "duration_ms": 28972.41,
-      "details": "122 tests passed (88 lib incl. Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + 34 kani harness); 0 compiler warnings"
+      "duration_ms": 18501.0,
+      "details": "128 tests passed (91 lib incl. S-01/S-02 replay protection, Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + 37 kani harness); 0 compiler warnings"
     },
     {
       "gate_id": "2.1",
       "name": "ts_rt Clippy & Memory Discipline Verification",
       "status": "PASS",
-      "duration_ms": 142.24,
+      "duration_ms": 139.08,
       "details": "0 FFI warnings; VirtualLock/mlock verified"
     },
     {
       "gate_id": "3.1",
       "name": "CNSA Suite 2.0 KATs & Algorithm Purity",
       "status": "PASS",
-      "duration_ms": 539.4,
+      "duration_ms": 421.55,
       "details": "ML-KEM-1024, ML-DSA-87, AES-256-GCM KATs verified"
     },
     {
       "gate_id": "4.1",
       "name": "ProVerif 2.05 Symbolic Handshake & PCS Proofs",
       "status": "PASS",
-      "duration_ms": 34180.39,
+      "duration_ms": 37794.47,
       "details": "2/2 models proven; inj-event & secrecy conclude TRUE"
     },
     {
       "gate_id": "5.1",
       "name": "Active Exploit Defenses (Replay DoS & Nonce Reuse)",
       "status": "PASS",
-      "duration_ms": 24687.48,
+      "duration_ms": 2875.36,
       "details": "RFC 6479 decoupled window & atomic monotonic state pass"
     },
     {
       "gate_id": "6.1",
       "name": "Platform Gating (Signed ML-DSA-87 Waivers)",
       "status": "PASS",
-      "duration_ms": 2796.02,
+      "duration_ms": 2723.68,
       "details": "Unsigned waivers & unverified records fail closed"
     },
     {
       "gate_id": "7.1",
       "name": "SLSA Level 3+ Supply Chain & DLL Pinning",
       "status": "PASS",
-      "duration_ms": 278.45,
+      "duration_ms": 358.26,
       "details": "Ed25519 & SHA-384 embedded pins; Merkle root verified"
     },
     {
       "gate_id": "8.1",
       "name": "Truth-in-Claims & Linguistic Purity",
       "status": "PASS",
-      "duration_ms": 5206.28,
+      "duration_ms": 6210.16,
       "details": "Purged badges; exact Kani bounds; 0 buzzwords; 0 emojis"
     },
     {
       "gate_id": "9.1",
       "name": "In-Process Single-Command Operator Self-Test",
       "status": "PASS",
-      "duration_ms": 5996.13,
+      "duration_ms": 6821.68,
       "details": "In-memory loopback roundtrip, CER, and zeroization verified"
     }
   ]

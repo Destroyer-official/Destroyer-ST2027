@@ -199,8 +199,8 @@ class TestAuditForensicRemediations(unittest.TestCase):
                 capture_output=True, text=True
             )
             self.assertTrue(os.path.exists(state_file), "State file must exist")
-            # State file must be exactly 80 bytes (48 bytes raw + 32 bytes HMAC-SHA256)
-            self.assertEqual(os.path.getsize(state_file), 80)
+            # State file must be exactly 328 bytes (296 bytes raw + 32 bytes HMAC-SHA256)
+            self.assertEqual(os.path.getsize(state_file), 328)
 
             # Snapshot valid state bytes
             valid_state = Path(state_file).read_bytes()
@@ -246,6 +246,67 @@ class TestAuditForensicRemediations(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, "Legacy 48-byte state must be refused")
             self.assertIn("bad length", r.stderr.lower())
 
+    def test_10_rust_state_legacy_80byte_refused(self):
+        """S-02: pre-328B 80-byte state files (STSTATE2) are refused fail-closed."""
+        bin_path = ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+        if not bin_path.exists():
+            bin_path = ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+        if not bin_path.exists():
+            self.skipTest("secure-transmit binary not found")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_file = os.path.join(tmpdir, "session.key")
+            state_file = os.path.join(tmpdir, "session.state")
+
+            subprocess.run([str(bin_path), "keygen", "--out", key_file], check=True)
+
+            # Plant an old 80-byte STSTATE2 state
+            legacy = bytearray(80)
+            legacy[:8] = b"STSTATE2"
+            Path(state_file).write_bytes(legacy)
+
+            r = subprocess.run(
+                [str(bin_path), "send", "--key-file", key_file, "--state", state_file,
+                 "--to", "127.0.0.1:51820", "--msg", "legacy-80b-refuse"],
+                capture_output=True, text=True
+            )
+            self.assertNotEqual(r.returncode, 0, "Legacy 80-byte state must be refused")
+            self.assertIn("bad length", r.stderr.lower())
+
+    def test_11_s03_error_message_clarity(self):
+        """S-03: HMAC verification failure names HMAC mismatch and corruption/forgery accurately."""
+        bin_path = ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+        if not bin_path.exists():
+            bin_path = ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+        if not bin_path.exists():
+            self.skipTest("secure-transmit binary not found")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            key_file = os.path.join(tmpdir, "session.key")
+            state_file = os.path.join(tmpdir, "session.state")
+
+            subprocess.run([str(bin_path), "keygen", "--out", key_file], check=True)
+            subprocess.run(
+                [str(bin_path), "send", "--key-file", key_file, "--state", state_file,
+                 "--to", "127.0.0.1:51820", "--msg", "init"],
+                check=True
+            )
+
+            # Corrupt HMAC bytes
+            data = bytearray(Path(state_file).read_bytes())
+            data[-1] ^= 0x55
+            Path(state_file).write_bytes(data)
+
+            r = subprocess.run(
+                [str(bin_path), "send", "--key-file", key_file, "--state", state_file,
+                 "--to", "127.0.0.1:51820", "--msg", "tampered"],
+                capture_output=True, text=True
+            )
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("HMAC mismatch", r.stderr)
+            self.assertIn("state corrupt or forged", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
+
