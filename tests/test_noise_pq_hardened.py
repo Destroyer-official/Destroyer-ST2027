@@ -65,6 +65,35 @@ class TestNoisePsk2Hardening:
         wire2 = npq.transport_send(rsp, b"BASE_ACKNOWLEDGED_BURST")
         assert npq.transport_recv(ini, wire2) == b"BASE_ACKNOWLEDGED_BURST"
 
+    def test_psk2_spec_9_2_mixed_key_on_ephemeral(self):
+        """Noise spec 9.2: PSK handshakes must MixKey(e) after every MixHash(e).
+
+        Pins the conformance fix: after M1 (own e + KEM key; no other MixKey
+        is possible), the PSK session's key schedule MUST already be seeded
+        (ck advanced, cipher key present), while a non-PSK session stays
+        keyless until `ee` (byte-identical legacy schedule). The received-e
+        mirror sites are proven by test_psk2_handshake_agreement: if either
+        side skipped MixKey(e), ck would fork and the M2 enc_pk decrypt
+        would fail closed. Mirrored insertions live in
+        rust_data_plane/src/handshake.rs (cargo test psk_variant_*).
+        """
+        (ci_pk, ci_sk), _ = _make_identities()
+        psk = secrets.token_bytes(32)
+
+        # PSK: ephemeral public key seeds the schedule at M1 (spec 9.2).
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk, psk=psk)
+        ck0 = ini.sym.ck
+        npq.initiator_hello(ini)
+        assert ini.sym.ck != ck0, "PSK mode must advance ck with MixKey(e) at M1 (spec 9.2)"
+        assert ini.sym._key is not None, "PSK mode must hold a cipher key after MixKey(e)"
+
+        # Non-PSK: classic XXhfs schedule untouched until ee.
+        bare = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        ck0b = bare.sym.ck
+        npq.initiator_hello(bare)
+        assert bare.sym.ck == ck0b, "Non-PSK must NOT MixKey(e) (classic XXhfs schedule)"
+        assert bare.sym._key is None, "Non-PSK stays keyless until ee"
+
     def test_psk_divergence_from_non_psk(self):
         """Verify PSK session produces distinct transcript and keys compared to bare XXhfs."""
         (ci_pk, ci_sk), (cr_pk, cr_sk) = _make_identities()

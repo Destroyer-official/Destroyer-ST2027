@@ -432,6 +432,14 @@ class ACVPValidationHarness:
                 "version": "2028.1.0",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "target_profile": "NSA-CNSA-2.0-STRICT",
+                "profile_notes": (
+                    "KAT coverage intentionally exceeds the CNSA profile: "
+                    "SLH-DSA-256f (FIPS 205) and ChaCha20-Poly1305 (RFC 8439) "
+                    "vectors verify implementation correctness for "
+                    "defense-in-depth / legacy-interop code paths and are NOT "
+                    "claimed as CNSA-approved (NSA CNSA 2.0 FAQ: SLH-DSA not "
+                    "approved for NSS; ChaCha20-Poly1305 not in CNSA)."
+                ),
                 "nist_security_level": 5,
                 "overall_status": "COMPLIANT" if all_passed else "NON-COMPLIANT"
             },

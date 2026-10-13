@@ -73,7 +73,7 @@ jobs:
           import ctypes, re, sys, os
           min_tag = os.environ.get("LIBOQS_TAG", "0.16.0")
           def parse(v):
-              m = re.match(r"(\d+)\.(\d+)\.(\d+)", v or "")
+              m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", (v or "").strip())
               return tuple(int(x) for x in m.groups()) if m else None
           lib = ctypes.CDLL(os.path.join(os.environ["GITHUB_WORKSPACE"], "oqs.dll"))
           if not hasattr(lib, "OQS_version"):
@@ -84,7 +84,7 @@ jobs:
           floor = parse(min_tag)
           print(f"built oqs.dll reports {ver} (parsed={got}, floor={floor})")
           if got is None or got < floor:
-              print(f"FAIL: built liboqs {ver} < required {min_tag}", file=sys.stderr)
+              print(f"FAIL: built liboqs {ver!r} is not an official release >= {min_tag}", file=sys.stderr)
               sys.exit(1)
           print("PASS: rebuilt oqs.dll meets version floor")
           PY

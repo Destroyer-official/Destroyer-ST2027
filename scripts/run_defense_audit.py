@@ -108,9 +108,9 @@ def main():
         card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, "Compiler warnings present")
     else:
         code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
-        passed = (code2 == 0 and "0 failed" in out2 and ("91 passed" in out2 or "88 passed" in out2 or "86 passed" in out2 or "75 passed" in out2 or "65 passed" in out2 or "52 passed" in out2 or "51 passed" in out2 or "49 passed" in out2) and ("37 passed" in out2 or "34 passed" in out2 or "30 passed" in out2 or "29 passed" in out2))
+        passed = (code2 == 0 and "0 failed" in out2 and ("110 passed" in out2 or "91 passed" in out2 or "88 passed" in out2 or "86 passed" in out2 or "75 passed" in out2 or "65 passed" in out2 or "52 passed" in out2 or "51 passed" in out2 or "49 passed" in out2) and ("37 passed" in out2 or "34 passed" in out2 or "30 passed" in out2 or "29 passed" in out2))
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         "128 tests passed (91 lib incl. S-01/S-02 replay protection, Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + 37 kani harness); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
+                         "147 tests passed (110 lib incl. TPM 2.0 NV rollback guard, S-01/S-02 replay protection, Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + 37 kani harness); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
 
     # Gate 2: Native Top-Secret Runtime (ts_rt)
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")

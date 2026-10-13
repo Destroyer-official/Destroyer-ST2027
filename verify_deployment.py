@@ -57,13 +57,16 @@ LARGE_FILES = {
     "tls_channel_manager.py": {"min_lines": 5700, "critical": True},
 }
 
-# CNSA 2.0 Approved Algorithms
+# CNSA 2.0 Approved Algorithms (NSA CNSA 2.0 FAQ / CNSSP-15, corrected
+# 2026-10-13). Documentation-only constant (runtime gates use
+# cnsa2_policy_engine.CNSA2PolicyEngine): SLH-DSA-256f, ChaCha20-Poly1305,
+# SHA3-* and McEliece were removed — FIPS/RFC-valid but NOT CNSA-listed.
 CNSA2_APPROVED_ALGORITHMS = {
-    "kem": ["ML-KEM-1024", "McEliece-8192128f"],
-    "signature": ["ML-DSA-87", "SLH-DSA-256f"],
-    "aead": ["AES-256-GCM", "ChaCha20-Poly1305"],
-    "hash": ["SHA-384", "SHA3-256", "SHA3-512"],
-    "kdf": ["HKDF-SHA384"]
+    "kem": ["ML-KEM-1024"],
+    "signature": ["ML-DSA-87"],
+    "aead": ["AES-256-GCM"],
+    "hash": ["SHA-384", "SHA-512"],
+    "kdf": ["HKDF-SHA384", "HKDF-SHA512"]
 }
 
 # Forbidden algorithms (NO FALLBACKS)

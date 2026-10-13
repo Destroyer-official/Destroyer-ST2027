@@ -5,12 +5,28 @@ CNSA 2.0 Policy Engine - Strict Enforcement
 This module implements NSA Commercial National Security Algorithm Suite 2.0
 with FAIL-CLOSED security model. No fallbacks permitted.
 
-CNSA 2.0 Approved Algorithms (2024+):
+CNSA 2.0 Approved Algorithms (NSA; acquisition gate 2027-01-01):
 - KEM: ML-KEM-1024 (FIPS 203)
-- Signatures: ML-DSA-87 (FIPS 204), SLH-DSA-256f (FIPS 205)
-- AEAD: AES-256-GCM, ChaCha20-Poly1305
-- Hash: SHA-384, SHA3-512
-- KDF: HKDF-SHA384
+- Signature: ML-DSA-87 (FIPS 204) only
+- AEAD: AES-256-GCM only
+- Hash: SHA-384, SHA-512 (CNSSP-15 2024 general usage)
+- KDF: HKDF-SHA384, HKDF-SHA512
+
+Honesty basis (NSA CNSA 2.0 FAQ / CNSSP-15, verified 2026-10-13):
+- SLH-DSA (FIPS 205) is NOT part of CNSA and is not approved for any use
+  in NSS. SLH-DSA-256f remains in APPROVED_SIG (non-strict) only as a
+  FIPS-finalized defense-in-depth secondary for this non-NSS product;
+  CNSA_2027_STRICT refuses it because that gate models CNSA acquisition
+  requirements, not general NIST approval.
+- ChaCha20-Poly1305 (RFC 8439) is NOT in CNSA (NSA: AES-256 only);
+  refused by this engine even though legacy interop code elsewhere in
+  this repo still uses it.
+- SHA-3/SHAKE are not approved CNSA hashes (NSA FAQ); CNSSP-15 permits
+  SHA3 only in specific applications. SHA3-512/SHA3-256 stay in
+  ALGORITHM_SPECS (known; used internally for fingerprints/message IDs)
+  but are NOT in APPROVED_HASH and are refused here.
+- Software/firmware signing: NSA directs immediate transition to LMS
+  (SP 800-208) — tracked separately (pqc_algorithms.EnhancedLMS).
 
 Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7
 """
@@ -103,7 +119,8 @@ class CNSA2PolicyEngine:
         # the RFC 10024 SecP384r1MLKEM1024 / X25519MLKEM768 registrations.
     })
     
-    # Requirement 1.2: ML-DSA-87 or SLH-DSA-256f for signatures
+    # Requirement 1.2: ML-DSA-87 primary; SLH-DSA-256f non-CNSA secondary
+    # (see module docstring honesty basis — FIPS 205 valid, not CNSA-listed).
     # NOTE ON FALCON-1024 / FIPS 206 FN-DSA:
     # FIPS 206 (FN-DSA) draft was submitted in August 2025 with final publication expected late 2026/early 2027.
     # Production systems MUST NOT bet on the draft because Round-3 Falcon key and signature encodings
@@ -118,33 +135,38 @@ class CNSA2PolicyEngine:
 
     CNSA_2027_APPROVED_SIG: FrozenSet[str] = frozenset({
         'ML-DSA-87',        # NIST FIPS 204 - Finalized Primary PQ signature (Level 5)
-        # NOTE (verified 2026-09-23 against CNSA 2.0 sources): NSA lists
-        # ML-DSA-87 for signing and deliberately EXCLUDES SLH-DSA (FIPS 205
-        # finalized Aug 2024 but not CNSA-listed; NSA signals no plans to
-        # add future standards). SLH-DSA-256f stays in THIS set solely as
-        # a FIPS-finalized defense-in-depth SECONDARY (hybrid signatures);
-        # it is never presented as the CNSA acquisition claim -- the
-        # mandatory procurement-gate primary is ML-DSA-87 alone.
-        'SLH-DSA-256f',     # NIST FIPS 205 - Finalized Stateless hash-based (Level 5)
+        # NOTE (corrected 2026-10-13 against the NSA CNSA 2.0 FAQ): SLH-DSA
+        # was REMOVED from this procurement-gate set. The FAQ states SLH-DSA
+        # is "not part of CNSA and is not approved for any use in NSS", so a
+        # CNSA acquisition gate must not approve it. SLH-DSA-256f stays in
+        # APPROVED_SIG (non-strict) as a FIPS-finalized defense-in-depth
+        # secondary only; under CNSA_2027_STRICT it is refused here.
     })
     
-    # Requirement 1.3: AES-256-GCM or ChaCha20-Poly1305
+    # Requirement 1.3: AES-256-GCM (CNSA 2.0 AEAD). ChaCha20-Poly1305
+    # removed 2026-10-13 — NSA lists AES-256 only; RFC 8439 ChaCha is not
+    # CNSA. Legacy interop ChaCha paths elsewhere in this repo stay outside
+    # this engine and are never presented as CNSA-approved.
     APPROVED_AEAD: FrozenSet[str] = frozenset({
         'AES-256-GCM',
-        'ChaCha20-Poly1305',
     })
     
-    # Requirement 1.4: SHA-384 or SHA3-512
+    # Requirement 1.4: SHA-384 / SHA-512 (CNSA + CNSSP-15 2024 general
+    # usage). SHA3-512/SHA3-256 removed from this set 2026-10-13: NSA FAQ
+    # states SHA-3/SHAKE are not approved CNSA hashes (CNSSP-15 allows
+    # SHA3 only in specific applications). They remain known in
+    # ALGORITHM_SPECS for internal fingerprint/message-ID use and are
+    # refused when validated through this engine.
     APPROVED_HASH: FrozenSet[str] = frozenset({
         'SHA-384',
-        'SHA3-512',
-        'SHA3-256',  # For message IDs only
+        'SHA-512',
     })
     
-    # KDF algorithms
+    # KDF algorithms: HKDF over CNSA hashes (HKDF-SHA512 added with the
+    # CNSSP-15 SHA-512 general-usage update). HKDF-SHA3_512 removed
+    # 2026-10-13 — no CNSA-approved SHA-3 hash backs it.
     APPROVED_KDF: FrozenSet[str] = frozenset({
         'HKDF-SHA384',
-        'HKDF-SHA3_512',
         'HKDF-SHA512',
     })
     
@@ -200,6 +222,7 @@ class CNSA2PolicyEngine:
         'AES-256-GCM': AlgorithmSpec('AES-256-GCM', AlgorithmCategory.AEAD, 256, 'FIPS 197', False),
         'ChaCha20-Poly1305': AlgorithmSpec('ChaCha20-Poly1305', AlgorithmCategory.AEAD, 256, 'RFC 8439', False),
         'SHA-384': AlgorithmSpec('SHA-384', AlgorithmCategory.HASH, 192, 'FIPS 180-4', False),
+        'SHA-512': AlgorithmSpec('SHA-512', AlgorithmCategory.HASH, 256, 'FIPS 180-4', False),
         'SHA3-512': AlgorithmSpec('SHA3-512', AlgorithmCategory.HASH, 256, 'FIPS 202', False),
         'SHA3-256': AlgorithmSpec('SHA3-256', AlgorithmCategory.HASH, 128, 'FIPS 202', False),
         'HKDF-SHA384': AlgorithmSpec('HKDF-SHA384', AlgorithmCategory.KDF, 192, 'RFC 5869', False),
@@ -315,7 +338,7 @@ class CNSA2PolicyEngine:
             if check_category == AlgorithmCategory.SIGNATURE and algorithm not in self.CNSA_2027_APPROVED_SIG:
                 self._violation_count += 1
                 raise SecurityPolicyViolation(
-                    f"DRAFT/QUARANTINED ALGORITHM REJECTED in CNSA 2027+ Strict Mode: {algorithm} is not finalized under FIPS 204/205. Approved: {sorted(self.CNSA_2027_APPROVED_SIG)}",
+                    f"DRAFT/QUARANTINED ALGORITHM REJECTED in CNSA 2027+ Strict Mode: {algorithm} is not an NSA-listed CNSA signature (FALCON-1024: draft FIPS 206; SLH-DSA-256f: not CNSA-listed per NSA FAQ). Approved: {sorted(self.CNSA_2027_APPROVED_SIG)}",
                     algorithm=algorithm,
                     operation="validate"
                 )
@@ -634,16 +657,18 @@ if __name__ == "__main__":
     
     # Test approved algorithms
     print("Testing approved algorithms:")
-    for alg in ['ML-KEM-1024', 'ML-DSA-87', 'AES-256-GCM', 'SHA3-512']:
+    for alg in ['ML-KEM-1024', 'ML-DSA-87', 'AES-256-GCM', 'SHA-512']:
         try:
             engine.validate_algorithm(alg)
             print(f"  PASS {alg} - APPROVED")
         except SecurityPolicyViolation as e:
             print(f"  FAIL {alg} - REJECTED: {e}")
     
-    # Test non-approved algorithms
+    # Test non-approved algorithms (incl. non-CNSA names this engine must
+    # refuse: ChaCha20-Poly1305 and SHA3-512 are valid RFC/FIPS algorithms
+    # but are NOT CNSA-approved — see module docstring honesty basis).
     print("\nTesting non-approved algorithms:")
-    for alg in ['WEAK-SYM-128', 'WEAK-ASYM-2048', 'SHA-256']:
+    for alg in ['WEAK-SYM-128', 'WEAK-ASYM-2048', 'SHA-256', 'ChaCha20-Poly1305', 'SHA3-512']:
         try:
             engine.validate_algorithm(alg)
             print(f"  FAIL {alg} - Should have been rejected!")

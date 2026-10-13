@@ -58,8 +58,12 @@ def test_2027_strict_sets_and_falcon_quarantine(monkeypatch):
         AlgorithmCategory, CNSA2PolicyEngine, SecurityPolicyViolation)
 
     eng = CNSA2PolicyEngine()
-    assert eng.CNSA_2027_APPROVED_SIG == frozenset({"ML-DSA-87", "SLH-DSA-256f"})  # nosec: B101
+    # Corrected 2026-10-13: the CNSA acquisition gate is ML-DSA-87 alone —
+    # NSA FAQ: SLH-DSA is "not part of CNSA and is not approved for any
+    # use in NSS", so it must not appear in this strict set.
+    assert eng.CNSA_2027_APPROVED_SIG == frozenset({"ML-DSA-87"})  # nosec: B101
     assert "FALCON-1024" not in eng.CNSA_2027_APPROVED_SIG  # nosec: B101
+    assert "SLH-DSA-256f" not in eng.CNSA_2027_APPROVED_SIG  # nosec: B101
     # Mandatory pair validates in any mode.
     assert eng.validate_algorithm("ML-KEM-1024", AlgorithmCategory.KEM) is True  # nosec: B101
     assert eng.validate_algorithm("ML-DSA-87", AlgorithmCategory.SIGNATURE) is True  # nosec: B101
@@ -70,10 +74,46 @@ def test_2027_strict_sets_and_falcon_quarantine(monkeypatch):
     assert eng.is_cnsa_2027_strict is True  # nosec: B101
     with pytest.raises(SecurityPolicyViolation):
         eng.validate_algorithm("FALCON-1024", AlgorithmCategory.SIGNATURE)
+    # ...and SLH-DSA-256f is refused too (not CNSA-listed per NSA FAQ).
+    with pytest.raises(SecurityPolicyViolation):
+        eng.validate_algorithm("SLH-DSA-256f", AlgorithmCategory.SIGNATURE)
     # ...while lab keeps verify-legacy compat (quarantine, not removal).
     monkeypatch.delenv("CNSA_2027_STRICT", raising=False)
     assert eng.is_cnsa_2027_strict is False  # nosec: B101
     assert eng.validate_algorithm("FALCON-1024", AlgorithmCategory.SIGNATURE) is True  # nosec: B101
+    # Non-strict: SLH-DSA-256f remains a defense-in-depth secondary.
+    assert eng.validate_algorithm("SLH-DSA-256f", AlgorithmCategory.SIGNATURE) is True  # nosec: B101
+
+
+def test_honest_cnsa_aead_hash_kdf_sets():
+    """Corrected 2026-10-13: engine must refuse non-CNSA AEAD/hash/KDF names.
+
+    NSA CNSA 2.0 FAQ: AES-256-GCM is the only CNSA AEAD; SHA-3/SHAKE are
+    not approved CNSA hashes (CNSSP-15 general usage = SHA-384/SHA-512).
+    ChaCha20-Poly1305, SHA3-512 and HKDF-SHA3_512 are valid RFC/FIPS
+    algorithms used elsewhere in this repo, but must never validate as
+    CNSA-approved through this engine.
+    """
+    from cnsa2_policy_engine import (
+        AlgorithmCategory, CNSA2PolicyEngine, SecurityPolicyViolation)
+
+    eng = CNSA2PolicyEngine()
+    assert eng.APPROVED_AEAD == frozenset({"AES-256-GCM"})  # nosec: B101
+    assert eng.APPROVED_HASH == frozenset({"SHA-384", "SHA-512"})  # nosec: B101
+    assert eng.APPROVED_KDF == frozenset({"HKDF-SHA384", "HKDF-SHA512"})  # nosec: B101
+
+    assert eng.validate_algorithm("AES-256-GCM", AlgorithmCategory.AEAD) is True  # nosec: B101
+    assert eng.validate_algorithm("SHA-512", AlgorithmCategory.HASH) is True  # nosec: B101
+    assert eng.validate_algorithm("HKDF-SHA384", AlgorithmCategory.KDF) is True  # nosec: B101
+
+    for banned, cat in (
+        ("ChaCha20-Poly1305", AlgorithmCategory.AEAD),
+        ("SHA3-512", AlgorithmCategory.HASH),
+        ("SHA3-256", AlgorithmCategory.HASH),
+        ("HKDF-SHA3_512", AlgorithmCategory.KDF),
+    ):
+        with pytest.raises(SecurityPolicyViolation):
+            eng.validate_algorithm(banned, cat)
 
 
 def test_deployment_cnsa27_readiness_gate():

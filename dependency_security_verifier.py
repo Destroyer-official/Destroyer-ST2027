@@ -897,10 +897,11 @@ def liboqs_version_floor() -> Tuple[int, int, int]:
 def parse_oqs_version(version: Any) -> Optional[Tuple[int, int, int]]:
     """Parse a native version string ('0.14.1-dev' -> (0, 14, 1)).
 
-    A `-dev` snapshot compares by its numeric triple only: it can never
-    satisfy a floor above its own triple, and equality with a `-dev`
-    suffix is NOT acceptance (only official releases count — see the
-    rebuild runbook in docs/liboqs_pin.md).
+    Parsing only extracts the numeric triple for comparison/reporting;
+    it is NOT acceptance. Acceptance additionally requires a plain
+    official release string (X.Y.Z — `-dev`/prerelease snapshots never
+    count; see verify_liboqs_native_version and the rebuild runbook in
+    docs/liboqs_pin.md).
     """
     try:
         m = re.match(r"^\s*(\d+)\.(\d+)\.(\d+)", str(version or ""))
@@ -914,11 +915,14 @@ def parse_oqs_version(version: Any) -> Optional[Tuple[int, int, int]]:
 def verify_liboqs_native_version(dll_path: str) -> Tuple[Optional[str], bool]:
     """Query `OQS_version()` from a native liboqs binary and compare floor.
 
-    Returns (raw_version_or_None, meets_floor). NEVER raises: unparseable
-    or unreadable versions report (None, False) and CALLERS enforce
-    (fail-closed in production/TS, loud warning in lab). Loading the
-    library here is safe: the OS reference-counts the already-loaded DLL
-    and no cryptographic operation is performed.
+    Returns (raw_version_or_None, meets_floor). NEVER raises: unreadable
+    or unverifiable binaries report (None, False); present-but-rejected
+    versions (non-release strings, unparseable, or below floor) report
+    (raw, False). CALLERS enforce (fail-closed in production/TS, loud
+    warning in lab). Only plain official release strings (X.Y.Z) can
+    meet the floor — `-dev`/prerelease snapshots fail even at/above it.
+    Loading the library here is safe: the OS reference-counts the
+    already-loaded DLL and no cryptographic operation is performed.
     """
     try:
         lib = ctypes.CDLL(str(dll_path))
@@ -941,6 +945,12 @@ def verify_liboqs_native_version(dll_path: str) -> Tuple[Optional[str], bool]:
         return (None, False)
     parsed = parse_oqs_version(raw)
     floor = liboqs_version_floor()
+    if re.fullmatch(r"\d+\.\d+\.\d+", raw) is None:
+        logger.error(f"native version query: {raw!r} is not an official release "
+                     f"string (floor {floor[0]}.{floor[1]}.{floor[2]}; "
+                     f"-dev/prerelease snapshots are never acceptance — see "
+                     f"docs/liboqs_pin.md)")
+        return (raw, False)
     if parsed is None:
         logger.error(f"native version query: unparseable version {raw!r} (floor {floor})")
         return (raw, False)

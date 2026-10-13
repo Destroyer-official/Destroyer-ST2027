@@ -2,8 +2,9 @@
   "metadata": {
     "harness_name": "ACVP-CAVP-PQC-Validator",
     "version": "2028.1.0",
-    "timestamp_utc": "2026-10-13T04:57:59.860416+00:00",
+    "timestamp_utc": "2026-10-13T14:58:51.896587+00:00",
     "target_profile": "NSA-CNSA-2.0-STRICT",
+    "profile_notes": "KAT coverage intentionally exceeds the CNSA profile: SLH-DSA-256f (FIPS 205) and ChaCha20-Poly1305 (RFC 8439) vectors verify implementation correctness for defense-in-depth / legacy-interop code paths and are NOT claimed as CNSA-approved (NSA CNSA 2.0 FAQ: SLH-DSA not approved for NSS; ChaCha20-Poly1305 not in CNSA).",
     "nist_security_level": 5,
     "overall_status": "COMPLIANT"
   },
@@ -11,7 +12,7 @@
     "total_tests": 13,
     "passed": 13,
     "failed": 0,
-    "duration_seconds": 0.292
+    "duration_seconds": 0.29
   },
   "algorithms_validated": [
     {
@@ -88,7 +89,7 @@
       "test_type": "KeyGen-AFT",
       "status": "PASS",
       "details": "pk=2592B, sk=4896B match NIST Level 5 FIPS 204 specs",
-      "duration_ms": 0.44
+      "duration_ms": 0.4
     },
     {
       "standard": "FIPS 204",
@@ -96,7 +97,7 @@
       "test_type": "SigGenVer-KAT",
       "status": "PASS",
       "details": "4 distinct vectors signed (sig=4627B) and verified successfully",
-      "duration_ms": 8.22
+      "duration_ms": 5.3
     },
     {
       "standard": "FIPS 204",
@@ -104,7 +105,7 @@
       "test_type": "TamperRejection-KAT",
       "status": "PASS",
       "details": "Bit-flipped signatures and message substitutions rejected fail-closed",
-      "duration_ms": 3.61
+      "duration_ms": 4.69
     },
     {
       "standard": "FIPS 205",
@@ -112,7 +113,7 @@
       "test_type": "KeyGen-AFT",
       "status": "PASS",
       "details": "pk=64B, sk=128B match NIST Level 5 FIPS 205 specs",
-      "duration_ms": 12.76
+      "duration_ms": 11.12
     },
     {
       "standard": "FIPS 205",
@@ -120,7 +121,7 @@
       "test_type": "SigGenVer-KAT",
       "status": "PASS",
       "details": "SLH-DSA-256f sig=49856B generated and verified successfully",
-      "duration_ms": 254.76
+      "duration_ms": 257.34
     },
     {
       "standard": "FIPS 205",
@@ -128,7 +129,7 @@
       "test_type": "TamperRejection-KAT",
       "status": "PASS",
       "details": "Tampered SLH-DSA signature rejected fail-closed",
-      "duration_ms": 6.94
+      "duration_ms": 5.78
     },
     {
       "standard": "FIPS 197 / SP 800-38D",
@@ -160,7 +161,7 @@
       "test_type": "Monte-Carlo-MCT",
       "status": "PASS",
       "details": "1,000 iterated hashing and 100 AEAD chaining rounds verified without state divergence",
-      "duration_ms": 4.8
+      "duration_ms": 4.33
     }
   ]
 }

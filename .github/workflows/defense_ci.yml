@@ -61,10 +61,13 @@ jobs:
           python scripts/cavp_algorithm_validator.py
 
       - name: Run Unified Operator In-Process Self-Test (CNSA 2.0 / PQC / DEM)
+        # Values are "1" (not "true"): most production/strict gates check
+        # == "1" exactly; "true" was inert for those, silently running lab
+        # paths under a prod label (docs/liboqs_pin.md KNOWN GAP P1).
         env:
-          SECURE_P2P_PRODUCTION: "true"
-          P2P_STRICT_SECURITY: "true"
-          CNSA_2027_STRICT: "true"
+          SECURE_P2P_PRODUCTION: "1"
+          P2P_STRICT_SECURITY: "1"
+          CNSA_2027_STRICT: "1"
         run: |
           python secure_transmit_2027.py selftest
 
@@ -178,7 +181,7 @@ jobs:
           from pathlib import Path
           MIN=(0,16,0)
           def parse(v):
-              m=re.match(r'(\d+)\.(\d+)\.(\d+)', v or '')
+              m=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', (v or '').strip())
               return tuple(int(x) for x in m.groups()) if m else None
           # 1) Try native OQS_version() from any candidate lib (CI-safe: SKIP if absent).
           cands=[Path('oqs.dll'), Path('liboqs.so'), Path('liboqs.dll'),
@@ -199,7 +202,7 @@ jobs:
               got=parse(ver)
               print(f'liboqs native version via {src}: {ver} (parsed={got}, floor=0.16.0)')
               if got is None or got < MIN:
-                  print(f'FAIL: liboqs {ver} < floor 0.16.0', file=sys.stderr); sys.exit(1)
+                  print(f'FAIL: liboqs {ver!r} is not an official release >= floor 0.16.0', file=sys.stderr); sys.exit(1)
               print('PASS: liboqs native version >= 0.16.0'); sys.exit(0)
           # 2) No native lib on this runner (expected on ubuntu-latest for Windows oqs.dll):
           #    fall back to SBOM / verifier floor check, else SKIP — never fail when tool missing.
@@ -210,7 +213,7 @@ jobs:
                       v=str(comp.get('version','')); got=parse(v)
                       print(f'SBOM liboqs pin: {v} (parsed={got}, floor=0.16.0)')
                       if got is None or got < MIN:
-                          print(f'FAIL: SBOM liboqs pin {v} < floor 0.16.0', file=sys.stderr); sys.exit(1)
+                          print(f'FAIL: SBOM liboqs pin {v!r} is not an official release >= floor 0.16.0', file=sys.stderr); sys.exit(1)
                       print('PASS: SBOM liboqs pin >= 0.16.0 (native lib absent on this runner; see docs/liboqs_pin.md)'); sys.exit(0)
           except SystemExit:
               raise
@@ -241,11 +244,29 @@ jobs:
           }
           sh docs/formal/check.sh --strict
 
-      # F-06: fail-closed supply-chain attestation. Missing cosign, missing
-      # signatures, or a failed verify is a BLOCKING release failure — not a
-      # skip. ML-DSA-87 offline signatures are verified in a prior step; this
-      # step enforces Cosign blob presence + verify and records Rekor status.
-      - name: Cosign SBOM signature (fail-closed) + Rekor transparency note
+      # F-06: cosign is not preinstalled on GitHub runners. Install a
+      # SHA-pinned release (v4.1.2 -> default cosign v3.0.6) BEFORE the
+      # attestation gate; cosign v3 sign-blob requires --bundle.
+      - name: Install Cosign (pinned sigstore/cosign-installer)
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2 (cosign v3.0.6)
+
+      # F-06: fail-closed supply-chain attestation with a REAL keyless flow
+      # (workflow grants id-token: write). Missing cosign, a failed sign, or
+      # a failed verify is a BLOCKING release failure — never a skip.
+      #   1. cosign sign-blob: GitHub OIDC -> Fulcio short-lived cert ->
+      #      Rekor transparency-log upload; emits a self-contained
+      #      .sigstore.json bundle (signature + cert + inclusion proof) per
+      #      committed SBOM (v3 deprecated the detached output flags).
+      #   2. cosign verify-blob over every generated bundle: verifies the
+      #      signature, the Fulcio certificate identity (this exact
+      #      workflow only), the GitHub Actions OIDC issuer, AND the Rekor
+      #      inclusion proof against Sigstore's trusted root
+      #      (--insecure-ignore-tlog defaults to false) — Rekor status is
+      #      now proven, not advisory.
+      #   3. ML-DSA offline signatures (*.mldsa87.sig and the two .sig files
+      #      with .pub siblings) are verified by the offline/PQ steps and
+      #      are NOT cosign artifacts — they are not demanded here.
+      - name: Cosign keyless SBOM signing (OIDC) + fail-closed bundle verify + Rekor proof
         run: |
           set -euo pipefail
           if ! command -v cosign >/dev/null 2>&1; then
@@ -253,37 +274,61 @@ jobs:
             exit 1
           fi
           cosign version
-          COSIGN_SIG=""
-          for f in compliance_reports/*.sig compliance_reports/sbom/*.sig; do
-            if [ -f "$f" ] && [[ "$f" != *.mldsa87.sig ]]; then COSIGN_SIG="$COSIGN_SIG $f"; fi
+
+          # Committed SBOM set (job 2 does not regenerate artifacts).
+          ARTIFACTS=()
+          for f in compliance_reports/sbom/*.json \
+                   compliance_reports/cyclonedx_sbom.json \
+                   compliance_reports/spdx_sbom.json; do
+            [ -f "$f" ] && ARTIFACTS+=("$f")
           done
-          if [ -z "$COSIGN_SIG" ]; then
-            echo "FAIL: no Cosign SBOM signatures present (expected compliance_reports/*.sig + .pem/.crt)"
-            echo "      ML-DSA offline sigs (*.mldsa87.sig) do not satisfy the Cosign gate"
+          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
+            echo "FAIL: no SBOM artifacts present to attest"
             exit 1
           fi
+
+          # 1) Keyless sign (OIDC -> Fulcio -> Rekor). The bundle carries the
+          #    signature, certificate, and Rekor inclusion proof together.
+          for f in "${ARTIFACTS[@]}"; do
+            echo "Signing $f (keyless OIDC -> Fulcio -> Rekor)..."
+            cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f"
+          done
+
+          # 2) Verify every bundle: signature + Fulcio identity (this
+          #    workflow) + OIDC issuer + embedded Rekor inclusion proof.
           VERIFIED=0
-          for sig in $COSIGN_SIG; do
-            base="${sig%.sig}"
-            cert=""
-            if [ -f "${base}.pem" ]; then cert="${base}.pem"; elif [ -f "${base}.crt" ]; then cert="${base}.crt"; fi
-            if [ -z "$cert" ]; then
-              echo "FAIL: no cosign cert for $sig (expected ${base}.pem or ${base}.crt)"
-              exit 1
-            fi
-            echo "Verifying $base with cosign (cert=$cert)..."
-            if ! cosign verify-blob --cert "$cert" --signature "$sig" "$base"; then
+          for bundle in compliance_reports/*.sigstore.json compliance_reports/sbom/*.sigstore.json; do
+            [ -f "$bundle" ] || continue
+            base="${bundle%.sigstore.json}"
+            echo "Verifying $base (bundle: signature + Fulcio cert + Rekor proof)..."
+            if ! cosign verify-blob \
+                 --bundle "$bundle" \
+                 --certificate-identity-regexp 'https://github\.com/Destroyer-official/Destroyer-ST2027/\.github/workflows/defense_ci\.yml@refs/' \
+                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                 "$base"; then
               echo "FAIL: cosign verify-blob failed for $base"
               exit 1
             fi
-            VERIFIED=$((VERIFIED+1))
+            VERIFIED=$((VERIFIED + 1))
           done
-          echo "PASS: $VERIFIED Cosign blob signature(s) verified"
-          # Rekor: transparency log inclusion is advisory until a signed
-          # inclusion proof is produced offline (see generate_production_sbom.py
-          # verify_sbom_offline TODO(rekor)). Recorded, not silently skipped.
-          echo "Rekor: transparency inclusion check is advisory/offline-only (see generate_production_sbom.py verify_sbom_offline TODO(rekor))"
+          if [ "$VERIFIED" -eq 0 ]; then
+            echo "FAIL: no Cosign (keyless) bundle signatures verified"
+            exit 1
+          fi
+          echo "PASS: $VERIFIED Cosign blob signature(s) verified (keyless Fulcio identity + Rekor inclusion proof via Sigstore bundle)"
           exit 0
+
+      # Archive the attestation receipts (.sigstore.json bundles) for
+      # auditors; ephemeral CI output, 30-day retention like test results.
+      - name: Upload Cosign Attestation Receipts
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3  # v4.3.1
+        with:
+          name: cosign-attestation-receipts
+          path: |
+            compliance_reports/*.sigstore.json
+            compliance_reports/sbom/*.sigstore.json
+          if-no-files-found: error
+          retention-days: 30
 
   python-test-suite:
     name: Python Test Suite (${{ matrix.os }})

@@ -59,6 +59,7 @@ pub mod purge;
 pub mod ratchet;
 pub mod replay;
 pub mod session;
+pub mod tpm_nv;
 pub mod zero_trust;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};

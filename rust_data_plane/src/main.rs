@@ -40,6 +40,7 @@ use destroyer_core::policy::{DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87
 use destroyer_core::purge;
 use destroyer_core::ratchet::PcsRatchet;
 use destroyer_core::replay::AntiReplayWindow;
+use destroyer_core::tpm_nv;
 use destroyer_core::zero_trust::{
     inspect_content_rtb, ClearanceLevel, SecurityRole, ZeroTrustEngine, PERM_CRITICAL_RELEASE,
     PERM_MESSAGE_SEND,
@@ -118,7 +119,11 @@ fn usage() -> ! {
          Security: --seq, --key HEX and --psk HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Keys/PSK NEVER\n\
          appear in argv (visible via ps): provision via --key-file (0600), --key-stdin,\n\
-         --psk-file, or native quantum-resistant kex-listen/kex-connect with ML-KEM-1024 + X25519."
+         --psk-file, or native quantum-resistant kex-listen/kex-connect with ML-KEM-1024 + X25519.\n\
+         \n\
+         Env: P2P_TPM_NV_INDEX=0x<hex> binds seq reservations to a TPM 2.0 NV monotonic\n\
+         counter (fail-closed hardware rollback guard; P2P_TPM_NV_REPROVISION=1 is the\n\
+         explicit operator re-anchor recovery)."
     );
     std::process::exit(2);
 }
@@ -436,16 +441,19 @@ fn write_state_locked(f: &mut File, st: &SessionState, key: &[u8; 32]) {
 /// high-water journal (`<state>.seqlog`). If the state file is restored to
 /// an older snapshot while the journal still records a higher end-seq, the
 /// reservation is refused — a rollback must not successfully encrypt under
-/// a reused counter. Rolling back BOTH files requires a hardware monotonic
-/// counter (out of scope); software-only detection covers the demonstrated
-/// state-file-restore attack.
+/// a reused counter. Restoring BOTH files to an old consistent pair is
+/// additionally refused when the hardware guard is enabled
+/// (`P2P_TPM_NV_INDEX` — see `tpm_nv`): a TPM 2.0 NV counter generation
+/// cannot be rolled back in software or by the owner hierarchy.
 fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -> u64 {
     if count == 0 {
         fail("reservation count must be >= 1");
     }
+    let state_fresh = tpm_nv::state_is_fresh(path);
     let jpath = seq_journal_path(path);
     let mut f = open_locked_state(path);
     let mut st = read_state_locked(&mut f, key, key_id);
+    tpm_nv::guard(path, key, st.send_seq, state_fresh).unwrap_or_else(|e| fail(&e));
     let journal_hw = seq_journal_high_water(&jpath);
     if st.send_seq < journal_hw {
         fail(
@@ -468,13 +476,20 @@ fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -
     // Journal AFTER successful state persist: crash here leaves journal
     // behind state (safe — next run catches up); never journaled-ahead.
     seq_journal_append(&jpath, end);
+    // Hardware generation checkpoint last (no-op without P2P_TPM_NV_INDEX);
+    // a crash before it leaves the NV chain one checkpoint behind, which the
+    // next guard tolerates (state >= sidecar seq) and the next checkpoint
+    // catches up.
+    tpm_nv::checkpoint(path, key, end).unwrap_or_else(|e| fail(&e));
     // Unlock via drop.
     start
 }
 
 fn load_recv_window(path: &str, key: &[u8; 32], key_id: &[u8; 16]) -> (File, AntiReplayWindow) {
+    let state_fresh = tpm_nv::state_is_fresh(path);
     let mut f = open_locked_state(path);
     let st = read_state_locked(&mut f, key, key_id);
+    tpm_nv::guard(path, key, st.send_seq, state_fresh).unwrap_or_else(|e| fail(&e));
     let w = AntiReplayWindow::from_parts(st.recv_last, st.recv_bitmap);
     (f, w)
 }
@@ -1737,8 +1752,11 @@ fn cmd_channel(args: &[String]) {
     let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
 
+    let state_fresh = tpm_nv::state_is_fresh(&state);
     let mut state_file = open_locked_state(&state);
     let initial_st = read_state_locked(&mut state_file, &key_bytes, &key_id);
+    tpm_nv::guard(&state, &key_bytes, initial_st.send_seq, state_fresh)
+        .unwrap_or_else(|e| fail(&e));
     let mut next_send_seq = initial_st.send_seq;
     let mut window = AntiReplayWindow::from_parts(initial_st.recv_last, initial_st.recv_bitmap);
 
@@ -1748,6 +1766,7 @@ fn cmd_channel(args: &[String]) {
     let mut st = read_state_locked(&mut state_file, &key_bytes, &key_id);
     st.send_seq = reserved_limit;
     write_state_locked(&mut state_file, &st, &key_bytes);
+    tpm_nv::checkpoint(&state, &key_bytes, reserved_limit).unwrap_or_else(|e| fail(&e));
 
     let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
     for m in &msgs {
@@ -1820,6 +1839,10 @@ fn cmd_channel(args: &[String]) {
                 }
                 _ = tick_timer.tick() => {
                     if next_send_seq >= reserved_limit {
+                        // Persisted send_seq is still the previous limit here
+                        // (fresh=false): guard the chain before moving it up.
+                        tpm_nv::guard(&state, &key_bytes, reserved_limit, false)
+                            .unwrap_or_else(|e| fail(&e));
                         reserved_limit = next_send_seq
                             .checked_add(512)
                             .unwrap_or_else(|| fail("sequence exhausted"));
@@ -1831,6 +1854,8 @@ fn cmd_channel(args: &[String]) {
                             recv_bitmap: bitmap,
                         };
                         write_state_locked(&mut state_file, &st, &key_bytes);
+                        tpm_nv::checkpoint(&state, &key_bytes, reserved_limit)
+                            .unwrap_or_else(|e| fail(&e));
                     }
 
                     let seq = next_send_seq;
@@ -1914,6 +1939,11 @@ fn cmd_channel(args: &[String]) {
             recv_bitmap: bitmap,
         };
         write_state_locked(&mut state_file, &st, &key_bytes);
+        // Final write gives unused reservations back (send_seq may drop to
+        // the consumed value): re-anchor the NV chain so the next guard
+        // sees sidecar == state instead of a false rollback.
+        tpm_nv::checkpoint(&state, &key_bytes, next_send_seq)
+            .unwrap_or_else(|e| fail(&e));
 
         println!(
             "channel: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={}",
@@ -2206,6 +2236,19 @@ fn cmd_zeroize(args: &[String]) {
             }
             Err(e) => {
                 fail(&format!("zeroize failed on {target}: {e}"));
+            }
+        }
+        // Sidecars pin this state lineage (append-only seq journal, NV
+        // checkpoint chain): purge them too so a fresh state at the same
+        // path starts a clean chain instead of tripping a stale
+        // high-water refusal.
+        for suffix in [".seqlog", ".nvck"] {
+            let side = format!("{target}{suffix}");
+            if std::path::Path::new(&side).exists() {
+                purge::purge_file(&side)
+                    .unwrap_or_else(|e| fail(&format!("zeroize failed on {side}: {e}")));
+                println!("zeroize: purged {side}");
+                purged += 1;
             }
         }
     }

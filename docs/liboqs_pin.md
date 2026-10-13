@@ -10,7 +10,7 @@ the runner (e.g. Windows `oqs.dll` on `ubuntu-latest`).
 |---|---|
 | Vendored binary | `oqs.dll` (repo root, Windows; `liboqs_wrapper.py` falls back to `liboqs.so` on Linux) |
 | Embedded version string in binary | `0.14.1-dev` (printable string adjacent to `system`/`OpenSSL` alg table; `OQS_version` export present) — BELOW FLOOR, fail-closed until rebuilt |
-| SBOM-declared version | `0.16.0` target (`generate_production_sbom.py:259`, `supply_chain_security.py:1112`, `compliance_reports/{spdx,cyclonedx}_sbom.json`) |
+| SBOM-declared version | `0.10.1` (stale pre-floor pin in `scripts/generate_production_sbom.py` dlls list and `supply_chain_security.py:1112`, carried into `compliance_reports/{spdx,cyclonedx}_sbom.json`) — below floor; regenerated at `0.16.0` by update-procedure step 4 |
 | Verifier floor (`dependency_security_verifier.py` `oqs.dll.min_version`) | `0.16.0` (only 0.16.0 supported upstream; <0.16 unsupported) |
 | Verifier upgrade target | `0.16.0` |
 | Blocked algorithms until rebuild | `HQC-128`, `HQC-192`, `HQC-256`, `XMSS-SHA2_10_256`, `XMSS-SHA2_16_256`, `XMSSMT-*` (see verifier `blocked_algorithms` + `triple_hybrid_kem.py` allowlist) |
@@ -80,9 +80,10 @@ The workflow builds from the official tag under MSVC, asserts
    upstream fixes (CVE-2024-54137, CVE-2025-52473, CVE-2026-44518 /
    CVE-2026-46344 per verifier comment); otherwise keep them blocked and
    keep `upgrade_target` open.
-6. Update this file's table + hashes; CI (`adversarial-gates` liboqs pin
-   check) asserts `>=` floor and fails closed only when a present version
-   is below floor — missing native lib stays SKIP exit 0.
+ 6. Update this file's table + hashes; CI (`adversarial-gates` liboqs pin
+    check) asserts `>=` floor AND official-release format (a `-dev`/
+    prerelease string fails even at floor) — missing native lib stays
+    SKIP exit 0.
 
 ## RIC / masking backport tracking
 
@@ -105,7 +106,10 @@ Cosign/Rekor anchoring plan.
 The sidecar/SBOM checks verify INTEGRITY, never the live binary's version,
 so `verify_liboqs_native_version()` (`dependency_security_verifier.py`)
 queries `OQS_version()` and compares the single-sourced floor, enforced at
-`liboqs_wrapper.py` load time:
+`liboqs_wrapper.py` load time. Only plain official release strings
+(`X.Y.Z`) can meet the floor — `-dev`/prerelease snapshots are rejected
+even at/above it (runtime check + CI pin check + rebuild assert,
+hardened 2026-10-13):
 
 | Mode | Below-floor binary (`0.14.1-dev` today) |
 |---|---|
@@ -115,9 +119,13 @@ queries `OQS_version()` and compares the single-sourced floor, enforced at
 Strict-mode semantics are IDENTICAL to the orchestrator's canonical check
 (`secure_transmit_2027.py:558`) by design — uniform mode perception, no
 surprises. KNOWN GAP (P1, pre-existing, repo-wide): most `SECURE_P2P_PRODUCTION`
-gates test `== "1"` while CI sets `"true"`, so CI's "prod" selftest runs lab
-paths. Normalize to one 4-value helper repo-wide AND set CI to `"1"` (or vice
-versa) — a maintainer decision with test implications; do NOT fix piecemeal.
+gates test `== "1"` while CI used to set `"true"`, so CI's "prod" selftest ran
+lab paths. **Closed 2026-10-13 (CI side):** the selftest step in
+`.github/workflows/defense_ci.yml` now sets `"1"` for all three flags
+(`SECURE_P2P_PRODUCTION`, `P2P_STRICT_SECURITY`, `CNSA_2027_STRICT`), so the
+existing `== "1"` gates activate. The repo-wide parsing inconsistency (some
+modules accept 4 values, some only `== "1"`) remains: a future cleanup should
+normalize all gates to one shared 4-value helper; do NOT fix piecemeal.
 
 ## Evidence (2026-10-11, this machine)
 

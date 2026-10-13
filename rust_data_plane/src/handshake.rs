@@ -425,6 +425,11 @@ impl Handshake {
         let (e_sk, e_pub) = p384_keygen()?;
         self.e_secret = Some(e_sk);
         self.sym.mix_hash(&e_pub);
+        if self.psk.is_some() {
+            // Noise spec 9.2 (PSK only): MixHash(e) followed by MixKey(e);
+            // mirrored by noise_pq.py `_take_ephemeral` (byte-identical ck).
+            self.sym.mix_key(&e_pub)?;
+        }
         let (ml_ek, ml_dk) = mlkem_keygen()?;
         self.ml_dk = Some(ml_dk);
         self.sym.mix_hash(&ml_ek);
@@ -449,10 +454,19 @@ impl Handshake {
         let (e_cli, ek_cli) = (&m1[..P384_PUB], &m1[P384_PUB..]);
         // Received values mixed first, in send order (else transcript forks).
         self.sym.mix_hash(e_cli);
+        if self.psk.is_some() {
+            // Noise spec 9.2: MixKey after received e (PSK only).
+            self.sym.mix_key(e_cli)?;
+        }
         self.sym.mix_hash(ek_cli);
         let (e_sk, e_pub) = p384_keygen()?;
         self.e_secret = Some(e_sk);
         self.sym.mix_hash(&e_pub);
+        if self.psk.is_some() {
+            // Noise spec 9.2: MixKey after own e (PSK only); mirrors
+            // noise_pq.py, which mixes inside `_take_ephemeral`.
+            self.sym.mix_key(&e_pub)?;
+        }
         // Encapsulate to the initiator's KEM key (mirrors `kem.rs`).
         use ml_kem::Key as MlkemKey;
         let ek_arr: [u8; MLKEM1024_PK] = ek_cli.try_into().map_err(|_| CoreError::Malformed)?;
@@ -520,6 +534,11 @@ impl Handshake {
         let ml_ct = &m2[P384_PUB..P384_PUB + MLKEM1024_CT];
         let rest = &m2[P384_PUB + MLKEM1024_CT..];
         self.sym.mix_hash(e_srv);
+        if self.psk.is_some() {
+            // Noise spec 9.2: MixKey after received e (PSK only); mirrors
+            // the responder's own-e MixKey before its ml_ct mix.
+            self.sym.mix_key(e_srv)?;
+        }
         self.sym.mix_hash(ml_ct);
         let e_taken = self.e_secret.take().ok_or(CoreError::Malformed)?;
         let ee = p384_dh(&e_taken, e_srv)?;

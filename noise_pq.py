@@ -54,6 +54,23 @@ Message flow (all lengths fixed; any deviation aborts):
   M3 I->R: enc(sig_i_pk 2592) || enc(sig_i)
   Split -> (k_ir, k_ri) + transcript hash h (channel binding export).
 
+PSK VARIANT (Noise_XXhfs_psk2, conforming to the Noise spec rev 34):
+  Section 9.4: the `psk` token sits at the END of message 2 (psk2), so
+  the responder's identity signature covers the transcript BEFORE the
+  PSK mixes (M2 layout is spec-conformant, not a binding gap: protocol
+  names differ from byte 0, blocking PSK-strip/downgrade, and M3's
+  signature plus the final transcript hash cover the PSK-derived state).
+  Section 9.2: in PSK handshakes every MixHash(e.public_key) MUST be
+  followed by MixKey(e.public_key) — applied here at all four e-token
+  processing sites (M1 send/receive, M2 send/receive — three code points
+  because both send sites share `_take_ephemeral`) in BOTH implementations
+  (noise_pq.py and rust_data_plane/src/handshake.rs, mirrored insertion
+  points; non-PSK sessions are byte-identical to the pre-9.2 schedule).
+  This seeds the key schedule with ephemeral public keys before any
+  PSK-derived encryption key exists (the spec's randomization rationale).
+  Section 9.3 validity rule: satisfied — the initiator sends its
+  ephemeral in M1 before any psk-derived key encrypts data (M3).
+
 Transport: AES-256-GCM, 12B nonce seq(8BE)||dir(1)||zero(3), strict replay
 window (shared semantics with secure_transmit_2027.Channel).
 
@@ -417,6 +434,10 @@ def _take_ephemeral(sess: NoiseSession) -> bytes:
     sess._e_priv = priv
     sess._e_pub = pub
     sess.sym.mix_hash(pub)
+    if sess.psk is not None:
+        # Noise spec 9.2 (PSK handshakes only): MixHash(e) must be followed
+        # by MixKey(e). Mirrored by rust_data_plane/src/handshake.rs.
+        sess.sym.mix_key(pub)
     return pub
 
 
@@ -490,6 +511,9 @@ def responder_reply(sess: NoiseSession, m1: bytes, signer=None) -> bytes:
     # send order, then generate own ephemeral material. Any other order
     # forks the transcript hash h between the parties (caught live).
     sess.sym.mix_hash(e_cli)
+    if sess.psk is not None:
+        # Noise spec 9.2: MixKey after RECEIVED e (PSK only).
+        sess.sym.mix_key(e_cli)
     sess.sym.mix_hash(ek_cli)
     e_pub = _take_ephemeral(sess)  # mixes e_pub exactly once (see helper)
     ml_ct, ml_ss_raw = _mlkem_encaps(ek_cli)
@@ -541,6 +565,10 @@ def initiator_finish(
     e_srv, rest = m2[:P384_PUB], m2[P384_PUB:]
     ml_ct, rest = rest[:MLKEM_CT], rest[MLKEM_CT:]
     sess.sym.mix_hash(e_srv)
+    if sess.psk is not None:
+        # Noise spec 9.2: MixKey after RECEIVED e (PSK only); mirrors the
+        # responder's own-e MixKey before its ml_ct mix.
+        sess.sym.mix_key(e_srv)
     sess.sym.mix_hash(ml_ct)
     dh_secret = bytearray(_p384_dh(sess._e_priv, e_srv))
     sess._e_priv = None  # Single-use ephemeral ECDH key zero-dwell disposal (NIST SP 800-227)
