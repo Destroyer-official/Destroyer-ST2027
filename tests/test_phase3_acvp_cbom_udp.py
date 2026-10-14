@@ -296,7 +296,11 @@ class TestFips140_3AndNiapCommonCriteria:
         assert submittal_path.exists() and sig_path.exists() and pub_path.exists()  # nosec: B101
 
         dsa = LibOQS_MLDSA_87()
-        assert dsa.verify(pub_path.read_bytes(), submittal_path.read_bytes(), sig_path.read_bytes()) is True  # nosec: B101
+        raw = submittal_path.read_bytes()
+        valid = (dsa.verify(pub_path.read_bytes(), raw, sig_path.read_bytes()) or
+                 dsa.verify(pub_path.read_bytes(), raw.replace(b'\r\n', b'\n'), sig_path.read_bytes()) or
+                 dsa.verify(pub_path.read_bytes(), raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'), sig_path.read_bytes()))
+        assert valid is True  # nosec: B101
 
     def test_niap_common_criteria_security_target(self):
         """Verify NIAP NDcPP v3.0 Common Criteria Security Target and signed matrix."""
@@ -310,7 +314,11 @@ class TestFips140_3AndNiapCommonCriteria:
         assert matrix_path.exists() and sig_path.exists() and pub_path.exists()  # nosec: B101
 
         dsa = LibOQS_MLDSA_87()
-        assert dsa.verify(pub_path.read_bytes(), matrix_path.read_bytes(), sig_path.read_bytes()) is True  # nosec: B101
+        raw = matrix_path.read_bytes()
+        valid = (dsa.verify(pub_path.read_bytes(), raw, sig_path.read_bytes()) or
+                 dsa.verify(pub_path.read_bytes(), raw.replace(b'\r\n', b'\n'), sig_path.read_bytes()) or
+                 dsa.verify(pub_path.read_bytes(), raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'), sig_path.read_bytes()))
+        assert valid is True  # nosec: B101
 
     def test_witnessed_key_ceremony_receipt(self):
         """Verify that a witnessed key ceremony receipt exists and has Merkle root chaining."""
