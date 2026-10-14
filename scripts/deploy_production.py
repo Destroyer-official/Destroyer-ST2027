@@ -110,8 +110,16 @@ class ProductionDeployer:
         all_required = True
         
         # Check production mode (SECURE_P2P_PRODUCTION or P2P_PRODUCTION or P2P_TS_MODE)
-        prod_mode = os.environ.get('SECURE_P2P_PRODUCTION') or os.environ.get('P2P_PRODUCTION') or os.environ.get('P2P_TS_MODE')
-        if prod_mode and str(prod_mode).strip().lower() in ('1', 'true', 'yes', 'on'):
+        try:
+            from production_gate import is_production as _gate_prod
+            _any_strict = _gate_prod() or os.environ.get('P2P_TS_MODE', '').strip().lower() in ('1', 'true', 'yes', 'on')
+        except Exception:
+            _any_strict = False
+        prod_mode = next((v for v in (os.environ.get('SECURE_P2P_PRODUCTION', '').strip(),
+                                     os.environ.get('P2P_PRODUCTION', '').strip(),
+                                     os.environ.get('P2P_TS_MODE', '').strip())
+                          if v.lower() in ('1', 'true', 'yes', 'on')), None)
+        if _any_strict or prod_mode:
             self.log_pass(f"Environment: Production mode is set ({prod_mode})")
         else:
             self.log_error("Environment: P2P_PRODUCTION=1 / SECURE_P2P_PRODUCTION=true is NOT set (required for production fail-closed enforcement)")

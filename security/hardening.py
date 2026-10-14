@@ -39,8 +39,8 @@ class SecurityError(Exception):
 def _is_production() -> bool:
     """Return True if running in production mode."""
     return (
-        os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes")
-        or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes")
+        os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+        or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
     )
 
 

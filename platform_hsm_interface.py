@@ -8731,13 +8731,20 @@ def get_available_pkcs11_libraries():
 
 
 def _softhsm_prod_strict() -> bool:
-    """True in production (sticky-prod aware): default PINs never allowed."""
+    """True in production (sticky-prod aware): default PINs never allowed.
+
+    F-01: delegates to production_gate (canonical sticky detector).
+    """
     try:
-        if os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1":
-            return True
-        return os.environ.get("P2P_PRODUCTION", "0").lower() in ("1", "true")
+        from production_gate import is_production
+        return is_production()
     except Exception:
-        return False
+        try:
+            if os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"):
+                return True
+            return os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+        except Exception:
+            return False
 
 
 def _resolve_pkcs11_pin(pin, platform_config, pkcs11_lib_path):

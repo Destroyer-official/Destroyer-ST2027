@@ -1353,7 +1353,12 @@ class SimpleP2PChat:
                 from destroyer_core import SecureEngine
                 self._rust_engine = SecureEngine()
             except ImportError as e:
-                if os.environ.get("P2P_PRODUCTION") == "1" or os.environ.get("P2P_STRICT_SECURITY") == "1":
+                try:
+                    from production_gate import is_production as _gate_prod
+                    _p2p_prod = _gate_prod()
+                except Exception:
+                    _p2p_prod = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                if _p2p_prod or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
                     raise RuntimeError(
                         "MILITARY FATAL: P2P_DATA_PLANE=rust required in production but native module "
                         "destroyer_core is not built. Run `maturin develop -r` in rust_data_plane/."

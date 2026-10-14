@@ -137,10 +137,13 @@ def _pal_decrypt(key: bytes, nonce: bytes, ciphertext: bytes,
         try:
             import os as _os
 
-            _strict = (_os.environ.get("P2P_TS_MODE", "").strip().lower()
-                       in ("1", "true", "yes", "on")
-                       or _os.environ.get("P2P_PRODUCTION", "").strip().lower()
-                       in ("1", "true", "yes", "on"))
+            try:
+                from production_gate import is_production as _gate_prod
+                _strict = _gate_prod() or _os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+            except Exception:
+                _strict = (_os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+                           or _os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                           or _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
         except Exception:
             _strict = False
         if _strict:
@@ -171,7 +174,19 @@ class OfficerIdentity:
     def to_dict(self, include_secret: bool = False) -> Dict[str, Any]:
         """Serialize officer profile. Secret key serialization is prohibited in production."""
         if include_secret:
-            if os.environ.get("SECURE_P2P_PRODUCTION") == "true" or os.environ.get("P2P_PRODUCTION") == "true":
+            # F-01: use canonical sticky production detector (all truthy
+            # spellings for both env vars). Prior check accepted only
+            # == "true" and missed P2P_PRODUCTION=1, allowing secret-key
+            # serialization under a production label.
+            try:
+                from production_gate import is_production as _gate_prod
+                _prod_ser = _gate_prod()
+            except Exception:
+                _prod_ser = (
+                    os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                    or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                )
+            if _prod_ser:
                 raise NC3SecurityError(
                     "MILITARY FATAL: Serialization of NC3 secret signing keys to dictionaries/JSON "
                     "is strictly prohibited in production mode."
@@ -1396,7 +1411,18 @@ def get_default_token_backend(pin: Optional[str] = None) -> Any:
     backend = PKCS11HardwareTokenBackend(pin=pin)
     if backend.is_available():
         return backend
-    if os.environ.get("P2P_PRODUCTION", "").strip() == "1" or os.environ.get("P2P_FAIL_ON_SOFTWARE_FALLBACK", "").strip() == "1":
+    # F-01: canonical sticky production detector (all truthy spellings for
+    # both P2P_PRODUCTION and SECURE_P2P_PRODUCTION).
+    _fail_closed = os.environ.get("P2P_FAIL_ON_SOFTWARE_FALLBACK", "").strip() == "1"
+    try:
+        from production_gate import is_production as _gate_prod
+        _fail_closed = _fail_closed or _gate_prod()
+    except Exception:
+        _fail_closed = _fail_closed or (
+            os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+        )
+    if _fail_closed:
         raise HardwareTokenAuthenticationError("Physical PKCS#11 hardware token mandatory in production mode.")
     return SoftwareTokenBackend()
 

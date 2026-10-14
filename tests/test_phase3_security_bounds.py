@@ -85,7 +85,13 @@ def test_pqxdh_v1_refused_in_production(monkeypatch):
     monkeypatch.delenv("P2P_TS_MODE", raising=False)
     with pytest.raises(SecurityError):
         h.negotiate_protocol_version({"protocol_version": 1})
+    # F-01 sticky latch (by design): flipping the env to "0" does NOT
+    # downgrade a process that already armed production posture — that is
+    # exactly the downgrade attack the latch refuses. The lab-phase
+    # assertion below uses the documented test-only escape hatch.
     monkeypatch.setenv("P2P_PRODUCTION", "0")
+    import production_gate
+    production_gate.reset_for_tests()
     assert h.negotiate_protocol_version({"protocol_version": 1}) == 1
 
 

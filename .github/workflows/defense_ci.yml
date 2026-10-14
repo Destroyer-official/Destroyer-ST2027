@@ -49,7 +49,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y liboqs-dev || true
           if [ ! -f /usr/local/lib/liboqs.so ] && [ ! -f /usr/lib/x86_64-linux-gnu/liboqs.so ] && [ ! -f /usr/lib/liboqs.so ]; then
+            # F-09: tags are mutable refs — clone the 0.16.0 tag but HARD-PIN
+            # the build to the release commit SHA and fail closed on mismatch.
+            LIBOQS_PIN_SHA="5a1a854b0dc9f2141bdc771c555ee60c37950183"
             git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+            ACTUAL_SHA="$(git -C /tmp/liboqs rev-parse HEAD)"
+            if [ "$ACTUAL_SHA" != "$LIBOQS_PIN_SHA" ]; then
+              echo "FAIL: liboqs 0.16.0 tag now points at $ACTUAL_SHA, expected pinned $LIBOQS_PIN_SHA (tag moved or supply-chain tamper)" >&2
+              exit 1
+            fi
+            echo "liboqs pin OK: 0.16.0 -> $ACTUAL_SHA"
             cmake -S /tmp/liboqs -B /tmp/liboqs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local
             cmake --build /tmp/liboqs/build -j$(nproc)
             sudo cmake --install /tmp/liboqs/build
@@ -61,9 +70,13 @@ jobs:
           python scripts/cavp_algorithm_validator.py
 
       - name: Run Unified Operator In-Process Self-Test (CNSA 2.0 / PQC / DEM)
-        # Values are "1" (not "true"): most production/strict gates check
-        # == "1" exactly; "true" was inert for those, silently running lab
-        # paths under a prod label (docs/liboqs_pin.md KNOWN GAP P1).
+        # Values are "1" (explicit, one of the four accepted truthy spellings).
+        # F-01 REMEDIATED (2026-10-14): the former "KNOWN GAP P1" — most
+        # gates checked == "1"/== "true" exactly so "true" was inert for some
+        # modules — is closed. All production gates now route through
+        # production_gate.is_production() (canonical 1/true/yes/on, sticky),
+        # covered by tests/test_production_gate.py (114-case matrix, both
+        # env vars, all spellings, fresh-interpreter import-time arming).
         env:
           SECURE_P2P_PRODUCTION: "1"
           P2P_STRICT_SECURITY: "1"

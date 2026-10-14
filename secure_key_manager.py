@@ -2724,7 +2724,12 @@ if __name__ == "__main__":
                     log.debug(f"Key {key_name} decrypted successfully from AES-256-GCM file")
                 else:
                     from utils.helpers import is_env_true
-                    is_prod = is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION") or is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK")
+                    try:
+                        from production_gate import is_production as _gate_prod
+                        _gate = _gate_prod()
+                    except Exception:
+                        _gate = is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
+                    is_prod = _gate or is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK")
                     if is_prod:
                         raise SecurityPolicyViolationError(
                             f"FATAL SECURITY VIOLATION: Unencrypted legacy key '{key_name}' detected on disk in production mode. "

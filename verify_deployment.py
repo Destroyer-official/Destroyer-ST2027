@@ -649,6 +649,28 @@ class DeploymentVerifier:
             if _pow < 3:
                 self._add_result("Env Policy: P2P_DHT_POW_DIFFICULTY_BYTES", VerificationStatus.WARN,
                                  f"PoW difficulty {_pow} < 3 in production (recommend 3 with persistent pre-mined identities)")
+        # F-04 (audit 2026-10-14): private signing key material must never
+        # ship inside the deployed runtime tree — co-located with the signed
+        # config it would let a compromised host forge boot configuration.
+        # Signing is offline/HSM only; FAIL the ATO gate in production.
+        _leaked_keys = [
+            p for p in (
+                os.path.join("certs", "config_signer.key"),
+                os.path.join("certs", "sbom_mldsa87_signer.sk"),
+            ) if os.path.isfile(p)
+        ]
+        if _leaked_keys:
+            if any(_truthy(f) for f in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE")):
+                self._add_result("Key Hygiene: signing key exposure", VerificationStatus.FAIL,
+                                 f"private key material present in runtime tree: {', '.join(_leaked_keys)} "
+                                 "— relocate signer to offline/HSM before ATO")
+                all_secure = False
+            else:
+                self._add_result("Key Hygiene: signing key exposure", VerificationStatus.WARN,
+                                 f"private keys present in tree (lab only; production would FAIL): {', '.join(_leaked_keys)}")
+        else:
+            self._add_result("Key Hygiene: signing key exposure", VerificationStatus.PASS,
+                             "no config-signing private keys in runtime tree")
         return all_secure
 
     
@@ -668,7 +690,7 @@ class DeploymentVerifier:
                              f"posture detection unavailable: {str(e)[:80]}")
             return True
         prod = (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                or os.environ.get("SECURE_P2P_PRODUCTION", "").strip() in ("1", "true"))
+                or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
         ok = True
         sb = posture.get("secure_boot")
         if sb is True:

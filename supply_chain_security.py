@@ -1786,8 +1786,12 @@ class TUFReleaseManager:
         """
         if os.environ.get("P2P_REQUIRE_PQ_CODE_SIG", "").strip().lower() in ("1", "true", "yes", "on"):
             return True
-        return (os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1"
-                or os.environ.get("P2P_PRODUCTION", "0").lower() in ("1", "true"))
+        try:
+            from production_gate import is_production
+            return is_production()
+        except Exception:
+            return (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                    or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
 
     def _ensure_pq_keys(self) -> Tuple[bytes, bytes]:
         """Load (or mint) the ML-DSA-87 release-signing keypair.

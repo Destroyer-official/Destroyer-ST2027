@@ -180,7 +180,7 @@ def _verify_ek_chain(ek_cert_chain: list[bytes], vendor: str = "amd") -> bool:
             from utils.helpers import is_env_true
             is_prod = is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
         except Exception:
-            is_prod = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true") or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true")
+            is_prod = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on") or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
 
         root_cert = chain[-1]
         root_fp = root_cert.fingerprint(hashes.SHA256()).hex().lower()

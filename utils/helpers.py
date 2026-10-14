@@ -135,9 +135,20 @@ class NonceManager:
             RuntimeError: If nonce space is exhausted
         """
         with self._lock:
-            # Check if rotation is needed
+            # Fail-closed (2026-10-14, audit nonce finding): exhaustion under
+            # a live key RAISES. The pre-fix code silently called
+            # _reset_locked(), re-rolling the 4-byte prefix and zeroing the
+            # counter under the SAME key (nonce-space re-entry; birthday
+            # collisions on the 32-bit prefix, exact reuse when two resets
+            # draw the same prefix because both restart the counter).
+            # Caller must rotate the encryption key, then call reset().
             if self.counter >= self.max_nonce_uses:
-                self._reset_locked()
+                raise RuntimeError(
+                    f"NONCE SPACE EXHAUSTED: counter {self.counter} reached "
+                    f"max_nonce_uses={self.max_nonce_uses} for this key. Rotate "
+                    "the encryption key and call reset(); never re-roll the "
+                    "prefix under a live key (RFC 8439 Sec 2.8)."
+                )
 
             # Increment counter
             self.counter += 1

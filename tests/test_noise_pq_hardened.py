@@ -449,3 +449,32 @@ class TestDestroyerNodeIngressHardening:
         assert payload2 == msg2
 
 
+class TestCookieGateFailClosedDefaultsF11:
+    """F-11 (audit 2026-10-14): anti-amplification cookie gate defaults ON."""
+
+    def test_process_incoming_m1_challenges_without_kwargs(self):
+        (ci_pk, ci_sk), _ = _make_identities()
+        gate = npq.StatelessCookieGate()
+        ini = npq.NoiseSession(is_initiator=True, sig_pk=ci_pk, sig_sk=ci_sk)
+        m1 = npq.initiator_hello(ini)
+        status, challenge = gate.process_incoming_m1(m1, "198.51.100.9", 51400)
+        assert status == "CHALLENGE"
+        assert challenge.startswith(b"NPQ_CHALLENGE\x00")
+        status2, accepted = gate.process_incoming_m1(
+            m1, "198.51.100.9", 51400, require_cookie=False
+        )
+        assert status2 == "ACCEPT"
+        assert accepted == m1
+
+    def test_destroyer_node_cookie_required_by_default(self):
+        from destroyer_node import DestroyerNode
+
+        node = DestroyerNode()
+        assert node.cookie_required is True
+        node.enable_cookie_gate(difficulty_bits=4)
+        assert node.cookie_required is True
+        node2 = DestroyerNode()
+        node2.enable_cookie_gate(difficulty_bits=0, require_cookie=False)
+        assert node2.cookie_required is False
+
+

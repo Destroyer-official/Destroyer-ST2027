@@ -1732,14 +1732,24 @@ class HybridKeyExchange:
                     hybrid_kex_logger.critical(f"SECURITY ALERT: Key bundle failed TOFU pin continuity for peer '{peer_id}'! Identity key changed!")
                     return False
                 if pin_status == 'new':
-                    if os.environ.get("P2P_PRODUCTION") == "1" or os.environ.get("P2P_STRICT_SECURITY") == "1":
+                    try:
+                        from production_gate import is_production as _gate_prod
+                        _prod_pin = _gate_prod()
+                    except Exception:
+                        _prod_pin = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                    if _prod_pin or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
                         auth_fps = getattr(self, 'authorized_peer_fingerprints', None)
                         if auth_fps is not None and fingerprint not in auth_fps:
                             hybrid_kex_logger.critical(f"FAIL-CLOSED: Peer '{peer_id}' is unknown and not in authorized whitelist under production policy.")
                             return False
             except Exception as e_pin:
                 hybrid_kex_logger.error(f"FAIL-CLOSED: TOFU pin continuity check failed for peer '{peer_id}': {e_pin}")
-                if os.environ.get("P2P_PRODUCTION") == "1" or os.environ.get("P2P_STRICT_SECURITY") == "1":
+                try:
+                    from production_gate import is_production as _gate_prod
+                    _prod_pin_err = _gate_prod()
+                except Exception:
+                    _prod_pin_err = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                if _prod_pin_err or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
                     return False
 
             # First verify Ed25519 prekey signature
@@ -3137,7 +3147,12 @@ class HybridKeyExchange:
         Lab stays interoperable at v1 with a warning.
         """
         import os as _os
-        _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+        try:
+            from production_gate import is_ts_mode as _gate_ts
+            _prod = _gate_ts()
+        except Exception:
+            _prod = (_os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                     or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on"))
         _floor = int(getattr(type(self), "PROTOCOL_VERSION_MIN_PRODUCTION", 2)) if _prod else int(type(self).PROTOCOL_VERSION_MIN)
         peer_v = type(self).PROTOCOL_VERSION_MIN
         try:

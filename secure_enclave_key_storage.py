@@ -1171,7 +1171,9 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
         passphrase = os.environ.get("P2P_ENCLAVE_PASSPHRASE", "").strip()
         if not passphrase:
             no_persist = os.environ.get("P2P_NO_PERSISTENT_SEEDS", "").strip().lower() in ("1", "true", "yes", "on")
-            prod = os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on") or os.environ.get("P2P_ENV", "").strip().lower() == "production"
+            prod = (os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                     or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                     or os.environ.get("P2P_ENV", "").strip().lower() == "production")
             if no_persist or prod:
                 raise SecurityError(
                     "Enclave KEK seed persistence prohibited under military zero-trust policy. "
@@ -1660,10 +1662,16 @@ class SecureEnclaveKeyStorage:
         if require_hardware and not self.hardware_available:
             raise HardwareUnavailableError("Hardware security required but unavailable")
         # 2028 hardening: production must not silently use software fallback.
-        # Lab default stays permissive; production (SECURE_P2P_PRODUCTION or
-        # P2P_PRODUCTION=true) fail-closes unless operator explicitly opts out
-        # via P2P_ALLOW_SOFTWARE_FALLBACK=1 (which verify_deployment flags).
-        _prod = os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1" or os.environ.get("P2P_PRODUCTION", "0").lower() in ("1", "true")
+        # Lab default stays permissive; production (P2P_PRODUCTION /
+        # SECURE_P2P_PRODUCTION, any truthy spelling) fail-closes unless
+        # operator explicitly opts out via P2P_ALLOW_SOFTWARE_FALLBACK=1.
+        # F-01: delegates to production_gate (canonical sticky detector).
+        try:
+            from production_gate import is_production as _gate_prod
+            _prod = _gate_prod()
+        except Exception:
+            _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                     or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
         if _prod and self._active_backend_type == KeyStorageBackend.SOFTWARE_FALLBACK:
             if os.environ.get("P2P_ALLOW_SOFTWARE_FALLBACK", "0") != "1" and not self.fail_on_software_fallback:
                 raise EnclaveSecurityError("MILITARY FATAL: production requires hardware-backed key storage (TPM/SecureEnclave/HSM); software fallback refused. Set P2P_FAIL_ON_SOFTWARE_FALLBACK=1 and provision HSM, or explicitly set P2P_ALLOW_SOFTWARE_FALLBACK=1 to acknowledge risk.")

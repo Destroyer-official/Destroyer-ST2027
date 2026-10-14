@@ -455,6 +455,23 @@ class ConfigManager:
         to legacy Ed25519 .sig only in lab with explicit warning.
         Checks config_path + ".sig" against pubkey_path (defaults to certs/config_signer.pub).
         """
+        # F-04 (audit 2026-10-14): private signing key co-located in the
+        # runtime tree (see verify_deployment.py for the hard ATO refusal).
+        _leaked = [
+            p for p in (
+                os.path.join("certs", "config_signer.key"),
+                os.path.join("certs", "sbom_mldsa87_signer.sk"),
+            ) if os.path.isfile(p)
+        ]
+        if _leaked:
+            _msg = (
+                f"F-04 KEY EXPOSURE: private signing key material in runtime tree: "
+                f"{', '.join(_leaked)} — relocate signer to offline/HSM."
+            )
+            if _is_production():
+                logger.critical(_msg)
+            else:
+                logger.warning(_msg)
         # 1. ML-DSA-87 preferred path (CNSA 2.0)
         try:
             mldsa_sig = config_path + ".mldsa87.sig"

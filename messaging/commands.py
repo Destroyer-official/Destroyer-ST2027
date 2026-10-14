@@ -692,7 +692,11 @@ class CommandProcessor(BaseModule):
         print("\r" + " " * 100)
         try:
             mil_mode = os.environ.get("P2P_MILITARY_MODE", "0") in ("1", "true")
-            prod_mode = os.environ.get("P2P_PRODUCTION", "0") in ("1", "true")
+            try:
+                from production_gate import is_production as _gate_prod
+                prod_mode = _gate_prod()
+            except Exception:
+                prod_mode = os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
             try:
                 from destroyer_core import SecureEngine
                 rust_avail = True

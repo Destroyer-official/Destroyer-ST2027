@@ -52,6 +52,30 @@ import os
 if 'P2P_FAST_INIT' not in os.environ:
     os.environ['P2P_FAST_INIT'] = '1'
 
+# F-02 (audit remediation): LEGACY QUARANTINE. This root file is the lab-only
+# legacy entry point. Production deployments launch destroyer_tactical_p2p.py
+# (tactical node/web) or secure_transmit_2027.py (CNSA XXhfs pipeline).
+# Refuse BEFORE any heavy import when executed as a script under the
+# production/TS gate, so the legacy surface cannot be brought up in
+# production by habit. When IMPORTED (tests, tooling) this block is skipped.
+if __name__ == "__main__":
+    try:
+        from production_gate import is_production as _gate_is_prod
+        _gate_blocks_legacy = _gate_is_prod()
+    except Exception:
+        _gate_blocks_legacy = (
+            os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+        )
+    if _gate_blocks_legacy:
+        import sys as _sys
+        _sys.stderr.write(
+            "FATAL: legacy secure_p2p.py refused under production posture.\n"
+            "Launch destroyer_tactical_p2p.py (node/web) or "
+            "secure_transmit_2027.py instead. See README 'Legacy quarantine'.\n"
+        )
+        raise SystemExit(2)
+
 # Preload the Rust data plane BEFORE binary signature policy mitigation locks
 try:
     import destroyer_core  # noqa: F401
@@ -2171,7 +2195,12 @@ class SecureP2PChat:
         """
         # CNSA 2.0 / TOP SECRET Sovereign Mode Enforcement
         self.ts_mode = os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
-        self.production_mode = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+        try:
+            from production_gate import is_production as _gate_prod
+            self.production_mode = _gate_prod()
+        except Exception:
+            self.production_mode = (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                                    or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
         if self.ts_mode or self.production_mode:
             log.info("[CNSA 2.0] Strict sovereign military mode active — bare-metal Rust engine and hardware root-of-trust armed.")
 
@@ -2256,7 +2285,12 @@ class SecureP2PChat:
             log.info("[PASS] Zero-Gap Defense Pipeline initialized")
         except ImportError as e:
             import os as _os
-            _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1"
+            try:
+                from production_gate import is_production as _gate_prod
+                _prod = _gate_prod()
+            except Exception:
+                _prod = (_os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                         or _os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
             if _prod:
                 log.critical(f"unified_secure_pipeline missing in production — fail-closed (no legacy path): {e}")
                 raise RuntimeError("unified_secure_pipeline required in production; legacy path refused") from e
@@ -3823,7 +3857,13 @@ class SecureP2PChat:
                     log.warning(f"Failed to create TLSA records from certificate: {e}")
 
             # If we couldn't create TLSA records from a certificate, fail-closed in production
-            if os.environ.get("SECURE_P2P_PRODUCTION") == "true" or os.environ.get("P2P_PRODUCTION") == "true":
+            try:
+                from production_gate import is_production as _gate_prod
+                _prod_tlsa = _gate_prod()
+            except Exception:
+                _prod_tlsa = (os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                              or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
+            if _prod_tlsa:
                 log.error("MILITARY FATAL: Real certificate TLSA records required for DANE. Refusing placeholder in production.")
                 return None
 
@@ -14597,6 +14637,9 @@ def run_automated_two_terminal_drill() -> bool:
 
 # Only execute this code if the script is run directly
 if __name__ == "__main__":
+    # NOTE (F-02): the legacy-production refusal guard lives at the TOP of
+    # this file (before heavy imports); it already fired or passed by now.
+
     # Set flag to indicate we're running directly (not imported)
     _RUNNING_DIRECTLY = True
 

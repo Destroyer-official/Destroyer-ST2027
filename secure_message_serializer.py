@@ -217,7 +217,9 @@ class SecureMessageSerializer:
                 flags=message.flags
             )
         import os as _os
-        if _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_ENV", "").strip().lower() == "production":
+        if (_os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                or _os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                or _os.environ.get("P2P_ENV", "").strip().lower() == "production"):
             raise ValueError("AEAD envelope required in production: sender_id/sequence/timestamp must be encrypted (CNSA 2.0 metadata protection)")
         
         # Unified caps: 64KB strictest for chat MSG, 512KB for FILE chunks

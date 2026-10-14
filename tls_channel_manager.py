@@ -798,20 +798,34 @@ class NonceManager:
             Unique nonce bytes of nonce_size length
 
         Raises:
-            RuntimeError: If nonce space is exhausted
+            RuntimeError: If nonce space under the current key is exhausted.
+                Fail-closed (hardened 2026-10-14): this method NEVER
+                re-rolls the nonce prefix under a live key — a previous
+                auto-reset fired every ~window nonces (prefix re-roll under
+                the same key; exact reuse once two resets drew the same
+                prefix, both restarting the counter) and at the usage
+                threshold. The caller must rotate the KEY, then reset().
         """
-        # Check if rotation is needed
         if self.is_rotation_needed():
-            log.info("Nonce space approaching threshold, resetting")
-            self.reset()
+            raise RuntimeError(
+                f"NONCE SPACE EXHAUSTED: threshold "
+                f"({self.rotation_threshold} of {self.max_nonce_uses}) reached "
+                "for this key. Rotate the encryption key and call reset(); "
+                "re-rolling the prefix under a live key is prohibited "
+                "(RFC 8439 Sec 2.8)."
+            )
 
         # Increment counter
         self.counter += 1
 
-        # Ensure counter doesn't exceed maximum
+        # Ensure counter doesn't exceed maximum (fail-closed, no auto re-salt)
         if self.counter >= self.max_nonce_uses:
-            log.warning("Nonce counter reached maximum, resetting")
-            self.reset()
+            raise RuntimeError(
+                f"NONCE SPACE EXHAUSTED: counter {self.counter} reached "
+                f"max_nonce_uses={self.max_nonce_uses} for this key. Rotate "
+                "the encryption key and call reset(); never re-roll the "
+                "prefix under a live key (RFC 8439 Sec 2.8)."
+            )
 
         # Generate nonce with prefix and counter
         counter_bytes = self.counter.to_bytes(self.nonce_size - len(self.nonce_prefix),
@@ -832,12 +846,15 @@ class NonceManager:
         # Track used nonce
         self.used_nonces.add(nonce)
 
-        # Prevent unbounded growth of used_nonces set
+        # Prevent unbounded growth of used_nonces set.
         # 2028 fix: NonceManager nonces are prefix+counter, so uniqueness is
         # guaranteed by (prefix, counter) rotation, not by this cache. The old
         # code kept an arbitrary 100 entries via set(list(...)[-100:]) which is
         # non-deterministic and re-admits replayed nonces after eviction.
-        # Keep an ordered FIFO window (default 1024) purely as defense-in-depth.
+        # 2026-10-14 hardening: window overflow now FLUSHES the cache only —
+        # the pre-fix code called reset() here, re-rolling the prefix under
+        # the SAME key every ~1024 nonces (nonce-space re-entry). Prefix and
+        # counter are never touched by the cache path.
         _window = 1024
         try:
             import os as _os
@@ -845,14 +862,27 @@ class NonceManager:
         except Exception:
             _window = 1024
         if len(self.used_nonces) > _window:
-            # set has no order: drop arbitrary excess but force prefix rotation
-            # so old nonces can never validate against the new prefix.
-            self.reset()
+            self.used_nonces.clear()
+            log.debug(
+                "NonceManager: collision-cache window flushed at %d entries "
+                "(prefix/counter unchanged — monotonic uniqueness preserved)",
+                _window,
+            )
 
         return nonce
 
     def reset(self):
-        """Reset the nonce manager with a new nonce prefix."""
+        """Reset the nonce manager with a new nonce prefix.
+
+        DANGER: call ONLY immediately after rotating the underlying key;
+        re-rolling the prefix under a live key re-enters the nonce space
+        (RFC 8439 Sec 2.8). Automatic/internal callers are prohibited —
+        generate_nonce() fails closed instead of resetting.
+        """
+        log.warning(
+            "NonceManager.reset(): prefix re-drawn — caller MUST have "
+            "rotated the underlying encryption key first (RFC 8439 Sec 2.8)"
+        )
         self.counter = 0
         self.nonce_prefix = self.random_generator(self.nonce_size // 2)
         self.used_nonces.clear()
@@ -6359,9 +6389,26 @@ class SocketSelector:
 
 class CounterBasedNonceManager:
     """
-    Manages nonce generation using the counter + salt approach for AEAD ciphers.
-    NIST SP 800-38D compliant implementation that ensures each (key, nonce) pair is used exactly once,
-    with rotation following RFC 8439 Section 2.8 nonce reuse prevention guidelines.
+    Manages AEAD nonces as salt + counter under ONE key instance.
+
+    RFC 8439 Sec 2.8 / NIST SP 800-38D nonce discipline (hardened
+    2026-10-14 after audit): for a GIVEN key every nonce must be unique
+    for the lifetime of that key. This manager therefore:
+
+      * draws the random salt ONCE per instance (per key) and NEVER
+        re-randomizes it during the instance lifetime;
+      * advances the counter strictly monotonically — there is no
+        time-based "rotation" (a previous 5-minute auto re-salt under the
+        same key could repeat an already-used (salt, counter=0) nonce
+        after ~2^16 epochs = birthday collision on the 32-bit salt
+        space in ~227 days of uptime);
+      * FAILS CLOSED (RuntimeError) at the conservative 1% counter
+        threshold instead of silently re-salting: the caller must rotate
+        the underlying KEY and construct a fresh manager (new key = new
+        nonce space), never re-salt under the same key.
+
+    Counter + salt layout follows RFC 8439 Sec 2.8 (salt || counter,
+    big-endian) for 12-byte nonces; nonce_size=24 gives XChaCha20-Poly1305.
     """
 
     def __init__(self, counter_size: int = 8, salt_size: int = 4, nonce_size: int = 12):
@@ -6389,24 +6436,30 @@ class CounterBasedNonceManager:
 
     def generate_nonce(self) -> bytes:
         """
-        Generate a unique nonce using counter + salt approach.
+        Generate a unique nonce using the counter + salt approach.
 
         Returns:
             nonce_size-byte nonce for AEAD encryption (salt + counter)
 
         Raises:
-            RuntimeError: If counter exceeds maximum value
+            RuntimeError: If the conservative counter threshold is reached.
+                NEVER re-salts under the same key (RFC 8439 Sec 2.8);
+                the caller must rotate the key and build a new manager.
         """
-        # Check if counter is approaching maximum - for absolute quantum-resistant security, rotate extremely early
+        # Per NIST SP 800-38D Section 8.2.1, stop at 1% of the maximum
+        # counter value. Fail-closed: exhaustion of the nonce space under
+        # a fixed key is a hard error, not a cue to reuse the key with a
+        # re-randomized salt (the pre-2026-10-14 behavior).
         max_counter = (2 ** (self.counter_size * 8)) - 1
-        # Per NIST SP 800-38D Section 8.2.1, rotate nonces when we reach 1% of maximum counter value
-        # This is extremely conservative but provides maximum protection against nonce reuse and quantum attacks
         rotation_threshold = max_counter // 100
-        # Time-based rotation: also rotate if it's been more than 5 minutes since last reset
-        time_threshold_exceeded = (time.time() - self.last_reset_time) > 300  # 5 minutes
-        if self.counter >= rotation_threshold or time_threshold_exceeded:
-            log.info(f"Nonce counter reached security threshold ({rotation_threshold}), resetting salt and counter")
-            self.reset()
+        if self.counter > rotation_threshold:
+            raise RuntimeError(
+                f"NONCE SPACE EXHAUSTED: counter {self.counter} reached the "
+                f"conservative threshold ({rotation_threshold}) for this key. "
+                "Rotate the encryption key and construct a new "
+                "CounterBasedNonceManager; re-salting under the same key is "
+                "prohibited (RFC 8439 Sec 2.8)."
+            )
 
         # Convert counter to bytes (big-endian)
         counter_bytes = self.counter.to_bytes(self.counter_size, byteorder='big')
@@ -6421,7 +6474,18 @@ class CounterBasedNonceManager:
         return nonce
 
     def reset(self):
-        """Reset the counter and generate a new random salt."""
+        """Re-draw the salt and zero the counter.
+
+        DANGER: calling this while the SAME encryption key is still in use
+        re-enters the nonce space and can repeat a (salt, counter) pair
+        (birthday collision on the salt space). Only call immediately
+        AFTER rotating the underlying key. Automatic/internal callers are
+        prohibited — generate_nonce() fails closed instead of resetting.
+        """
+        log.warning(
+            "CounterBasedNonceManager.reset(): salt re-drawn — caller MUST "
+            "have rotated the underlying encryption key first (RFC 8439 Sec 2.8)"
+        )
         self.counter = 0
         self.salt = secrets.token_bytes(self.salt_size)
         self.last_reset_time = time.time()
@@ -6434,6 +6498,16 @@ class CounterBasedNonceManager:
     def get_salt(self) -> bytes:
         """Get the current salt value (for testing/debugging only)."""
         return self.salt
+
+    def is_rotation_needed(self) -> bool:
+        """True when the conservative 1% counter threshold is reached.
+
+        The caller must rotate the encryption key and build a fresh
+        manager; generate_nonce() raises past this point instead of
+        re-salting under the same key (RFC 8439 Sec 2.8).
+        """
+        max_counter = (2 ** (self.counter_size * 8)) - 1
+        return self.counter > (max_counter // 100)
 
     def verify_certificate_fingerprint(self, ssl_socket, server_hostname=None):
         """

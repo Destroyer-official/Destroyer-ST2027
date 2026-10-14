@@ -310,7 +310,12 @@ class AnonymousIdentityManager:
         """
         # Check for production mode enforcement
         import os
-        production_mode = (os.environ.get('SECURE_P2P_PRODUCTION', '').lower() == 'true') or (os.environ.get('P2P_PRODUCTION', '').lower() == 'true')
+        try:
+            from production_gate import is_production as _gate_prod
+            production_mode = _gate_prod()
+        except Exception:
+            production_mode = (os.environ.get('SECURE_P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on')
+                               or os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on'))
         
         if PQC_AVAILABLE:
             try:

@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-14T08:49:00.634706+00:00",
+  "timestamp_utc": "2026-10-14T16:55:06.498231+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -27,8 +27,8 @@
   },
   "core_modules": {
     "platform_hsm_interface.py": {
-      "size_bytes": 504128,
-      "sha3_512": "331e9f50434d425b4adacddc2e8b6bde340e62de6bb2dfbec95c9e4f4a11d9fe4780ec5a251b27d48d0932d30c59afa21e17ca698e46b961b1a7e6968a8a8d09"
+      "size_bytes": 504405,
+      "sha3_512": "d4714ce75616bb164664174ae15d7163655cda3463de39e44de9fbd1ee04b14e0c2ee8d5064fa4e3423eb380cf197f65f0408de7c66a403793a3f03f7a4f7748"
     },
     "cnsa2_policy_engine.py": {
       "size_bytes": 30978,
@@ -51,8 +51,8 @@
       "sha3_512": "84b3d592aecf4c37694a4e23fd0ece91b5ed3d2c5cb60943bd765a589ccd40703c0cf4d6dedb3c91398abf31c3f3dadb5bb082dec812ef1c01d70caa11bc7fe2"
     },
     "secure_p2p.py": {
-      "size_bytes": 784442,
-      "sha3_512": "b4dd3a50cd6991a15ce106148003371fcab8cc3e6ee12e65cd20b6f372aa951a32863f142251cdc0455feec48dda258222f084ac2ae26218336f0fd9f4146e78"
+      "size_bytes": 786662,
+      "sha3_512": "e75436fae424c7d3f733ea81f3694bec87991974eb1668ed5e4fc6bca67df587b80bb17376bb49d964e429709b3dd5d44de44b1c92004f5ad9e05b63bc5546eb"
     }
   },
   "sbom_status": {
@@ -65,11 +65,11 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "d92730570ca0dc7a68b398ed64100716ace4aab79d7209e35953ebea9c2148a690624b62c09c3bc15705b99abfa1a49889f3e256546e90998c7c417fc34e563d",
+  "source_tree_merkle_root": "75c45a90131c16a8980a5c887ad6c5a43063af575357038d72bac1b3c7019be6026cd2e795ce57d102450ed23547dea40631a678e3ed3112d82301e779a463a1",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
-      "expected_sha3_512": "e9cc4df0900dcbe32a295e148f85a9a10e05d84d46f563401932e55ae4fd8416864f61c766a39ad5097f0fb266ed422b19952ae88603c16981a9ba6f672130f5",
-      "actual_sha3_512": "e9cc4df0900dcbe32a295e148f85a9a10e05d84d46f563401932e55ae4fd8416864f61c766a39ad5097f0fb266ed422b19952ae88603c16981a9ba6f672130f5",
+      "expected_sha3_512": "580986b82ceee90879d152488c6f1be97fedbf3d0c7f6577ed8c3df6f13351b0ddae18890891f7da7884b5e7f85e748ecfbda2730674b07b28b9bde1b6d46cc0",
+      "actual_sha3_512": "580986b82ceee90879d152488c6f1be97fedbf3d0c7f6577ed8c3df6f13351b0ddae18890891f7da7884b5e7f85e748ecfbda2730674b07b28b9bde1b6d46cc0",
       "matched": true
     },
     "rust_data_plane/src/main.rs": {

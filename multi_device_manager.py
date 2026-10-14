@@ -1420,7 +1420,13 @@ class MultiDeviceManager:
                     # 2028 hardening: plaintext registry relies on 0600 ACL only —
                     # revocation list tamper is undetected without sealing. Fail-closed
                     # in production (sticky prod); lab keeps ACL-only write + warning.
-                    _prod = os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1" or os.environ.get("P2P_PRODUCTION", "0").lower() in ("1", "true")
+                    # F-01: canonical sticky production detector.
+                    try:
+                        from production_gate import is_production as _gate_prod
+                        _prod = _gate_prod()
+                    except Exception:
+                        _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                                 or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
                     if _prod:
                         raise ValueError("FAIL-CLOSED: refusing plaintext devices.json write in production (set P2P_STORAGE_PASSPHRASE to seal registry incl. revocation list)")
                     with open(temp_filepath, 'w', encoding='utf-8') as f:

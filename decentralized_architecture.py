@@ -438,7 +438,12 @@ class DHTRoutingTable:
             return False
 
         # 2028 hardening: production refuses downgraded DHT policy.
-        _prod = os.environ.get("SECURE_P2P_PRODUCTION", "0") == "1" or os.environ.get("P2P_PRODUCTION", "0").lower() in ("1", "true")
+        try:
+            from production_gate import is_production as _gate_prod
+            _prod = _gate_prod()
+        except Exception:
+            _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                     or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
         if _prod and os.environ.get("P2P_ENFORCE_DHT_POW", "1") != "1":
             logger.critical("MILITARY FATAL: production refuses P2P_ENFORCE_DHT_POW!=1 (Sybil downgrade)")
             return False

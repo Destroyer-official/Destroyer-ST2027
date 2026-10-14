@@ -405,6 +405,30 @@ class ConfigManager:
         except Exception:  # nosec: B110
             pass
 
+        # F-04 (audit 2026-10-14): the config/SBOM-signing PRIVATE keys must
+        # never ship inside the runtime tree — co-located with the configs
+        # they sign, any host compromise forges boot configuration. Signing
+        # is an offline/HSM operation; only .pub belongs on the node. Hard
+        # refusal (FAIL) lives in verify_deployment.py; here we emit an
+        # audit CRITICAL under production posture, WARNING in lab.
+        _leaked_signing_keys = [
+            p for p in (
+                os.path.join("certs", "config_signer.key"),
+                os.path.join("certs", "sbom_mldsa87_signer.sk"),
+            ) if os.path.isfile(p)
+        ]
+        if _leaked_signing_keys:
+            _leak_msg = (
+                f"F-04 KEY EXPOSURE: private signing key material in runtime tree: "
+                f"{', '.join(_leaked_signing_keys)} — relocate signer to offline/HSM "
+                f"and remove from deployment."
+            )
+            if production_mode:
+                self.logger.critical(_leak_msg)
+                _emit_config_audit(self.logger, _leak_msg)
+            else:
+                self.logger.warning(_leak_msg)
+
         if os.path.exists(config_file) and (production_mode or is_prod_config):
             # Prefer ML-DSA-87 / DSSE (CNSA 2.0); legacy Ed25519 .sig lab-shim.
             mldsa_sig = config_file + ".mldsa87.sig"

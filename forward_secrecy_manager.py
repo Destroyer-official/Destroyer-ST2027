@@ -471,7 +471,18 @@ class ForwardSecrecyManager:
         FAIL-CLOSED: Raises error if PQC not available in production mode.
         """
         import os
-        production_mode = os.environ.get('SECURE_P2P_PRODUCTION', '').lower() == 'true'
+        # F-01: canonical sticky production detector (accepts 1/true/yes/on
+        # for BOTH P2P_PRODUCTION and SECURE_P2P_PRODUCTION). Prior check
+        # accepted only SECURE_P2P_PRODUCTION=="true", silently leaving this
+        # fail-closed path in lab mode when operators used P2P_PRODUCTION=1.
+        try:
+            from production_gate import is_production
+            production_mode = is_production()
+        except Exception:
+            production_mode = (
+                os.environ.get('SECURE_P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on')
+                or os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on')
+            )
         
         try:
             # Import ML-KEM-1024 from pqc_algorithms (lazy import to avoid slow startup)

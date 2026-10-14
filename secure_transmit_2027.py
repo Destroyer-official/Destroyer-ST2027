@@ -357,16 +357,19 @@ def verify_transcript(sig_pk: bytes, transcript: bytes, sig: bytes) -> None:
 # ---------------------------------------------------------------------------
 # Session establishment is delegated to noise_pq.py's
 # Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384 state machine.
-# FORMAL-MODEL STATUS (honest, 2026-09-29): docs/formal/st2027_handshake.pv
-# and st2027_pcs.pv still encode the RETIRED 2-message handshake
-# (cleartext initiator static in M1, kdf(he,hm,tr) direct derivation) and
-# do NOT cover the deployed XXhfs flow (encrypted statics in M2/M3,
-# Split + HKDF combiner). Their queries prove true statements about the
-# old design only. Re-modeling XXhfs (message structure, transcript
-# binding, combiner abstraction) and re-proving is tracked open work;
-# until then, NO claim of machine-checked coverage attaches to XXhfs.
-# Live assurance for XXhfs rests on the wire-pattern, M1-privacy,
-# verify-before-derive, and cross-implementation gates, not on ProVerif.
+# FORMAL-MODEL STATUS (updated 2026-10-14, supersedes the 2026-09-29 note
+# that claimed the .pv files still encoded the RETIRED 2-message handshake):
+# docs/formal/st2027_handshake.pv now models the DEPLOYED XXhfs flow
+# (M1 ephemeral-only, encrypted statics in M2/M3, verify-before-derive,
+# transcript-bound HKDF Split combiner) and st2027_pcs.pv proves post-
+# compromise security of the rehandshake; both were reworked with the code
+# (commits 51e82a2 / 5f6ad41) and are exercised by
+# tests/test_proverif_st2027.py (ProVerif 2.05, green). Known honest gaps
+# stated IN the models, not hidden: symbolic AES-GCM cannot express nonce
+# reuse (enforced in code), completion deadlines are policy, and the
+# HKDF-as-dual-PRF condition is an assumption (eprint 2022/065). Live
+# assurance for XXhfs = ProVerif + the wire-pattern, M1-privacy,
+# verify-before-derive, and cross-implementation gates.
 #
 # 3-message flow, all inside the outer TLS 1.3 envelope:
 #   M1 I->R: e_pub(97) || ml_ek(1568) — ephemeral ONLY, zero static keys.

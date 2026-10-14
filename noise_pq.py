@@ -930,11 +930,16 @@ class StatelessCookieGate:
         wire: bytes,
         client_ip: str,
         client_port: int,
-        require_cookie: bool = False,
+        require_cookie: bool = True,
         difficulty_bits: int = 0,
     ) -> Tuple[str, bytes]:
         """
         Ingress filter for incoming M1 frames over connectionless transport.
+
+        Fail-closed by default (F-11, audit 2026-10-14): require_cookie
+        defaults to True so unauthenticated M1 frames are challenged
+        (anti-amplification) unless the caller explicitly opts out.
+
         Returns:
             ("ACCEPT", m1_bytes) — proceed to responder_reply
             ("CHALLENGE", challenge_packet) — transmit challenge back to client

@@ -336,9 +336,9 @@ class UnifiedSecurePipeline:
         try:
             is_stealth = (
                 stealth if stealth is not None else (
-                    os.environ.get('P2P_STEALTH_FRAMING', '0') in ('1', 'true') or
-                    os.environ.get('P2P_PRODUCTION', '0') in ('1', 'true') or
-                    os.environ.get('P2P_MILITARY_MODE', '0') in ('1', 'true')
+                    os.environ.get('P2P_STEALTH_FRAMING', '0').strip().lower() in ('1', 'true', 'yes', 'on') or
+                    os.environ.get('P2P_PRODUCTION', '0').strip().lower() in ('1', 'true', 'yes', 'on') or
+                    os.environ.get('P2P_MILITARY_MODE', '0').strip().lower() in ('1', 'true', 'yes', 'on')
                 )
             )
 
@@ -366,8 +366,8 @@ class UnifiedSecurePipeline:
                     raise PipelineSecurityError("Rust outer seal returned empty")
                 log.debug(f"[SEAL] Outer (Rust AEAD): {len(inner_sealed)} -> {len(outer_sealed)} bytes")
             elif os.environ.get('P2P_DATA_PLANE', '').lower() in ('rust', 'rust_udp', 'udp') or \
-                 os.environ.get('P2P_PRODUCTION', '') in ('1', 'true') or \
-                 os.environ.get('P2P_MILITARY_MODE', '') in ('1', 'true'):
+                 os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on') or \
+                 os.environ.get('P2P_MILITARY_MODE', '').strip().lower() in ('1', 'true', 'yes', 'on'):
                 # Rust required but not available -- FAIL CLOSED
                 raise PipelineSecurityError(
                     "Rust data plane required in production/military mode but not established")
@@ -434,7 +434,7 @@ class UnifiedSecurePipeline:
                 inner_sealed = self._rust_node.open_stream(bytes(sealed_data))
                 if inner_sealed is not None:
                     log.debug(f"[OPEN] Outer (Rust AEAD): {len(sealed_data)} -> {len(inner_sealed)} bytes")
-                elif os.environ.get('P2P_PRODUCTION', '') in ('1', 'true') or \
+                elif os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on') or \
                      os.environ.get('P2P_MILITARY_MODE', '') in ('1', 'true'):
                     raise PipelineSecurityError("Rust AEAD outer verification failed under strict production/military mode")
                 else:

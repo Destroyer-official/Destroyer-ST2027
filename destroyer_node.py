@@ -60,7 +60,10 @@ class DestroyerNode:
         self._udp_admitted = 0
         self.cookie_gate = None
         self.cookie_difficulty = 0
-        self.cookie_required = False
+        # F-11 (audit 2026-10-14): cookie challenge required by default —
+        # anti-amplification must be fail-closed; opting OUT of the stateless
+        # cookie gate requires an explicit require_cookie=False at enable time.
+        self.cookie_required = True
         self._using_native_cookie_gate = False
         self._chaff_thread = None
         self._chaff_stop_event = None
@@ -428,9 +431,13 @@ class DestroyerNode:
         self,
         rotation_interval: int = 120,
         difficulty_bits: int = 0,
-        require_cookie: bool = False,
+        require_cookie: bool = True,
     ) -> None:
-        """Enable stateless anti-amplification and anti-DoS cookie challenge gate."""
+        """Enable stateless anti-amplification and anti-DoS cookie challenge gate.
+
+        Fail-closed by default (F-11): every M1 must answer a cookie
+        challenge unless require_cookie=False is passed explicitly.
+        """
         try:
             from destroyer_core import CoreCookieGate
             self.cookie_gate = CoreCookieGate(rotation_interval=rotation_interval)

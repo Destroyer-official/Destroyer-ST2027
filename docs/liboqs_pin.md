@@ -123,9 +123,19 @@ gates test `== "1"` while CI used to set `"true"`, so CI's "prod" selftest ran
 lab paths. **Closed 2026-10-13 (CI side):** the selftest step in
 `.github/workflows/defense_ci.yml` now sets `"1"` for all three flags
 (`SECURE_P2P_PRODUCTION`, `P2P_STRICT_SECURITY`, `CNSA_2027_STRICT`), so the
-existing `== "1"` gates activate. The repo-wide parsing inconsistency (some
-modules accept 4 values, some only `== "1"`) remains: a future cleanup should
-normalize all gates to one shared 4-value helper; do NOT fix piecemeal.
+existing `== "1"` gates activate.
+
+**CLOSED 2026-10-14 (repo side, F-01):** as this section prescribed ("normalize
+all gates to one shared helper; do NOT fix piecemeal"), every production gate
+now routes through the single sticky detector `production_gate.is_production()`
+(canonical truthy set `1/true/yes/on` for BOTH `P2P_PRODUCTION` and
+`SECURE_P2P_PRODUCTION`, process-sticky, audit-logged; explicit falsey
+spellings keep lab mode; unknown spellings fail toward lab WITH a CRITICAL
+log). ~30 former one-off checks (`== "1"`-only, `== "true"`-only,
+`("1","true")`-only, no-`.lower()` case traps, first-non-empty-var-wins) were
+converted. Covered by `tests/test_production_gate.py` (114-case matrix: both
+vars × all spellings × falsey set × sticky-latch × direct module-gate probes ×
+fresh-interpreter import-time arming), asserted in the CI suite run.
 
 ## Evidence (2026-10-11, this machine)
 
