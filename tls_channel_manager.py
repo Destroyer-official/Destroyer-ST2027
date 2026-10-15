@@ -271,6 +271,15 @@ from enum import Enum
 import uuid
 # NOTE: 'import random' removed — use 'secrets' for CSPRNG.
 
+class SecurityError(Exception):
+    """Fail-closed security policy violation (local to this module).
+
+    Defined here because multiple fail-closed paths in this module raise it
+    (CERT_NONE prohibition, CA-load failure, suite-pin violation). Without
+    this definition those raises would surface as NameError at runtime,
+    defeating callers that catch SecurityError specifically (audit 2026-10-15).
+    """
+
 # Import platform_hsm_interface
 try:
     import platform_hsm_interface as cphs
@@ -2574,6 +2583,25 @@ class TLSSecureChannel:
             cipher_name = cipher[0] if cipher and len(cipher) > 0 else "unknown"
             tls_version = self.ssl_socket.version()
 
+            # CNSA 2.0 TLS 1.3 suite pin (audit 2026-10-15): Python's
+            # SSLContext.set_ciphers cannot constrain the TLS 1.3 ciphersuite
+            # offer (TLS13-* names rejected; only <=1.2 list affected), so
+            # OpenSSL defaults leave TLS_CHACHA20_POLY1305_SHA256 and
+            # TLS_AES_128_GCM_SHA256 negotiable. Pin the negotiated suite
+            # post-handshake (mirrors secure_transmit_2027.assert_outer_is_pinned):
+            # only TLS_AES_256_GCM_SHA384 is CNSA-approved; any other suite
+            # aborts and closes the socket (fail-closed, no fallback).
+            if tls_version != "TLSv1.3" or cipher_name != "TLS_AES_256_GCM_SHA384":
+                self.handshake_complete = False
+                self._handshake_in_progress = False
+                try:
+                    self.ssl_socket.close()
+                finally:
+                    raise SecurityError(
+                        f"TLS 1.3 suite pin violated: {tls_version}/{cipher_name} "
+                        f"(required TLSv1.3/TLS_AES_256_GCM_SHA384, CNSA 2.0)"
+                    )
+
             # Determine if post-quantum was used by inspecting the cipher suite and TLS extensions
             pq_negotiated = False
             pq_algorithm = None
@@ -2811,6 +2839,14 @@ class TLSSecureChannel:
             log.error(f"SSL error during handshake: {e}")
             self._handshake_in_progress = False
             return False
+
+        except SecurityError:
+            # Fail-closed (audit 2026-10-15): the CNSA suite pin and other
+            # SecurityError raises inside this method must PROPAGATE to the
+            # caller — never be swallowed by the generic handler below, which
+            # would convert a policy violation into a soft False/timeout.
+            self._handshake_in_progress = False
+            raise
 
         except Exception as e:
             log.error(f"Unexpected error during handshake: {e}")
