@@ -4,7 +4,7 @@ This directory contains the machine-checked symbolic formal verification models 
 
 ## 1. Machine-Checked ProVerif Models
 
-The protocol is formally modeled and mathematically proven using **ProVerif 2.05**:
+The protocol is formally modeled and **symbolically** verified in the applied pi-calculus using **ProVerif 2.05**. Scope caveat (F-03, audit 2026-10-14): these are MODEL proofs, not computational-security reductions and not implementation proofs. The deployed handshake uses an UNPROVEN custom substitution (see `deploy_st2027/noise_pq.py:30-40`): the ML-DSA-87 signature replacing the hfs draft's es/se tokens has no reduction to the hfs draft (which has no proofs) nor to PQNoise, and the model abstracts kdf as one-way (stronger than the dual-PRF property HKDF is actually assumed to have — eprint 2022/065). Treat the results as "the protocol structure is sound under these abstractions", never as "the concrete cryptography is proven".
 
 1. **`st2027_handshake.pv`**: Full symbolic model of the deployed Noise_XXhfs handshake with P-384 ECDHE, ML-KEM-1024, ML-DSA-87, AES-256-GCM, and transcript-bound KEM combination.
    - Evaluates 7 core security queries: secrecy of payload under session keys, injective agreement `inj-event(S_Accepts ==> C_Accepts)`, forward secrecy under ephemeral leak phases, client verification `C_VerifiedM2`, and initiator identity privacy.
