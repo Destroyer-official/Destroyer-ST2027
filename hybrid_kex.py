@@ -2164,7 +2164,20 @@ class HybridKeyExchange:
         # advertise protocol_version >= 2; otherwise the v1 root stands.
         try:
             _negotiated = self.negotiate_protocol_version(peer_bundle)
+        except SecurityError:
+            # Fail-closed (combiner hardening 2026-10-14): negotiation RAISES
+            # when the agreed version is below the production floor. Swallowing
+            # that here and continuing with the v1 raw-concat root would defeat
+            # the floor (combiner downgrade). Production re-raises; lab treats
+            # negotiation refusal as v1 interop only.
+            if self._production_posture():
+                raise
+            _negotiated = type(self).PROTOCOL_VERSION_MIN
         except Exception:
+            if self._production_posture():
+                hybrid_kex_logger.critical(
+                    "PQXDH version negotiation error under production posture — fail-closed")
+                raise
             _negotiated = type(self).PROTOCOL_VERSION_MIN
         if _negotiated >= 2:
             try:
@@ -2184,7 +2197,21 @@ class HybridKeyExchange:
                 root_key = self.derive_root_v2(dh1, dh2, dh3, dh4, kem_shared_secret, _v2_transcript)
                 hybrid_kex_logger.info("PQXDH combiner v2 selected (negotiated v2): HKDF-SHA384 root derived")
             except Exception as _v2_e:
-                hybrid_kex_logger.warning(f"PQXDH v2 combiner failed, keeping v1 root: {_v2_e}")
+                # Fail-closed (combiner hardening 2026-10-14): once v2 is
+                # negotiated, silently keeping the v1 root is a combiner
+                # downgrade — an attacker able to force any v2 transcript or
+                # derivation error would select the weaker raw-concat combiner.
+                # Production refuses; lab keeps v1 ONLY as interop debugging.
+                if self._production_posture():
+                    hybrid_kex_logger.critical(
+                        f"PQXDH combiner v2 derivation failed under production posture — "
+                        f"refusing silent v1 fallback (fail-closed): {_v2_e}")
+                    raise SecurityError(
+                        "PQXDH combiner v2 derivation failed in production; "
+                        "v1 fallback refused (fail-closed)"
+                    ) from _v2_e
+                hybrid_kex_logger.warning(
+                    f"PQXDH v2 combiner failed, keeping v1 root (lab interop only): {_v2_e}")
         else:
             hybrid_kex_logger.info("PQXDH combiner v1 selected (negotiated v1): SHA3_512 root retained")
 
@@ -2704,7 +2731,18 @@ class HybridKeyExchange:
             # (initiator-first ID order); see build_transcript_v2.
             try:
                 _negotiated = self.negotiate_protocol_version(current_peer_bundle)
+            except SecurityError:
+                # Fail-closed (combiner hardening 2026-10-14): same rule as
+                # the initiator path — never swallow the production-floor
+                # refusal and continue with the v1 root.
+                if self._production_posture():
+                    raise
+                _negotiated = type(self).PROTOCOL_VERSION_MIN
             except Exception:
+                if self._production_posture():
+                    hybrid_kex_logger.critical(
+                        "PQXDH version negotiation error under production posture — fail-closed")
+                    raise
                 _negotiated = type(self).PROTOCOL_VERSION_MIN
             if _negotiated >= 2:
                 try:
@@ -2727,7 +2765,19 @@ class HybridKeyExchange:
                     root_key = self.derive_root_v2(dh1, dh2, dh3, dh4, kem_shared_secret, _v2_transcript)
                     hybrid_kex_logger.info("PQXDH combiner v2 selected (negotiated v2): HKDF-SHA384 root derived")
                 except Exception as _v2_e:
-                    hybrid_kex_logger.warning(f"PQXDH v2 combiner failed, keeping v1 root: {_v2_e}")
+                    # Fail-closed (combiner hardening 2026-10-14): production
+                    # refuses the silent v1 fallback (combiner downgrade);
+                    # lab keeps v1 ONLY as interop debugging.
+                    if self._production_posture():
+                        hybrid_kex_logger.critical(
+                            f"PQXDH combiner v2 derivation failed under production posture — "
+                            f"refusing silent v1 fallback (fail-closed): {_v2_e}")
+                        raise SecurityError(
+                            "PQXDH combiner v2 derivation failed in production; "
+                            "v1 fallback refused (fail-closed)"
+                        ) from _v2_e
+                    hybrid_kex_logger.warning(
+                        f"PQXDH v2 combiner failed, keeping v1 root (lab interop only): {_v2_e}")
             else:
                 hybrid_kex_logger.info("PQXDH combiner v1 selected (negotiated v1): SHA3_512 root retained")
 
@@ -3185,6 +3235,19 @@ class HybridKeyExchange:
                 f"(local v{local_v}, peer v{peer_v})"
             )
         return negotiated
+
+    @staticmethod
+    def _production_posture() -> bool:
+        """True when production/TS posture is active (sticky fail-closed gate)."""
+        try:
+            from production_gate import is_production, is_ts_mode
+            return bool(is_production() or is_ts_mode())
+        except Exception:
+            import os as _os
+            _truthy = ("1", "true", "yes", "on")
+            return (_os.environ.get("P2P_PRODUCTION", "").strip().lower() in _truthy
+                    or _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in _truthy
+                    or _os.environ.get("P2P_TS_MODE", "").strip().lower() in _truthy)
 
     def derive_root_v2(self, dh1: bytes, dh2: bytes, dh3: bytes, dh4: bytes,
                        ss_hybrid: bytes, transcript: bytes) -> bytes:

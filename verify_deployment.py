@@ -671,6 +671,16 @@ class DeploymentVerifier:
         else:
             self._add_result("Key Hygiene: signing key exposure", VerificationStatus.PASS,
                              "no config-signing private keys in runtime tree")
+        # F-06 hardening (2026-10-15): P2P_MS_SIGNED_ONLY opts the process into
+        # PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY (MicrosoftSignedOnly) —
+        # irreversible for the process lifetime, so it is opt-in only via
+        # dep_impl._enable_modern_mitigations. Report the active state.
+        if _truthy("P2P_MS_SIGNED_ONLY"):
+            self._add_result("Env Policy: P2P_MS_SIGNED_ONLY", VerificationStatus.PASS,
+                             "active (only MS-signed binaries load; irreversible per-process mitigation)")
+        else:
+            self._add_result("Env Policy: P2P_MS_SIGNED_ONLY", VerificationStatus.PASS,
+                             "not active (default: any correctly signed .pyd accepted)")
         return all_secure
 
     

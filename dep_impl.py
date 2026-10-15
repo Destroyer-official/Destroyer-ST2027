@@ -2345,39 +2345,61 @@ class EnhancedDEP:
             except Exception:
                 log.info("High Entropy ASLR: System provides base protection, enhanced features require admin privileges")
 
-        # Enable blocking of non-Microsoft signed binaries
-        try:
-            # Create a properly typed binary signature policy structure
-            signature_policy = BinarySignaturePolicyStruct()
-            signature_policy = set_binary_signature_policy_flags(signature_policy)
+        # Enable blocking of non-Microsoft signed binaries.
+        #
+        # F-06 / audit 2026-10-14: SetProcessMitigationPolicy(BinarySignature,
+        # MicrosoftSignedOnly) is IRREVERSIBLE for the process lifetime and
+        # makes the loader reject EVERY subsequently loaded non-Microsoft-
+        # signed image with WinError 577. This stack intentionally loads
+        # self-built oqs.dll and pycryptodome/hypothesis native extensions
+        # (none Microsoft-signed) — enabling the policy by default silently
+        # bricks all later crypto/DLL loads (observed: production-mode chat
+        # init poisoned the rest of the pytest process; every subsequent
+        # pycryptodome _raw_*.pyd load failed with 577). Hardening that
+        # self-DoSes the running system is not hardening: explicit opt-in
+        # only, for deployments whose ENTIRE runtime image set is
+        # Microsoft-signed (re-sign or remove all third-party native images
+        # BEFORE setting the env, since the policy cannot be unset).
+        _ms_signed_only = os.environ.get("P2P_MS_SIGNED_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+        if not _ms_signed_only:
+            log.info(
+                "Binary signature policy (MicrosoftSignedOnly) disabled — set "
+                "P2P_MS_SIGNED_ONLY=1 ONLY if every runtime image is Microsoft-signed "
+                "(policy is irreversible for the process lifetime)."
+            )
+        else:
+            try:
+                # Create a properly typed binary signature policy structure
+                signature_policy = BinarySignaturePolicyStruct()
+                signature_policy = set_binary_signature_policy_flags(signature_policy)
 
-            # Define the correct function prototype for binary signature policy
-            SetBinarySignaturePolicy = ctypes.windll.kernel32.SetProcessMitigationPolicy
-            SetBinarySignaturePolicy.argtypes = [
-                ctypes.c_ulong,  # MitigationPolicy
-                ctypes.c_void_p,  # lpBuffer
-                ctypes.c_ulong   # dwLength
-            ]
-            SetBinarySignaturePolicy.restype = ctypes.c_bool
+                # Define the correct function prototype for binary signature policy
+                SetBinarySignaturePolicy = ctypes.windll.kernel32.SetProcessMitigationPolicy
+                SetBinarySignaturePolicy.argtypes = [
+                    ctypes.c_ulong,  # MitigationPolicy
+                    ctypes.c_void_p,  # lpBuffer
+                    ctypes.c_ulong   # dwLength
+                ]
+                SetBinarySignaturePolicy.restype = ctypes.c_bool
 
-            if SetBinarySignaturePolicy(
-                PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY,
-                ctypes.byref(signature_policy),
-                ctypes.sizeof(signature_policy)
-            ):
-                log.info(
-                    "Successfully enabled blocking of non-Microsoft signed binaries.")
-            else:
-                error_code = ctypes.windll.kernel32.GetLastError()
-                if error_code == 50:  # ERROR_NOT_SUPPORTED
+                if SetBinarySignaturePolicy(
+                    PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY,
+                    ctypes.byref(signature_policy),
+                    ctypes.sizeof(signature_policy)
+                ):
                     log.info(
-                        "Binary signature policy may already be enabled or not supported in this environment.")
+                        "Successfully enabled blocking of non-Microsoft signed binaries.")
                 else:
-                    log.warning(
-                        f"Failed to enable blocking of non-Microsoft signed binaries. Error: {error_code}")
-        except Exception as e:
-            log.warning(
-                f"An exception occurred while enabling binary signature policy: {e}")
+                    error_code = ctypes.windll.kernel32.GetLastError()
+                    if error_code == 50:  # ERROR_NOT_SUPPORTED
+                        log.info(
+                            "Binary signature policy may already be enabled or not supported in this environment.")
+                    else:
+                        log.warning(
+                            f"Failed to enable blocking of non-Microsoft signed binaries. Error: {error_code}")
+            except Exception as e:
+                log.warning(
+                    f"An exception occurred while enabling binary signature policy: {e}")
 
     def _enable_standard_dep(self):
         """
