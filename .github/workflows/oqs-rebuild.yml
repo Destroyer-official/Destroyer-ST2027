@@ -51,6 +51,7 @@ jobs:
         run: |
           cmake -S "$RUNNER_TEMP/liboqs" -B "$RUNNER_TEMP/liboqs/build" \
             -DBUILD_SHARED_LIBS=ON \
+            -DOQS_BUILD_ONLY_LIB=ON \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/oqs-prefix" \
             -DCMAKE_BUILD_TYPE=Release
 
