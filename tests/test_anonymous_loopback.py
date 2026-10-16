@@ -54,10 +54,18 @@ def test_anonymous_loopback_top_secret(tmp_path, monkeypatch):
     ta.anonymous_send("127.0.0.1", port, cli_ctx, cli_h, "loop-peer", data,
                       classification="TOP SECRET", receipt=receipt,
                       server_hostname="loopback-test")
-    th.join(timeout=120)
+    # A-12: under full-suite CPU load the server side has occasionally been
+    # observed not to finish (flake ~1 in 3 full runs, never in isolation).
+    # Wait with a hard bound, then fail with an explicit diagnostic instead
+    # of the misleading KeyError('path') a bare join+index would produce.
+    th.join(timeout=300)
     if errors:
         import traceback
         for err in errors:
             traceback.print_exception(type(err), err, err.__traceback__)
     assert not errors, errors
+    assert not th.is_alive(), (
+        "server thread did not finish within 300s (no, or empty, error was"
+        " recorded; likely a scheduling stall under load)")
+    assert out.get("path") is not None, "server completed without a result"
     assert out["path"].read_bytes() == data

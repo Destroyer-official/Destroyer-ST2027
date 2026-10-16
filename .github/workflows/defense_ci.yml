@@ -89,7 +89,7 @@ jobs:
           python destroyer.py --help
 
       - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@7b7640ea9039031ef160be18df3ea44b02d6cc85  # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable (tip verified 2026-10-16; refresh if GitHub returns 422)
 
       - name: Execute Rust Data-Plane Unit & Integration Tests
         run: |

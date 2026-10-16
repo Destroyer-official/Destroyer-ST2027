@@ -276,6 +276,20 @@ class MLDSA_SLHDSA_HybridSignature:
         self.is_hybrid = hasattr(self.impl, 'base_signature')
         self.algorithm_name = "ML-DSA-87+SLH-DSA-256f-Hybrid"
 
+    @property
+    def mode(self):
+        """Signature mode, resolved from the underlying implementation.
+
+        A-14 root cause: this adapter previously exposed no ``mode``, so
+        callers that resolved the mode via ``getattr(dss, 'mode', 'fast')``
+        silently serialized the 'fast' public-key component set even when
+        the implementation signed in 'secure'/'dual' mode. The peer then
+        rejected bundles whose signature carried components absent from the
+        serialized public key. Delegating to the implementation keeps a
+        single source of truth: what is signed is what is serialized.
+        """
+        return getattr(self.impl, 'mode', 'fast')
+
     def keygen(self) -> Tuple[Union[bytes, dict], Union[bytes, dict]]:
         """
         Generate a new FALCON-1024 key pair (now hybrid).
@@ -720,10 +734,15 @@ class HybridKeyExchange:
     fallbacks to weaker algorithms or security parameters.
     """
 
-    # PQXDH combiner protocol versions (non-breaking negotiation).
-    # v1 = legacy HKDF-SHA3_512 raw-concat combiner (wire format frozen,
-    #      never modified). v2 = HKDF-SHA384 length-prefixed combiner with
-    #      transcript binding (see crypto.kem.hybrid_combine_v2).
+     # PQXDH combiner protocol versions (non-breaking negotiation).
+     # v1 = legacy HKDF-SHA3_512 raw-concat combiner (wire format frozen,
+     #      never modified). v2 = HKDF-SHA384 length-prefixed combiner with
+     #      transcript binding (see crypto.kem.hybrid_combine_v2); the v2
+     #      transcript (build_transcript_v2) binds IDs, classical EC pubs, PQ
+     #      pubkey (PQPK) and KEM ciphertext (CT) into the outer KDF info --
+     #      the countermeasure required by ePrint 2026/140 ("hash the classical
+     #      ciphertext and public key in the outer KDF") and by PQNoise-style
+     #      analyses of hybrid KEM composition.
     # Research (USENIX'24 Bhargavan et al. on PQXDH; Signal PQXDH spec):
     # version/{"protocol_version"} MUST be transcript-bound; unauthenticated
     # min() negotiation downgrades to v1. Production therefore floors at v2.
@@ -1639,7 +1658,22 @@ class HybridKeyExchange:
                     _vas_ok = False
                 if not _vas_ok:
                     raise ValueError("Verify-after-sign failed on public bundle (fault?)")
-                
+
+                # A-14 fail-closed invariant: the serialized public key MUST
+                # carry every component the signature needs, or peers cannot
+                # verify the bundle (HybridSignature.verify requires each
+                # signature component's public half). Serialization filters
+                # by signature mode; any future mode-plumbing divergence is
+                # caught here before an unverifiable bundle is published.
+                if isinstance(bundle_signature, dict) and isinstance(self.falcon_public_key, dict):
+                    _sig_comps = set(bundle_signature.keys())
+                    _pub_comps = set(self.falcon_public_key.keys())
+                    if not _sig_comps.issubset(_pub_comps):
+                        raise ValueError(
+                            "Public bundle serialization would omit signature "
+                            f"components {sorted(_sig_comps - _pub_comps)}; refusing to"
+                            " publish a peer-unverifiable bundle")
+
                 # Handle hybrid signature format - store complete signature
                 if isinstance(bundle_signature, dict):
                     # Store the complete hybrid signature as JSON
@@ -1821,6 +1855,18 @@ class HybridKeyExchange:
                     # Legacy format - single base64 signature
                     bundle_signature = base64.b64decode(bundle_signature_str)
                     hybrid_kex_logger.debug("Using legacy single signature format")
+
+                # A-14: explicit component-containment check (same invariant
+                # as the emit-side gate) so a component mismatch is rejected
+                # with a precise audit log instead of an opaque verify error.
+                if isinstance(bundle_signature, dict) and isinstance(falcon_public_key, dict):
+                    _missing = set(bundle_signature.keys()) - set(falcon_public_key.keys())
+                    if _missing:
+                        hybrid_kex_logger.error(
+                            "SECURITY ALERT: bundle signature components "
+                            f"{sorted(_missing)} are absent from the advertised"
+                            " FALCON public key; rejecting.")
+                        return False
 
                 # Verify with hybrid signature system
                 try:

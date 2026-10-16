@@ -11,9 +11,14 @@ Post-fix: under production/TS posture both paths fail closed (SecurityError);
 lab keeps the v1 fallback for interop debugging only.
 
 Note: a full two-peer handshake integration test was omitted here because
-get_public_bundle() emits a FALCON-signed bundle that fails self-verification
-under this environment's FALCON key format detection — an unrelated pre-existing
-serialization quirk, not caused by the combiner change. The decision logic
+get_public_bundle() emitted a FALCON-signed bundle that failed peer
+verification under this environment's FALCON mode handling — the A-14
+"self-verify quirk". Root cause (2026-10-16): verification was gated on the
+VERIFIER's own sign mode, so 'secure'/'dual'-signed bundles were rejected by
+'fast'-mode peers while the signer's own verify-after-sign passed. Fixed in
+pqc_algorithms.EnhancedFALCON_1024._verify_hybrid_components (component-
+complete verification) with the serialization invariant pinned by
+tests/test_falcon_bundle_mode_consistency.py. The decision logic
 (new _production_posture helper + re-raise of negotiate_protocol_version's
 SecurityError) is tested directly below.
 """

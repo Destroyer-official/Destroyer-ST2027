@@ -29,7 +29,7 @@ from enum import Enum
 
 # Core modules that MUST be preserved (Iron Core)
 CORE_MODULES = [
-    "secure_p2",
+    "secure_p2p",
     "pqc_algorithms",
     "military_security_enforcement",
     "double_ratchet",
@@ -50,7 +50,7 @@ CORE_MODULES = [
 
 # Large files that require special handling (DO NOT DELETE FUNCTIONS)
 LARGE_FILES = {
-    "archive/legacy_prototype/secure_p2p.py": {"min_lines": 9000, "critical": True},
+    "secure_p2p.py": {"min_lines": 11000, "critical": True},
     "pqc_algorithms.py": {"min_lines": 7500, "critical": True},
     "double_ratchet.py": {"min_lines": 3500, "critical": True},
     "platform_hsm_interface.py": {"min_lines": 8000, "critical": True},
@@ -492,8 +492,66 @@ class DeploymentVerifier:
                              f"native proof failed: {str(e)[:80]}")
             ok = False
         return ok
-    
-    
+
+    def verify_tls_pq_posture(self) -> bool:
+        """TLS 1.3 post-quantum key-exchange posture (A-10/A-11/P1).
+
+        Empirical gate on THIS host/runtime: PQ key exchange rides TLS 1.3
+        GROUPS (RFC 10024 hybrids), never ciphersuite names. Probes the
+        default ClientHello (tls_pq_policy.client_offers_hybrid_group) and
+        reports OPENSSL_CONF policy visibility. WARN in lab, FAIL under
+        production posture (draft-becker-cnsa2-tls-profile fail-closed).
+        Ciphersuite pinning (TLS_AES_256_GCM_SHA384) happens post-handshake
+        in tls_channel_manager.do_handshake.
+        """
+        print("\n=== TLS Post-Quantum Key-Exchange Posture ===")
+        ok = True
+        prod = any(
+            os.environ.get(k, "").strip().lower() in ("1", "true", "yes", "on")
+            for k in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE")
+        )
+        ssl_mod = None
+        try:
+            import ssl as ssl_mod
+            tls13 = bool(getattr(ssl_mod, "HAS_TLSv1_3", False))
+        except Exception:
+            tls13 = False
+        if tls13:
+            self._add_result("TLS13: library support", VerificationStatus.PASS,
+                             f"{getattr(ssl_mod, 'OPENSSL_VERSION', 'ssl module')}")
+        else:
+            self._add_result("TLS13: library support", VerificationStatus.FAIL,
+                             "TLS 1.3 unavailable in this runtime")
+            ok = False
+        hybrid = False
+        try:
+            from tls_pq_policy import client_offers_hybrid_group
+            hybrid = bool(client_offers_hybrid_group())
+        except Exception as e:
+            self._add_result("TLS13: PQ hybrid group offer", VerificationStatus.WARN,
+                             f"probe unavailable: {str(e)[:60]}")
+        if hybrid:
+            self._add_result(
+                "TLS13: PQ hybrid group offer", VerificationStatus.PASS,
+                "default ClientHello offers RFC 10024 hybrid group (e.g. X25519MLKEM768)")
+        elif tls13:
+            self._add_result(
+                "TLS13: PQ hybrid group offer",
+                VerificationStatus.FAIL if prod else VerificationStatus.WARN,
+                "default ClientHello offers NO RFC 10024 hybrid group")
+            ok = ok and not prod
+        openssl_conf = os.environ.get("OPENSSL_CONF", "").strip()
+        if openssl_conf:
+            self._add_result("TLS13: OPENSSL_CONF policy", VerificationStatus.PASS,
+                             f"explicit OpenSSL config in force: {openssl_conf}")
+        else:
+            self._add_result(
+                "TLS13: OPENSSL_CONF policy",
+                VerificationStatus.WARN if prod else VerificationStatus.SKIP,
+                "no OPENSSL_CONF; KEX groups rely on runtime build defaults"
+                " (harden with deploy/openssl_cnsa.cnf)")
+        return ok
+
     def verify_audit_logging(self) -> bool:
         """Verify audit logging system is present"""
         print("\n=== Audit Logging Verification ===")
@@ -608,6 +666,7 @@ class DeploymentVerifier:
             ("P2P_ALLOW_LOOPBACK", "Loopback IP acceptance + loopback pin-skip (lab only)"),
             ("P2P_ALLOW_NO_HOSTNAME_CHECK", "TLS hostname verification bypass"),
             ("P2P_ALLOW_LEGACY_KEY_MIGRATION", "Legacy plaintext key migration"),
+            ("P2P_ALLOW_LEGACY_CERTS", "Legacy ECDSA certificate acceptance (TLS migration path; refused in production)"),
             ("P2P_DISABLE_STRICT_AUTH", "Strict mutual authentication disablement"),
             ("P2P_EPHEMERAL_MODE", "Ephemeral mode (check: must be intentional, not default)"),
             ("P2P_ENABLE_VULN_HQC", "Vulnerable HQC leg on oqs 0.10.1 (CVE-2024-54137/CVE-2025-52473, lab only)"),
@@ -618,7 +677,7 @@ class DeploymentVerifier:
         all_secure = True
         for flag, description in insecure_flags:
             if _truthy(flag):
-                level = VerificationStatus.WARN if flag in ("P2P_ALLOW_LOOPBACK", "P2P_EPHEMERAL_MODE") else VerificationStatus.FAIL
+                level = VerificationStatus.WARN if flag in ("P2P_ALLOW_LOOPBACK", "P2P_EPHEMERAL_MODE", "P2P_ALLOW_LEGACY_CERTS") else VerificationStatus.FAIL
                 self._add_result(f"Env Policy: {flag}", level, f"OVERRIDE ACTIVE: {flag} ({description})")
                 if level == VerificationStatus.FAIL:
                     all_secure = False
@@ -639,16 +698,21 @@ class DeploymentVerifier:
                 self._add_result(f"Env Policy: {flag}", VerificationStatus.FAIL,
                                  f"{flag}={val} weakens secure default (want {want}/unset)")
                 all_secure = False
-        # S/Kademlia PoW: default 2 (16-bit, matched gen==verify) is reliable;
-        # high-threat production should raise to 3 with pre-mined identities.
-        if any(_truthy(f) for f in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION")):
+        # A-13: production auto-raises the DHT PoW difficulty to the code
+        # floor in decentralized_architecture._pow_difficulty(); report the
+        # effective value so operators see the mining budget implication.
+        if any(_truthy(f) for f in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE")):
             try:
                 _pow = int(os.environ.get("P2P_DHT_POW_DIFFICULTY_BYTES", "2"))
             except (TypeError, ValueError):
                 _pow = 2
             if _pow < 3:
-                self._add_result("Env Policy: P2P_DHT_POW_DIFFICULTY_BYTES", VerificationStatus.WARN,
-                                 f"PoW difficulty {_pow} < 3 in production (recommend 3 with persistent pre-mined identities)")
+                self._add_result("Env Policy: P2P_DHT_POW_DIFFICULTY_BYTES", VerificationStatus.PASS,
+                                 f"production floor enforced in code: {_pow} -> 3 leading zero bytes "
+                                 "(set >=3 to pre-mine identities ahead of startup)")
+            else:
+                self._add_result("Env Policy: P2P_DHT_POW_DIFFICULTY_BYTES", VerificationStatus.PASS,
+                                 f"PoW difficulty {_pow} >= production floor 3")
         # F-04 (audit 2026-10-14): private signing key material must never
         # ship inside the deployed runtime tree — co-located with the signed
         # config it would let a compromised host forge boot configuration.
@@ -743,11 +807,11 @@ class DeploymentVerifier:
             ("Security Policies", self.verify_security_policy_files),
             ("Forbidden Algorithms", self.verify_no_forbidden_algorithms),
             ("CNSA27 Readiness", self.verify_cnsa27_readiness),
+            ("TLS PQ Posture", self.verify_tls_pq_posture),
             ("Host Posture", self.verify_host_posture),
             ("Audit Logging", self.verify_audit_logging),
             ("Memory Security", self.verify_memory_security),
             ("Anti-Downgrade Policies", self.verify_secure_environment_configuration),
-            ("Host Posture", self.verify_host_posture),
         ]
         
         check_results = {}

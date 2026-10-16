@@ -39,6 +39,34 @@ def _free_udp_port():
     return port
 
 
+def _wait_udp_bound(port, proc, timeout_s=15.0):
+    """Block until `proc` has bound 127.0.0.1:port (A-12 flake fix).
+
+    The Rust receiver uses a plain UdpSocket::bind with no SO_REUSEADDR, so
+    a conflicting probe bind fails exactly once the receiver owns the port.
+    Replaces the fixed 1.5 s sleep, which flaked under load (sender fired
+    before the receiver was bound -> UDP datagrams silently dropped).
+    """
+    import time
+    deadline = time.monotonic() + timeout_s
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                raise AssertionError(
+                    f"receiver exited before binding (rc={proc.returncode})")
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                return  # port taken -> receiver is bound
+            probe.close()
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            time.sleep(0.05)
+        raise AssertionError("receiver never bound UDP port within timeout")
+    finally:
+        probe.close()
+
+
 def _free_tcp_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))
@@ -115,8 +143,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 cwd=str(CRATE))
             try:
-                import time
-                time.sleep(1.5)  # let recv bind first (fail-closed otherwise)
+                _wait_udp_bound(port, recv)
                 sent = _run("send", "--key-file", kf, "--state", send_state,
                             "--to", f"127.0.0.1:{port}",
                             "--msg", "BINARY-PROOF-7741")
@@ -147,8 +174,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 cwd=str(CRATE))
             try:
-                import time
-                time.sleep(1.5)
+                _wait_udp_bound(port, recv)
                 sent = _run("send", "--key-file", kf, "--state", send_state,
                             "--to", f"127.0.0.1:{port}",
                             "--msg", "MUST-NOT-OPEN")
@@ -182,8 +208,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 cwd=str(CRATE))
             try:
-                import time
-                time.sleep(1.5)
+                _wait_udp_bound(port, recv)
                 sent = _run("send-file", "--key-file", kf, "--state", send_state,
                             "--to", f"127.0.0.1:{port}", "--file", src)
                 self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
@@ -219,8 +244,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 cwd=str(CRATE))
             try:
-                import time
-                time.sleep(1.5)
+                _wait_udp_bound(port, recv)
                 sent = _run("send-file", "--key-file", kf, "--state", send_state,
                             "--to", f"127.0.0.1:{port}", "--file", src)
                 self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
@@ -251,8 +275,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 cwd=str(CRATE))
             try:
-                import time
-                time.sleep(1.5)
+                _wait_udp_bound(port, recv)
                 _run("send-file", "--key-file", kf, "--state", send_state,
                      "--to", f"127.0.0.1:{port}", "--file", src)
                 out, err = recv.communicate(timeout=30)
@@ -336,7 +359,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 cwd=str(CRATE))
             try:
-                time.sleep(1.5)  # wait for bind
+                _wait_udp_bound(port, recv)
                 sent = _run("diode-send", "--key-file", kf, "--state", send_state,
                             "--to", f"127.0.0.1:{port}", "--file", src,
                             "--parity-ratio", "0.3")
@@ -419,7 +442,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 [str(BIN), "recv", "--key-file", key_a, "--state", st_recv, "--bind", f"127.0.0.1:{udp_port}", "--count", "1"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
             try:
-                time.sleep(1.0)
+                _wait_udp_bound(udp_port, recv)
                 sent = _run("send", "--key-file", key_b, "--state", st_send, "--to", f"127.0.0.1:{udp_port}", "--msg", "KEX-VERIFIED")
                 self.assertEqual(sent.returncode, 0, sent.stderr[-500:])
                 out_recv, err_recv = recv.communicate(timeout=10)

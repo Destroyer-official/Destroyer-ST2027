@@ -8103,32 +8103,51 @@ def enhanced_tls_pq_support() -> dict:
         result["recommended_action"] = "Upgrade OpenSSL to a version that supports TLS 1.3"
         return result
 
-    # Check if we have TLS 1.3 support
-    if not result["has_tls13"]:
-        result["error"] = "TLS 1.3 not supported"
-        result["diagnostics"].append("TLS 1.3 not supported by SSL library")
-        logger.warning("TLS 1.3 not supported by SSL library")
-        result["recommended_action"] = "Upgrade OpenSSL to a version that supports TLS 1.3"
-        return result
-
     # Check if set_groups is available
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     has_set_groups = hasattr(context, "set_groups")
     result["set_groups_available"] = has_set_groups
 
-    if has_set_groups:
-        result["diagnostics"].append("SSLContext.set_groups() is available")
-    else:
-        result["error"] = "SSLContext.set_groups() not available"
-        result["diagnostics"].append(
-            "SSLContext.set_groups() not available - cannot configure PQ key exchange")
-        logger.warning(
-            "SSLContext.set_groups() not available. Post-quantum TLS KEX may not be available.")
-        result["recommended_action"] = "Upgrade Python to 3.8+ and OpenSSL to 1.1.1+ for set_groups support"
+    if not has_set_groups:
+        # CPython exposes neither set_groups nor set_ecdh_curves; PQ groups
+        # ride build defaults. Probe the emitted ClientHello empirically
+        # instead of failing to a false negative (A-10, 2026-10-16): on
+        # OpenSSL 3.5.x the default offer includes X25519MLKEM768 (0x11EC).
+        try:
+            from tls_pq_policy import client_offers_hybrid_group
+            _default_offer_hybrid = client_offers_hybrid_group()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"TLS PQ policy probe unavailable: {e}")
+            _default_offer_hybrid = False
+        if _default_offer_hybrid:
+            result["pq_supported"] = True
+            result["groups_supported"].append("X25519MLKEM768 (runtime default offer)")
+            result["diagnostics"].append(
+                "SSLContext.set_groups() unavailable (CPython); default TLS 1.3"
+                " ClientHello empirically offers an RFC 10024 hybrid group")
+            result["recommended_group"] = "X25519MLKEM768 (runtime default offer)"
+            result["diagnostics"].append(
+                "Restrict/verify groups via OPENSSL_CONF (Groups=) for fail-closed policy")
+        else:
+            result["error"] = "No post-quantum TLS groups offered by default"
+            result["diagnostics"].append(
+                "SSLContext.set_groups() unavailable (CPython) and the default"
+                " TLS 1.3 ClientHello offers no RFC 10024 hybrid group")
+            logger.warning(
+                "No post-quantum TLS group offered by default. Quantum security may be compromised.")
+            result["recommended_action"] = (
+                "Upgrade OpenSSL to 3.5+ (hybrid groups on by default) or set"
+                " OPENSSL_CONF groups explicitly")
         return result
+
+    result["diagnostics"].append("SSLContext.set_groups() is available")
 
     # Try to set various post-quantum groups
     pq_groups = [
+        # RFC 10024 canonical names (Standards Track)
+        "X25519MLKEM768",
+        "SecP384r1MLKEM1024",
+        "SecP256r1MLKEM768",
         # ML-KEM (formerly Kyber) hybrid groups
         "x25519_kyber768",
         "p256_kyber768",
@@ -8282,29 +8301,24 @@ def create_tls_context_with_pq_fallback(is_server: bool = False, fail_on_classic
     protocol = ssl.PROTOCOL_TLS_SERVER if is_server else ssl.PROTOCOL_TLS_CLIENT
     context = ssl.SSLContext(protocol)
 
-    # Set minimum TLS version to 1.3
+    # Set minimum TLS version to 1.3 (and maximum: TLS 1.3-only policy)
     try:
         context.minimum_version = ssl.TLSVersion.TLSv1_3
+        context.maximum_version = ssl.TLSVersion.TLSv1_3
     except (AttributeError, ValueError):
         # Fallback for older Python versions
         context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_TLSv1_2
         logger.warning(
             "Setting TLS 1.3 as minimum version not supported - using options flags instead")
 
-    # Set secure cipher suites
-    try:
-        # Try to set PQ cipher suites first if they might be supported
-        context.set_ciphers(
-            "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_sha3_512:TLS_AES_128_GCM_sha3_512")
-    except ssl.SSLError as e:
-        logger.critical(f"Failed to set post-quantum cipher suites: {e}")
-        if fail_on_classical_fallback or os.environ.get("P2P_ENFORCE_SECURITY", "1") == "1":
-            raise SecurityPolicyViolationError(f"Production security violation: PQ ciphers unavailable: {e}") from e
-        try:
-            context.set_ciphers(
-                "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-sha3_512")
-        except ssl.SSLError:
-            logger.warning("Failed to set specific cipher suites - using defaults")
+    # A-10 (2026-10-16): the former cipher block passed phantom/non-RFC8446
+    # suite names (TLS_CHACHA20_POLY1305_sha3_512, TLS_AES_128_GCM_sha3_512)
+    # to SSLContext.set_ciphers(), which configures the pre-1.3 cipher list
+    # only and rejects TLS 1.3 names outright ("No cipher can be selected",
+    # verified 2026-10-16). TLS 1.3 posture is enforced via
+    # minimum/maximum_version plus group policy; PQ key exchange rides
+    # RFC 10024 hybrid GROUPS, never ciphersuite names. No set_ciphers()
+    # call is correct here on a TLS 1.3-only context.
 
     # Try to set post-quantum groups if supported
     pq_support = enhanced_tls_pq_support()
@@ -8335,6 +8349,13 @@ def create_tls_context_with_pq_fallback(is_server: bool = False, fail_on_classic
             pq_configured = True
         except Exception as e:
             logger.warning(f"Failed to set post-quantum groups: {e}")
+    elif pq_support["pq_supported"]:
+        # CPython: groups ride runtime build defaults (empirically verified
+        # RFC 10024 hybrid offer); nothing to configure on the context.
+        pq_configured = True
+        logger.info(
+            "TLS 1.3 PQ key exchange via runtime default group offers"
+            " (RFC 10024 hybrid group present in ClientHello)")
 
     if not pq_configured:
         should_fail_closed = (

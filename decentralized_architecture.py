@@ -92,14 +92,39 @@ WIFI_DIRECT_PORT = 8765
 # default-on).
 DEFAULT_POW_DIFFICULTY_BYTES = 2
 
+# A-13 (2026-10-16 audit): production must not run the Sybil proof-of-work
+# below the high-threat floor. Generation, admission and verification all
+# resolve difficulty through _pow_difficulty(), so the floor cannot
+# reintroduce the historical generation-vs-verification mismatch.
+PRODUCTION_POW_FLOOR_BYTES = 3
+
 
 def _pow_difficulty() -> int:
-    """Effective PoW difficulty: env override or matched default."""
+    """Effective PoW difficulty: env override, matched default, or production floor.
+
+    Production (P2P_PRODUCTION/SECURE_P2P_PRODUCTION/P2P_TS_MODE via
+    production_gate) auto-raises sub-floor configurations to
+    PRODUCTION_POW_FLOOR_BYTES and logs loudly. Lab keeps the matched
+    default for availability (see DEFAULT_POW_DIFFICULTY_BYTES note).
+    """
     try:
-        return max(0, int(os.environ.get("P2P_DHT_POW_DIFFICULTY_BYTES",
-                                         str(DEFAULT_POW_DIFFICULTY_BYTES))))
+        configured = max(0, int(os.environ.get("P2P_DHT_POW_DIFFICULTY_BYTES",
+                                               str(DEFAULT_POW_DIFFICULTY_BYTES))))
     except (TypeError, ValueError):
-        return DEFAULT_POW_DIFFICULTY_BYTES
+        configured = DEFAULT_POW_DIFFICULTY_BYTES
+    try:
+        from production_gate import is_production as _gate_prod
+        _prod = bool(_gate_prod())
+    except Exception:
+        _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+                 or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+    if _prod and configured < PRODUCTION_POW_FLOOR_BYTES:
+        logger.warning(
+            "PRODUCTION PoW floor active: elevating DHT PoW difficulty "
+            f"{configured} -> {PRODUCTION_POW_FLOOR_BYTES} leading zero bytes "
+            "(A-13; operators should pre-mine identities, see docs)")
+        return PRODUCTION_POW_FLOOR_BYTES
+    return configured
 
 
 class DecentralizedError(Exception):

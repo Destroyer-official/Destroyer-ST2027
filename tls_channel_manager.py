@@ -1898,6 +1898,15 @@ class SecureEnclaveManager:
 
         log.info("SecureEnclaveManager state reset. All hardware considered unavailable locally.")
 
+# --- TLS 1.3 PQ-capability probe (A-10/A-11/P1, 2026-10-16) ----------------
+# Shared stdlib-only implementation (see tls_pq_policy module docstring for
+# the empirical basis: default offer includes 0x11EC on OpenSSL 3.5.x).
+from tls_pq_policy import (  # noqa: E402  (import after stdlib block is fine)
+    RFC10024_HYBRID_GROUP_CODEPOINTS,
+    client_offers_hybrid_group as tls13_client_offers_hybrid_group,
+)
+
+
 class TLSSecureChannel:
     """NIST FIPS 140-2 Level 3 compliant TLS 1.3 channel with quantum-resistant cryptography.
 
@@ -1932,12 +1941,20 @@ class TLSSecureChannel:
     and provides NIST Level 5 protection against classical and quantum cryptanalytic attacks.
     """
 
-    # Primary cipher suites with quantum resistance
+    # Approved TLS 1.3 ciphersuites (RFC 8446 registry).
+    # A-11 (2026-10-16): TLS 1.3 ciphersuite NAMES do not reference the key
+    # exchange — PQ rides the RFC 10024 hybrid GROUPS (see HYBRID_PQ_GROUPS).
+    # Prior revisions carried phantom names (TLS_MLKEM_1024_*,
+    # TLS_KYBER_1024_*) that no OpenSSL accepts; and SSLContext.set_ciphers()
+    # configures the pre-1.3 cipher list only, so TLS 1.3 suites are never
+    # pinned through it ("No cipher can be selected", verified 2026-10-16).
+    # Enforcement: min/max_version pins TLS 1.3 here; the negotiated suite is
+    # pinned post-handshake (CNSA 2.0: TLS_AES_256_GCM_SHA384) in
+    # do_handshake().
     CIPHER_SUITES = [
-        "TLS_MLKEM_1024_CHACHA20_POLY1305_SHA3_512",
-        "TLS_KYBER_1024_CHACHA20_POLY1305_SHA3_512",
-        "TLS_MLKEM_1024_AES_256_GCM_SHA384",
-        "TLS_KYBER_1024_AES_256_GCM_SHA384"
+        "TLS_AES_256_GCM_SHA384",
+        "TLS_CHACHA20_POLY1305_SHA256",
+        "TLS_AES_128_GCM_SHA256",
     ]
 
     # Enforce TLS 1.3 as minimum version
@@ -1965,12 +1982,12 @@ class TLSSecureChannel:
     SECURITY_LOG_LEVEL_DEBUG = 2
     SECURITY_LOG_LEVEL = SECURITY_LOG_LEVEL_VERBOSE
 
-    # Expected cipher suites for compatibility verification
+    # Expected ciphersuites for post-handshake verification. Real RFC 8446
+    # names only (A-11): PQ key encapsulation never appears in a ciphersuite
+    # name; it is negotiated via hybrid key-exchange groups.
     EXPECTED_PQ_CIPHER_SUITES = [
-        "TLS_MLKEM_1024_CHACHA20_POLY1305_SHA3_512",
-        "TLS_MLKEM_1024_AES_256_GCM_SHA384",
-        "TLS_KYBER_1024_CHACHA20_POLY1305_SHA3_512",
-        "TLS_KYBER_1024_AES_256_GCM_SHA384"
+        "TLS_AES_256_GCM_SHA384",
+        "TLS_CHACHA20_POLY1305_SHA256",
     ]
     # No-demo rule: a previous revision kept a second copy of this list
     # under a *_PLACEHOLDERS name that nothing ever read. Dead duplicate
@@ -2120,10 +2137,8 @@ class TLSSecureChannel:
                 "security_level": "MAXIMUM",
                 "key_exchange": "SecP384r1MLKEM1024",
                 "ciphers": [
-                    "TLS_MLKEM_1024_CHACHA20_POLY1305_SHA3_512",
-                    "TLS_KYBER_1024_CHACHA20_POLY1305_SHA3_512",
-                    "TLS_MLKEM_1024_AES_256_GCM_SHA384",
-                    "TLS_KYBER_1024_AES_256_GCM_SHA384"
+                    "TLS_AES_256_GCM_SHA384",
+                    "TLS_CHACHA20_POLY1305_SHA256"
                 ]
             },
             "strict_tls_version": "1.3",
@@ -3722,9 +3737,9 @@ class TLSSecureChannel:
             log.info("Client: ENFORCED TLS 1.3 only policy - all older versions and fallbacks disabled")
 
             # Set cipher preferences to enforce quantum-resistant ML-KEM with ChaCha20-Poly1305
-            log.info("Client Context: Enforcing PQ-resistant ciphers with ML-KEM-1024 and KYBER-1024")
+            log.info("Client Context: Enforcing approved TLS 1.3 suites (PQ KEX negotiated via groups)")
             cipher_string = ":".join(self.CIPHER_SUITES)
-            log.info(f"Client Context: Setting TLS 1.3 cipher suites: {cipher_string}")
+            log.info(f"Client Context: Approved TLS 1.3 ciphersuites: {cipher_string}")
         except Exception as e:
             log.error(f"Error enforcing TLS 1.3: {e}. Using basic security settings.")
             # Continue with existing context but apply minimum security options on legacy runtimes
@@ -3735,55 +3750,23 @@ class TLSSecureChannel:
         context.options |= ssl.OP_SINGLE_DH_USE | ssl.OP_SINGLE_ECDH_USE
         context.options |= ssl.OP_NO_COMPRESSION  # Disable compression (CRIME attack)
 
-        # Define the ciphers to be set - only the specified PQ cipher suites
-        # Use the ML-KEM-1024 cipher suites as the primary options with no fallback
-        ciphers_to_set_list = self.EXPECTED_PQ_CIPHER_SUITES
-        pq_suites_attempted = [
-                "TLS_MLKEM_1024_AES_256_GCM_SHA384",
-                "TLS_MLKEM_1024_CHACHA20_POLY1305_SHA3_512",
-                "TLS_KYBER_1024_AES_256_GCM_SHA384",         # Legacy naming
-                "TLS_KYBER_1024_CHACHA20_POLY1305_SHA3_512"    # Legacy naming
-            ]
-
-        log.info(f"Client Context: Enforcing PQ-resistant ciphers with ML-KEM-1024 and KYBER-1024")
-
-        cipher_suite_string_to_set = ":".join(ciphers_to_set_list)
-        log.info(f"Client Context: Setting TLS 1.3 cipher suites: {cipher_suite_string_to_set}")
-
-        try:
-            context.set_ciphers(cipher_suite_string_to_set)
-            current_ciphers_details = context.get_ciphers()
-            current_cipher_names = [c['name'] for c in current_ciphers_details if 'name' in c] if current_ciphers_details else []
-
-            if not current_cipher_names:
-                log.critical("MILITARY FATAL: Client Context: set_ciphers resulted in an empty cipher list! Fallback to standard TLS 1.3 forbidden.")
-                raise ssl.SSLError("MILITARY FATAL: Post-Quantum ciphers unavailable. Fallbacks forbidden.")
-            else:
-                # Verify that only TLS 1.3 ciphers were selected
-                non_tls13_ciphers = [c for c in current_cipher_names if not c.startswith("TLS_")]
-                if non_tls13_ciphers:
-                    log.warning(f"Non-TLS 1.3 ciphers detected: {non_tls13_ciphers}. Proceeding with available ciphers.")
-
-                log.info(f"Client Context: Successfully applied cipher string. Active ciphers: {current_cipher_names}")
-
-                # Check if any of our expected PQ ciphers are available
-                found_pq_ciphers = [cipher for cipher in current_cipher_names if cipher in pq_suites_attempted]
-                if found_pq_ciphers:
-                    log.info(f"Client Context: Using post-quantum ciphers: {found_pq_ciphers}")
-                    self.using_pq_ciphers = True
-                    # Mark context as using PQ
-                    context._pq_enabled = True
-                    for cipher in found_pq_ciphers:
-                        log.info(f"Client Context: Confirmed PQ cipher suite active: {cipher}")
-                else:
-                    log.warning("No post-quantum ciphers available. Using standard TLS 1.3 ciphers.")
-                    self.using_pq_ciphers = False
-                    # Mark context as not using PQ
-                    context._pq_enabled = False
-
-        except ssl.SSLError as e:
-            log.critical(f"MILITARY FATAL: Client Context: Failed to set PQ cipher string '{cipher_suite_string_to_set}': {e}. Fallbacks forbidden.")
-            raise ssl.SSLError(f"MILITARY FATAL: PQ cipher initialization failed: {e}. Fallbacks forbidden.")
+        # A-11 (2026-10-16): TLS 1.3 ciphersuites cannot be pinned through
+        # SSLContext.set_ciphers() — that API configures OpenSSL's pre-1.3
+        # cipher list and rejects TLS 1.3 suite names with "No cipher can be
+        # selected". The former TLS_MLKEM_1024_*/TLS_KYBER_1024_* names were
+        # phantom and could never be selected on any OpenSSL. PQ key
+        # exchange is negotiated via RFC 10024 hybrid groups; the final TLS
+        # 1.3 suite is pinned post-handshake (CNSA 2.0:
+        # TLS_AES_256_GCM_SHA384 — see do_handshake()).
+        _offers_hybrid = tls13_client_offers_hybrid_group()
+        if getattr(self, 'enable_pq_kem', False) and _offers_hybrid:
+            log.info("Client Context: runtime offers RFC 10024 hybrid groups (PQ key exchange available)")
+            self.using_pq_ciphers = True
+            context._pq_enabled = True
+        else:
+            log.warning("Client Context: no hybrid PQ group offered by runtime; classical TLS 1.3 key exchange")
+            self.using_pq_ciphers = False
+            context._pq_enabled = False
 
         # Add TLS fingerprint verification and certificate pinning
         if hasattr(self, 'certificate_pinning') and self.certificate_pinning:
@@ -4506,55 +4489,20 @@ class TLSSecureChannel:
         context.options |= ssl.OP_SINGLE_DH_USE | ssl.OP_SINGLE_ECDH_USE
         context.options |= ssl.OP_NO_COMPRESSION  # Disable compression (CRIME attack)
 
-        # Define the ciphers to be set - only the specified PQ cipher suites
-        # Use the ML-KEM-1024 cipher suites as the primary options with no fallback
-        ciphers_to_set_list = self.EXPECTED_PQ_CIPHER_SUITES
-        pq_suites_attempted = [
-                "TLS_MLKEM_1024_AES_256_GCM_SHA384",
-                "TLS_MLKEM_1024_CHACHA20_POLY1305_SHA3_512",
-                "TLS_KYBER_1024_AES_256_GCM_SHA384",         # Legacy naming
-                "TLS_KYBER_1024_CHACHA20_POLY1305_SHA3_512"    # Legacy naming
-            ]
-
-        log.info(f"Server Context: Enforcing PQ-resistant ciphers with ML-KEM-1024 and KYBER-1024")
-
-        cipher_suite_string_to_set = ":".join(ciphers_to_set_list)
-        log.info(f"Server Context: Setting TLS 1.3 cipher suites: {cipher_suite_string_to_set}")
-
-        try:
-            context.set_ciphers(cipher_suite_string_to_set)
-            current_ciphers_details = context.get_ciphers()
-            current_cipher_names = [c['name'] for c in current_ciphers_details if 'name' in c] if current_ciphers_details else []
-
-            if not current_cipher_names:
-                log.critical("MILITARY FATAL: Server Context: set_ciphers resulted in an empty cipher list! Fallback to standard TLS 1.3 forbidden.")
-                raise ssl.SSLError("MILITARY FATAL: Post-Quantum ciphers unavailable. Fallbacks forbidden.")
-            else:
-                # Verify that only TLS 1.3 ciphers were selected
-                non_tls13_ciphers = [c for c in current_cipher_names if not c.startswith("TLS_")]
-                if non_tls13_ciphers:
-                    log.warning(f"Non-TLS 1.3 ciphers detected: {non_tls13_ciphers}. Proceeding with available ciphers.")
-
-                log.info(f"Server Context: Successfully applied TLS 1.3 cipher string. Active ciphers: {current_cipher_names}")
-
-                # Check if any of our expected PQ ciphers are available
-                found_pq_ciphers = [cipher for cipher in current_cipher_names if cipher in pq_suites_attempted]
-                if found_pq_ciphers:
-                    log.info(f"Server Context: Using post-quantum ciphers: {found_pq_ciphers}")
-                    self.using_pq_ciphers = True
-                    # Mark context as using PQ
-                    context._pq_enabled = True
-                    for cipher in found_pq_ciphers:
-                        log.info(f"Server Context: Confirmed PQ cipher suite active: {cipher}")
-                else:
-                    log.warning("No post-quantum ciphers available. Using standard TLS 1.3 ciphers.")
-                    self.using_pq_ciphers = False
-                    # Mark context as not using PQ
-                    context._pq_enabled = False
-
-        except ssl.SSLError as e:
-            log.critical(f"MILITARY FATAL: Server Context: Failed to set PQ cipher string '{cipher_suite_string_to_set}': {e}. Fallbacks forbidden.")
-            raise ssl.SSLError(f"MILITARY FATAL: PQ cipher initialization failed: {e}. Fallbacks forbidden.")
+        # A-11 (2026-10-16): same rationale as the client builder — TLS 1.3
+        # ciphersuites are not selectable via SSLContext.set_ciphers() (that
+        # API is the pre-1.3 list; TLS 1.3 names raise "No cipher can be
+        # selected"). PQ key exchange rides RFC 10024 hybrid groups; the
+        # suite is pinned post-handshake (CNSA 2.0: TLS_AES_256_GCM_SHA384).
+        _offers_hybrid = tls13_client_offers_hybrid_group()
+        if getattr(self, 'enable_pq_kem', False) and _offers_hybrid:
+            log.info("Server Context: runtime offers RFC 10024 hybrid groups (PQ key exchange available)")
+            self.using_pq_ciphers = True
+            context._pq_enabled = True
+        else:
+            log.warning("Server Context: no hybrid PQ group offered by runtime; classical TLS 1.3 key exchange")
+            self.using_pq_ciphers = False
+            context._pq_enabled = False
 
         # Load certificates using secure enclave if available
         if self.secure_enclave and self.secure_enclave._using_enclave:
@@ -6196,19 +6144,21 @@ class SocketSelector:
         # We aim for TLS 1.3, so PROTOCOL_TLS_CLIENT is appropriate.
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
-        # Set preferred ciphers for TLS 1.3 (and 1.2 if unavoidable)
-        # Order matters: stronger/preferred ciphers first.
-        # This also helps in selecting PQ ciphers if supported and named correctly.
+        # A-11 (2026-10-16): TLS 1.3 ciphersuites cannot be pinned via
+        # SSLContext.set_ciphers() (pre-1.3 list only; TLS 1.3 names raise
+        # "No cipher can be selected"). Pin the protocol version instead and
+        # record PQ posture from the empirical hybrid-group probe; the
+        # negotiated suite is gated post-handshake where a suite gate exists.
         try:
-            # Use only the restricted set of PQ cipher suites
-            cipher_list_to_set = self.CIPHER_SUITES
-
-            context.set_ciphers(':'.join(cipher_list_to_set))
-            if log.isEnabledFor(logging.DEBUG):
-                log.debug(f"Client Ciphers set to: {context.get_ciphers()}")
-        except ssl.SSLError as e:
-            log.critical(f"FATAL: Failed to set client ciphers: {e}. This may lead to insecure connections.")
-            raise TlsChannelException(f"Cannot establish secure client context with quantum-resistant ciphers: {e}")
+            if hasattr(context, 'minimum_version') and hasattr(ssl, 'TLSVersion'):
+                context.minimum_version = ssl.TLSVersion.TLSv1_3
+                context.maximum_version = ssl.TLSVersion.TLSv1_3
+        except Exception as e:
+            log.warning(f"TLS 1.3 version pin failed: {e}")
+        self.using_pq_ciphers = bool(getattr(self, 'enable_pq_kem', False)) and tls13_client_offers_hybrid_group()
+        context._pq_enabled = self.using_pq_ciphers
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Client TLS 1.3 posture: pq_kex_offered={self.using_pq_ciphers}")
 
         # Set options for security
         if not (hasattr(context, 'minimum_version') and hasattr(ssl, 'TLSVersion')):
@@ -6315,20 +6265,13 @@ class SocketSelector:
             if not hasattr(context, 'minimum_version'):
                 context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_TLSv1_2 | ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
 
-        # Set preferred ciphers - quantum-resistant only
-        try:
-            # Use only the restricted set of quantum-resistant PQ cipher suites - no fallbacks
-            cipher_list_to_set = self.CIPHER_SUITES
-            context.set_ciphers(':'.join(cipher_list_to_set))
-
-            # Log the active ciphers at verbose level
-            if log.isEnabledFor(logging.DEBUG):
-                current_ciphers_details = context.get_ciphers()
-                current_cipher_names = [c['name'] for c in current_ciphers_details if 'name' in c] if current_ciphers_details else []
-                log.info(f"Server using quantum-resistant cipher suites: {current_cipher_names}")
-        except ssl.SSLError as e:
-            log.critical(f"Failed to set quantum-resistant cipher suites: {e}. This is a critical security error.")
-            raise TlsChannelException(f"Cannot establish secure server context with quantum-resistant ciphers: {e}")
+        # A-11 (2026-10-16): see client builder — TLS 1.3 suites are not
+        # selectable via set_ciphers(); version pin above enforces TLS 1.3
+        # and PQ KEX posture comes from the empirical hybrid-group probe.
+        self.using_pq_ciphers = bool(getattr(self, 'enable_pq_kem', False)) and tls13_client_offers_hybrid_group()
+        context._pq_enabled = self.using_pq_ciphers
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug(f"Server TLS 1.3 posture: pq_kex_offered={self.using_pq_ciphers}")
 
         if not (hasattr(context, 'minimum_version') and hasattr(ssl, 'TLSVersion')):
             context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 | ssl.OP_NO_TLSv1_2

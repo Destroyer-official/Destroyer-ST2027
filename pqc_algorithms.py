@@ -5099,7 +5099,7 @@ class EnhancedFALCON_1024:
             message = message.encode('utf-8')
 
         if isinstance(public_key, dict) or isinstance(signature, dict):
-            return self.base_signature.verify(public_key, message, signature)
+            return self._verify_hybrid_components(public_key, message, signature)
 
         if not isinstance(public_key, (bytes, bytearray)) or not isinstance(signature, (bytes, bytearray)):
             self._timing_jitter()
@@ -5124,6 +5124,37 @@ class EnhancedFALCON_1024:
 
         self._timing_jitter()
         return False
+
+    def _verify_hybrid_components(self, public_key, message, signature):
+        """Component-complete hybrid verification (A-14, 2026-10-16).
+
+        Verifies EVERY signature component against its matching public half,
+        independent of this instance's local sign mode. Previously the dict
+        path delegated to the mode-bound HybridSignature.verify, so a bundle
+        signed in 'secure'/'dual' mode was rejected by any 'fast'-mode peer
+        ('mldsa' not in signatures -> False) while the signer's own
+        verify-after-sign passed — the environment-dependent self-verify
+        quirk. This path never verifies less than a same-mode check:
+        unknown signature components or a component without its public key
+        fail closed, and every present component must verify.
+        """
+        if not isinstance(public_key, dict) or not isinstance(signature, dict) or not signature:
+            return False
+        inner = getattr(self.base_signature, 'base_signature', None)
+        engines = {
+            'mldsa': getattr(inner, 'mldsa', None),
+            'slhdsa': getattr(inner, 'slhdsa', None),
+        }
+        for comp, sig_bytes in signature.items():
+            engine = engines.get(comp)
+            if engine is None or comp not in public_key:
+                pqc_logger.warning(
+                    f"Hybrid verification rejected: component '{comp}' has no "
+                    "verification engine or matching public key")
+                return False
+            if not engine.verify(public_key[comp], message, sig_bytes):
+                return False
+        return True
 
     def _timing_jitter(self):
         """Add random timing jitter to mitigate timing side channels using cryptographically secure RNG."""
