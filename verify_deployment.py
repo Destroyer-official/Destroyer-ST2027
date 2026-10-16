@@ -176,8 +176,14 @@ class DeploymentVerifier:
             try:
                 try:
                     importlib.import_module(module)
-                except ImportError:
-                    importlib.import_module(f"archive.legacy_prototype.{module}")
+                except ImportError as real_err:
+                    try:
+                        importlib.import_module(f"archive.legacy_prototype.{module}")
+                    except ImportError:
+                        # Surface the ORIGINAL failure: a missing legacy twin
+                        # must not mask the true cause (e.g. the fail-closed
+                        # liboqs below-floor ImportError cascade in production).
+                        raise real_err
                 self._add_result(
                     f"Import: {module}",
                     VerificationStatus.PASS,
@@ -669,7 +675,7 @@ class DeploymentVerifier:
             ("P2P_ALLOW_LEGACY_CERTS", "Legacy ECDSA certificate acceptance (TLS migration path; refused in production)"),
             ("P2P_DISABLE_STRICT_AUTH", "Strict mutual authentication disablement"),
             ("P2P_EPHEMERAL_MODE", "Ephemeral mode (check: must be intentional, not default)"),
-            ("P2P_ENABLE_VULN_HQC", "Vulnerable HQC leg on oqs 0.10.1 (CVE-2024-54137/CVE-2025-52473, lab only)"),
+            ("P2P_ENABLE_VULN_HQC", "HQC leg opt-in (CVE-2024-54137/CVE-2025-52473 fixed in vendored oqs 0.16.0; still refused by default, lab only)"),
             ("P2P_ENABLE_CUSTOM_ZK", "Unaudited custom ZK arithmetic (lab only)"),
             ("P2P_ENABLE_EXPERIMENTAL", "Blanket experimental crypto (lab only)"),
         ]

@@ -3769,8 +3769,9 @@ class SecureP2PChat:
                             f"MILITARY FATAL: {_k} prohibited in production (fail-closed anti-downgrade)."
                         )
             # Experimental/vulnerable-crypto opt-ins are never authorized in production:
-            # HQC on oqs 0.10.1 (CVE-2024-54137/CVE-2025-52473), custom ZK arithmetic,
-            # and blanket EXPERIMENTAL all void the 2028 hardening posture.
+            # HQC opt-in (CVEs fixed in vendored oqs 0.16.0 but still refused by
+            # default), custom ZK arithmetic, and blanket EXPERIMENTAL all void
+            # the 2028 hardening posture.
             for _k in ("P2P_ENABLE_VULN_HQC", "P2P_ENABLE_CUSTOM_ZK", "P2P_ENABLE_EXPERIMENTAL"):
                 if is_env_true(_k):
                     raise SecurityError(f"MILITARY FATAL: {_k} prohibited in production.")

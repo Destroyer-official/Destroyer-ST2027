@@ -5,7 +5,7 @@
   "name": "secure_p2p-sbom",
   "documentNamespace": "https://example.com/sbom/secure_p2p/2.0.0-CNSA2-2027",
   "creationInfo": {
-    "created": "2026-10-11T03:10:54.552256+00:00",
+    "created": "2026-10-16T17:26:18.111290+00:00",
     "creators": [
       "Tool: supply_chain_security.py",
       "Organization: Secure P2P Project"
@@ -55,7 +55,7 @@
     {
       "SPDXID": "SPDXRef-Package-1",
       "name": "oqs.dll",
-      "versionInfo": "0.10.1",
+      "versionInfo": "0.16.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT OR Apache-2.0",
@@ -66,17 +66,17 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:generic/oqs.dll@0.10.1"
+          "referenceLocator": "pkg:generic/oqs.dll@0.16.0"
         }
       ],
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "ab7f7005df004d0168b23afa8b2fba41a2b2c0c60a8a555abc1b6be56846d4da"
+          "checksumValue": "ab1c1373a464a4ed5f3d5292935084fe6fe272ee51edca18b1083b7b631233e2"
         },
         {
           "algorithm": "SHA512",
-          "checksumValue": "995ed25ed9345be0bb1f6e1ba6dfd90ad804af4fe877cc3b74dbf38b7d8634dbdf7a9fb9326dc3881af1838ef14126d483065e02dde1302f49980c6ac254581e"
+          "checksumValue": "b10aadbeb94c4d7462090c0ba02b4f1bb5e30ff9691638263e41896b0fad7e675a49a8e9556e9167dae16aae15db867e84682d9ffc0b3f44c370c4dcd4ee7ee7"
         }
       ]
     },
@@ -223,6 +223,60 @@
           "checksumValue": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
         }
       ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-8",
+      "name": "pytest",
+      "versionInfo": "9.1.1",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "supplier": "Organization: PyPI Community",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/pytest@9.1.1"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-9",
+      "name": "pytest-timeout",
+      "versionInfo": "2.4.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "supplier": "Organization: PyPI Community",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/pytest-timeout@2.4.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-10",
+      "name": "hypothesis",
+      "versionInfo": "6.165.5",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "supplier": "Organization: PyPI Community",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/hypothesis@6.165.5"
+        }
+      ]
     }
   ],
   "relationships": [
@@ -270,6 +324,21 @@
       "spdxElementId": "SPDXRef-Package-root",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-root",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-8"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-root",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-root",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-10"
     }
   ]
 }

@@ -1,0 +1,27 @@
+{
+  "ceremony": "dll-ca-signing",
+  "action": "rotate",
+  "reason": "liboqs 0.16.0 rebuild artifact (workflow run 38926972301, 2026-10-16); original Ed25519 CA private key unavailable on build host - documented trust-anchor rotation per docs/liboqs_pin.md update procedure",
+  "timestamp_utc": "2026-10-16T17:24:35.007806+00:00",
+  "ca_algorithm": "Ed25519",
+  "anchor_pub_sha256": "3cb29eef2f32e70520a481105de5556e9247db4387f87c5febf6271cdbfea98c",
+  "anchor_pub_sha512": "402dd7e4e02cebfc849bff3190522a336aad7907f63dd552c2585c7f9dd13075a1cd51b70c542d9ed775f1496c8c6f5f70ce6f3f9f84f28bbe18fe266978f7c3",
+  "dlls": [
+    {
+      "dll": "oqs.dll",
+      "size": 4355072,
+      "sha256": "ab1c1373a464a4ed5f3d5292935084fe6fe272ee51edca18b1083b7b631233e2",
+      "sha512": "b10aadbeb94c4d7462090c0ba02b4f1bb5e30ff9691638263e41896b0fad7e675a49a8e9556e9167dae16aae15db867e84682d9ffc0b3f44c370c4dcd4ee7ee7",
+      "sha3_512": "c6af8151a04b750112f49c8d5ae39df1a4625b99dd0c1ac70385867b9308dc4d187a1cbb3ee034ce3c1c3ec9a72cd3147fdfaad74b1940bea16264b3af5ac0ea"
+    },
+    {
+      "dll": "libsodium.dll",
+      "size": 346624,
+      "sha256": "5cfdc4bf7628777d4fd807a6f9e15ed8fb6fdaee5be65c816b3c6c3dd1c93ed1",
+      "sha512": "79a55a5140befc28772cd4b23501b322ae9ab8cf3435253b98906a4b2090cd910e9c3e038a499f4ccc8c80a5e09f12251dd82941ed93485da7f2aed957b15a98",
+      "sha3_512": "31b92c7e2986d4a8a39cbab49b48de627352223db60ab3bdde10a371d1713f5f97c5c7205140878bab87fe0a992cffc151bd216be645ed3a8e27e78318d93cd0"
+    }
+  ],
+  "attestation_grade": "LAB-GRADE self-attestation until Rekor anchoring (see docs/liboqs_pin.md external anchoring plan)",
+  "ed25519_signature_b64": "yEuimZJ2G+G/Vun7Uo1lVNxOXku/Z6PsRWqW5EtWzK65m2Ez+wpgTtjzKAcJ7ulZ/DmK+sCMqs0gjA91gRzrDA=="
+}

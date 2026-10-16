@@ -17,6 +17,82 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 from supply_chain_security import SBOMGenerator
 
+def resolve_sbom_signing_material(explicit_sk=None, explicit_pk=None, certs_dir=None):
+    """Custody-aware, fail-closed SBOM signing material resolution.
+
+    Fail-closed rule (production F-04/A-01 posture): an existing trust anchor
+    is NEVER silently replaced. Usually a present ``.pub`` with a missing
+    ``.sk`` means the signer key was relocated to offline custody (expected in
+    production) — refuse and require explicit key paths. A fresh lab keypair
+    is only signalled (``bootstrap_needed=True``) when NEITHER anchor nor key
+    exists.
+
+    Returns ``(sk, pk, sk_source, pk_source, bootstrap_needed)``.
+    """
+    certs = Path(certs_dir) if certs_dir is not None else (REPO_ROOT / "certs")
+    default_sk_path = certs / "sbom_mldsa87_signer.sk"
+    default_pk_path = certs / "sbom_mldsa87_signer.pub"
+
+    if explicit_sk:
+        sk_path = Path(explicit_sk)
+        if not sk_path.is_file():
+            raise RuntimeError(
+                f"FAIL-CLOSED: SBOM signing key not found: {sk_path} "
+                f"(from --signing-key/SBOM_SIGNING_KEY)"
+            )
+        sk = sk_path.read_bytes()
+        if not sk:
+            raise RuntimeError(
+                f"FAIL-CLOSED: SBOM signing key empty/unreadable: {sk_path}"
+            )
+        candidates = []
+        if explicit_pk:
+            candidates.append(Path(explicit_pk))
+        # Sibling .pub next to the signing key (foo.sk -> foo.pub).
+        try:
+            candidates.append(sk_path.with_suffix(".pub"))
+        except Exception:
+            candidates.append(Path(str(sk_path) + ".pub"))
+        candidates.append(default_pk_path)
+        for cand in candidates:
+            try:
+                if cand.is_file():
+                    return sk, cand.read_bytes(), sk_path, cand, False
+            # AUDITED (B112): intentional best-effort loop guard; no security decision swallowed (triaged 2026-09 waves)
+            except Exception:  # nosec: B112
+                continue
+        if explicit_pk:
+            raise RuntimeError(
+                f"FAIL-CLOSED: SBOM pubkey not found: {explicit_pk} "
+                f"(from --pubkey/SBOM_PUBKEY)"
+            )
+        raise RuntimeError(
+            "FAIL-CLOSED: SBOM pubkey missing for explicit --signing-key; "
+            "provide --pubkey/SBOM_PUBKEY or place a sibling .pub next to "
+            f"the signing key (tried: {[str(c) for c in candidates]})"
+        )
+
+    sk_exists = default_sk_path.is_file()
+    pk_exists = default_pk_path.is_file()
+    if sk_exists and pk_exists:
+        return (default_sk_path.read_bytes(), default_pk_path.read_bytes(),
+                default_sk_path, default_pk_path, False)
+    if pk_exists and not sk_exists:
+        raise RuntimeError(
+            f"FAIL-CLOSED: SBOM signer key missing at {default_sk_path} while "
+            f"trust anchor {default_pk_path} is present — refusing to mint a "
+            "replacement (an existing anchor is never silently replaced). Use "
+            "the custodied offline key via --signing-key/SBOM_SIGNING_KEY "
+            "(+ SBOM_PUBKEY)."
+        )
+    if sk_exists and not pk_exists:
+        raise RuntimeError(
+            f"FAIL-CLOSED: SBOM anchor missing at {default_pk_path} while a "
+            f"private key exists at {default_sk_path} — inconsistent custody; "
+            "restore the anchor or pass explicit --signing-key/--pubkey."
+        )
+    return None, None, default_sk_path, default_pk_path, True
+
 def _parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Generate production SBOMs (SPDX + CycloneDX) with ML-DSA-87 signatures."
@@ -405,7 +481,7 @@ def main(argv=None):
     # Add native cryptographic boundaries
     dlls = [
         ("libsodium.dll", "1.0.22", "Libsodium Core Cryptography Boundary"),
-        ("oqs.dll", "0.10.1", "LibOQS Quantum-Resistant Cryptography Boundary")
+        ("oqs.dll", "0.16.0", "LibOQS Quantum-Resistant Cryptography Boundary")
     ]
     for dll_name, ver, desc in dlls:
         dll_path = repo_root / dll_name
@@ -503,72 +579,26 @@ def main(argv=None):
         from liboqs_wrapper import LibOQS_MLDSA_87
         signer = LibOQS_MLDSA_87()
 
-        if explicit_sk:
-            sk_path = Path(explicit_sk)
-            if not sk_path.is_file():
-                raise RuntimeError(
-                    f"FAIL-CLOSED: SBOM signing key not found: {sk_path} "
-                    f"(from --signing-key/SBOM_SIGNING_KEY)"
-                )
-            sk = sk_path.read_bytes()
-            if not sk:
-                raise RuntimeError(
-                    f"FAIL-CLOSED: SBOM signing key empty/unreadable: {sk_path}"
-                )
-            pk = None
-            candidates = []
-            if explicit_pk:
-                candidates.append(Path(explicit_pk))
-            # Sibling .pub next to the signing key (foo.sk -> foo.pub).
-            try:
-                candidates.append(sk_path.with_suffix(".pub"))
-            except Exception:
-                candidates.append(Path(str(sk_path) + ".pub"))
-            candidates.append(default_pk_path)
-            pk_source = None
-            for cand in candidates:
-                try:
-                    if cand.is_file():
-                        pk = cand.read_bytes()
-                        pk_source = cand
-                        break
-                # AUDITED (B112): intentional best-effort loop guard; no security decision swallowed (triaged 2026-09 waves)
-                except Exception:  # nosec: B112
-                    continue
-            if not pk:
-                if explicit_pk:
-                    raise RuntimeError(
-                        f"FAIL-CLOSED: SBOM pubkey not found: {explicit_pk} "
-                        f"(from --pubkey/SBOM_PUBKEY)"
-                    )
-                raise RuntimeError(
-                    "FAIL-CLOSED: SBOM pubkey missing for explicit --signing-key; "
-                    "provide --pubkey/SBOM_PUBKEY or place a sibling .pub next to "
-                    f"the signing key (tried: {[str(c) for c in candidates]})"
-                )
-            print(f"[OK] Using persistent SBOM signing key {sk_path} (pub: {pk_source})")
+        sk, pk, sk_source, pk_source, bootstrap = resolve_sbom_signing_material(
+            explicit_sk, explicit_pk, certs_dir)
+        if bootstrap:
+            import warnings
+            warnings.warn(
+                "No --signing-key/SBOM_SIGNING_KEY provided; generating lab-grade "
+                f"ephemeral-persistent anchor at {default_pk_path}. For production, supply "
+                "--signing-key/--pubkey (or SBOM_SIGNING_KEY/SBOM_PUBKEY).",
+                UserWarning,
+            )
+            print(
+                f"[WARN] No --signing-key/SBOM_SIGNING_KEY provided; using lab-grade "
+                f"local anchor at {default_pk_path}. Supply persistent keys for production."
+            )
+            pk, sk = signer.keygen()
+            default_sk_path.write_bytes(sk)
+            default_pk_path.write_bytes(pk)
+            print(f"[OK] Initialized persistent SBOM ML-DSA-87 root anchor at {default_pk_path}")
         else:
-            sk_path = default_sk_path
-            pk_path = default_pk_path
-            if sk_path.exists() and pk_path.exists():
-                sk = sk_path.read_bytes()
-                pk = pk_path.read_bytes()
-            else:
-                import warnings
-                warnings.warn(
-                    "No --signing-key/SBOM_SIGNING_KEY provided; generating lab-grade "
-                    f"ephemeral-persistent anchor at {pk_path}. For production, supply "
-                    "--signing-key/--pubkey (or SBOM_SIGNING_KEY/SBOM_PUBKEY).",
-                    UserWarning,
-                )
-                print(
-                    f"[WARN] No --signing-key/SBOM_SIGNING_KEY provided; using lab-grade "
-                    f"local anchor at {pk_path}. Supply persistent keys for production."
-                )
-                pk, sk = signer.keygen()
-                sk_path.write_bytes(sk)
-                pk_path.write_bytes(pk)
-                print(f"[OK] Initialized persistent SBOM ML-DSA-87 root anchor at {pk_path}")
+            print(f"[OK] Using SBOM signing key {sk_source} (pub: {pk_source})")
 
         # CBOM (cryptography inventory for the Jan-2027 gate evidence pack).
         cbom_path = write_cbom(reports_dir)

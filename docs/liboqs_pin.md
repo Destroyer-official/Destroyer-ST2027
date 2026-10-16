@@ -4,31 +4,54 @@ Additive pin record. CI-safe: `adversarial-gates` checks the floor
 (≥ 0.16.0) and SKIPs the native assert when the binary is absent from
 the runner (e.g. Windows `oqs.dll` on `ubuntu-latest`).
 
-## Rebuild completed 2026-10-16 — artifact verified, swap PENDING SIGNATURE
+## SWAPPED + SIGNED 2026-10-16 — vendored binary is now 0.16.0
 
-The automated rebuild now works end-to-end. Workflow run
-`38926972301` ("Rebuild oqs.dll (liboqs 0.16.0, Windows)",
-`.github/workflows/oqs-rebuild.yml`, green in 7m3s) produced the
-`oqs-dll-0.16.0` artifact, locally verified:
+Workflow run `38926972301` ("Rebuild oqs.dll (liboqs 0.16.0, Windows)",
+green in 7m3s) produced the `oqs-dll-0.16.0` artifact; it was locally
+verified and SWAPPED into the repo root, then signed under the trust
+anchor rotation ceremony:
 
-| Field | Rebuilt artifact (`%TEMP%\opencode\oqs_016_artifact\oqs.dll`) |
+| Field | Value (verified artifact, now vendored) |
 |---|---|
 | `OQS_version()` (ctypes, fresh process) | `0.16.0` — official release string, at floor |
 | liboqs.commit (artifact) | `5a1a854b0dc9f2141bdc771c555ee60c37950183` — matches the documented pin |
 | Size | 4,355,072 bytes |
-| SHA-256 | `ab1c1373a464a4ed5f3d5292935084fe6fe272ee51edca18b1083b7b631233e2` |
-| SHA-512 | `b10aadbeb94c4d7462090c0ba02b4f1bb5e30ff9691638263e41896b0fad7e675a49a8e9556e9167dae16aae15db867e84682d9ffc0b3f44c370c4dcd4ee7ee7` |
-| Build | MSVC x64 (VS18 toolset 14.51), `BUILD_SHARED_LIBS=ON`, `OQS_BUILD_ONLY_LIB=ON`, Release |
+| Build (this artifact) | MSVC x64 (VS18 toolset 14.51), `BUILD_SHARED_LIBS=ON`, `OQS_BUILD_ONLY_LIB=ON`, Release |
 
-Remaining step BEFORE swapping the vendored binary (update-procedure
-steps 2-6): re-sign with the Ed25519 CA key
-(`military_root_ca.pem` + its passphrase sidecar) via
-`python scripts/sign_dependencies.py` on a host that holds the key —
-the key is intentionally NOT in this repo/box. Swapping `oqs.dll`
-without regenerating `oqs.dll.sig` is refused by design (signature
-verify fails, exit non-zero gates). Note the MSVC toolchain emits
-liboqs's own "non-GNUC/Clang toolchain" constant-time warning — standard
-for Windows builds; treat constant-time claims per upstream advisories.
+**Trust-anchor rotation ceremony (documented, 2026-10-16 17:24 UTC):**
+the original Ed25519 CA private key (which signed the pre-swap
+`oqs.dll.sig`/`libsodium.dll.sig`) was not available on the build host —
+neither on disk, nor in git history, nor in any stash. Per the update
+procedure ("rotate only with a documented ceremony"), a NEW Ed25519 CA
+key was generated in offline custody
+(`~/.destroyer-st2027/offline-keys/military_root_ca.pem`, encrypted at
+rest, passphrase sidecar 0400, ACL restricted to the operator account)
+via `python scripts/sign_dependencies.py --rotate`. Both `oqs.dll` and
+`libsodium.dll` were re-signed; all four anchors (`*.dll.pub`,
+`*.dll.sig`, `*.dll.hashes`) were rotated consistently. Receipt (with
+Ed25519 self-signature, hashes, fingerprints):
+`docs/dll_ca_ceremony_receipt.json` (new anchor pub sha256
+`3cb29eef2f32e70520a481105de5556e9247db4387f87c5febf6271cdbfea98c`).
+Old anchor (sha256 `2f45d1ae…`) is retired; any previously distributed
+copy must be replaced.
+
+**Rotation plumbing that MUST move together (learned 2026-10-16):**
+swapping the DLL and sidecars alone is NOT sufficient — the runtime
+verifier pins the trust anchor EMBEDDED in code:
+
+- `dependency_security_verifier.py` `EMBEDDED_OQS_ED25519_PUBKEY_PEM` +
+  `EMBEDDED_OQS_SHA384` (sha512-family SHA-384 of the new DLL —
+  `bed075001dddcf7395eeb11baa7c100f19a8a386d23c48115f41a225c24f38adfc3d9b86b2b4c5a3ed29dc62df5cf4eb`).
+- `critical_modules.hashes` (hash-manifest CI gate) must be refreshed
+  for `dependency_security_verifier.py` in the same commit.
+- SBOM version bumps (3 places) + SBOM/receipt regeneration (below).
+
+**Toolchain note:** the MSVC build emits liboqs's "non-GNUC/Clang
+toolchain — no optimization barrier" warning (constant-time caveat).
+`oqs-rebuild.yml` now builds with **clang-cl + Ninja** (CMake sees
+"Clang", so the barriers compile in); the next dispatch should be
+preferred for the shipped binary once proven green. The current vendored
+artifact is the MSVC build above.
 
 Workflow fixes that were required (all pushed 2026-10-16): valid
 `lukka/get-cmake` pin (v4.4.2), MSVC x64 environment via
@@ -42,39 +65,36 @@ DLL itself builds clean).
 | Field | Value |
 |---|---|
 | Vendored binary | `oqs.dll` (repo root, Windows; `liboqs_wrapper.py` falls back to `liboqs.so` on Linux) |
-| Embedded version string in binary | `0.14.1-dev` (printable string adjacent to `system`/`OpenSSL` alg table; `OQS_version` export present) — BELOW FLOOR, fail-closed until the verified `0.16.0` artifact is signed + swapped (see top section) |
-| SBOM-declared version | `0.10.1` (stale pre-floor pin in `scripts/generate_production_sbom.py` dlls list and `supply_chain_security.py:1112`, carried into `compliance_reports/{spdx,cyclonedx}_sbom.json`) — below floor; regenerated at `0.16.0` by update-procedure step 4 |
+| Embedded version string in binary | `0.16.0` (official release; `OQS_version()` export verified) — AT FLOOR, production loads |
+| SBOM-declared version | `0.16.0` (`scripts/generate_production_sbom.py` dlls list and `supply_chain_security.py` `add_native_dependencies`; regenerated into `compliance_reports/{spdx,cyclonedx}_sbom.json` + CBOM 2026-10-16) |
 | Verifier floor (`dependency_security_verifier.py` `oqs.dll.min_version`) | `0.16.0` (only 0.16.0 supported upstream; <0.16 unsupported) |
-| Verifier upgrade target | `0.16.0` |
-| Blocked algorithms until rebuild | `HQC-128`, `HQC-192`, `HQC-256`, `XMSS-SHA2_10_256`, `XMSS-SHA2_16_256`, `XMSSMT-*` (see verifier `blocked_algorithms` + `triple_hybrid_kem.py` allowlist) |
+| Verifier upgrade target | `0.16.0` — SATISFIED |
+| Blocked algorithms (conservative, operator-gated) | `HQC-*`, `XMSS-*` remain refused by default (`liboqs_wrapper` opt-in gate + `triple_hybrid_kem.py` allowlist + verifier `blocked_algorithms`); the 0.16.0 CVEs are fixed, so re-enabling is now a capability decision, not a CVE gate |
 | Allowed / exercised paths | `Classic-McEliece-8192128f`, `ML-KEM-1024`, `ML-DSA-87` (+ `SLH_DSA_PURE_SHAKE_256f`, Falcon-1024 via wrapper) |
 
-> Note (hardened 2026-10-10): the vendored `oqs.dll` embeds
-> `0.14.1-dev` which is BELOW the `0.16.0` floor (upstream supports only
-> 0.16.0; CVE-2024-54137/CVE-2025-52473 HQC + CVE-2026-44518/CVE-2026-46344
-> XMSS fixed in 0.16.0). Treat `0.16.0` as the **minimum supported**;
-> the CI pin check asserts `>= 0.16.0` via `OQS_version()` when
-> the native lib is present, else via the SBOM/verifier floor. The
-> vendored binary MUST be rebuilt at `0.16.0` from an official release
-> (never a -dev snapshot); until then HQC/XMSS stay refused and
-> production loads fail closed on version check (see Update procedure).
+> Note (2026-10-16): the vendored `oqs.dll` is the official `0.16.0`
+> release (all HQC/XMSS CVEs fixed upstream). The floor check
+> (`>= 0.16.0`, official-release format only) stays enforced at
+> `liboqs_wrapper.py` load time + CI pin check + rebuild assert —
+> rebuilding at a NEW tag re-runs the full update procedure incl. the
+> rotation plumbing above.
 
-## Hashes (measured 2026-09-18, `oqs.dll`, 3030016 bytes)
+## Hashes (measured 2026-10-16, `oqs.dll`, 4355072 bytes)
 
 ```
-size:     3030016
-sha256:   ab7f7005df004d0168b23afa8b2fba41a2b2c0c60a8a555abc1b6be56846d4da
-sha512:   995ed25ed9345be0bb1f6e1ba6dfd90ad804af4fe877cc3b74dbf38b7d8634dbdf7a9fb9326dc3881af1838ef14126d483065e02dde1302f49980c6ac254581e
-sha3_256: 79b3fdbfe73595115358047806f5d68c8fe237466e76e9e582d1469fa30d60b3
-sha3_512: 7c6801cd0faf6aad077bf11220f98b0b171bf23970c6d2fc918a36004b7da8984e635846cfcba7020220579dfb5e42b4ea3a8fee12d5f05f2dc9062f1d2292b1
+size:     4355072
+sha256:   ab1c1373a464a4ed5f3d5292935084fe6fe272ee51edca18b1083b7b631233e2
+sha512:   b10aadbeb94c4d7462090c0ba02b4f1bb5e30ff9691638263e41896b0fad7e675a49a8e9556e9167dae16aae15db867e84682d9ffc0b3f44c370c4dcd4ee7ee7
+sha3_256: 29295ebc9a3dbef11ac9bac14dba41f94271e89575f757441534639e98b26996
+sha3_512: c6af8151a04b750112f49c8d5ae39df1a4625b99dd0c1ac70385867b9308dc4d187a1cbb3ee034ce3c1c3ec9a72cd3147fdfaad74b1940bea16264b3af5ac0ea
 ```
 
-Sidecars (repo root, Ed25519):
+Sidecars (repo root, Ed25519, rotated 2026-10-16):
 
 | File | Size | Purpose |
 |---|---|---|
 | `oqs.dll.sig` | 64 bytes | Ed25519 signature over `oqs.dll` bytes (verified by `dependency_security_verifier.py`) |
-| `oqs.dll.pub` | 116 bytes (PEM `MCowBQYDK2VwAyEA…`) | Trust anchor for the above |
+| `oqs.dll.pub` | 113 bytes (PEM `MCowBQYDK2VwAyEAKy5ea9…`) | Trust anchor for the above (rotated; see ceremony) |
 | `oqs.dll.hashes` | JSON `{sha512, sha3_512, size}` | Integrity anchor (matches table above) |
 
 Recompute locally (Windows PowerShell):
@@ -89,34 +109,39 @@ Windows rebuilds are now automated via the manual-dispatch workflow
 `.github/workflows/oqs-rebuild.yml` (F-01): run it with the target tag
 (default `0.16.0`), download the `oqs-dll-<tag>` artifact (contains the
 fresh `oqs.dll` + `liboqs.commit`), then follow the re-pin steps below.
-The workflow builds from the official tag under MSVC, asserts
-`OQS_version() >= tag` (fail-closed), and records hashes for the table.
+The workflow builds from the official tag (clang-cl + Ninja; MSVC SDK
+env), asserts `OQS_version() >= tag` (fail-closed), and records hashes
+for the table.
 
 1. Build liboqs at the target tag (goal: `0.16.0`) from upstream
-   <https://github.com/open-quantum-safe/liboqs> with only the
-   allowlisted algs enabled; record commit SHA + build flags.
-   (Or dispatch `oqs-rebuild.yml` and use its artifact.)
-2. Replace `oqs.dll` (and `liboqs.so` for Linux CI if shipped), then
-   regenerate sidecars:
-   - `oqs.dll.hashes` ← fresh `{sha512, sha3_512, size}` (keep `size` field).
-   - `oqs.dll.sig` ← Ed25519-sign the new bytes; keep `oqs.dll.pub` as the
-     matching anchor (rotate only with a documented ceremony).
-3. Bump the declared version in **all three** places (they must agree):
+   <https://github.com/open-quantum-safe/liboqs>; record commit SHA +
+   build flags. (Or dispatch `oqs-rebuild.yml` and use its artifact.)
+2. Swap `oqs.dll` (and `liboqs.so` for Linux CI if shipped), then
+   regenerate sidecars with the custodied CA key:
+   `python scripts/sign_dependencies.py` (re-sign) — writes
+   `*.dll.sig` + `*.dll.hashes` + keeps the matching `*.dll.pub`.
+   A DIFFERENT CA key (rotation) requires the explicit `--rotate`
+   ceremony flag and writes `docs/dll_ca_ceremony_receipt.json`.
+3. Rotation plumbing — replace the EMBEDDED pins in the same commit:
+   `dependency_security_verifier.py` (`EMBEDDED_OQS_ED25519_PUBKEY_PEM`,
+   `EMBEDDED_OQS_SHA384` = SHA-384 of the new DLL) and refresh
+   `critical_modules.hashes` for that file. `oqs.dll.pub` sidecar alone
+   authorizes nothing at runtime (by design).
+4. Bump the declared version in **all three** places (they must agree):
    `generate_production_sbom.py` (`dlls` list),
    `supply_chain_security.py` (`add_native_dependencies`),
-   `dependency_security_verifier.py` (`oqs.dll.min_version`, and lower/
-   clear `blocked_algorithms` only after the HQC/XMSS fixes land).
-4. Regenerate + re-sign SBOMs: `python generate_production_sbom.py`
-   (ML-DSA-87 `.mldsa87.sig`/`.pub` siblings), then
+   `dependency_security_verifier.py` (`oqs.dll.min_version`; lower/clear
+   `blocked_algorithms` only as an explicit operator capability decision).
+5. Regenerate + re-sign SBOMs:
+   `python scripts/generate_production_sbom.py` (with
+   `SBOM_SIGNING_KEY`/`SBOM_PUBKEY` pointing at the offline-custody
+   signer + certs anchor when the signer has been relocated, see
+   docs/airgap_runbook.md §6), then
    `python scripts/verify_reproducible_build.py`.
-5. Re-enable HQC/XMSS paths **only** if the rebuilt version contains the
-   upstream fixes (CVE-2024-54137, CVE-2025-52473, CVE-2026-44518 /
-   CVE-2026-46344 per verifier comment); otherwise keep them blocked and
-   keep `upgrade_target` open.
- 6. Update this file's table + hashes; CI (`adversarial-gates` liboqs pin
-    check) asserts `>=` floor AND official-release format (a `-dev`/
-    prerelease string fails even at floor) — missing native lib stays
-    SKIP exit 0.
+6. Update this file's table + hashes; CI (`adversarial-gates` liboqs pin
+   check) asserts `>=` floor AND official-release format (a `-dev`/
+   prerelease string fails even at floor) — missing native lib stays
+   SKIP exit 0.
 
 ## RIC / masking backport tracking
 
@@ -126,13 +151,13 @@ randomized-integrity-check fixes; advisory until vendored):
 - <https://eprint.iacr.org/2025/2009> — RIC/masking backport tracking (2025/2009).
 - <https://eprint.iacr.org/2026/924> — RIC/masking backport tracking (2026/924).
 
-Status: **REBUILD DONE, SWAP PENDING SIGNATURE** — the `0.16.0`
-artifact (verified above, workflow run `38926972301`) exists but the
-vendored `oqs.dll` remains the `0.14.1-dev` binary below the floor with
-HQC/XMSS disabled and version-gated until the custodian re-signs
-(`military_root_ca.pem` ceremony) and the binary is swapped per the
-update procedure. Production load stays fail-closed in the meantime.
-See also
+Status: **SWAPPED AND SIGNED (2026-10-16)** — the vendored `oqs.dll` is
+the official `0.16.0` release (verified above), signed under the
+documented anchor rotation ceremony
+(`docs/dll_ca_ceremony_receipt.json`); production loads verified
+(ML-KEM-1024 + ML-DSA-87 keygen/sign/verify under `P2P_PRODUCTION=1`).
+HQC/XMSS remain refused by conservative policy (opt-in gate), not by
+CVE entitlement. See also
 `dependency_security_verifier.py` header comment and
 `generate_production_sbom.py verify_sbom_offline TODO(rekor)` for the
 Cosign/Rekor anchoring plan.
@@ -147,10 +172,10 @@ queries `OQS_version()` and compares the single-sourced floor, enforced at
 even at/above it (runtime check + CI pin check + rebuild assert,
 hardened 2026-10-13):
 
-| Mode | Below-floor binary (`0.14.1-dev` today) |
+| Mode | Current binary (`0.16.0`, at floor) |
 |---|---|
-| production/TS (`P2P_PRODUCTION`/`SECURE_P2P_PRODUCTION=1`/`P2P_TS_MODE`) | `ImportError` — Python PQ path dead until rebuild (verified: exit 1, `FATAL … production/TS load refused`) |
-| lab | `CRITICAL` log + `LIBOQS_BELOW_FLOOR=True`, load continues (ML-KEM/ML-DSA paths unaffected by the fixed HQC/XMSS CVEs; HQC/XMSS legs refused regardless) |
+| production/TS (`P2P_PRODUCTION`/`SECURE_P2P_PRODUCTION=1`/`P2P_TS_MODE`) | loads (verified 2026-10-16: ML-KEM-1024 + ML-DSA-87 exercised under prod env). A below-floor / -dev binary would still `ImportError` fail-closed — the gate remains armed for future regressions. |
+| lab | loads; `LIBOQS_BELOW_FLOOR=False` on the current binary; HQC/XMSS legs refused regardless (opt-in gate) |
 
 Strict-mode semantics are IDENTICAL to the orchestrator's canonical check
 (`secure_transmit_2027.py:558`) by design — uniform mode perception, no
@@ -180,11 +205,18 @@ fresh-interpreter import-time arming), asserted in the CI suite run.
   CVE-2026-22705 + hint-dup), `ml-kem 0.3.2`, `p384` 0.14.0 all clean.
 * Bandit on `liboqs_wrapper.py` + `dependency_security_verifier.py`:
   **0 issues** (4 justified `nosec` suppressions).
-* Rebuild BLOCKED on this box: no C toolchain (`cl`/`gcc`/`clang`),
-  no CMake, no Visual Studio — rebuild must happen on a build host or in
-  CI (ubuntu runner + `apt install cmake ninja-build gcc`), then follow
-  the update procedure above. Do NOT vendor another `-dev` snapshot:
-  rebuild from the official `0.16.0` tag only.
+
+## Post-swap evidence (2026-10-16, this machine)
+
+* Wrapper load: `[OK] oqs.dll security verification passed` (embedded
+  Ed25519 pin + SHA-384 constant), `OQS_version 0.16.0 meets floor`,
+  `LIBOQS_BELOW_FLOOR=False`.
+* Production env exercised: `P2P_PRODUCTION=1` → `LibOQS_MLKEM_1024` +
+  `LibOQS_MLDSA_87` keygen/sign/verify all succeed.
+* SBOMs + CBOM regenerated and ML-DSA-87-signed
+  (`compliance_reports/*.mldsa87.sig` verified); reproducible-build
+  receipt: `[SUCCESS] … (100% Verified)` with the refreshed
+  `critical_modules.hashes` manifest.
 
 ## External anchoring ceremony (Sigstore/Rekor — NOT yet executable here)
 

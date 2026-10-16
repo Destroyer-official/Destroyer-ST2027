@@ -86,3 +86,41 @@ Import (air-gapped host, no network):
    -> stale `version <= stored` ignored; unsigned rejected under `P2P_CRL_REQUIRE_SIG=1`/prod.
 3. Verify boot config sig + `.dsse` via `ConfigManager.verify_config_signature()`; check clock (`secure_time_now`, section 1) before accepting.
 4. Wipe USB or retain per policy; log receipt + hashes in ceremony record.
+
+## 6. Signer key custody (offline, F-04/A-01)
+
+Private signers NEVER live in the runtime/deployment tree (production
+`verify_deployment.py` FAILs on detection: "Key Hygiene: signing key
+exposure"). Custody location used by this repo (operator account, ACL
+restricted, encrypted-at-rest where supported):
+
+```
+%USERPROFILE%\.destroyer-st2027\offline-keys\
+  military_root_ca.pem            # Ed25519 CA: signs oqs.dll / libsodium.dll sidecars
+  military_root_ca.pem.passphrase # 0400 custodian secret (or set P2P_CA_PASSPHRASE)
+  config_signer.key               # boot-config Ed25519 signer (pub stays in certs/)
+  sbom_mldsa87_signer.sk          # SBOM/CBOM ML-DSA-87 signer (anchor pub stays in certs/)
+```
+
+Public anchors (`certs/*.pub`) stay in the tree — only SECRET keys move.
+
+Signing operations run on the key-custody host with env pointing at the
+offline material (never copy the keys back into the tree for convenience):
+
+```sh
+export SBOM_SIGNING_KEY="$HOME/.destroyer-st2027/offline-keys/sbom_mldsa87_signer.sk"
+export SBOM_PUBKEY=certs/sbom_mldsa87_signer.pub
+export P2P_CRL_SIGNING_KEY="$HOME/.destroyer-st2027/offline-keys/crl_mldsa87_signer.sk"
+export P2P_CA_KEY_PATH="$HOME/.destroyer-st2027/offline-keys/military_root_ca.pem"
+# passphrase: P2P_CA_PASSPHRASE env or the 0400 .passphrase sidecar
+python scripts/generate_production_sbom.py       # SBOMs + CBOM (ML-DSA-87)
+python scripts/sign_dependencies.py              # DLL sidecars (bare re-sign)
+python scripts/sign_dependencies.py --rotate     # ANCHOR ROTATION ceremony only
+```
+
+Custody rules: `--rotate` is the ONLY path that generates a new CA key or
+replaces an existing `*.dll.pub` anchor (refuses silently otherwise and
+writes `docs/dll_ca_ceremony_receipt.json`). DLL re-signing also requires
+refreshing the EMBEDDED pins in `dependency_security_verifier.py`
+(`EMBEDDED_OQS_*`) + `critical_modules.hashes` — see
+`docs/liboqs_pin.md` "Rotation plumbing".

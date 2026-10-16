@@ -1109,11 +1109,12 @@ class SBOMGenerator:
         """Add native/system dependencies to SBOM"""
         # Versions must match the vendored binaries truth (generate_production_sbom.py):
         # libsodium 1.0.22 (fixes CVE-2025-69277/CVE-2025-15444 present in <=1.0.20),
-        # oqs 0.10.1 (HQC/XMSS paths disabled until 0.16.0 rebuild - see verifier).
+        # oqs 0.16.0 official release (HQC/XMSS CVEs fixed; blocked_algorithms
+        # stay fail-closed in the verifier until an explicit operator decision).
         native_deps = [
             {
                 'name': 'oqs',
-                'version': '0.10.1',
+                'version': '0.16.0',
                 'supplier': 'Open Quantum Safe',
                 'license': 'MIT',
                 'file': 'oqs.dll'

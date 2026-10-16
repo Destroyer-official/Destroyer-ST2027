@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:6639d9277f620b28200d191e9e92e84c",
+  "serialNumber": "urn:uuid:cfcd1de4bdf7afe27363841ab8b92d2d",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-11T03:10:54.552256+00:00",
+    "timestamp": "2026-10-16T17:26:18.111290+00:00",
     "tools": [
       {
         "vendor": "Secure P2P Project",
@@ -46,8 +46,8 @@
     {
       "type": "library",
       "name": "oqs.dll",
-      "version": "0.10.1",
-      "purl": "pkg:generic/oqs.dll@0.10.1",
+      "version": "0.16.0",
+      "purl": "pkg:generic/oqs.dll@0.16.0",
       "licenses": [
         {
           "license": {
@@ -59,11 +59,11 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "ab7f7005df004d0168b23afa8b2fba41a2b2c0c60a8a555abc1b6be56846d4da"
+          "content": "ab1c1373a464a4ed5f3d5292935084fe6fe272ee51edca18b1083b7b631233e2"
         },
         {
           "alg": "SHA-512",
-          "content": "995ed25ed9345be0bb1f6e1ba6dfd90ad804af4fe877cc3b74dbf38b7d8634dbdf7a9fb9326dc3881af1838ef14126d483065e02dde1302f49980c6ac254581e"
+          "content": "b10aadbeb94c4d7462090c0ba02b4f1bb5e30ff9691638263e41896b0fad7e675a49a8e9556e9167dae16aae15db867e84682d9ffc0b3f44c370c4dcd4ee7ee7"
         }
       ]
     },
@@ -184,6 +184,48 @@
         {
           "alg": "SHA-256",
           "content": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": "9.1.1",
+      "purl": "pkg:pypi/pytest@9.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": null,
+            "name": "NOASSERTION"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest-timeout",
+      "version": "2.4.0",
+      "purl": "pkg:pypi/pytest-timeout@2.4.0",
+      "licenses": [
+        {
+          "license": {
+            "id": null,
+            "name": "NOASSERTION"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hypothesis",
+      "version": "6.165.5",
+      "purl": "pkg:pypi/hypothesis@6.165.5",
+      "licenses": [
+        {
+          "license": {
+            "id": null,
+            "name": "NOASSERTION"
+          }
         }
       ]
     }

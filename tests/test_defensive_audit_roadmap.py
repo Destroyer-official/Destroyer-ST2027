@@ -4,7 +4,7 @@ Test Defensive Audit Roadmap Targets.
 Implements specific regression tests requested in the 2026 Defensive Security Audit:
 1. test_discovery_forged_bundle_rejected: Forged/tampered discovery bundle rejected fail-closed.
 2. test_tofu_changed_pin_aborts: Changed certificate fingerprint in TOFU returns 'CHANGED'.
-3. test_hqc_default_disabled: HQC-256 gated OFF by default on vendored oqs 0.10.1 (CVE-2024-54137/CVE-2025-52473).
+3. test_hqc_default_disabled: HQC-256 gated OFF by default (policy refusal; CVEs fixed in vendored oqs 0.16.0).
 4. test_no_tls_no_send: Cleartext dispatch refused if TLS channel is not active.
 5. test_replay_flood_evicts_oldest: Monotonic replay cache handles eviction without clearing active records.
 6. test_heartbeat_ack_throttle: Heartbeat flood throttles to <= 1 ACK per 5 seconds.
@@ -68,7 +68,7 @@ class TestDefensiveAuditRoadmap(unittest.TestCase):
         self.assertEqual(status, "CHANGED", "Tampered certificate fingerprint must return 'CHANGED'")
 
     def test_hqc_default_disabled(self):
-        """Verify that HQC-256 is disabled by default on vendored oqs 0.10.1 and only active with explicit opt-in."""
+        """Verify that HQC-256 is disabled by default (refused by policy; CVEs fixed in vendored oqs 0.16.0) and only active with explicit opt-in."""
         from triple_hybrid_kem import is_hqc_available
         
         old_val = os.environ.pop("P2P_ENABLE_VULN_HQC", None)

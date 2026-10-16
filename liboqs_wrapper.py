@@ -269,11 +269,12 @@ except Exception as e:
 
 # --- Runtime native version gate (fail-closed floor 0.16.0) ---
 # The sidecar/SBOM pin checks verify INTEGRITY, not the live binary's
-# version: a below-floor DLL (current vendored: 0.14.1-dev) would otherwise
+# version: a below-floor or -dev DLL (previously vendored 0.14.1-dev;
+# current vendored 0.16.0 passes) would otherwise
 # load silently in every mode. This gate queries OQS_version() from the
 # loaded library and enforces the single-sourced floor:
-#   production/TS -> ImportError (Python PQ path dead until rebuild at
-#                   official 0.16.0; fail-closed, no silent downgrade)
+#   production/TS -> ImportError (Python PQ path dead until rebuilt at
+#                   official 0.16.0+; fail-closed, no silent downgrade)
 #   lab           -> CRITICAL log + LIBOQS_BELOW_FLOOR flag (ML-KEM/ML-DSA
 #                   paths used here are unaffected by the fixed HQC/XMSS
 #                   CVEs, but the binary stays untrusted for anything else;

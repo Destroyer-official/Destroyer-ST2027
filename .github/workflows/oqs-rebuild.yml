@@ -2,10 +2,17 @@ name: Rebuild oqs.dll (liboqs 0.16.0, Windows)
 
 # F-01: the vendored oqs.dll embeds 0.14.1-dev, below the 0.16.0 floor.
 # This workflow rebuilds it from the official 0.16.0 tag on a Windows
-# runner (MSVC + CMake available), runs the version assert, and uploads
-# the binary as a workflow artifact. A maintainer then follows the
-# re-pin procedure in docs/liboqs_pin.md (sidecars, SBOM bumps, hashes).
+# runner, runs the version assert, and uploads the binary as a workflow
+# artifact. A maintainer then follows the re-pin procedure in
+# docs/liboqs_pin.md (sidecars, SBOM bumps, hashes).
 # Manual dispatch only: rebuilds are deliberate release activities.
+#
+# Toolchain (2026-10-16): clang-cl + Ninja (MSVC SDK headers/libs via
+# msvc-dev-cmd). Rationale: liboqs emits "non-GNUC/Clang toolchain —
+# no optimization barrier guarantee" for pure MSVC; clang-cl reports as
+# Clang to CMake, so the constant-time barriers compile in. The earlier
+# verified artifact was plain MSVC — prefer clang-cl for the shipped
+# binary; see docs/liboqs_pin.md.
 
 on:
   workflow_dispatch:
@@ -38,6 +45,13 @@ jobs:
         with:
           arch: x64
 
+      - name: Record toolchain versions (clang-cl, ninja, cmake)
+        shell: bash
+        run: |
+          clang-cl --version
+          ninja --version
+          cmake --version
+
       - name: Clone liboqs at pinned tag
         shell: bash
         run: |
@@ -46,10 +60,13 @@ jobs:
           cd "$RUNNER_TEMP/liboqs"
           git rev-parse HEAD > "$GITHUB_WORKSPACE/liboqs.commit"
 
-      - name: Configure (shared DLL, install to local prefix)
+      - name: Configure (clang-cl + Ninja, shared DLL, install to local prefix)
         shell: bash
         run: |
           cmake -S "$RUNNER_TEMP/liboqs" -B "$RUNNER_TEMP/liboqs/build" \
+            -G Ninja \
+            -DCMAKE_C_COMPILER=clang-cl \
+            -DCMAKE_CXX_COMPILER=clang-cl \
             -DBUILD_SHARED_LIBS=ON \
             -DOQS_BUILD_ONLY_LIB=ON \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/oqs-prefix" \
