@@ -4,12 +4,45 @@ Additive pin record. CI-safe: `adversarial-gates` checks the floor
 (≥ 0.16.0) and SKIPs the native assert when the binary is absent from
 the runner (e.g. Windows `oqs.dll` on `ubuntu-latest`).
 
+## Rebuild completed 2026-10-16 — artifact verified, swap PENDING SIGNATURE
+
+The automated rebuild now works end-to-end. Workflow run
+`38926972301` ("Rebuild oqs.dll (liboqs 0.16.0, Windows)",
+`.github/workflows/oqs-rebuild.yml`, green in 7m3s) produced the
+`oqs-dll-0.16.0` artifact, locally verified:
+
+| Field | Rebuilt artifact (`%TEMP%\opencode\oqs_016_artifact\oqs.dll`) |
+|---|---|
+| `OQS_version()` (ctypes, fresh process) | `0.16.0` — official release string, at floor |
+| liboqs.commit (artifact) | `5a1a854b0dc9f2141bdc771c555ee60c37950183` — matches the documented pin |
+| Size | 4,355,072 bytes |
+| SHA-256 | `ab1c1373a464a4ed5f3d5292935084fe6fe272ee51edca18b1083b7b631233e2` |
+| SHA-512 | `b10aadbeb94c4d7462090c0ba02b4f1bb5e30ff9691638263e41896b0fad7e675a49a8e9556e9167dae16aae15db867e84682d9ffc0b3f44c370c4dcd4ee7ee7` |
+| Build | MSVC x64 (VS18 toolset 14.51), `BUILD_SHARED_LIBS=ON`, `OQS_BUILD_ONLY_LIB=ON`, Release |
+
+Remaining step BEFORE swapping the vendored binary (update-procedure
+steps 2-6): re-sign with the Ed25519 CA key
+(`military_root_ca.pem` + its passphrase sidecar) via
+`python scripts/sign_dependencies.py` on a host that holds the key —
+the key is intentionally NOT in this repo/box. Swapping `oqs.dll`
+without regenerating `oqs.dll.sig` is refused by design (signature
+verify fails, exit non-zero gates). Note the MSVC toolchain emits
+liboqs's own "non-GNUC/Clang toolchain" constant-time warning — standard
+for Windows builds; treat constant-time claims per upstream advisories.
+
+Workflow fixes that were required (all pushed 2026-10-16): valid
+`lukka/get-cmake` pin (v4.4.2), MSVC x64 environment via
+`ilammy/msvc-dev-cmd` v1.13.0 (standalone CMake cannot discover the
+runner's VS), and `-DOQS_BUILD_ONLY_LIB=ON` (liboqs test executables
+fail to link on the VS18 toolset due to SLH-DSA STFL symbols; the
+DLL itself builds clean).
+
 ## Current pin
 
 | Field | Value |
 |---|---|
 | Vendored binary | `oqs.dll` (repo root, Windows; `liboqs_wrapper.py` falls back to `liboqs.so` on Linux) |
-| Embedded version string in binary | `0.14.1-dev` (printable string adjacent to `system`/`OpenSSL` alg table; `OQS_version` export present) — BELOW FLOOR, fail-closed until rebuilt |
+| Embedded version string in binary | `0.14.1-dev` (printable string adjacent to `system`/`OpenSSL` alg table; `OQS_version` export present) — BELOW FLOOR, fail-closed until the verified `0.16.0` artifact is signed + swapped (see top section) |
 | SBOM-declared version | `0.10.1` (stale pre-floor pin in `scripts/generate_production_sbom.py` dlls list and `supply_chain_security.py:1112`, carried into `compliance_reports/{spdx,cyclonedx}_sbom.json`) — below floor; regenerated at `0.16.0` by update-procedure step 4 |
 | Verifier floor (`dependency_security_verifier.py` `oqs.dll.min_version`) | `0.16.0` (only 0.16.0 supported upstream; <0.16 unsupported) |
 | Verifier upgrade target | `0.16.0` |
@@ -93,10 +126,13 @@ randomized-integrity-check fixes; advisory until vendored):
 - <https://eprint.iacr.org/2025/2009> — RIC/masking backport tracking (2025/2009).
 - <https://eprint.iacr.org/2026/924> — RIC/masking backport tracking (2026/924).
 
-Status: **FAIL-CLOSED below floor** — `oqs.dll` remains a `0.14.1-dev`
-binary below the `0.16.0` floor with HQC/XMSS disabled and version-gated.
-Rebuild at official `0.16.0` + re-verification above is REQUIRED before
-production trust. See also
+Status: **REBUILD DONE, SWAP PENDING SIGNATURE** — the `0.16.0`
+artifact (verified above, workflow run `38926972301`) exists but the
+vendored `oqs.dll` remains the `0.14.1-dev` binary below the floor with
+HQC/XMSS disabled and version-gated until the custodian re-signs
+(`military_root_ca.pem` ceremony) and the binary is swapped per the
+update procedure. Production load stays fail-closed in the meantime.
+See also
 `dependency_security_verifier.py` header comment and
 `generate_production_sbom.py verify_sbom_offline TODO(rekor)` for the
 Cosign/Rekor anchoring plan.
