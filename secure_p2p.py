@@ -1545,7 +1545,7 @@ class InputValidator:
         return True
 
 # Enhanced P2P Integration Classes
-class MilitaryGradeCrypto:
+class HashedIdentifierEngine:
     """
     Cryptographic operations for authenticated hashed identifiers.
     
@@ -1581,14 +1581,17 @@ class MilitaryGradeCrypto:
     @staticmethod
     def hash_username_for_lookup(username: str) -> str:
         """Hash username for secure database lookup."""
-        return MilitaryGradeCrypto.quantum_resistant_hash(username, MilitaryGradeCrypto._system_salt())
+        return HashedIdentifierEngine.quantum_resistant_hash(username, HashedIdentifierEngine._system_salt())
 
     @staticmethod
     def hash_user_id_for_storage(user_id: str) -> str:
         """Hash user_id for secure database storage."""
-        salt = MilitaryGradeCrypto.generate_secure_salt()
-        hashed = MilitaryGradeCrypto.quantum_resistant_hash(user_id, salt)
+        salt = HashedIdentifierEngine.generate_secure_salt()
+        hashed = HashedIdentifierEngine.quantum_resistant_hash(user_id, salt)
         return f"{salt}:{hashed}"
+
+# Legacy backwards-compatibility alias
+MilitaryGradeCrypto = HashedIdentifierEngine
 
 class EnhancedUserManager:
     """Enhanced user profile management with hashed storage and database integration."""

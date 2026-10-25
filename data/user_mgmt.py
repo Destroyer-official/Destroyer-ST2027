@@ -39,8 +39,8 @@ except ImportError:
     DATABASE_AVAILABLE = False
 
 
-class MilitaryGradeCrypto:
-    """secure cryptographic operations for hashed identifiers."""
+class HashedIdentifierEngine:
+    """Cryptographic operations for authenticated hashed identifiers (SHA3-512)."""
     
     @staticmethod
     def _system_salt() -> str:
@@ -72,16 +72,20 @@ class MilitaryGradeCrypto:
     @staticmethod
     def hash_username_for_lookup(username: str) -> str:
         """Hash username for secure database lookup."""
-        return MilitaryGradeCrypto.quantum_resistant_hash(
-            username, MilitaryGradeCrypto._system_salt()
+        return HashedIdentifierEngine.quantum_resistant_hash(
+            username, HashedIdentifierEngine._system_salt()
         )
 
     @staticmethod
     def hash_user_id_for_storage(user_id: str) -> str:
         """Hash user_id for secure database storage."""
-        salt = MilitaryGradeCrypto.generate_secure_salt()
-        hashed = MilitaryGradeCrypto.quantum_resistant_hash(user_id, salt)
+        salt = HashedIdentifierEngine.generate_secure_salt()
+        hashed = HashedIdentifierEngine.quantum_resistant_hash(user_id, salt)
         return f"{salt}:{hashed}"
+
+
+# Legacy alias for backwards compatibility
+MilitaryGradeCrypto = HashedIdentifierEngine
 
 
 class EnhancedUserManager(BaseModule):

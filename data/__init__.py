@@ -6,7 +6,7 @@ secure encryption and security.
 """
 
 from .manager import DataManager
-from .user_mgmt import EnhancedUserManager, MilitaryGradeCrypto
+from .user_mgmt import EnhancedUserManager, MilitaryGradeCrypto, HashedIdentifierEngine
 from .peer_mgmt import EnhancedPeerManager
 from .file_transfer import FileTransferManager
 
@@ -14,6 +14,7 @@ __all__ = [
     "DataManager",
     "EnhancedUserManager",
     "MilitaryGradeCrypto",
+    "HashedIdentifierEngine",
     "EnhancedPeerManager",
     "FileTransferManager"
 ]
