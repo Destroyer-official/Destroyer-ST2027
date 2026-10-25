@@ -1,6 +1,6 @@
-# Sovereign Transmit 2027 (ST2027)
-## Military Technical Manual and Operational Doctrine
-### High-Assurance Zero-Trust Post-Quantum Communications Architecture for National Security Systems
+# Technical Manual TM-ST2027-2027.1
+## Sovereign Transmit Protocol Specification and Operational Doctrine
+### High-Assurance Zero-Trust Transport Architecture for National Security Systems
 
 ```
 Document Identification : TM-ST2027-OPS-SEC-2027.1
@@ -16,8 +16,8 @@ Integrity Custody       : ML-DSA-87 Digital Signature Manifest (FIPS 204)
 
 ## 1. Classification, Applicability, and Standards Conformance
 
-### 1.1 Doctrinal Context and Purpose
-This technical manual establishes the authoritative engineering baseline, operational doctrine, protocol state machines, and hardware gating boundaries for **Sovereign Transmit 2027 (ST2027)**. 
+### 1.1 Scope and Objective
+This technical manual defines the protocol architecture, cryptographic state machines, and hardware gating boundaries for **Sovereign Transmit 2027 (ST2027)**.
 
 ST2027 is engineered to satisfy the mandatory requirements of the **National Security Agency (NSA) Commercial National Security Algorithm (CNSA) Suite 2.0** timeline, directing the transition of National Security Systems (NSS) to post-quantum cryptographic algorithms between 2025 and 2030, with full deprecation of legacy classical algorithms (RSA, non-hybrid ECDH, ECDSA) by 2030.
 
@@ -275,7 +275,7 @@ To prevent adversary replay of VM snapshots or disk rollback attacks:
 ## 8. Multi-Level Security (MLS) and Cross-Domain Enclave Doctrine
 
 ### 8.1 Bell-LaPadula Security Invariants
-ST2027 implements formal military Multi-Level Security (MLS) based on the Bell-LaPadula model:
+ST2027 implements Multi-Level Security (MLS) based on the formal Bell-LaPadula model:
 1. **Simple Security Property (No Read Up):** A system running at classification level $L_1$ cannot read or decrypt information classified at level $L_2$ if $L_2 > L_1$.
 2. **$\star$-Property (No Write Down):** A system running at classification level $L_1$ cannot write or transmit unencrypted information to classification level $L_2$ if $L_2 < L_1$.
 

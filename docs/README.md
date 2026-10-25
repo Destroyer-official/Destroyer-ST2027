@@ -10,8 +10,8 @@ Every behavior stated in this documentation tree maps to verified source code (`
 
 ```
 docs/
-├── MILITARY_TECHNICAL_MANUAL_AND_OPERATIONAL_DOCTRINE_ST2027.md # Authoritative Military Technical Manual & Doctrine
-├── MILITARY_HIGH_ASSURANCE_ARCHITECTURE_2027.md # High-Assurance Architecture & Forensic Security Spec
+├── TECHNICAL_MANUAL_ST2027_TACTICAL_COMMUNICATIONS.md # Tactical Communications Technical Manual (TM-ST2027-2027.1)
+├── NSS_HIGH_ASSURANCE_ARCHITECTURE_ST2027.md # National Security Systems Architecture Specification
 ├── ARCHITECTURE.md                          # Master system thesis, threat models, 2027 vs legacy stacks
 ├── RUST_CORE.md                             # Native Rust Core Architecture & Migration Specification
 ├── README.md                                # This document index & cross-reference guide

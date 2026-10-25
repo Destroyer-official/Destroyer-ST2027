@@ -1,4 +1,4 @@
-# Sovereign Transmit 2027 (ST2027) — Military High-Assurance Architecture & Forensic Security Specification
+# Sovereign Transmit 2027 (ST2027) — High-Assurance Transport Architecture Specification for National Security Systems
 
 ```
 Document Reference: ST2027-ENG-SPEC-REV-4.2
@@ -94,7 +94,7 @@ Neither key component alone is sufficient; compromise of the classical curve lea
 
 ## 3. High-Assurance Rust Data Plane (`destroyer_core`)
 
-For high-throughput, latency-critical operations and military-grade resilience against memory corruption, the data plane is compiled from pure Rust with zero external network dependencies.
+For deterministic latency-critical operations and rigorous resilience against memory corruption, the data plane is compiled from pure Rust with zero external network dependencies.
 
 ### 3.1 Zero-Heap-Allocation AEAD Encryption
 
@@ -162,7 +162,7 @@ tpm_nv_increment_monotonic(TPM_NV_INDEX_RATCHET)?;
 
 ## 5. Multi-Level Security (MLS) & Cross-Domain Enclaves
 
-ST2027 implements strict military **Bell-LaPadula Multi-Level Security (MLS)** rules:
+ST2027 implements strict **Bell-LaPadula Multi-Level Security (MLS)** rules:
 - **Simple Security Property (No Read Up)**: A subject at classification level $L_1$ cannot read an object at classification level $L_2$ if $L_2 > L_1$.
 - **$\star$-Property (No Write Down)**: A subject at classification level $L_1$ cannot write an object at classification level $L_2$ if $L_2 < L_1$.
 
@@ -196,7 +196,7 @@ For cross-domain boundary transit between RED (classified) and BLACK (unclassifi
 
 Multi-party tactical groups communicate via the **Sovereign Group Ratchet** (`sovereign_group_ratchet.py` and `rust_data_plane/src/group_ratchet.rs`):
 - **Break-in Recovery (PCS)**: Any compromise of an ephemeral sender key is automatically healed within a single epoch rotation through fresh post-quantum KEM exchanges.
-- **Two-Person Integrity (TPI)**: Critical operational commands (e.g., EAM / Emergency Action Messages) require independent cryptographic dual-custody authorization. Two independent military custodians must sign the message with distinct ML-DSA-87 / Ed25519 tokens before the cryptographic guard permits decapsulation and execution.
+- **Two-Person Integrity (TPI)**: Critical operational commands (e.g., EAM / Emergency Action Messages) require independent cryptographic dual-custody authorization. Two independent authorized operators must sign the message with distinct ML-DSA-87 / Ed25519 tokens before the cryptographic guard permits decapsulation and execution.
 
 ---
 
