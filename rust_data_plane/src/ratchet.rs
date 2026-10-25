@@ -20,10 +20,10 @@
 //! Old halves are zeroized on rotation. Skipped-key store is bounded
 //! (`MAX_SKIPPED_KEYS`, Signal default 1000); over-budget fails closed.
 //!
-//! Research: Dodis et al. 2025/078 Triple Ratchet / Signal SPQR (Oct 2025)
-//! braid `kenc = KDF(keyC, keyQ)`; Apple PQ3 heals ~50 msgs / 7 days.
-//! Here every step heals (data-plane cadence), which is strictly stronger
-//! and matches the constant-rate `channel` transport.
+//! Research: Dodis et al. 2025/078 Triple Ratchet / Signal SPQR motivates
+//! fresh-KEM healing. This implementation performs a fresh encapsulation on
+//! every step, but cadence alone does not establish stronger or equivalent
+//! post-compromise security; the composition requires independent review.
 
 use hkdf::Hkdf;
 use sha2::Sha384;
