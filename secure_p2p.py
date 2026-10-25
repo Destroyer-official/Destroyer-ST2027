@@ -69,6 +69,13 @@ if __name__ == "__main__":
             "secure_transmit_2027.py instead. See README 'Legacy quarantine'.\n"
         )
         raise SystemExit(2)
+    else:
+        import sys as _sys
+        _sys.stderr.write(
+            "[DEPRECATION NOTICE] secure_p2p.py is a monolithic prototype entry point.\n"
+            "  Scheduled for retirement. For production tactical nodes, launch destroyer.py\n"
+            "  or destroyer_tactical_p2p.py.\n"
+        )
 
 # Preload the Rust data plane BEFORE binary signature policy mitigation locks
 try:
