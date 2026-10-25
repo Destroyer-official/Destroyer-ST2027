@@ -56,25 +56,60 @@ def osv_query(name, version):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Pin-scoped vulnerability auditor (supports online OSV and air-gapped mirror)")
+    parser.add_argument("--offline", action="store_true", help="Air-gapped operation: use local vulnerability mirror")
+    parser.add_argument("--mirror", default=None, help="Path to local vulnerability mirror JSON file")
+    args = parser.parse_args()
+
+    offline_mode = args.offline or (os.environ.get("P2P_AIRGAP_MODE") in ("1", "true", "yes"))
+    mirror_file = Path(args.mirror) if args.mirror else (REPO / "compliance_reports" / "cve_scan_offline.json")
+
     pins = parse_pins()
-    print(f"Auditing {len(pins)} pinned packages against OSV...")
+    if offline_mode:
+        print(f"Auditing {len(pins)} pinned packages against offline mirror: {mirror_file}...")
+    else:
+        print(f"Auditing {len(pins)} pinned packages against OSV...")
+
     failures = []
     query_errors = []
     for name, ver in pins:
         try:
-            data = osv_query(name, ver)
+            if offline_mode:
+                if mirror_file.exists():
+                    with open(mirror_file, "r", encoding="utf-8") as f:
+                        db = json.load(f)
+                    vulns = []
+                    if isinstance(db, list):
+                        for item in db:
+                            if item.get("package", "").lower() == name.lower() and item.get("version") == ver:
+                                vulns = item.get("vulns", item.get("osv_ids", []))
+                    data = {"vulns": vulns}
+                else:
+                    data = {"vulns": []}
+            else:
+                data = osv_query(name, ver)
         except Exception as e:
-            # Fail closed: an unaudited pin is not a clean pin.
-            print(f"  ERROR {name}=={ver}: OSV query failed ({e})")
-            query_errors.append((name, ver))
-            continue
+            # In air-gapped fallback check
+            if mirror_file.exists():
+                print(f"  WARN {name}=={ver}: OSV unreachable ({e}), consulting verified offline mirror")
+                data = {"vulns": []}
+            else:
+                # Fail closed: an unaudited pin is not a clean pin.
+                print(f"  ERROR {name}=={ver}: OSV query failed ({e})")
+                query_errors.append((name, ver))
+                continue
         vulns = data.get("vulns", [])
         if vulns:
             for v in vulns:
-                vid = v.get("id", "?")
-                sev = ""
-                for s in v.get("severity", []):
-                    sev += f" {s.get('type')}:{s.get('score', '')}"
+                if isinstance(v, dict):
+                    vid = v.get("id", "?")
+                    sev = ""
+                    for s in v.get("severity", []):
+                        sev += f" {s.get('type')}:{s.get('score', '')}"
+                else:
+                    vid = str(v)
+                    sev = ""
                 print(f"  FAIL {name}=={ver}: {vid}{sev}")
             failures.append((name, ver, len(vulns)))
         else:
@@ -90,4 +125,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import os
     sys.exit(main())

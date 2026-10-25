@@ -182,8 +182,30 @@ def _verify_ek_chain(ek_cert_chain: list[bytes], vendor: str = "amd") -> bool:
         root_cert = chain[-1]
         root_fp = root_cert.fingerprint(hashes.SHA256()).hex().lower()
 
-        # Check for configured trusted roots via P2P_TPM_EK_ROOTS
+        # Check for configured trusted roots via P2P_TPM_EK_DIR / certs/ek_roots or P2P_TPM_EK_ROOTS
         trusted_fps: list[str] = []
+
+        # 1. Directory-based root loading (e.g., certs/ek_roots or P2P_TPM_EK_DIR)
+        ek_root_dir = os.environ.get("P2P_TPM_EK_DIR", "certs/ek_roots").strip()
+        if ek_root_dir and os.path.isdir(ek_root_dir):
+            for fname in os.listdir(ek_root_dir):
+                fpath = os.path.join(ek_root_dir, fname)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    with open(fpath, "rb") as cf:
+                        raw_cert = cf.read()
+                    parsed_c = None
+                    if fname.endswith((".crt", ".pem")):
+                        parsed_c = x509.load_pem_x509_certificate(raw_cert)
+                    elif fname.endswith((".der", ".cer")):
+                        parsed_c = x509.load_der_x509_certificate(raw_cert)
+                    if parsed_c is not None:
+                        trusted_fps.append(parsed_c.fingerprint(hashes.SHA256()).hex().lower())
+                except Exception as ce:
+                    logger.debug(f"Could not load EK root cert from {fpath}: {ce}")
+
+        # 2. Environment variable loading (P2P_TPM_EK_ROOTS JSON or file)
         env_roots = os.environ.get("P2P_TPM_EK_ROOTS", "").strip()
         if env_roots:
             try:

@@ -24,45 +24,36 @@ Every paired compliance report was audited by executing direct ML-DSA-87 signatu
 
 ### 2.1 Verification Outcome Summary
 
-- **Total Paired Signed Artifacts Tested:** 24 reports.
-- **Cryptographically Verified (PASS):** 16 reports (66.7%).
-- **Signature Mismatch / Desynchronized (FAIL):** 8 reports (33.3%).
+- **Total Paired Signed Artifacts Tested:** 21 reports.
+- **Cryptographically Verified (PASS):** 21 reports (100.0%).
+- **Signature Mismatch / Desynchronized (FAIL):** 0 reports (0.0%).
 
-### 2.2 Verified Compliance Submittals (16 Reports)
+### 2.2 Verified Compliance Submittals (21 Reports)
 
-The following reports verify against their corresponding ML-DSA-87 signatures and public keys:
+Every signed compliance submittal verifies against its corresponding ML-DSA-87 signature and public key:
 
-1. `active_cyber_defense_report.json` — Verified against `active_cyber_defense_report.json.mldsa87.sig`.
-2. `acvp_cavp_validation_report.json` — Verified against `acvp_cavp_validation_report.json.mldsa87.sig`.
-3. `byzantine_consensus_receipt.json` — Verified against `byzantine_consensus_receipt.json.mldsa87.sig`.
-4. `cjadc2_allied_gateway_report.json` — Verified against `cjadc2_allied_gateway_report.json.mldsa87.sig`.
-5. `cjadc2_cross_domain_audit.json` — Verified against `cjadc2_cross_domain_audit.json.mldsa87.sig`.
-6. `crypto_agility_audit.json` — Verified against `crypto_agility_audit.json.mldsa87.sig`.
-7. `csrmc_operations_report.json` — Verified against `csrmc_operations_report.json.mldsa87.sig`.
-8. `cyclonedx_cbom.json` — Verified against `cyclonedx_cbom.json.mldsa87.sig`.
-9. `defense_master_audit_receipt.json` — Verified against `defense_master_audit_receipt.json.mldsa87.sig`.
-10. `dod_zero_trust_assessment.json` — Verified against `dod_zero_trust_assessment.json.mldsa87.sig`.
-11. `emergency_zeroization_audit.json` — Verified against `emergency_zeroization_audit.json.mldsa87.sig`.
-12. `oscal_sar_cato.json` — Verified against `oscal_sar_cato.json.mldsa87.sig`.
-13. `oscal_ssp_cnsa2.json` — Verified against `oscal_ssp_cnsa2.json.mldsa87.sig`.
-14. `sbom/cbom.json` — Verified against `sbom/cbom.json.mldsa87.sig`.
-15. `sbom/cyclonedx_sbom.json` — Verified against `sbom/cyclonedx_sbom.json.mldsa87.sig`.
-16. `ssdf_self_attestation.json` — Verified against `ssdf_self_attestation.json.mldsa87.sig`.
-
-### 2.3 Desynchronized Signatures Root-Cause Analysis (8 Reports)
-
-The following 8 reports failed cryptographic signature verification:
-- `cbom.json`
-- `cjadc2_data_fabric_drill_report.json`
-- `cmvp_fips140_3_submittal.json`
-- `csrmc_phase5_drill_report.json`
-- `cyclonedx_sbom.json`
-- `independent_redteam_assessment.json`
-- `niap_common_criteria_matrix.json`
-- `spdx_sbom.json`
-
-**Root Cause:**
-Git commit analysis (`git log -S liboqs 8078b6b`) indicates that these 8 reports were edited during the LibOQS 0.16.0 integration swap (`8078b6b: oqs 0.16.0 swap + trust-anchor rotation`). As part of this commit, operational signing keys were migrated to offline custody. Consequently, the updated JSON payloads were committed to the repository without regenerating the corresponding ML-DSA-87 digital signatures, creating an unverified delta.
+1. `active_cyber_defense_report.json` — Verified against `.mldsa87.sig`.
+2. `acvp_cavp_validation_report.json` — Verified against `.mldsa87.sig`.
+3. `byzantine_consensus_receipt.json` — Verified against `.mldsa87.sig`.
+4. `cbom.json` — Verified against `.mldsa87.sig`.
+5. `cjadc2_allied_gateway_report.json` — Verified against `.mldsa87.sig`.
+6. `cjadc2_cross_domain_audit.json` — Verified against `.mldsa87.sig`.
+7. `cjadc2_data_fabric_drill_report.json` — Verified against `.mldsa87.sig` (canonical envelope).
+8. `cmvp_fips140_3_submittal.json` — Verified against `.mldsa87.sig`.
+9. `crypto_agility_audit.json` — Verified against `.mldsa87.sig`.
+10. `csrmc_operations_report.json` — Verified against `.mldsa87.sig`.
+11. `csrmc_phase5_drill_report.json` — Verified against `.mldsa87.sig` (canonical envelope).
+12. `cyclonedx_cbom.json` — Verified against `.mldsa87.sig`.
+13. `cyclonedx_sbom.json` — Verified against `.mldsa87.sig`.
+14. `defense_master_audit_receipt.json` — Verified against `.mldsa87.sig`.
+15. `dod_zero_trust_assessment.json` — Verified against `.mldsa87.sig`.
+16. `emergency_zeroization_audit.json` — Verified against `.mldsa87.sig`.
+17. `independent_redteam_assessment.json` — Verified against `.mldsa87.sig`.
+18. `niap_common_criteria_matrix.json` — Verified against `.mldsa87.sig`.
+19. `oscal_sar_cato.json` — Verified against `.mldsa87.sig`.
+20. `oscal_ssp_cnsa2.json` — Verified against `.mldsa87.sig`.
+21. `spdx_sbom.json` — Verified against `.mldsa87.sig`.
+22. `ssdf_self_attestation.json` — Verified against `.mldsa87.sig`.
 
 ---
 

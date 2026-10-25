@@ -381,6 +381,8 @@ class Phase6DataFabricMissionDrill:
         tamper_caught = (not tampered_cot.verify_event_signature())
 
         # 4. Package into DDIL Store-and-Forward bundle
+        from tactical_mesh_ddil import get_tactical_keyring
+        get_tactical_keyring().register_epoch_key("TACTICAL_TOC_HQ", b"\x5a" * 32, epoch=1)
         bundle = cot.to_ddil_bundle("RADAR_POST_01", "TACTICAL_TOC_HQ", seq=901)
         bundle_ok = (bundle.priority == BundlePriority.EMERGENCY) and (bundle.recipient_id == "TACTICAL_TOC_HQ")
 

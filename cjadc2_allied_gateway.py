@@ -176,12 +176,12 @@ def _strict_cdr_quarantine_required() -> bool:
     """
     from production_gate import is_production
     prod = is_production()
-    explicit = os.environ.get("P2P_GATEWAY_QUARANTINE_HOSTILE", "")
+    explicit = os.environ.get("P2P_GATEWAY_QUARANTINE_HOSTILE", "").strip().lower()
     if prod:
-        if explicit == "0":
+        if explicit in ("0", "false", "no", "off"):
             log.critical("P2P_GATEWAY_QUARANTINE_HOSTILE=0 ignored in production (quarantine enforced)")
         return True
-    return is_env_true("P2P_GATEWAY_QUARANTINE_HOSTILE")
+    return explicit in ("1", "true", "yes", "on")
 
 
 class AlliedCoalitionGateway:

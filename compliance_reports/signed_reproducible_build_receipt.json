@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-25T04:48:31.462117+00:00",
+  "timestamp_utc": "2026-10-25T10:34:13.373475+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {

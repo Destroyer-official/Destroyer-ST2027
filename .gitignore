@@ -108,7 +108,9 @@ keys/*
 # ignores the *contents* instead, so the negation below works (verified with
 # `git check-ignore -v keys/manager.py` -> `!keys/*.py`).
 !keys/*.py
-certs/
+certs/*
+!certs/ek_roots/
+!certs/ek_roots/*.md
 .env.local
 .env.production
 config.json

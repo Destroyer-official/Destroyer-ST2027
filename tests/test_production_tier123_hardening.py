@@ -87,7 +87,9 @@ class TestProductionTier123Hardening(unittest.TestCase):
             self.assertIn("fail-closed", report.error_message.lower())
 
         # In non-production lab mode: valid quote structure verifies for test harnesses
+        from production_gate import reset_for_tests
         with patch.dict(os.environ, {"SECURE_P2P_PRODUCTION": "0", "P2P_PRODUCTION": "0"}):
+            reset_for_tests()
             ok = enclave.verify_attestation(report)
             self.assertTrue(ok)
             self.assertEqual(report.status, AttestationStatus.VERIFIED)
