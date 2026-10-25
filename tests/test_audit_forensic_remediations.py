@@ -144,6 +144,10 @@ class TestAuditForensicRemediations(unittest.TestCase):
                     os.environ[flag] = val
                     self.assertTrue(st._production_strict(), f"{flag}={val} must activate production strict")
 
+            # The loop above intentionally armed the process-lifetime latch.
+            # Reset only in this test before checking a fresh falsey-only posture.
+            from production_gate import reset_for_tests
+            reset_for_tests()
             os.environ.clear()
             os.environ["P2P_PRODUCTION"] = "0"
             os.environ["SECURE_P2P_PRODUCTION"] = "false"

@@ -15,7 +15,8 @@
 //! - `auth`: native ML-DSA-87 (FIPS 204, pure-Rust `ml-dsa` crate).
 //! - `kex_auth`: authenticated hybrid KEX (X25519 + ML-KEM-1024,
 //!   transcript-bound, PSK-or-MLDSA, SAS out-of-band).
-//! - `ratchet`: fresh-KEM-per-step PCS ratchet (SPQR-style, no v1 reuse).
+//! - `ratchet`: project-specific fresh-KEM-per-step ratchet (no v1 reuse;
+//!   inspired by SPQR research, not an SPQR implementation).
 //! - `attest`: enrollment-bound RATS verifier (no TOFU path).
 //! - `handshake`: Noise_XXhfs P-384+ML-KEM-1024+ML-DSA-87 handshake,
 //!   byte-identical to the `noise_pq.py` reference profile.

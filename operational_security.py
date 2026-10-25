@@ -709,11 +709,12 @@ class MessageExpirationManager:
                 ttl_seconds=ttl_seconds,
             )
             
-            # Bound stored messages to prevent unbounded memory allocation
+            # Bound stored messages to prevent unbounded memory allocation.
+            # Initialize with the oldest inserted entry so equal timestamps
+            # (common with coarse Windows clock resolution) cannot disable eviction.
             if len(self._messages) >= self.MAX_STORED_MESSAGES:
-                now = datetime.now()
-                oldest_id = None
-                oldest_time = now
+                oldest_id = next(iter(self._messages))
+                oldest_time = self._messages[oldest_id].created_at
                 for mid, m in self._messages.items():
                     if m.is_expired:
                         oldest_id = mid
@@ -721,8 +722,7 @@ class MessageExpirationManager:
                     if m.created_at < oldest_time:
                         oldest_time = m.created_at
                         oldest_id = mid
-                if oldest_id:
-                    self._expire_message(oldest_id)
+                self._expire_message(oldest_id)
 
             # Store message
             self._messages[message_id] = message

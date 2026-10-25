@@ -1,10 +1,11 @@
 # Rust Secure Core — Production Path (Python Kept as Reference/Backup)
 
-**Status:** active production target. **Python tree untouched** — `noise_pq.py`,
-`double_ratchet.py`, `secure_transmit_2027.py`, `trust_anchor.py`, `ts_attest.py`
-and all other `.py` files keep their logic byte-for-byte as the audited
-reference and lab/backup path. No Python security logic was rewritten for this
-change; only additive Rust code plus this doc were introduced.
+**Status:** active development target; not a release authorization. Python and
+Rust implementations have both changed during subsequent audit remediations.
+The Python tree is a reference/lab/backup path, not a byte-for-byte frozen or
+independently audited artifact. Current verification evidence and residual
+risks are recorded in the dated forensic audit report; historical commands and
+counts below are not current release evidence.
 
 ## Why Rust-first
 
