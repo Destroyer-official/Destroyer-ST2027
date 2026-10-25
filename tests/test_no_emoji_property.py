@@ -43,7 +43,7 @@ class TestNoEmojiProperty:
     def get_production_python_files(self) -> List[Path]:
         """Get all Python files in the production codebase (excluding notupload folder)."""
         python_files = []
-        exclude_dirs = {'__pycache__', '.git', '.pytest_cache', 'notupload', '.hypothesis', '.venv', 'archive', 'rust_data_plane'}
+        exclude_dirs = {'__pycache__', '.git', '.pytest_cache', 'notupload', '.hypothesis', '.venv', '.audit-venv', '.audit-lock-venv', '.audit-deps', 'archive', 'rust_data_plane', 'docs'}
         exclude_files = {'test_no_emoji_property.py', 'test_no_marketing_buzzwords_property.py', 'production_cleanup_utils.py'}
         
         for root, dirs, files in os.walk(PROJECT_ROOT):
