@@ -1147,19 +1147,20 @@ class CAExchange:
             raise NetworkError(f"Failed to setup exchange socket: {e}")
 
     def exchange_certs(self, role: str, host: str, port: int, ready_event: Optional[threading.Event] = None) -> bytes:
-        """Perform quantum-resistant certificate exchange with military-grade security.
+        """Perform post-quantum certificate exchange conforming to CNSA Suite 2.0.
 
-        Implements a military-grade multi-layer security protocol:
-        1. Advanced parameter validation with entropy verification
-        2. Quantum-resistant socket setup with perfect forward secrecy
-        3. Post-quantum key agreement using ML-KEM-1024 (NIST Level 5)
-        4. Military-grade authenticated encryption (XChaCha20-Poly1305)
-        5. Multi-layer certificate validation with quantum resistance
-        6. Hardware-backed secure memory management
-        7. Anti-tampering protection
-        8. Side-channel attack prevention
-        9. Timing attack resistance
-        10. Perfect forward secrecy
+        Operational Context:
+            Where Used: Node peering, mutual authentication, and TLS 1.3 mTLS bootstrap.
+            What Used:  FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, XChaCha20-Poly1305 / AES-256-GCM.
+            Protocol:
+            1. Parameter validation with entropy bounds checking
+            2. Socket configuration with perfect forward secrecy
+            3. Post-quantum key encapsulation via ML-KEM-1024 (NIST Level 5)
+            4. Authenticated payload encryption (XChaCha20-Poly1305 / AES-256-GCM)
+            5. Mutual certificate verification against pre-authorized fingerprint anchors
+            6. Volatile memory protection and zeroization
+            7. Anti-tampering and timing side-channel defenses
+            8. RFC 6479 anti-replay sequence tracking
 
         Cross-Site Protection:
         - Advanced fingerprint validation
@@ -1943,13 +1944,12 @@ class CAExchange:
             ctypes.memmove(c_buf, c_buf, len(buffer))
 
     def secure_cleanup(self):
-        """Military-grade secure erasure of all cryptographic material from memory following DoD 5220.22-M / NIST SP 800-88.
+        """Secure erasure of cryptographic key material from memory conforming to DoD 5220.22-M / NIST SP 800-88 Rev 1.
 
-        This method performs forensic-grade memory cleanup:
-        - Wipes all cryptographic keys and certificates
-        - Uses multiple overwrite passes (zeros, ones, random)
-        - Overwrites buffers using ctypes.memmove memory barriers
-        - Eliminates lingering references in python runtime
+        Operational Context:
+            Where Used: Session termination, error teardown, and process exit handlers.
+            What Used:  Multi-pass overwrites (zeros, inverted bitmasks, cryptorandom) via ctypes.memmove.
+            Standard:   DoD 5220.22-M, NIST SP 800-88 Rev 1 (Cryptographic Erasure / Purge).
         """
         try:
             secure_wipe_buffer = self.secure_wipe_buffer

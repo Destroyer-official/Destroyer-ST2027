@@ -496,12 +496,12 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `CAExchange._recv_all` (ca_services.py:997) — (self, sock, length, max_len, timeout) | branches:ifx4,whilex1,tryx3 calls:SecurityError,gettimeout,settimeout,recv,min raises:SecurityError catches:timeout,Exception returns:1 — Receive exactly 'length' bytes, bounded and timed.
 #### `CAExchange._validate_exchange_params` (ca_services.py:1038) — (self, role, host, port) | branches:ifx4,tryx1 calls:ValidationError,startswith,gethostbyname raises:ValidationError catches:Exception returns:0 — Validate certificate exchange parameters.
 #### `CAExchange._setup_exchange_socket` (ca_services.py:1066) — (self, role, host, port) | branches:tryx2 calls:ip_address,debug,socket,setsockopt,NetworkError raises:NetworkError catches:ValueError,Exception returns:1 — Set up network socket for certificate exchange.
-#### `CAExchange.exchange_certs` (ca_services.py:1095) — (self, role, host, port, ready_event) | branches:ifx43,forx1,tryx13 calls:generate_self_signed,SecurityError,info,get_cached_ocsp_response,generate_ocsp_response,ip_address,debug raises:SecurityError catches:ValueError,Exception,ImportError returns:1 — Perform quantum-resistant certificate exchange with military-grade security.
+#### `CAExchange.exchange_certs` (ca_services.py:1095) — (self, role, host, port, ready_event) | branches:ifx43,forx1,tryx13 calls:generate_self_signed,SecurityError,info,get_cached_ocsp_response,generate_ocsp_response,ip_address,debug raises:SecurityError catches:ValueError,Exception,ImportError returns:1 — Perform quantum-resistant certificate exchange with CNSA Suite 2.0 mutual authentication.
 #### `CAExchange.create_server_ctx` (ca_services.py:1520) — (self) | branches:ifx8,tryx8 calls:ValueError,lower,critical,SecurityError,_enforce_crl_freshness,_enforce_ocsp_must_staple,info raises:ValueError,SecurityError catches:Exception returns:1 — Create a hardened TLS 1.3 server context with mutual authentication.
 #### `CAExchange.create_client_ctx` (ca_services.py:1636) — (self, target_hostname) | branches:ifx7,tryx7 calls:ValueError,lower,critical,SecurityError,_enforce_crl_freshness,_enforce_ocsp_must_staple,info raises:ValueError,SecurityError catches:Exception returns:1 — Create a hardened TLS 1.3 client context with certificate validation.
 #### `CAExchange._secure_delete` (ca_services.py:1799) — (file_path, passes) | branches:ifx4,tryx3 calls:exists,secure_shred_file,debug,getsize,seek,write,flush catches:Exception returns:2 — Securely delete a file using DoD 5220.22-M compliant overwriting.
 #### `CAExchange.secure_wipe_buffer` (ca_services.py:1849) — (buffer) | branches:ifx1,forx2 calls:from_buffer,randbelow,pattern,memmove returns:1 — Securely wipe a buffer using multiple patterns following NIST SP 800-88.
-#### `CAExchange.secure_cleanup` (ca_services.py:1864) — (self) | branches:ifx8,forx3,tryx5 calls:bytearray,secure_wipe_buffer,any,error,rotate_key,token_bytes,clear catches:Exception returns:0 — Military-grade secure erasure of all cryptographic material from memory following DoD 5220.22-M / NIST SP 800-88.
+#### `CAExchange.secure_cleanup` (ca_services.py:1864) — (self) | branches:ifx8,forx3,tryx5 calls:bytearray,secure_wipe_buffer,any,error,rotate_key,token_bytes,clear catches:Exception returns:0 — Cryptographic erasure of all sensitive material from memory following DoD 5220.22-M / NIST SP 800-88.
 #### `CAExchange.wrap_socket_server` (ca_services.py:1947) — (self, sock) | calls:create_server_ctx,wrap_socket,info returns:1 — Wrap a server socket with a hardened TLS 1.3 context.
 #### `CAExchange.wrap_socket_client` (ca_services.py:1969) — (self, sock, server_hostname) | calls:create_client_ctx,wrap_socket,info returns:1 — Wrap a client socket with a hardened TLS 1.3 context.
 #### `CAExchange._check_secure_memory` (ca_services.py:1993) — (self) | branches:ifx2,tryx1 calls:store,remove,is_protected catches:Exception returns:4 — Check if secure memory protection is enabled and working.
@@ -1398,7 +1398,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ### class `DependencySecurityError` (dependency_security_verifier.py:62) bases:Exception methods:0 — Exception raised when dependency security verification fails
 
-### class `DependencySecurityVerifier` (dependency_security_verifier.py:65) methods:21 — Military-grade dependency security verification system.
+### class `DependencySecurityVerifier` (dependency_security_verifier.py:65) methods:21 — High-assurance dependency security verification and SLSA Level 3+ integrity enforcement system.
 #### `DependencySecurityVerifier.__init__` (dependency_security_verifier.py:73) — (self) | calls:_init_verification_system returns:0 — Initialize the dependency security verifier
 #### `DependencySecurityVerifier._init_verification_system` (dependency_security_verifier.py:113) — (self) | branches:tryx1 calls:_load_verification_policies,_init_crypto_verification,_setup_runtime_monitoring,info,error,DependencySecurityError raises:DependencySecurityError catches:Exception returns:0 — Initialize the verification system with security policies
 #### `DependencySecurityVerifier._load_verification_policies` (dependency_security_verifier.py:131) — (self) | branches:ifx1,tryx1 calls:Path,exists,load,update,info,warning catches:Exception returns:0 — Load security verification policies for dependencies
@@ -1827,7 +1827,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ## `enhanced_security_features.py`
 
-### class `MilitarySecurityLevel` (enhanced_security_features.py:45) bases:Enum methods:0 — Military security levels military-grade
+### class `MilitarySecurityLevel` (enhanced_security_features.py:45) bases:Enum methods:0 — Operational security posture classification levels.
 
 ### class `MilitarySecurityMetrics` (enhanced_security_features.py:54) methods:0 — Military security metrics and measurements
 
@@ -2392,7 +2392,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `LibOQS_AES256GCM.encrypt` (liboqs_wrapper.py:604) — (self, key, nonce, plaintext, associated_data) | branches:ifx2 calls:ValueError,encrypt,AESGCM raises:ValueError returns:1 — Encrypt plaintext using AES-256-GCM
 #### `LibOQS_AES256GCM.decrypt` (liboqs_wrapper.py:610) — (self, key, nonce, ciphertext, associated_data) | branches:ifx2,tryx1 calls:ValueError,decrypt,AESGCM,InvalidTag,RuntimeError raises:ValueError,InvalidTag,RuntimeError catches:InvalidTag,Exception returns:1 — Decrypt ciphertext using AES-256-GCM.
 
-### class `HybridKEM` (liboqs_wrapper.py:622) methods:7 — MILITARY-GRADE HYBRID KEY ENCAPSULATION MECHANISM
+### class `HybridKEM` (liboqs_wrapper.py:622) methods:7 — HIGH-ASSURANCE HYBRID KEY ENCAPSULATION MECHANISM
 #### `HybridKEM.__init__` (liboqs_wrapper.py:644) — (self) | branches:ifx3,tryx2 calls:validate_military_algorithm,enforce_no_fallbacks,quiet_print,LibOQS_MLKEM_1024,ImportError raises:ImportError catches:ImportError,Exception returns:0 — Initialize hybrid KEM with both ML-KEM-1024 and McEliece-8192128f.
 #### `HybridKEM.mceliece` (liboqs_wrapper.py:696) — (self) | branches:ifx1 calls:LibOQS_McEliece_8192128f returns:1 — Lazy-initialize and cache Classic-McEliece-8192128f on demand.
 #### `HybridKEM.keygen` (liboqs_wrapper.py:702) — (self) | calls:keygen returns:1 — Generate hybrid keypair for both ML-KEM-1024 and McEliece-8192128f.
@@ -2757,7 +2757,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ### class `MilitarySecurityError` (military_security_enforcement.py:22) bases:Exception methods:0 — Exception raised when military security requirements are violated.
 
-### class `MilitarySecurityEnforcement` (military_security_enforcement.py:25) methods:6 — Enforces military-grade security requirements with no fallbacks.
+### class `MilitarySecurityEnforcement` (military_security_enforcement.py:25) methods:6 — Enforces defense cryptographic security policy with fail-closed semantics.
 #### `MilitarySecurityEnforcement.__init__` (military_security_enforcement.py:70) — (self) | calls:info returns:0 — Initialize military security enforcement.
 #### `MilitarySecurityEnforcement.validate_algorithm` (military_security_enforcement.py:79) — (self, algorithm, operation_type) | branches:ifx4 calls:critical,MilitarySecurityError,error,add,info raises:MilitarySecurityError returns:1 — Validate that an algorithm is approved for military use.
 #### `MilitarySecurityEnforcement.enforce_hybrid_mode_only` (military_security_enforcement.py:123) — (self) | branches:ifx2 calls:bool,critical,MilitarySecurityError,info raises:MilitarySecurityError returns:1 — Enforce that only hybrid cryptography is used.
@@ -3103,7 +3103,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `NetworkEndpointDiscovery.scan_local_interfaces` (network_endpoint_discovery.py:169) — (self) | branches:ifx5,forx2,tryx2 calls:net_if_addrs,ip_address,NetworkEndpoint catches:ImportError,ValueError returns:1 — Scan all local network adapter hardware interfaces for IPv6 and IPv4 addresses.
 #### `NetworkEndpointDiscovery.query_stun_server` (network_endpoint_discovery.py:236) — async (self, stun_host, stun_port, family, timeout) | branches:ifx6,whilex1,tryx1 calls:urandom,pack,get_running_loop,socket,setblocking,getaddrinfo,sock_connect catches:Exception returns:6 — RFC 5389 / RFC 8489 STUN Binding Request to discover public mapped endpoint.
 #### `NetworkEndpointDiscovery.discover_endpoints` (network_endpoint_discovery.py:318) — async (self, allow_stun, stun_servers, timeout) | branches:ifx11,forx2 calls:perf_counter,NetworkPosture,lower,get_kernel_routed_ipv6,get_kernel_routed_ipv4,scan_local_interfaces,bool returns:1 — Execute comprehensive multi-tier endpoint discovery.
-#### `print_network_report` (network_endpoint_discovery.py:398) — (posture, port) | branches:ifx7,forx3 returns:0 — Print an aesthetically rich, military-grade terminal report.
+#### `print_network_report` (network_endpoint_discovery.py:398) — (posture, port) | branches:ifx7,forx3 returns:0 — Print an authenticated security diagnostics terminal report.
 #### `parse_endpoint` (network_endpoint_discovery.py:459) — (raw_str, default_port) | branches:ifx7,tryx2 calls:ValueError,startswith,lstrip,endswith,count raises:ValueError catches:ValueError returns:1 — Parse an IP endpoint string (IPv6, IPv4, or hostname with optional port)
 #### `main` (network_endpoint_discovery.py:518) — async () | branches:ifx1 calls:ArgumentParser,add_argument,parse_args,NetworkEndpointDiscovery,discover_endpoints,to_json,print_network_report returns:0
 
@@ -3656,14 +3656,14 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `NISTLevel5Enforcer._test_secure_random` (pqc_algorithms.py:3515) — (cls) | branches:ifx2,tryx1 calls:generate_secure_random,SecurityError,debug raises:SecurityError catches:Exception returns:0 — Test secure random generation quality.
 #### `NISTLevel5Enforcer.validate_cryptographic_operation` (pqc_algorithms.py:3537) — (cls, operation, algorithm, mode) | branches:ifx1 calls:enforce_algorithm,lower,enforce_authenticated_encryption_only,debug returns:0 — Validate that a cryptographic operation meets NIST Level 5+ requirements.
 
-### class `EnhancedHybridKEM` (pqc_algorithms.py:3573) methods:5 — MILITARY-GRADE Hybrid Key Encapsulation Mechanism - NIST Level 5 Security
+### class `EnhancedHybridKEM` (pqc_algorithms.py:3573) methods:5 — CNSA Suite 2.0 Hybrid Key Encapsulation Mechanism - NIST Level 5 Security
 #### `EnhancedHybridKEM.__init__` (pqc_algorithms.py:3618) — (self) | branches:tryx1 calls:HybridKEM,info,_validate_production_implementation,critical,RuntimeError raises:RuntimeError catches:Exception returns:0 — Initialize Hybrid KEM system.
 #### `EnhancedHybridKEM._validate_production_implementation` (pqc_algorithms.py:3639) — (self) | branches:ifx3,tryx1 calls:debug,keygen,encaps,decaps,RuntimeError,info,critical raises:RuntimeError catches:Exception returns:1 — Validate that hybrid KEM implementation is working correctly.
 #### `EnhancedHybridKEM.keygen` (pqc_algorithms.py:3664) — (self) | calls:keygen returns:1 — Generate hybrid KEM keypair.
 #### `EnhancedHybridKEM.encaps` (pqc_algorithms.py:3668) — (self, public_key) | calls:encaps returns:1 — Encapsulate using hybrid KEM.
 #### `EnhancedHybridKEM.decaps` (pqc_algorithms.py:3672) — (self, secret_key, ciphertext) | calls:decaps returns:1 — Decapsulate using hybrid KEM.
 
-### class `EnhancedMLKEM_1024` (pqc_algorithms.py:3677) methods:13 — MILITARY-GRADE HYBRID KEM IMPLEMENTATION
+### class `EnhancedMLKEM_1024` (pqc_algorithms.py:3677) methods:13 — CNSA SUITE 2.0 HYBRID KEM IMPLEMENTATION
 #### `EnhancedMLKEM_1024.__init__` (pqc_algorithms.py:3768) — (self) | branches:ifx1,tryx1 calls:validate_military_algorithm,enforce_no_fallbacks,info,HybridKEM,_validate_production_implementation,_validate_parameter_set,critical raises:RuntimeError catches:MilitarySecurityError,Exception returns:0 — Initialize ML-KEM-1024 with comprehensive security hardening.
 #### `EnhancedMLKEM_1024._validate_production_implementation` (pqc_algorithms.py:3895) — (self) | branches:ifx2,tryx1 calls:debug,keygen,encaps,decaps,RuntimeError,info,critical raises:RuntimeError catches:Exception returns:1 — Validate that production KEM implementation is working correctly.
 #### `EnhancedMLKEM_1024._validate_parameter_set` (pqc_algorithms.py:3919) — (self) | branches:ifx3,forx1 calls:debug,ValueError raises:ValueError returns:0 — Validate ML-KEM-1024 parameter set against NIST FIPS 203 specification.
@@ -3703,14 +3703,14 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `EnhancedSPHINCS_256s.sign` (pqc_algorithms.py:4862) — (self, private_key, message) | branches:ifx1,tryx1 calls:ValueError,sign,debug,SignatureError raises:ValueError,SignatureError catches:Exception returns:1 — Sign message with SPHINCS+-256s.
 #### `EnhancedSPHINCS_256s.verify` (pqc_algorithms.py:4879) — (self, public_key, message, signature) | branches:ifx1,tryx1 calls:ValueError,verify,debug,error raises:ValueError catches:Exception returns:2 — Verify SPHINCS+-256s signature.
 
-### class `EnhancedHybridSignature` (pqc_algorithms.py:4898) methods:5 — MILITARY-GRADE Hybrid Signature Scheme - NIST Level 5 Security
+### class `EnhancedHybridSignature` (pqc_algorithms.py:4898) methods:5 — CNSA Suite 2.0 Hybrid Signature Scheme - NIST Level 5 Security
 #### `EnhancedHybridSignature.__init__` (pqc_algorithms.py:4936) — (self, mode) | branches:ifx1,tryx1 calls:validate_military_algorithm,enforce_no_fallbacks,info,HybridSignature,_validate_hybrid_signature,critical,RuntimeError raises:RuntimeError catches:MilitarySecurityError,Exception returns:0 — Initialize Hybrid Signature system.
 #### `EnhancedHybridSignature._validate_hybrid_signature` (pqc_algorithms.py:4968) — (self) | branches:ifx5,tryx1 calls:keygen,sign,verify,RuntimeError,info,critical raises:RuntimeError catches:Exception returns:0 — Validate that hybrid signature implementation is working correctly.
 #### `EnhancedHybridSignature.keygen` (pqc_algorithms.py:4994) — (self) | calls:keygen returns:1 — Generate hybrid signature keypair.
 #### `EnhancedHybridSignature.sign` (pqc_algorithms.py:4998) — (self, secret_key, message) | calls:sign returns:1 — Sign message using hybrid signatures.
 #### `EnhancedHybridSignature.verify` (pqc_algorithms.py:5002) — (self, public_key, message, signature) | calls:verify returns:1 — Verify hybrid signature.
 
-### class `EnhancedFALCON_1024` (pqc_algorithms.py:5008) methods:7 — MILITARY-GRADE FALCON-1024 SIGNATURE IMPLEMENTATION (FN-DSA track, FIPS 206 DRAFT / Level 5)
+### class `EnhancedFALCON_1024` (pqc_algorithms.py:5008) methods:7 — HIGH-ASSURANCE FALCON-1024 SIGNATURE IMPLEMENTATION (FN-DSA track, FIPS 206 DRAFT / Level 5)
 #### `EnhancedFALCON_1024.__init__` (pqc_algorithms.py:5031) — (self, mode) | branches:ifx1,tryx1 calls:validate_military_algorithm,enforce_no_fallbacks,info,LibOQS_Falcon_1024,critical,RuntimeError,EnhancedHybridSignature raises:RuntimeError catches:Exception returns:0 — Initialize using native LibOQS Falcon-1024.
 #### `EnhancedFALCON_1024.keygen` (pqc_algorithms.py:5052) — (self) | branches:ifx2,tryx1 calls:_timing_jitter,keygen,KeyGenerationError raises:KeyGenerationError catches:Exception returns:1 — Generate a genuine FALCON-1024 key pair via native liboqs.
 #### `EnhancedFALCON_1024.sign` (pqc_algorithms.py:5073) — (self, private_key, message) | branches:ifx6,tryx1 calls:_timing_jitter,sign,SignatureVerificationError,bytes raises:SignatureVerificationError catches:Exception returns:3 — Sign message using native FALCON-1024 or hybrid format.
@@ -4702,7 +4702,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `deserialize_hybrid_signature` (secure_p2.py:845) — (signature_data) | branches:ifx1,forx1,tryx2 calls:loads,b64decode,error,ValueError raises:ValueError catches:JSONDecodeError,Exception returns:2 — Deserialize a hybrid signature from transmission format.
 #### `secure_memory_wipe` (secure_p2.py:877) — (address, length, owner) | branches:ifx5,tryx3 calls:addressof,from_buffer,VirtualProtect,c_void_p,c_size_t,byref,c_ulong catches:Exception returns:7 — Securely wipes a memory region using the most secure method available on the platform.
 
-### class `InputValidator` (secure_p2.py:932) methods:7 — Military-grade input validation class with strict validation and mandatory rejection.
+### class `InputValidator` (secure_p2.py:932) methods:7 — Formal input validation engine with strict whitelist validation and fail-closed rejection.
 #### `InputValidator.validate_username` (secure_p2.py:972) — (username) | branches:ifx7,forx1 calls:error,type,match,search returns:8 — Strict username validation with mandatory rejection of invalid inputs.
 #### `InputValidator.validate_message` (secure_p2.py:1036) — (message) | branches:ifx6,forx1,tryx1 calls:error,type,search,findall catches:UnicodeDecodeError returns:7 — Strict message validation with mandatory rejection of invalid inputs.
 #### `InputValidator.validate_ip_address` (secure_p2.py:1135) — (ip) | branches:ifx20,forx2,tryx2 calls:error,type,search,match,lower,warning,startswith catches:ValueError returns:22 — Strict IP address validation with mandatory rejection of invalid inputs.
@@ -4711,7 +4711,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `InputValidator.verify_input_integrity` (secure_p2.py:1409) — (input_data, expected_hash) | branches:ifx4,tryx1 calls:error,type,sha3_512,update,info catches:Exception returns:5 — Cryptographic integrity verification for critical inputs.
 #### `InputValidator.validate_critical_input` (secure_p2.py:1460) — (input_data, input_type, expected_hash) | branches:ifx3 calls:error,verify_input_integrity,info returns:4 — Comprehensive validation for critical inputs with cryptographic verification.
 
-### class `MilitaryGradeCrypto` (secure_p2.py:1504) methods:4 — Military-grade cryptographic operations for hashed identifiers.
+### class `MilitaryGradeCrypto` (secure_p2.py:1504) methods:4 — Cryptographic operations for authenticated hashed identifiers.
 #### `MilitaryGradeCrypto.generate_secure_salt` (secure_p2.py:1509) — () | branches:ifx1 calls:get_secure_random,SecurityError,hex raises:SecurityError returns:1 — Generate cryptographically secure 256-bit salt.
 #### `MilitaryGradeCrypto.quantum_resistant_hash` (secure_p2.py:1518) — (data, salt) | calls:sha3_512,update returns:1 — Quantum-resistant hash using SHA3-512.
 #### `MilitaryGradeCrypto.hash_username_for_lookup` (secure_p2.py:1526) — (username) | calls:quantum_resistant_hash returns:1 — Hash username for secure database lookup.
@@ -4726,7 +4726,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `EnhancedUserManager.load` (secure_p2.py:1631) — (self) | branches:ifx2,tryx1 calls:exists,_get_passphrase,read,_derive_key,AESGCM,decrypt,loads catches:InvalidTag,Exception returns:5 — Load and decrypt user profile from local storage.
 #### `EnhancedUserManager.create_new_user` (secure_p2.py:1665) — async (self, username, display_name, ipv6, port) | branches:ifx5,tryx2 calls:_get_passphrase,_ensure_discovery_service,create_or_register_user,save,get_secure_random,SecurityError,hex raises:SecurityError catches:Exception returns:4 — Create new user with P2P Discovery Service registration.
 #### `EnhancedUserManager.automatic_login` (secure_p2.py:1731) — async (self, current_ipv6, current_port) | branches:ifx4,tryx2 calls:exists,load,update_endpoint,_ensure_discovery_service,_ensure_api_client,update_user_status,RuntimeError raises:RuntimeError catches:Exception returns:5 — Perform automatic login for returning users.
-#### `EnhancedUserManager.save` (secure_p2.py:1780) — (self, username, display_name, user_id, ipv6, port, pubkey, private_key, passphrase) | branches:ifx7,tryx1 calls:get_secure_random,SecurityError,_derive_key,exists,read,ValueError,hash_username_for_lookup raises:SecurityError,ValueError catches:Exception returns:0 — Save and encrypt user profile with military-grade hashing.
+#### `EnhancedUserManager.save` (secure_p2.py:1780) — (self, username, display_name, user_id, ipv6, port, pubkey, private_key, passphrase) | branches:ifx7,tryx1 calls:get_secure_random,SecurityError,_derive_key,exists,read,ValueError,hash_username_for_lookup raises:SecurityError,ValueError catches:Exception returns:0 — Save and encrypt user profile with SHA3-512 hashing.
 #### `EnhancedUserManager.update_endpoint` (secure_p2.py:1831) — (self, ipv6, port) | branches:ifx2 calls:update,isoformat,save_profile returns:0 — Update user endpoint information and re-save the encrypted profile.
 #### `EnhancedUserManager.get_profile` (secure_p2.py:1838) — (self) | calls:copy returns:1 — Get current user profile.
 #### `EnhancedUserManager.save_profile` (secure_p2.py:1842) — (self) | branches:ifx6,tryx1 calls:dumps,get_secure_random,SecurityError,AESGCM,encrypt,exists,read raises:SecurityError catches:Exception returns:1 — Save and encrypt the current profile data to file.
@@ -4920,7 +4920,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `deserialize_hybrid_signature` (secure_p2p.py:845) — (signature_data) | branches:ifx1,forx1,tryx2 calls:loads,b64decode,error,ValueError raises:ValueError catches:JSONDecodeError,Exception returns:2 — Deserialize a hybrid signature from transmission format.
 #### `secure_memory_wipe` (secure_p2p.py:877) — (address, length, owner) | branches:ifx5,tryx3 calls:addressof,from_buffer,VirtualProtect,c_void_p,c_size_t,byref,c_ulong catches:Exception returns:7 — Securely wipes a memory region using the most secure method available on the platform.
 
-### class `InputValidator` (secure_p2p.py:932) methods:7 — Military-grade input validation class with strict validation and mandatory rejection.
+### class `InputValidator` (secure_p2p.py:932) methods:7 — Formal input validation engine with strict whitelist validation and fail-closed rejection.
 #### `InputValidator.validate_username` (secure_p2p.py:972) — (username) | branches:ifx7,forx1 calls:error,type,match,search returns:8 — Strict username validation with mandatory rejection of invalid inputs.
 #### `InputValidator.validate_message` (secure_p2p.py:1036) — (message) | branches:ifx6,forx1,tryx1 calls:error,type,search,findall catches:UnicodeDecodeError returns:7 — Strict message validation with mandatory rejection of invalid inputs.
 #### `InputValidator.validate_ip_address` (secure_p2p.py:1135) — (ip) | branches:ifx20,forx2,tryx2 calls:error,type,search,match,lower,warning,startswith catches:ValueError returns:22 — Strict IP address validation with mandatory rejection of invalid inputs.
@@ -4929,7 +4929,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `InputValidator.verify_input_integrity` (secure_p2p.py:1409) — (input_data, expected_hash) | branches:ifx4,tryx1 calls:error,type,sha3_512,update,info catches:Exception returns:5 — Cryptographic integrity verification for critical inputs.
 #### `InputValidator.validate_critical_input` (secure_p2p.py:1460) — (input_data, input_type, expected_hash) | branches:ifx3 calls:error,verify_input_integrity,info returns:4 — Comprehensive validation for critical inputs with cryptographic verification.
 
-### class `MilitaryGradeCrypto` (secure_p2p.py:1504) methods:4 — Military-grade cryptographic operations for hashed identifiers.
+### class `MilitaryGradeCrypto` (secure_p2p.py:1504) methods:4 — Cryptographic operations for authenticated hashed identifiers.
 #### `MilitaryGradeCrypto.generate_secure_salt` (secure_p2p.py:1509) — () | branches:ifx1 calls:get_secure_random,SecurityError,hex raises:SecurityError returns:1 — Generate cryptographically secure 256-bit salt.
 #### `MilitaryGradeCrypto.quantum_resistant_hash` (secure_p2p.py:1518) — (data, salt) | calls:sha3_512,update returns:1 — Quantum-resistant hash using SHA3-512.
 #### `MilitaryGradeCrypto.hash_username_for_lookup` (secure_p2p.py:1526) — (username) | calls:quantum_resistant_hash returns:1 — Hash username for secure database lookup.
@@ -4944,7 +4944,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `EnhancedUserManager.load` (secure_p2p.py:1631) — (self) | branches:ifx2,tryx1 calls:exists,_get_passphrase,read,_derive_key,AESGCM,decrypt,loads catches:InvalidTag,Exception returns:5 — Load and decrypt user profile from local storage.
 #### `EnhancedUserManager.create_new_user` (secure_p2p.py:1665) — async (self, username, display_name, ipv6, port) | branches:ifx5,tryx2 calls:_get_passphrase,_ensure_discovery_service,create_or_register_user,save,get_secure_random,SecurityError,hex raises:SecurityError catches:Exception returns:4 — Create new user with P2P Discovery Service registration.
 #### `EnhancedUserManager.automatic_login` (secure_p2p.py:1731) — async (self, current_ipv6, current_port) | branches:ifx4,tryx2 calls:exists,load,update_endpoint,_ensure_discovery_service,_ensure_api_client,update_user_status,RuntimeError raises:RuntimeError catches:Exception returns:5 — Perform automatic login for returning users.
-#### `EnhancedUserManager.save` (secure_p2p.py:1780) — (self, username, display_name, user_id, ipv6, port, pubkey, private_key, passphrase) | branches:ifx7,tryx1 calls:get_secure_random,SecurityError,_derive_key,exists,read,ValueError,hash_username_for_lookup raises:SecurityError,ValueError catches:Exception returns:0 — Save and encrypt user profile with military-grade hashing.
+#### `EnhancedUserManager.save` (secure_p2p.py:1780) — (self, username, display_name, user_id, ipv6, port, pubkey, private_key, passphrase) | branches:ifx7,tryx1 calls:get_secure_random,SecurityError,_derive_key,exists,read,ValueError,hash_username_for_lookup raises:SecurityError,ValueError catches:Exception returns:0 — Save and encrypt user profile with SHA3-512 hashing.
 #### `EnhancedUserManager.update_endpoint` (secure_p2p.py:1831) — (self, ipv6, port) | branches:ifx2 calls:update,isoformat,save_profile returns:0 — Update user endpoint information and re-save the encrypted profile.
 #### `EnhancedUserManager.get_profile` (secure_p2p.py:1838) — (self) | calls:copy returns:1 — Get current user profile.
 #### `EnhancedUserManager.save_profile` (secure_p2p.py:1842) — (self) | branches:ifx6,tryx1 calls:dumps,get_secure_random,SecurityError,AESGCM,encrypt,exists,read raises:SecurityError catches:Exception returns:1 — Save and encrypt the current profile data to file.
@@ -7648,7 +7648,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ### class `VerificationReport` (verify_deployment.py:96) methods:0 — Complete verification report
 
-### class `DeploymentVerifier` (verify_deployment.py:105) methods:15 — Production deployment verification for military-grade secure P2P system.
+### class `DeploymentVerifier` (verify_deployment.py:105) methods:15 — Pre-deployment verification testbench for ST2027 secure node endpoints.
 #### `DeploymentVerifier.__init__` (verify_deployment.py:113) — (self) | returns:0
 #### `DeploymentVerifier._add_result` (verify_deployment.py:117) — (self, check_name, status, message, details) | calls:VerificationResult returns:0 — Add a verification result
 #### `DeploymentVerifier.verify_core_modules_exist` (verify_deployment.py:137) — (self) | branches:ifx1,forx1 calls:exists,sum,_add_result returns:1 — Verify all core modules exist as files

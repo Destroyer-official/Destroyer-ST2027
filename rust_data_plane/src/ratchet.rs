@@ -1,5 +1,7 @@
-//! Fresh-KEM PCS ratchet (Rust secure core, SPQR-style).
+//! Project-specific fresh-KEM ratchet inspired by SPQR/Triple Ratchet.
 //!
+//! This is not an implementation of Signal SPQR or the Triple Ratchet
+//! specification, and no equivalent security or interoperability is claimed.
 //! Reference behavior mirrors `double_ratchet.py` v2 semantics and
 //! `secure_transmit_2027.py::rehandshake`, but WITHOUT any legacy mode:
 //! there is no v1 KEM-reuse path in this crate, so "downgrade to reuse"

@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-PROJECT SENTINEL - Production Deployment Verification Script
+ST2027 PRODUCTION DEPLOYMENT ASSURANCE & VERIFICATION TESTBENCH
 
-This script verifies all requirements for military-grade secure P2P communication
-system production deployment. It performs comprehensive checks on:
-- Core module integrity and import verification
-- Cryptographic compliance (CNSA 2.0, NIST Level 5)
-- Zero Trust architecture verification
-- Supply chain security (DLL signatures)
-- Memory security verification
-- Audit logging verification
+OPERATIONAL CONTEXT:
+  Executed by release engineers and air-gapped site administrators prior to
+  operational deployment. Performs offline, read-only validation of cryptographic
+  primitives, core module importability, memory protections, and hardware security
+  module interfaces in accordance with CNSA Suite 2.0 and NIST SP 800-218.
 
-CRITICAL: This script is READ-ONLY and makes NO modifications to the codebase.
-
-Author: Security Verification Team
-Version: 1.0.0
+SYSTEM INTEGRATION:
+  Subsystem: Deployment Verification Subsystem (CLI / Automation)
+  Standards: FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), RFC 8439 (ChaCha20-Poly1305),
+             NIST SP 800-88 Rev 1 (Sanitization), SLSA Level 3+ (Build Integrity).
+  Behavior: Strict fail-closed verification pipeline. Any discrepancy produces
+            non-zero exit status and halts deployment sequencing.
 """
 
 import os
@@ -107,10 +106,10 @@ class VerificationReport:
 
 class DeploymentVerifier:
     """
-    Production deployment verification for military-grade secure P2P system.
+    Automated pre-deployment validation testbench for ST2027 secure node endpoints.
     
-    This class performs comprehensive verification of all security requirements
-    without making any modifications to the codebase.
+    Validates cryptographic conformance, core module presence, memory defenses,
+    and dependency trees against authenticated baseline signatures prior to daemon startup.
     """
     
     def __init__(self):

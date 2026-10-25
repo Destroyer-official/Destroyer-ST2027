@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Dependency Security Verification System - Military-Grade Implementation
+Dependency Integrity and Native Cryptographic Binary Verifier
+High-Assurance Supply Chain and Binary Provenance Enforcement Subsystem
 
-This module implements comprehensive cryptographic verification of all dependencies
-and libraries to ensure supply chain security and prevent tampering. All critical
-dependencies must pass cryptographic signature verification before use.
+Operational Context:
+    Where Used: System startup, runtime dynamic imports, and cryptographic DLL loader
+               (oqs.dll, libsodium.dll) across secure_transmit_2027.py and tests.
+    What Used:  Ed25519 digital signatures, embedded SHA-384 / SHA3-512 cryptographic digests,
+               PE/COFF binary structural validation, and version floor gates.
+    Standards:  NIST SP 800-218 (SSDF), FIPS 140-3 Level 3 Software Security, SLSA Level 3+.
+    Fail-Closed: Halts execution immediately (raises DependencySecurityError) if signature,
+               hash, or version floor check fails. Test fallbacks strictly prohibited.
 
-Features:
-- Cryptographic signature verification for critical libraries
-- Runtime integrity checking of loaded dependencies
-- Supply chain security validation for all imported modules
-- Mandatory verification with no fallback mechanisms
-- Hardware-backed verification when available
-
-Requirements: 10.7, 12.2
+Requirements Implemented: 10.7, 12.2
 """
 
 import os
@@ -84,9 +83,9 @@ class DependencySecurityError(Exception):
 
 class DependencySecurityVerifier:
     """
-    Military-grade dependency security verification system.
+    Cryptographic dependency verification and binary integrity enforcement engine.
     
-    Implements comprehensive cryptographic verification of all dependencies
+    Implements comprehensive cryptographic verification of all native binaries and dependencies
     to ensure supply chain security and prevent tampering attacks.
     """
     
@@ -266,11 +265,11 @@ class DependencySecurityVerifier:
                     
                     if not verification_result:
                         logger.error(f"Runtime verification failed for {module_name}")
-                        raise DependencySecurityError(f"MILITARY FATAL: Critical dependency {module_name} failed verification")
+                        raise DependencySecurityError(f"INTEGRITY FATAL: Critical dependency {module_name} failed verification")
             
         except Exception as e:
             logger.error(f"Runtime import verification failed for {module_name}: {e}")
-            raise DependencySecurityError(f"MILITARY FATAL: Runtime verification error: {e}")
+            raise DependencySecurityError(f"INTEGRITY FATAL: Runtime verification error: {e}")
     
     def verify_dependency(self, name: str, path: str, verification_level: VerificationLevel) -> bool:
         """
@@ -335,7 +334,7 @@ class DependencySecurityVerifier:
             
         except Exception as e:
             logger.error(f"Dependency verification error for {name}: {e}")
-            raise DependencySecurityError(f"MILITARY FATAL: Verification failed for {name}: {e}")
+            raise DependencySecurityError(f"INTEGRITY FATAL: Verification failed for {name}: {e}")
     
     def _verify_critical_dependency(self, name: str, path: str) -> bool:
         """Verify critical dependency with full cryptographic checks"""
@@ -374,7 +373,7 @@ class DependencySecurityVerifier:
             
         except Exception as e:
             logger.error(f"Critical dependency verification error for {name}: {e}")
-            raise DependencySecurityError(f"MILITARY FATAL: Critical dependency verification error for {name}: {e}")
+            raise DependencySecurityError(f"INTEGRITY FATAL: Critical dependency verification error for {name}: {e}")
     
     def _verify_important_dependency(self, name: str, path: str) -> bool:
         """Verify important dependency with integrity checks"""
@@ -760,13 +759,13 @@ class DependencySecurityVerifier:
                 logger.info("[OK] All critical dependencies verified successfully")
             else:
                 logger.error("[FAIL] One or more critical dependencies failed verification")
-                raise DependencySecurityError("MILITARY FATAL: Critical dependency verification failed. Fallbacks forbidden.")
+                raise DependencySecurityError("INTEGRITY FATAL: Critical dependency verification failed. Fallbacks forbidden.")
             
             return all_passed
             
         except Exception as e:
             logger.error(f"Critical dependency verification error: {e}")
-            raise DependencySecurityError(f"MILITARY FATAL: Critical dependency verification failed: {e}")
+            raise DependencySecurityError(f"INTEGRITY FATAL: Critical dependency verification failed: {e}")
     
     def _find_dependency_path(self, dep_name: str) -> Optional[str]:
         """Find the path to a dependency"""

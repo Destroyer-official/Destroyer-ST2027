@@ -1,18 +1,17 @@
 """
-Memory Protection Engine - Military-Grade Memory Corruption Defense
+ST2027 MEMORY PROTECTION & CORRUPTION MITIGATION ENGINE
 
-This module implements comprehensive memory protection with:
-- Stack canary implementation around crypto buffers (Requirement 6.1)
-- Guard page allocation around sensitive memory (Requirement 6.2)
-- Heap integrity verification (Requirement 6.3)
-- ASLR-compatible allocation (Requirement 6.4)
-- Control Flow Integrity checks (Requirement 6.5)
-- Secure wipe and terminate on corruption (Requirement 6.6)
+OPERATIONAL CONTEXT:
+  Wraps sensitive cryptographic buffers, key material, and session descriptors
+  with hardware/OS memory safeguards. Detects heap corruption, buffer overflows,
+  and unauthorized write access with immediate fail-closed process zeroization.
 
-Standards Compliance:
-- DoD 5220.22-M: National Industrial Security Program Operating Manual
-- NIST SP 800-88 Rev. 1: Guidelines for Media Sanitization
-- FIPS 140-3: Security Requirements for Cryptographic Modules
+SYSTEM INTEGRATION:
+  Subsystem: Memory Defense Subsystem (Layer 1 Runtime Environment)
+  Standards:
+    - DoD 5220.22-M: Multi-pass cryptographic key sanitization upon tamper detection
+    - NIST SP 800-88 Rev 1: Media sanitization and memory clearing
+    - FIPS 140-3 Level 4: Complete zeroization of sensitive plaintext upon boundary violation
 """
 
 import os

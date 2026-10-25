@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Supply Chain Security System - Military-Grade Implementation
+Software Supply Chain Integrity and Provenance Verification Engine
+SLSA Level 3+ Compliant Deterministic Build and SBOM Verification Architecture
 
-This module implements comprehensive supply chain security features including:
-- Reproducible build system with deterministic outputs
-- Dependency signature verification
-- Software Bill of Materials (SBOM) generation
-- Code signing with hardware-backed keys
+Operational Context:
+    Where Used: CI/CD build gates, node deployment verifiers (verify_reproducible_build.py,
+               scripts/sign_dependencies.py, and node startup initialization).
+    What Used:  CycloneDX v1.5 / SPDX v2.3 SBOM generation, SHA-384 / SHA3-512 Merkle trees,
+               Ed25519 & ML-DSA-87 digital signatures, native DLL binary pin verification.
+    Standards:  NIST SP 800-218 (SSDF), Executive Order 14028, SLSA Level 3+.
+    Fail-Closed: Aborts software installation and halts runtime on signature mismatch or hash drift.
 
 Requirements: 5.1, 5.2, 5.4, 5.5
 """

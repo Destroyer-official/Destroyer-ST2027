@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
 """
-Quantum Random Number Generation and Entropy Management
+ST2027 HARDWARE ENTROPY POOL & CONDITIONING ENGINE
 
-Implements secure entropy pool management with quantum RNG integration for
-military-grade secure P2P messaging. Provides cryptographically secure random
-number generation with hardware entropy sources and health monitoring.
+OPERATIONAL CONTEXT:
+  Underpins all cryptographic key generation, nonce derivation, and KEM encapsulation
+  across the ST2027 node. Aggregates multi-source physical and OS entropy with
+  continuous SP 800-90B min-entropy health tests.
 
-Security Features:
-- Minimum 512-bit entropy pool with SHA3-512 conditioning
-- QRNG integration when quantum hardware available
-- Min-entropy verification and health monitoring
-- External entropy injection from HSM
-- Fail-closed: Operations block when entropy below threshold
-
-Standards Compliance:
-- NIST SP 800-90A: Random Number Generation
-- NIST SP 800-90B: Entropy Source Requirements
-- NIST SP 800-90C: Random Bit Generator Constructions
-- CNSA 2.0: Commercial National Security Algorithm Suite
-
-Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6
-
-Author: Military 2026 Production Security Enhancement
+SYSTEM INTEGRATION:
+  Subsystem: Cryptographic Primitives Subsystem (Entropy Provider)
+  Standards:
+    - NIST SP 800-90A: Deterministic Random Bit Generators (CTR_DRBG / HMAC_DRBG)
+    - NIST SP 800-90B: Health Testing & Min-Entropy Validation (Repetition Count & Adaptive Proportion)
+    - NIST SP 800-90C: Live Entropy Source Integration
+    - NSA CNSA Suite 2.0: Minimum 256-bit post-quantum security margin (512-bit pool baseline)
+  Fail-Closed Architecture:
+    Halts all random byte generation immediately if entropy source depletion or health failure is detected.
 """
 
 import os

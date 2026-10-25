@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-decentralized_architecture.py
+Decentralized Distributed Hash Table (DHT) and Mesh Routing Subsystem
+Serverless Peer Discovery and Sybil-Resistant Routing Architecture for National Security Systems
 
-Production-ready decentralized architecture for military-grade P2P messaging.
+Operational Context:
+    Where Used: Serverless ad-hoc tactical networking, peer discovery without central rendezvous,
+               and decentralized routing table management in DDIL radio environments.
+    What Used:  Kademlia XOR metric routing, Proof-of-Work (PoW) Sybil attack resistance,
+               Ed25519 node ID binding, store-and-forward relay buffers.
+    Standards:  Kademlia Routing Protocol Specification, NIST SP 800-53 IA-3 (Device Identification).
+    Fail-Closed: Rejects node admission if Proof-of-Work or public key binding fails verification.
 
-This module implements comprehensive decentralized features including:
-- DHT-based peer discovery (no central server dependency)
-- Direct device-to-device sync (Bluetooth, WiFi Direct)
-- Store-and-forward via relay nodes
-- Local mesh networking support
-
-**Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
-
-Correctness Properties Implemented:
-- Property 6: DHT Peer Lookup Correctness (Requirements 3.3)
+Requirements Implemented:
+- 3.1: Serverless DHT-based peer discovery
+- 3.2: Direct device-to-device transport synchronization
+- 3.3: Cryptographically bounded store-and-forward relay queues
+- 3.4: Local mesh networking support
+- 3.5: Proof-of-Work Sybil attack mitigation
 """
 
 import asyncio
@@ -471,7 +474,7 @@ class DHTRoutingTable:
         from production_gate import is_production as _gate_prod
         _prod = _gate_prod()
         if _prod and os.environ.get("P2P_ENFORCE_DHT_POW", "1") != "1":
-            logger.critical("MILITARY FATAL: production refuses P2P_ENFORCE_DHT_POW!=1 (Sybil downgrade)")
+            logger.critical("SECURITY FATAL: production refuses P2P_ENFORCE_DHT_POW!=1 (Sybil downgrade)")
             return False
         
         # Verify node-ID proof-of-work and public key binding (Finding 15, 16)

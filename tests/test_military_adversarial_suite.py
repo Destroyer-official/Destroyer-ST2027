@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-  TOP-SECRET MILITARY-GRADE ADVERSARIAL & OPERATIONAL VERIFICATION SUITE
+  ADVERSARIAL & OPERATIONAL VERIFICATION SUITE FOR NATIONAL SECURITY SYSTEMS
   STANDARDS: CNSA 2.0 / FIPS 140-3 LEVEL 3 / DoD 5220.22-M / NIST SP 800-88
 ================================================================================
 Tests the complete system against real-world adversarial attacks, failure modes,
@@ -534,9 +534,8 @@ def trial_8_live_dual_base_drill():
 def run_all_military_adversarial_trials():
     print(f"""{BOLD}{MAGENTA}
 ================================================================================
-  UNITED STATES DEPARTMENT OF DEFENSE // STRATEGIC DEFENSE NETWORK
-  TOP-SECRET MILITARY-GRADE ADVERSARIAL VERIFICATION & PENETRATION SUITE
-  SECURITY LEVEL: DEFCON-1 (MAXIMUM ENCRYPTED READINESS)
+  TACTICAL DEFENSE NETWORK // ADVERSARIAL VERIFICATION & PENETRATION SUITE
+  STANDARDS: CNSA 2.0 / FIPS 140-3 LEVEL 3 / ZERO-TRUST HIGH-ASSURANCE BASELINE
 ================================================================================{RESET}""")
 
     trials = [

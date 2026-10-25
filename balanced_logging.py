@@ -194,7 +194,7 @@ def enable_startup_logging():
     
     # Print startup message
     print("\n[SECURE P2P] QUANTUM-RESISTANT COMMUNICATIONS")
-    print("Initializing military-grade security...")
+    print("Initializing high-assurance security subsystems...")
     
     # Enable balanced logging (simplified to avoid hangs)
     try:

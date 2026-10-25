@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-tests/test_sel4_sovereign_appliance.py — Military-Grade Test Suite for the
+tests/test_sel4_sovereign_appliance.py — High-Assurance Verification Suite for the
 seL4 Sovereign Hardware Appliance & MILS Separation Architecture.
 
 Tests:

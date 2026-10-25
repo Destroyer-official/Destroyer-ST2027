@@ -1,10 +1,11 @@
 """
-Post-Quantum Cryptography Implementation Suite - MILITARY GRADE NIST FIPS 203/204/205 Compliant
+Post-Quantum Cryptography Implementation Suite - NIST FIPS 203/204/205 Compliant
+High-Assurance Lattice and Stateless Hash Primitives for National Security Systems
 
-MILITARY SECURITY ENFORCEMENT:
-• ONLY APPROVED ALGORITHMS PERMITTED
-• NO FALLBACKS TO WEAKER CIPHERS
-• FAIL CLOSED SECURITY MODEL
+OPERATIONAL CONTEXT & STANDARDS:
+• ONLY APPROVED NIST LEVEL 5 ALGORITHMS PERMITTED
+• NO FALLBACKS TO CLASSICAL UNHYBRIDIZED CIPHERS
+• STRICT FAIL-CLOSED SECURITY INVARIANTS
 
 APPROVED ALGORITHMS:
 • Hybrid KEM: ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384
@@ -161,9 +162,9 @@ except ImportError as e:
 
 def disable_all_fallbacks():
     """
-    MILITARY SECURITY: Disable all fallback mechanisms and weak algorithms.
+    DEFENSE CRYPTOGRAPHIC POLICY: Disable all fallback mechanisms and legacy algorithms.
     
-    This function ensures that only approved military-grade algorithms are used:
+    This function ensures that only approved CNSA Suite 2.0 / FIPS algorithms are used:
     • Hybrid KEM: ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384
     • Hybrid Signatures: ML-DSA-87 (fast) + SLH-DSA-256f (secure)
     
@@ -178,7 +179,7 @@ def disable_all_fallbacks():
     
     # Force use of only approved implementations
     pqc_logger.info("[SECURE] DISABLING ALL FALLBACK MECHANISMS")
-    pqc_logger.info("[SECURE] ENFORCING MILITARY-GRADE ALGORITHMS ONLY")
+    pqc_logger.info("[SECURE] ENFORCING CNSA SUITE 2.0 ALGORITHMS ONLY")
     
     # Validate that we have the required military algorithms
     try:
@@ -190,7 +191,7 @@ def disable_all_fallbacks():
         
         pqc_logger.info("[PASS] ALL MILITARY ALGORITHMS VALIDATED")
         pqc_logger.info("[SECURE] FALLBACK MECHANISMS DISABLED")
-        pqc_logger.info("[SECURE] MILITARY SECURITY MODE ACTIVE")
+        pqc_logger.info("[SECURE] CNSA SUITE 2.0 DEFENSE SECURITY MODE ACTIVE")
         
     except MilitarySecurityError as e:
         pqc_logger.critical(f"[ALERT] MILITARY ALGORITHM VALIDATION FAILED: {e}")
@@ -281,7 +282,7 @@ class SecurityError(CryptographicError):
             f"Security violation: {message} (level={security_level}, algorithm={algorithm})")
 
 
-# PRODUCTION-READY PQC IMPLEMENTATIONS - MILITARY-GRADE SECURITY
+# PRODUCTION-READY PQC IMPLEMENTATIONS - CNSA SUITE 2.0 BASELINE
 # Using the enhanced implementations defined in this module
 HAVE_PRODUCTION_PQC = True
 pqc_logger.info("[OK] Using enhanced PQC implementations from this module")
@@ -3573,11 +3574,12 @@ except Exception as e:
 
 class EnhancedHybridKEM:
     """
-    MILITARY-GRADE Hybrid Key Encapsulation Mechanism - NIST Level 5 Security
+    Post-Quantum Hybrid Key Encapsulation Mechanism - NIST Level 5 Security
     
-    This is the PRIMARY KEM implementation combining:
-    - ML-KEM-1024: Fast lattice-based KEM (NIST FIPS 203)
-    - McEliece-8192128f: Conservative code-based KEM (unbroken since 1978)
+    Operational Context:
+        Where Used: Dual-combiner key exchange in hybrid_kex.py and secure_transmit_2027.py.
+        What Used:  ML-KEM-1024 (FIPS 203) + McEliece-8192128f (Classic McEliece) + HKDF-SHA384.
+        Standards:  NIST FIPS 203, CNSA Suite 2.0, SP 800-56C Rev 2.
     
     SECURITY GUARANTEE: An attacker must break BOTH fundamentally different 
     cryptographic families (lattice-based AND code-based) to compromise the session key.
@@ -3677,14 +3679,14 @@ class EnhancedHybridKEM:
 
 class EnhancedMLKEM_1024:
     """
-    MILITARY-GRADE HYBRID KEM IMPLEMENTATION
+    CNSA 2.0 HYBRID KEM IMPLEMENTATION
     
-    MILITARY SECURITY ENFORCEMENT ACTIVE
+    HIGH-ASSURANCE SECURITY ENFORCEMENT ACTIVE
     • ONLY APPROVED ALGORITHMS: ML-KEM-1024 + McEliece-8192128f
     • NO FALLBACKS PERMITTED
     • FAIL CLOSED SECURITY MODEL
     
-    SECURITY UPGRADE: This class implements military-grade hybrid KEM
+    SECURITY PROFILE: Implements high-assurance hybrid KEM
     combining ML-KEM-1024 (lattice-based) and McEliece-8192128f (code-based).
     An attacker must break BOTH to compromise the session key.
     
@@ -4879,14 +4881,14 @@ class EnhancedSPHINCS_256s:
 
 class EnhancedHybridSignature:
     """
-    MILITARY-GRADE Hybrid Signature Scheme - NIST Level 5 Security
+    CNSA 2.0 Hybrid Signature Scheme - NIST Level 5 Security
     
-    MILITARY SECURITY ENFORCEMENT ACTIVE
+    HIGH-ASSURANCE SECURITY ENFORCEMENT ACTIVE
     • ONLY APPROVED ALGORITHMS: ML-DSA-87 (fast) + SLH-DSA-256f (secure)
     • NO FALLBACKS PERMITTED
     • FAIL CLOSED SECURITY MODEL
     
-    This is the PRIMARY signature implementation combining:
+    This is the primary signature implementation combining:
     - ML-DSA-87: Fast lattice-based signatures (NIST FIPS 204)
     - SLH-DSA-256f: Conservative hash-based signatures (NIST FIPS 205)
     
@@ -4989,7 +4991,7 @@ class EnhancedHybridSignature:
 # Real native FALCON-1024 signature implementation backed by liboqs
 class EnhancedFALCON_1024:
     """
-    MILITARY-GRADE FALCON-1024 SIGNATURE IMPLEMENTATION (FN-DSA track, FIPS 206 DRAFT / Level 5)
+    FALCON-1024 SIGNATURE IMPLEMENTATION (FN-DSA track, FIPS 206 DRAFT / Level 5)
 
     2026-27 STANCE (FIPS 206 IPD late 2025, final expected late 2026/early
     2027): pre-standard Falcon wire formats are NOT byte-compatible with
@@ -4998,7 +5000,7 @@ class EnhancedFALCON_1024:
     identity is ML-DSA-87; see double_ratchet.dss_algorithm). Do NOT mint
     new Falcon-first identities; upgrade path reserved for FIPS 206 final.
     
-    MILITARY SECURITY ENFORCEMENT ACTIVE
+    SECURITY ENFORCEMENT ACTIVE
     • LEGACY-VERIFY ROLE: Falcon-1024 via native liboqs C library (oqs.dll)
       -- verifies pre-migration peers only; ML-DSA-87 is the primary identity
     • PARAMETERS: PK = 1793 bytes, SK = 2305 bytes, Signature <= 1462 bytes
@@ -6889,7 +6891,7 @@ class EnhancedMLDSA_87:
         return hashlib.shake_256(seed + b'secret').digest(length)
 
     def _expand_matrix(self, rho: bytes, rows: int, cols: int) -> bytes:
-        raise NotImplementedError("MILITARY FATAL: Performd PQC matrix expansion logic stripped.")
+        raise NotImplementedError("DEFENSE FATAL: Direct PQC matrix expansion logic stripped.")
 
     def _compute_public_key_component(self, A: bytes, s1: bytes, s2: bytes) -> bytes:
         """
@@ -6941,7 +6943,7 @@ class EnhancedMLDSA_87:
         return hashlib.shake_256(vector + b'encode').digest(len(vector))
 
     def _generate_hint_vector(self, omega: int) -> bytes:
-        raise NotImplementedError("MILITARY FATAL: Performd PQC hint vector logic stripped.")
+        raise NotImplementedError("DEFENSE FATAL: Direct PQC hint vector logic stripped.")
 P2P_ENABLE_STATEFUL_HASH_ENV = "P2P_ENABLE_EXPERIMENTAL"
 
 

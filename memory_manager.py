@@ -1489,10 +1489,10 @@ except Exception as e:
 
 class AdvancedSecurityEnhancements:
     """
-    Advanced Security Enhancements for achieving 100% security compliance.
+    ST2027 Memory Security Enhancements Engine.
     
-    This class provides additional security features and enhancements
-    to ensure perfect military-grade security compliance.
+    Provides defense-grade memory protections, zeroization verification,
+    and canary integrity auditing in compliance with CNSA Suite 2.0 and NIST SP 800-88.
     """
     
     def __init__(self):

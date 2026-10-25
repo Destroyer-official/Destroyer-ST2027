@@ -1354,9 +1354,9 @@ def verify_key_material(key_material,
     # Use NIST SP 800-90B entropy verification
     passed, entropy, issues = EntropyVerifier.verify_entropy(key_material, description)
 
-    # MILITARY SECURITY FIX: Enhanced issue classification for hybrid cryptographic keys
+    # DEFENSE SECURITY FIX: Enhanced issue classification for hybrid cryptographic keys
     if not passed:
-        # Classify issues by severity for military-grade security
+        # Classify issues by severity for high-assurance security posture
         critical_issues = ["critical_low_entropy"]
         serious_issues = ["excessive_zero_regions", "excessive_one_regions"]
         

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Military-Grade Network Endpoint Discovery Engine (IPv6 / IPv4 / LAN)
+High-Assurance Network Endpoint Discovery Engine (IPv6 / IPv4 / LAN)
 ====================================================================
 Provides reliable, high-speed, and secure discovery of all network endpoints:
 1. Public Global Unicast IPv6 (GUA) — Zero-network-egress kernel route + interface scan.
@@ -396,7 +396,7 @@ class NetworkEndpointDiscovery:
 
 
 def print_network_report(posture: NetworkPosture, port: int = DEFAULT_P2P_PORT) -> None:
-    """Print an aesthetically rich, military-grade terminal report."""
+    """Print a structured endpoint discovery report."""
     green = "\033[92m"
     cyan = "\033[96m"
     yellow = "\033[93m"
@@ -405,7 +405,7 @@ def print_network_report(posture: NetworkPosture, port: int = DEFAULT_P2P_PORT) 
     reset = "\033[0m"
 
     print(f"\n{bold}{cyan}{'='*75}{reset}")
-    print(f"{bold}{cyan}  MILITARY SECURE NETWORK ENDPOINT DISCOVERY REPORT{reset}")
+    print(f"{bold}{cyan}  SECURE NETWORK ENDPOINT DISCOVERY REPORT{reset}")
     print(f"  Discovery Time: {posture.discovery_duration_ms:.2f} ms | Dual-Stack: {posture.dual_stack_capable}")
     print(f"{bold}{cyan}{'='*75}{reset}")
 
@@ -428,7 +428,7 @@ def print_network_report(posture: NetworkPosture, port: int = DEFAULT_P2P_PORT) 
         print(f"  {yellow}► {status_msg}{reset}")
 
     # 3. Local LAN IPv4 Section
-    print(f"\n{bold}[3. LOCAL LAN IPv4 ENDPOINTS (Intranet / Military Base LAN)]{reset}")
+    print(f"\n{bold}[3. LOCAL LAN IPv4 ENDPOINTS (Intranet / Local Command Base LAN)]{reset}")
     if posture.all_local_ipv4:
         for idx, ep in enumerate(posture.all_local_ipv4, 1):
             is_pri = " (DEFAULT)" if ep.ip == posture.primary_local_ipv4 else ""
@@ -516,7 +516,7 @@ def parse_endpoint(raw_str: str, default_port: int = DEFAULT_P2P_PORT) -> Tuple[
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Military Secure P2P Network Endpoint Discovery Engine")
+    parser = argparse.ArgumentParser(description="High-Assurance Secure P2P Network Endpoint Discovery Engine")
     parser.add_argument("--port", type=int, default=DEFAULT_P2P_PORT, help=f"P2P port number (default: {DEFAULT_P2P_PORT})")
     parser.add_argument("--json", action="store_true", help="Output complete report in JSON format")
     parser.add_argument("--no-stun", action="store_true", help="Strict zero-network-egress air-gapped mode (no STUN)")

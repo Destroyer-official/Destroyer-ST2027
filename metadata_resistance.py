@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-metadata_resistance.py
+Metadata Resistance and Traffic Analysis Countermeasures Subsystem
+Statistical Observability Defense and Cover Traffic Architecture for National Security Systems
 
-Production-ready metadata resistance features for military-grade P2P messaging.
+Operational Context:
+    Where Used: Session message serialization, outbound transport pipelines, Tor socks5 handlers.
+    What Used:  Uniform payload quantum padding (1024B/1232B), Poisson-distributed timing jitter,
+               Tor v3 SOCKS5 onion proxy integration, pseudorandom cover frame interleaving.
+    Standards:  IETF RFC 1928 (SOCKS5), Tor v3 Protocol Specification, NIST SP 800-53 SC-8.
+    Fail-Closed: Drops unpadded messages and blocks non-Tor outbound traffic on WAN profiles.
 
-This module implements comprehensive metadata resistance including:
-- Cover traffic generation (indistinguishable from real messages)
-- Message padding to uniform 1024-byte boundaries
-- Timing jitter for traffic analysis resistance
-- Tor SOCKS5 proxy support for onion routing
-
-**Validates: Requirements 2.1, 2.2, 2.3, 2.4**
+Requirements Implemented:
+- 2.1: Indistinguishable cover traffic generation
+- 2.2: Uniform cell padding to fixed quantum boundaries
+- 2.3: Controlled timing jitter mitigating packet inter-arrival correlation
+- 2.4: Mandatory Tor v3 SOCKS5 routing across public internet pathways
 """
 
 import asyncio

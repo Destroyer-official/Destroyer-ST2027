@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
-air_gapped_operation.py
+Air-Gapped Operation and Isolated Node Key Provisioning Subsystem
+Physical Network Isolation and Offline Transport Engine for National Security Systems
 
-Air-Gapped Operation Support for Military-Grade P2P Messaging.
+Operational Context:
+    Where Used: Isolated command enclaves, SCIF workstations, field stations without
+               external IP uplink, and out-of-band key ceremony procedures.
+    What Used:  Local UDP subnet discovery, ML-KEM-1024 PSK encapsulation, animated QR code
+               optical frame transfers, offline SHA3-512 signed certificate caches.
+    Standards:  CNSSI 1253 / NIST SP 800-53 SC-7 (Boundary Protection), FIPS 203 ML-KEM-1024.
+    Fail-Closed: Purges active session keys and halts socket binding if an unauthorized WAN route is detected.
 
-This module implements comprehensive air-gapped operation features including:
-- Local peer discovery via UDP broadcast on port 45678
-- Pre-shared key (PSK) support using ML-KEM-1024 encapsulation
-- QR code key exchange with base64url encoding and SHA3-512 integrity
-- Offline certificate caching with SHA3-512 integrity verification
-
-**Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
-
-Security Features:
-- No external server dependency
-- Direct peer-to-peer connections
-- ML-KEM-1024 post-quantum key encapsulation
-- SHA3-512 integrity verification for all cached data
-- Fail-closed security model
+Requirements Implemented:
+- 3.1: Isolated local peer discovery via broadcast on restricted interface
+- 3.2: Pre-shared key (PSK) negotiation using ML-KEM-1024 encapsulation
+- 3.3: Optical QR code key exchange with base64url encoding and SHA3-512 integrity
+- 3.4: Offline certificate validation against local Trust Anchor store
+- 3.5: Absolute fail-closed operation with zero external internet dependencies
 """
 
 import base64

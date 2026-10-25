@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-25T03:52:28.666284+00:00",
+  "timestamp_utc": "2026-10-25T04:48:31.462117+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -39,20 +39,20 @@
       "sha3_512": "481c17cee8e2b03bbc498785a8a52eed44da97895a545c2a259a9ff1e4b4d7a29b7e4c738aea1273c3c2d708185c8e2ac1759c23a93e73f085eba29c2bbd72f5"
     },
     "pqc_algorithms.py": {
-      "size_bytes": 349703,
-      "sha3_512": "c40322ea4153010b521d5847a40bef235fec8ffbb46fc1bcd82276ad94f753519ae6c6a9c026d5f0af52c88679522c48d00f72934e2ab18cd8e1ec10f7aa9362"
+      "size_bytes": 349904,
+      "sha3_512": "4c2093b15a37267f25ab5e2756fc98c180b0fef4a0b5d107fa58ff808a682e946a0ee8997dbf997fcca1f6d91833f19ba9ca5e421649b03b6b8989687841d675"
     },
     "metadata_resistance.py": {
-      "size_bytes": 34621,
-      "sha3_512": "98617b0790efcb4aa4a11fa414eb70136d70eb6b19d0e098da425bd380db6eb9b7cee66e9b6fb754c9fe07d6958bc0edfac01fbd9a168e5bcb926e3736c798cd"
+      "size_bytes": 35134,
+      "sha3_512": "b7b3792444e5d168800399606047755cf822b393b5d64a8edfd22eab04ac31c28ac728442d6486842427b708acd8fa0288395bb57bef8e9afb70aa3bda61ef51"
     },
     "network_adversary_resistance.py": {
-      "size_bytes": 60382,
-      "sha3_512": "1dc3ab6916c845a2003a0dfba0e651ead65bb167947986d95989f8713d48e2057bc6d46690f94c9610e96e8cdea8bc98b21b6017ec3e939ad8520fde9b015232"
+      "size_bytes": 60868,
+      "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 791865,
-      "sha3_512": "d50aa71f689cfae1dff25e2425a8aa3155b51b8c535c211666b4340228360d03654d6412f504c4d83971368fe973359d72e6c1a39b4c5b5d57ce296dc21d4474"
+      "size_bytes": 791735,
+      "sha3_512": "2e5dc2bc0648c685f88f38e75265160b8adca40fa221f612ae85e7fddb8ea798f7de55eb9bf82eba6e336dd1e77dfc6ada0eaab14f35acc25850d978a737fdd8"
     }
   },
   "sbom_status": {
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "8a70e24cbe46defee4e51f7f7821e80a85b9f42a27bf75967dc8f86b82268bf8c3b5a93e046e3ade96197e1c54a6d78b92d54736493548ec2499a5a5d440c9fb",
+  "source_tree_merkle_root": "e7b3afc298305d34faa945bc0a084eb47ad74de0fba16c0a68ed35dafbadbfabb541e10e1e989faf5743f1cdbd45375414617bbbbaba1be275b3e8c7b66a4804",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "e0d7d984839b7c9495e6031fb1cf1127df183a6cc8950589bd05ffedddc8eb7755e236978fef7cb8de5222c1e01ec0c36c57134488d49c68493c3c3b9bd4f96a",
@@ -73,8 +73,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "08697280e08d980695033ba5bee5c212707a0ca562a4c6f4bcae222390dc62ece5f0065412b65e83b5f6f74a3cec6a2ec9a85e94c5b7600ecc3fbc80afdbfa5f",
-      "actual_sha3_512": "08697280e08d980695033ba5bee5c212707a0ca562a4c6f4bcae222390dc62ece5f0065412b65e83b5f6f74a3cec6a2ec9a85e94c5b7600ecc3fbc80afdbfa5f",
+      "expected_sha3_512": "cd2b5785d6fd4792d9a7c18d11ce730480be49a67f0b3e70a216987810e8d2ab0750caffb137725e4fab0084f7ce9ba09220ac94924f14e5c5f3255e0af4211f",
+      "actual_sha3_512": "cd2b5785d6fd4792d9a7c18d11ce730480be49a67f0b3e70a216987810e8d2ab0750caffb137725e4fab0084f7ce9ba09220ac94924f14e5c5f3255e0af4211f",
       "matched": true
     },
     "ts_runtime.py": {
@@ -83,8 +83,8 @@
       "matched": true
     },
     "dependency_security_verifier.py": {
-      "expected_sha3_512": "603a1ebf010ebb46c87cd6ff744b68c7a50d108b4f50e2ae4676a115e40fea206df90a73cf9706a628ccce4fa5b5df7cbca77cc77ed3882fe18db62f4f10b1a6",
-      "actual_sha3_512": "603a1ebf010ebb46c87cd6ff744b68c7a50d108b4f50e2ae4676a115e40fea206df90a73cf9706a628ccce4fa5b5df7cbca77cc77ed3882fe18db62f4f10b1a6",
+      "expected_sha3_512": "c32eb5f28b4f404a51370a5919f3680131b191bffa7d6840e67fdbc4ac825c64eaed7752411d7c5838d371118ae28d1ecd9fea5b75b909715c2aa3be95d9b7d5",
+      "actual_sha3_512": "c32eb5f28b4f404a51370a5919f3680131b191bffa7d6840e67fdbc4ac825c64eaed7752411d7c5838d371118ae28d1ecd9fea5b75b909715c2aa3be95d9b7d5",
       "matched": true
     }
   }

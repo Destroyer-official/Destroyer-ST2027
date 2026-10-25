@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Military-Grade Full-Project Security Diagnostics
-================================================
+National Security Systems Full-Project Security Diagnostics
+===========================================================
 Runs a detailed, evidence-based security sweep of the entire P2P project:
 every check executes a LIVE probe (roundtrip, tamper-rejection, config
 parse, file inspection) and reports exactly what works and what does not.
@@ -1133,7 +1133,7 @@ def environment_facts() -> Dict[str, str]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Military-grade full-project security diagnostics")
+    ap = argparse.ArgumentParser(description="High-assurance full-project security diagnostics")
     ap.add_argument("--json", default=None, help="write JSON report to path")
     ap.add_argument("--category", default=None, help="run one category only")
     ap.add_argument("--fail-on-warn", action="store_true")
@@ -1158,7 +1158,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     header = [
         "=" * 78,
-        " MILITARY P2P // FULL-PROJECT SECURITY DIAGNOSTICS",
+        " SOVEREIGN P2P // FULL-PROJECT SECURITY DIAGNOSTICS",
         " " + " | ".join(f"{k}={v}" for k, v in facts.items()),
         "=" * 78,
     ]

@@ -4290,10 +4290,10 @@ class QuantumResistanceFutureProfing:
     def _create_sphincs_fallback(self):
         """
         Create a fallback implementation for SPHINCS+ using other quantum-resistant algorithms
-        (DISABLED for Military-Grade Security - Fail Closed)
+        (DISABLED for Defense-Baseline Security - Fail Closed)
         """
         self.logger.critical("SPHINCS+ fallback requested but fallbacks are strictly disabled.")
-        raise RuntimeError("Fail-Closed: SPHINCS+ fallback is not permitted in military-grade mode. Production hybrid signatures required.")
+        raise RuntimeError("Fail-Closed: SPHINCS+ fallback is not permitted in defense baseline mode. Production hybrid signatures required.")
 
     def _init_algorithm_instances(self):
         """Initialize instances of all supported PQ algorithms"""
@@ -4598,7 +4598,7 @@ def get_quantum_resistance():
     global quantum_resistance
     if quantum_resistance is None:
         # FAIL-CLOSED: Always initialize the real QuantumResistanceFutureProfing.
-        # Test stubs are not permitted under military-grade security policy.
+        # Test stubs are not permitted under defense baseline security policy.
         # Test environments must use proper test fixtures (e.g., unittest.mock) externally.
         quantum_resistance = QuantumResistanceFutureProfing()
     return quantum_resistance

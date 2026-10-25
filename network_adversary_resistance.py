@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-network_adversary_resistance.py
+Network Adversary Resistance and Onion-Encrypted Multi-Hop Routing Subsystem
+Adversarial Network Protection and Traffic Obfuscation Architecture for National Security Systems
 
-Production-ready network adversary resistance for military-grade P2P messaging.
+Operational Context:
+    Where Used: Peer transport layers, decentralized routing overlays, and WAN onion relays.
+    What Used:  Multi-hop layered Sphinx-style onion encryption, constant-interval cell pacing,
+               uniform packet size padding, dummy chaff stream intermixing.
+    Standards:  Tor v3 Protocol Specification, IETF RFC 1928, NIST SP 800-53 SC-8.
+    Fail-Closed: Drops invalid onion frames immediately with zero response datagrams emitted.
 
-This module implements comprehensive network adversary resistance including:
-- Constant-rate traffic (fixed rate regardless of actual messages)
-- Multi-hop routing with onion encryption per hop
-- Traffic shaping to obscure message boundaries
-
-**Validates: Requirements 9.1, 9.2, 9.3**
+Requirements Implemented:
+- 9.1: Constant-rate traffic generation independent of payload queues
+- 9.2: Multi-hop circuit construction with ephemeral per-hop key derivation
+- 9.3: Statistical traffic shaping obscuring transmission boundaries
 """
 
 import asyncio

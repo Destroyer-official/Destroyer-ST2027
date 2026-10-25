@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """
-Continuous Security Monitor Module
+ST2027 CONTINUOUS SECURITY MONITORING & ANOMALY DETECTION ENGINE
 
-This module implements continuous security monitoring for the military-grade
-secure P2P messaging system, providing real-time behavioral analysis, timing
-monitoring for side-channel indicators, honeypot key detection, and SIEM integration.
+OPERATIONAL CONTEXT:
+  Operates as an autonomous background observer across the ST2027 runtime daemon.
+  Collects continuous telemetry on cryptographic operation latencies, key lifecycle
+  events, honeypot canary interactions, and network ingress patterns.
 
-Requirements addressed: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6
-
-Key Features:
-- Behavioral analysis for anomaly detection (15.1)
-- Cryptographic operation timing monitoring (15.2)
-- Unusual key usage pattern detection (15.3)
-- Honeypot keys that trigger alerts (15.4)
-- SIEM integration via secure API (15.5)
-- Security metrics dashboard (15.6)
+SYSTEM INTEGRATION:
+  Subsystem: Telemetry & Active Defense Subsystem (Cross-Cutting Sentinel)
+  Standards:
+    - NIST SP 800-137: Information Security Continuous Monitoring (ISCM)
+    - DoD Zero Trust Architecture: Continuous Diagnostics and Mitigation (CDM)
+    - Syslog / RFC 5424 secure SIEM telemetry integration
 """
 
 import logging

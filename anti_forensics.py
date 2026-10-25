@@ -1,18 +1,22 @@
 """
-Anti-Forensics Module - Military-Grade Plausible Deniability
+Anti-Forensics and Emergency Media Sanitization Engine
+High-Assurance Plausible Deniability and Memory Sanitization Subsystem
 
-This module implements anti-forensics features for the secure P2P messaging system:
-- Deniable encryption with hidden volumes (Requirement 12.1)
-- Duress passwords revealing decoy data (Requirement 12.2)
-- Secure boot verification with anti-tamper detection (Requirement 12.3)
-- Remote secure wipe via authenticated command (Requirement 12.4)
-- Dead-man switch for automatic data destruction (Requirement 12.5)
-- Tamper-triggered immediate wipe (Requirement 12.6)
+Operational Context:
+    Where Used: Emergency panic wipe sequences, device compromise containment,
+               dead-man inactivity monitors, and duress credential challenges.
+    What Used:  Multi-volume deniable storage headers, NIST SP 800-88 multi-pass media wipe,
+               tamper sensor monitoring, authenticated remote emergency zeroization tokens.
+    Standards:  DoD 5220.22-M, NIST SP 800-88 Rev 1, FIPS 140-3 Physical Security.
+    Fail-Closed: Purges encryption master keys, overwrites volatile memory, and unlinks storage descriptors.
 
-Standards Compliance:
-- DoD 5220.22-M: Secure data sanitization
-- NIST SP 800-88 Rev. 1: Media sanitization guidelines
-- FIPS 140-3: Cryptographic module security requirements
+Requirements Implemented:
+- 12.1: Deniable encryption with hidden payload volumes
+- 12.2: Duress authentication revealing decoy profile state
+- 12.3: Boot-time integrity measurement with anti-tamper detection
+- 12.4: Cryptographically authenticated remote wipe commands
+- 12.5: Dead-man timer triggering automated data destruction
+- 12.6: Hardware tamper-triggered immediate memory zeroization
 """
 
 import os

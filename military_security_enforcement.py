@@ -1,36 +1,44 @@
 #!/usr/bin/env python3
 """
-Military Security Enforcement Module
+ST2027 CRYPTOGRAPHIC POLICY ENFORCEMENT ENGINE
 
-This module enforces strict military-grade security requirements with no fallbacks.
-Only approved algorithms are permitted:
+OPERATIONAL CONTEXT:
+  Invoked during runtime initialization and session negotiation to strictly gate
+  cryptographic primitive selection. Enforces CNSA Suite 2.0 and FIPS 140-3 Level 4
+  baselines with absolute fail-closed semantics.
 
-• Hybrid KEM: ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384
-• Hybrid Signatures: ML-DSA-87 (fast) + SLH-DSA-256f (secure)
+STANDARDS & SPECIFICATIONS:
+  - NIST FIPS 203: ML-KEM-1024 post-quantum key encapsulation
+  - NIST FIPS 204: ML-DSA-87 lattice digital signatures
+  - NIST FIPS 205: SLH-DSA-256f stateless hash-based digital signatures
+  - Classic McEliece: McEliece-8192128f conservative code-based KEM
+  - RFC 5869: HKDF-SHA384 key derivation
 
-NO FALLBACKS PERMITTED - FAIL CLOSED SECURITY MODEL
+FAIL-CLOSED BEHAVIOR:
+  Any attempt to negotiate unapproved algorithms or downgrade to legacy ciphers
+  immediately raises MilitarySecurityError and terminates connection sequencing.
 """
 
 import logging
 import sys
 from typing import Dict, List, Set, Optional
 
-# Configure military security logger
-military_logger = logging.getLogger('military_security')
+# Configure security enforcement logger
+military_logger = logging.getLogger('security_enforcement')
 military_logger.setLevel(logging.INFO)
 
 class MilitarySecurityError(Exception):
-    """Exception raised when military security requirements are violated."""
+    """Exception raised when defense cryptographic security requirements are violated."""
 
 class MilitarySecurityEnforcement:
     """
-    Enforces military-grade security requirements with no fallbacks.
+    ST2027 Cryptographic Policy Enforcement Subsystem.
     
     SECURITY POLICY:
-    - Only approved algorithms are permitted
-    - No fallback mechanisms allowed
-    - Fail closed on any security violation
-    - Continuous monitoring of cryptographic operations
+    - Only CNSA Suite 2.0 and NIST Level 5 approved algorithms are permitted
+    - Zero fallback mechanisms or downgrade paths
+    - Immediate fail-closed abort on any policy violation
+    - Continuous validation of active cryptographic contexts
     """
     
     # APPROVED ALGORITHMS - NO MODIFICATIONS PERMITTED

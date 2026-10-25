@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """
-covert_channel_defense.py
+Covert Channel Mitigation and Traffic Normalization Subsystem
+Statistical Traffic Analysis Resistance and Cell Shaping Architecture for National Security Systems
 
-Military-grade covert channel resistance for secure P2P messaging.
+Operational Context:
+    Where Used: Network outbound packet scheduler, wire cell encoder, and flow shaping
+               wrappers across transport_anonymity.py and secure_transmit_2027.py.
+    What Used:  Rigid constant-interval frame pacing (50ms), uniform cell quantization
+               (256B, 512B, 1232B), protocol field PRF whitening, pseudorandom chaff cover frames.
+    Standards:  NSA CNSA Suite 2.0 Network Protections, NIST SP 800-53 SC-8 (Transmission Confidentiality).
+    Fail-Closed: Drops out-of-spec packet sizes and throttles burst traffic violating pacing parameters.
 
-This module implements comprehensive covert channel defense including:
-- Fixed-rate transmission (Requirement 13.1)
-- Packet size normalization (Requirement 13.2)
-- Protocol field normalization (Requirement 13.3)
-- Covert channel detection (Requirement 13.4)
-- Cover traffic injection (Requirement 13.5)
-
-**Validates: Requirements 13.1, 13.2, 13.3, 13.4, 13.5**
+Requirements Implemented:
+- 13.1: Fixed-rate frame pacing scheduler with drift compensation
+- 13.2: Packet size normalization to quantized quantum boundaries
+- 13.3: Protocol header field normalization and PRF masking
+- 13.4: Statistical covert timing channel detection and monitoring
+- 13.5: Constant-entropy pseudorandom cover traffic (chaff) injection
 """
 
 import hashlib

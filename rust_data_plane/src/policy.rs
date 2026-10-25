@@ -14,8 +14,9 @@
 //! - Signal PQXDH analyses (Fiedler/Guenther PKC 2025; Bhargavan USENIX
 //!   2024): KEM ciphertext must bind the encapsulation key; transcript
 //!   hashes must cover every transmitted bundle.
-//! - Signal SPQR / Triple Ratchet (Dodis et al. 2025/078, Oct 2025):
-//!   PCS requires FRESH KEM encaps per ratchet step; reuse refused.
+//! - Signal SPQR / Triple Ratchet research motivates fresh-KEM healing.
+//!   This crate uses a project-specific construction, not SPQR/Triple
+//!   Ratchet itself; fresh encapsulation alone does not prove equivalent PCS.
 //! - RATS RFC 9334: verifier trust comes from a trust-anchor store
 //!   independent of the evidence; self-supplied keys prove nothing.
 //! - liboqs upstream supports ONLY 0.16.0 (<0.16 unsupported;

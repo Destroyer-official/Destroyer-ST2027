@@ -30,8 +30,12 @@
 //! Data-plane modules (existing, audited path): framing, AEAD, replay,
 //! padding, chaff, silent-drop networking, FEC, pacing, purge.
 //!
-//! FFI discipline: bytes and counters cross the boundary; raw key material
-//! never leaves Rust except inside sealed calls. All secrets ZeroizeOnDrop.
+//! FFI discipline: bytes and counters cross the boundary. KEX session keys,
+//! ratchet message keys, and frame-key derivation results are explicitly
+//! returned to CPython for orchestration/interoperability, so callers must
+//! treat Python-side key copies as exposed to the interpreter heap/GC.
+//! Rust-held secrets use zeroization where implemented; that does not erase
+//! Python-owned copies or establish constant-time Python orchestration.
 
 pub mod acd;
 pub mod aead;

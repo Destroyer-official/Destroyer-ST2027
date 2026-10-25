@@ -1,14 +1,18 @@
-//! Sovereign Group Ratchet (CNSA Suite 2.0 / RFC 9420 MLS Aligned)
-//! =================================================================
-//! Provides Post-Quantum End-to-End Encrypted Group Messaging for Top Secret
-//! Sovereign Defense Enclaves in pure, memory-locked Rust.
+//! Project-specific sender-key group ratchet, wire profile v2.
 //!
-//! Features:
-//! 1. Per-Member Sender Keys with Forward Secrecy (Symmetric Ratchet via HKDF-SHA384).
-//! 2. Continuous Epoch Rekeying for Post-Compromise Security (PCS self-healing).
-//! 3. Authenticated AES-256-GCM message encryption with directional sequence tags.
-//! 4. Two-Person Integrity (TPI) Dual-Officer verification for epoch transition.
-//! 5. Memory wiping (ZeroizeOnDrop) on all epoch and chain secrets.
+//! This is NOT MLS/RFC 9420 and does not implement authenticated membership
+//! commits, dual-officer authorization, or a complete group key agreement.
+//! An authenticated outer protocol must authorize every roster/epoch change.
+//!
+//! Implemented properties:
+//! 1. Per-member sender chains with forward progression via HKDF-SHA384.
+//! 2. Coordinated local epoch rekey when every member receives the same entropy.
+//! 3. AES-256-GCM with canonical context-bound AAD and checked counters.
+//! 4. Authentication-before-commit for receiver chain transitions.
+//! 5. Zeroization of epoch and chain secrets on replacement/drop.
+//!
+//! Delayed out-of-order delivery is unsupported: forward catch-up discards
+//! skipped message keys. No Signal, WhatsApp, or MLS equivalence is claimed.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::Aes256Gcm;

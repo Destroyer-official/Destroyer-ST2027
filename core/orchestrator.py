@@ -666,21 +666,29 @@ class SecureP2PChat:
 
     # ========== Crypto Module Delegation Stubs ==========
     
-    def _add_military_grade_padding(self, data: bytes) -> bytes:
-        """Add secure padding - delegates to crypto module."""
+    def _add_quantum_padding(self, data: bytes) -> bytes:
+        """Add secure cryptographic padding - delegates to crypto module."""
         try:
-            return self.crypto.padding.add_military_grade_padding(data)
+            return self.crypto.padding.add_quantum_padding(data)
         except Exception as e:
             self.logger.error(f"[CRYPTO] Padding failed: {e}", exc_info=True)
             raise
     
-    def _remove_military_grade_padding(self, padded_data: bytes) -> bytes:
-        """Remove secure padding - delegates to crypto module."""
+    def _remove_quantum_padding(self, padded_data: bytes) -> bytes:
+        """Remove secure cryptographic padding - delegates to crypto module."""
         try:
-            return self.crypto.padding.remove_military_grade_padding(padded_data)
+            return self.crypto.padding.remove_quantum_padding(padded_data)
         except Exception as e:
             self.logger.error(f"[CRYPTO] Padding removal failed: {e}", exc_info=True)
             raise
+
+    def _add_military_grade_padding(self, data: bytes) -> bytes:
+        """Legacy compatibility alias for _add_quantum_padding."""
+        return self._add_quantum_padding(data)
+    
+    def _remove_military_grade_padding(self, padded_data: bytes) -> bytes:
+        """Legacy compatibility alias for _remove_quantum_padding."""
+        return self._remove_quantum_padding(padded_data)
     
     def _add_random_padding(self, data: bytes) -> bytes:
         """Add random padding - delegates to crypto module."""

@@ -13,16 +13,14 @@ except (ImportError, ValueError):
 
 
 class PaddingOperations(BaseModule):
-    """secure padding operations."""
+    """Secure padding operations for National Security Systems."""
     
     # Maximum random padding bytes (1-32 bytes)
     MAX_RANDOM_PADDING_BYTES = 32
     
-    def add_military_grade_padding(self, data: bytes) -> bytes:
+    def add_quantum_padding(self, data: bytes) -> bytes:
         """
-        Add secure padding to data.
-        
-        This is an alias for add_random_padding for backward compatibility.
+        Add cryptographic padding with random bytes and length encoding.
         
         Args:
             data: Data to pad (bytes)
@@ -36,19 +34,17 @@ class PaddingOperations(BaseModule):
         try:
             return self.add_random_padding(data)
         except Exception as e:
-            self.logger.error(f"secure padding failed: {e}", exc_info=True)
+            self.logger.error(f"Secure padding failed: {e}", exc_info=True)
             raise CryptoError(
-                f"secure padding failed: {e}",
+                f"Secure padding failed: {e}",
                 module="crypto.padding",
-                function="add_military_grade_padding",
+                function="add_quantum_padding",
                 severity="HIGH"
             )
     
-    def remove_military_grade_padding(self, padded_data: bytes) -> bytes:
+    def remove_quantum_padding(self, padded_data: bytes) -> bytes:
         """
-        Remove secure padding from data.
-        
-        This is an alias for remove_random_padding for backward compatibility.
+        Remove cryptographic padding from data.
         
         Args:
             padded_data: Padded data (bytes)
@@ -62,13 +58,21 @@ class PaddingOperations(BaseModule):
         try:
             return self.remove_random_padding(padded_data)
         except Exception as e:
-            self.logger.error(f"secure padding removal failed: {e}", exc_info=True)
+            self.logger.error(f"Secure padding removal failed: {e}", exc_info=True)
             raise CryptoError(
-                f"secure padding removal failed: {e}",
+                f"Secure padding removal failed: {e}",
                 module="crypto.padding",
-                function="remove_military_grade_padding",
+                function="remove_quantum_padding",
                 severity="HIGH"
             )
+
+    def add_military_grade_padding(self, data: bytes) -> bytes:
+        """Legacy compatibility alias for add_quantum_padding."""
+        return self.add_quantum_padding(data)
+    
+    def remove_military_grade_padding(self, padded_data: bytes) -> bytes:
+        """Legacy compatibility alias for remove_quantum_padding."""
+        return self.remove_quantum_padding(padded_data)
     
     def add_random_padding(self, data: bytes) -> bytes:
         """

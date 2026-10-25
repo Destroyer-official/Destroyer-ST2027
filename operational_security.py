@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Operational Security Features for Military-Grade P2P Messaging
+Operational Security (OPSEC) and Ephemeral Lifecycle Management Subsystem
+Secure Media Disposal, Ephemeral Identities, and Automated Zeroization Architecture
 
-This module implements operational security features including:
-- Traffic analysis resistance padding (1024-byte boundaries)
-- Ephemeral identity support with ML-KEM-1024 + ML-DSA-87
-- Message expiration with TTL-based automatic deletion
-- Secure disposal with DoD 5220.22-M 3-pass wipe
+Operational Context:
+    Where Used: Node session lifecycle, message TTL monitors, and ephemeral identity rotators.
+    What Used:  TTL-based message revocation, ML-KEM-1024 + ML-DSA-87 ephemeral identity pools,
+               DoD 5220.22-M compliant 3-pass memory sanitization.
+    Standards:  DoD 5220.22-M, NIST SP 800-88 Rev 1, CNSA Suite 2.0.
+    Fail-Closed: Overwrites and zeroes expired key structures immediately upon TTL expiry.
 
-Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
-
-Correctness Properties Implemented:
+Requirements Implemented: 13.1, 13.2, 13.3, 13.4, 13.5
 - Property 14: Traffic Analysis Resistance Padding (Requirements 13.2)
 - Property 15: Ephemeral Identity Secure Disposal (Requirements 13.1, 13.3, 13.5)
 """

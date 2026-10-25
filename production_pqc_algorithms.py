@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
-Production-Ready Post-Quantum Cryptography Implementation Suite
-NIST FIPS 203/204/205 Compliant - Military-Grade Security
+ST2027 PRODUCTION POST-QUANTUM CRYPTOGRAPHY ENGINE
+CNSA Suite 2.0 / NIST FIPS 203, 204, 205 High-Assurance Primitives
 
-This module provides production-ready implementations of NIST-standardized 
-post-quantum cryptographic algorithms with no fallbacks, no compromises,
-and zero false positives.
+OPERATIONAL CONTEXT:
+  Invoked by key exchange, session ratification, and digital certificate verification
+  subsystems. Implements pure post-quantum primitives without legacy algorithm fallback.
 
-Supported Algorithms:
-- ML-KEM-1024: NIST FIPS 203 (Key Encapsulation)
-- FALCON-1024: NIST FIPS 206 IPD-track (Digital Signatures, final ~2027)
-- SPHINCS+-256s: NIST FIPS 205 (Hash-based Signatures)
-
-Security Features:
-- Hardware-backed implementations when available
-- Constant-time operations
-- Side-channel resistance
-- Memory protection
-- No fallbacks to weaker algorithms
+SYSTEM INTEGRATION:
+  Subsystem: Cryptographic Primitives Subsystem (Core Layer 2)
+  Standards:
+    - NIST FIPS 203: ML-KEM-1024 (Lattice-based Key Encapsulation Mechanism)
+    - NIST FIPS 204: ML-DSA-87 (Lattice-based Digital Signature Algorithm)
+    - NIST FIPS 205: SLH-DSA-256f (Stateless Hash-based Digital Signature Algorithm)
+    - NIST FIPS 206 (Draft): FALCON-1024 / FN-DSA (Fast Fourier Lattice Signature)
+  Behavior:
+    - Strict constant-time operations
+    - Zero fallback to unapproved or pre-quantum classical algorithms
 """
 
 import os

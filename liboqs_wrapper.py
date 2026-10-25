@@ -746,7 +746,7 @@ class LibOQS_AES256GCM:
 # --- Hybrid KEM Implementation ---
 class HybridKEM:
     """
-    MILITARY-GRADE HYBRID KEY ENCAPSULATION MECHANISM
+    HIGH-ASSURANCE HYBRID KEY ENCAPSULATION MECHANISM
     
     DUAL POST-QUANTUM RESEARCH AGILITY KEM (LATTICE + CODE-BASED HEDGE)
     
@@ -1151,7 +1151,7 @@ if __name__ == '__main__':
         print(f"  PASS AES Key generated: {len(aes_key)} bytes")
         aes_nonce = aes_gcm.generate_nonce()
         print(f"  PASS AES Nonce generated: {len(aes_nonce)} bytes")
-        plaintext = b"This is the confidential military data (faster build)."
+        plaintext = b"This is the confidential payload data (faster build)."
         aad = b"Metadata Packet ID 67890" # Associated Data
 
         ciphertext = aes_gcm.encrypt(aes_key, aes_nonce, plaintext, aad)

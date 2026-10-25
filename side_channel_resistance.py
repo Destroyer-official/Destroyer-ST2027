@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Military-Grade Side-Channel Resistance Module
-Military-Grade Constant-Time Operations with Timing Verification
+Side-Channel Attack Mitigation and Timing Invariance Verification Module
+High-Assurance Constant-Time Execution Engine for National Security Systems
 
-This module implements comprehensive side-channel attack resistance including:
-- Constant-time operation wrappers for all cryptographic operations
-- Statistical analysis of timing variance
-- Runtime timing measurement and anomaly detection
-- Coefficient of variation verification (< 0.05 threshold)
+Operational Context:
+    Where Used: Cryptographic key derivations, MAC verifications, and scalar point
+               multiplication checks across secure_transmit_2027.py, crypto/, and hybrid_kex.py.
+    What Used:  Bitwise branchless selections, constant-time memory comparisons (RFC 8439),
+               Box-Muller gaussian dummy delays, Welch's t-test statistical timing variance probes.
+    Standards:  FIPS 140-3 Level 3/4 Physical Security, NIST SP 800-38D, NIST SP 800-56C Rev 2.
+    Fail-Closed: Raises SideChannelViolationError on CV >= 0.05 timing variance threshold.
 
 Requirements Implemented:
 - 4.1: Constant-time operations for all cryptographic code paths

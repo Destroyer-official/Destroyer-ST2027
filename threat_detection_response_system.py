@@ -1,7 +1,14 @@
 """
-Military-Grade Threat Detection and Response System for Secure P2P
-Implements real-time threat detection algorithms, automatic security incident response,
-data exfiltration prevention, and comprehensive security monitoring.
+Continuous Threat Detection and Automated Incident Containment Engine
+Zero-Trust Anomaly Analysis and Active Defense Subsystem
+
+Operational Context:
+    Where Used: Continuous monitoring daemon, session packet inspection, connection
+               gatekeepers, and remote SIEM forwarders.
+    What Used:  Sliding-window statistical timing variance, Shannon entropy analysis,
+               IP rate limiting, and automated fail-closed containment policies.
+    Standards:  DoD Zero Trust Architecture (ZTA 2.0) Pillar 7, NIST SP 800-137 (ISCM).
+    Fail-Closed: Halts process execution and zeroizes session state on uncontained intrusion.
 """
 
 import asyncio
@@ -25,7 +32,7 @@ try:
         get_audit_logger, log_security_violation
     )
 except ImportError:
-    # FAIL-CLOSED: audit_logging_system is mandatory for military-grade threat detection.
+    # FAIL-CLOSED: audit_logging_system is mandatory for high-assurance threat detection.
     # Test stubs are not permitted in production deployments.
     raise RuntimeError(
         "CRITICAL: audit_logging_system module is required for threat detection. "
@@ -457,8 +464,8 @@ class AutomatedResponseSystem:
         logging.critical(alert_message)
         print(f"[ALERT] {alert_message}")
         
-        # In a military deployment, threats trigger an immediate fail-closed state
-        raise RuntimeError(f"MILITARY FATAL: Unresolved security threat. System halting. {alert_message}")
+        # Active containment: unresolved threats trigger an immediate fail-closed state
+        raise RuntimeError(f"DEFENSE FATAL: Unresolved security threat. System halting. {alert_message}")
 
     async def _rate_limit_user(self, threat: ThreatDetection) -> Dict[str, Any]:
         """Apply rate limiting to a user."""
@@ -472,7 +479,7 @@ class AutomatedResponseSystem:
         if threat.source_ip:
             self.blocked_ips.add(threat.source_ip)
             # Enforce immediate connection termination via OS-level firewall or fatal halt
-            raise RuntimeError(f"MILITARY FATAL: Unauthorized IP {threat.source_ip} detected. Halting to block access.")
+            raise RuntimeError(f"DEFENSE FATAL: Unauthorized IP {threat.source_ip} detected. Halting to block access.")
         return {'status': 'failed', 'reason': 'no_source_ip'}
 
     async def _permanent_block(self, threat: ThreatDetection) -> Dict[str, Any]:
@@ -480,7 +487,7 @@ class AutomatedResponseSystem:
         if threat.source_ip:
             self.blocked_ips.add(threat.source_ip)
             # Enforce permanent blockade and halt process to prevent any potential bypass
-            raise RuntimeError(f"MILITARY FATAL: Malicious IP {threat.source_ip} permanently blocked. Halting system.")
+            raise RuntimeError(f"DEFENSE FATAL: Malicious IP {threat.source_ip} permanently blocked. Halting system.")
         return {'status': 'failed', 'reason': 'no_source_ip'}
 
     async def _quarantine_user(self, threat: ThreatDetection) -> Dict[str, Any]:
@@ -494,7 +501,7 @@ class AutomatedResponseSystem:
         """Terminate user session."""
         if threat.user_id:
             # Under fail-closed policy, terminating a session halts the node to prevent data leakage
-            raise RuntimeError(f"MILITARY FATAL: Terminating session for {threat.user_id} due to security violation.")
+            raise RuntimeError(f"DEFENSE FATAL: Terminating session for {threat.user_id} due to security violation.")
         return {'status': 'failed', 'reason': 'no_user_id'}
 
     async def _escalate_to_human(self, threat: ThreatDetection) -> Dict[str, Any]:

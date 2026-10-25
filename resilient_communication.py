@@ -1,16 +1,17 @@
 """
-Resilient Communication Module
+ST2027 RESILIENT TRANSPORT & RELIABLE DELIVERY ENGINE
 
-Implements reliable message delivery for military-grade P2P communications:
-- Message queuing for offline peers (max 1000 messages per peer)
-- Exponential backoff retry: 1s, 2s, 4s, 8s, 16s, 32s, 60s max
-- Message deduplication using SHA3-256(session_id + sequence_number)
+OPERATIONAL CONTEXT:
+  Operates between session orchestrator and physical/overlay network layers.
+  Buffers outbound traffic across intermittent tactical connectivity, enforces
+  bounded exponential backoff pacing, and guarantees exact-once delivery via
+  cryptographic deduplication tags.
 
-**Feature: military-p2p-2026-enhancement**
-**Validates: Requirements 10.1, 10.2, 10.3, 10.4**
-
-Author: Security Team
-License: MIT
+SYSTEM INTEGRATION:
+  Subsystem: Reliable Transport Subsystem (Layer 4 Reliability / DDIL Adaptation)
+  Standards:
+    - NIST FIPS 202: SHA3-256 deterministic deduplication tags (session_id || sequence_number)
+    - RFC 896 / Tactical link backoff pacing bounds (1s to 60s ceiling)
 """
 
 import asyncio

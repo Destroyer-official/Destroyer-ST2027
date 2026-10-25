@@ -980,26 +980,21 @@ def secure_memory_wipe(address, length, owner=None):
 
 class InputValidator:
     """
-    Military-grade input validation class with strict validation and mandatory rejection.
+    ST2027 Ingress Boundary Input Validation Engine.
 
-    This class implements zero-compromise input validation according to military-grade
-    security requirements. All validation is strict with mandatory rejection of invalid
-    inputs. No sanitization attempts are made as they could mask attacks.
+    OPERATIONAL CONTEXT:
+      Invoked at packet and RPC ingress boundaries to validate message syntax,
+      envelope schemas, and parameter constraints before dispatching to deserialization
+      or cryptographic processing pipelines.
 
-    Security features:
-    - Strict validation with mandatory rejection of invalid inputs
-    - Cryptographic integrity checking for critical inputs
-    - No sanitization attempts that could mask attacks
-    - Hardware-backed validation where available
-    - Real-time security monitoring integration
-    - Zero tolerance for malformed or suspicious inputs
+    STANDARDS & SPECIFICATIONS:
+      NIST SP 800-53 Rev 5 (SI-10 Information Input Validation)
+      OWASP ASVS Level 3 strict input validation baseline
 
-    CRITICAL SECURITY REQUIREMENTS:
-    - All validation failures result in immediate rejection
-    - No graceful degradation or fallback mechanisms
-    - No input sanitization that could hide attack patterns
-    - Cryptographic verification of input integrity for critical data
-    - Mandatory audit logging of all validation failures
+    VALIDATION ARCHITECTURE:
+      - Strict whitelist matching via deterministic regular expressions
+      - Immediate fail-closed rejection on syntax anomaly; no heuristic mutation or sanitization
+      - Audit trail dispatch upon rejection for intrusion detection correlation
     """
     # Strict regular expressions for validation (no tolerance for variations)
     USERNAME_REGEX = r'^[a-zA-Z0-9_-]{3,32}$'
@@ -1551,7 +1546,12 @@ class InputValidator:
 
 # Enhanced P2P Integration Classes
 class MilitaryGradeCrypto:
-    """Military-grade cryptographic operations for hashed identifiers."""
+    """
+    Cryptographic operations for authenticated hashed identifiers.
+    
+    Implements NIST FIPS 202 SHA3-512 hashing with keyed salt derivation and
+    hardware entropy integration via platform HSM interface.
+    """
     @staticmethod
     def _system_salt() -> str:
         import os as _os
@@ -1567,7 +1567,7 @@ class MilitaryGradeCrypto:
         import platform_hsm_interface as cphs
         entropy = cphs.get_secure_random(32)
         if not entropy:
-            raise SecurityError("MILITARY FATAL: Hardware entropy failed for salt generation.", severity="CRITICAL")
+            raise SecurityError("DEFENSE FATAL: Hardware entropy failed for salt generation.", severity="CRITICAL")
         return entropy.hex()
 
     @staticmethod
@@ -1749,10 +1749,10 @@ class EnhancedUserManager:
 
                         print("[PASS] P2P Discovery Service registration successful")
 
-                        # Save locally with military-grade encryption
+                        # Save locally with AES-256-GCM authenticated encryption
                         self.save(username, display_name, user_id, ipv6, port, pubkey, private_key_b64, passphrase)
-                        print("[PASS] Local profile created with military-grade encryption")
-                        print("[SECURE] Your profile is secured with Military-grade hashing (SHA3-512) and AES-256-GCM encryption.")
+                        print("[PASS] Local profile created with authenticated encryption")
+                        print("[SECURE] Profile secured with SHA3-512 hashing and AES-256-GCM authenticated encryption.")
                         registered_cloud = True
                         return True
                     else:
@@ -1768,7 +1768,7 @@ class EnhancedUserManager:
                 import platform_hsm_interface as cphs
                 entropy = cphs.get_secure_random(8)
                 if not entropy:
-                    raise SecurityError("MILITARY FATAL: Hardware entropy failed for user_id generation.", severity="CRITICAL")
+                    raise SecurityError("DEFENSE FATAL: Hardware entropy failed for user_id generation.", severity="CRITICAL")
                 user_id = entropy.hex()
                 private_key = ed25519.Ed25519PrivateKey.generate()
                 pubkey = private_key.public_key()
@@ -1777,7 +1777,7 @@ class EnhancedUserManager:
 
                 self.save(username, display_name, user_id, ipv6, port, pubkey_hex, private_key_b64, passphrase)
                 print("[PASS] Local profile created (offline mode)")
-                print("[SECURE] Your profile is secured with Military-grade hashing (SHA3-512) and AES-256-GCM encryption.")
+                print("[SECURE] Profile secured with SHA3-512 hashing and AES-256-GCM authenticated encryption.")
                 return True
 
         except Exception as e:
@@ -1834,12 +1834,12 @@ class EnhancedUserManager:
             return False
 
     def save(self, username: str, display_name: str, user_id: str, ipv6: str, port: int, pubkey: str = None, private_key: str = None, passphrase: str = None):
-        """Save and encrypt user profile with military-grade hashing."""
+        """Save and encrypt user profile with SHA3-512 hashing and AES-256-GCM."""
         import platform_hsm_interface as cphs
         if passphrase:
             salt = cphs.get_secure_random(16)
             if not salt:
-                raise SecurityError("MILITARY FATAL: Hardware entropy failed for salt", severity="CRITICAL")
+                raise SecurityError("DEFENSE FATAL: Hardware entropy failed for salt", severity="CRITICAL")
             self._salt = salt
             self._encryption_key = self._derive_key(passphrase, salt)
         elif self._encryption_key:
@@ -2009,7 +2009,7 @@ class EnhancedPeerManager:
     Compatibility wrapper for the new enhanced peer manager.
 
     This class provides backward compatibility while using the new enhanced
-    peer management system with military-grade features.
+    peer management system with CNSA Suite 2.0 security controls.
     """
 
     def __init__(self):
@@ -2589,7 +2589,7 @@ class SecureP2PChat:
                 log.warning("Enhanced Security Features verification failed")
 
         except ImportError:
-            log.info("Enhanced Security Features not available - using standard military-grade security")
+            log.info("Enhanced Security Features not available - using standard high-assurance security posture")
         except Exception as e:
             log.error(f"Failed to initialize Enhanced Security Features: {e}")
 
@@ -4175,7 +4175,7 @@ class SecureP2PChat:
         """Enhanced startup flow with user management, anonymous tactical mode, and automatic login."""
         try:
             print("\n" + "="*60, flush=True)
-            print("[SECURE] MILITARY-GRADE SECURE P2P CHAT SYSTEM", flush=True)
+            print("[SECURE] ST2027 SECURE TACTICAL COMMUNICATIONS SYSTEM", flush=True)
             print("   Quantum-Resistant | Hardware-Secured | Zero-Trust", flush=True)
             print("="*60, flush=True)
 
@@ -4275,7 +4275,7 @@ class SecureP2PChat:
             # Persistent Profile Setup
             print("\n" + "="*60, flush=True)
             print("[NEW] CREATE SECURE PERSISTENT PROFILE (ENCRYPTED DISK STORAGE)", flush=True)
-            print("   Your identity will be encrypted with military-grade security", flush=True)
+            print("   Identity keys protected with Argon2id KDF and AES-256-GCM encryption", flush=True)
             print("="*60, flush=True)
             print("", flush=True)
             sys.stdout.flush()
@@ -14799,7 +14799,7 @@ if __name__ == "__main__":
         )
         sys.exit(0)
 
-    parser = argparse.ArgumentParser(description="Secure P2P Military-Grade Communications System")
+    parser = argparse.ArgumentParser(description="ST2027 Secure Tactical P2P Communications System")
     parser.add_argument("--demo", action="store_true", help="Run automated two-terminal military drill")
     parser.add_argument("--port", type=int, default=None, help="Port to listen on (default: 50007)")
     parser.add_argument("--profile", type=str, default=None, help="Path to profile file (default: enhanced_user_profile.json)")

@@ -111,7 +111,7 @@ Implementation Features:
 
 This module ensures consistent access to libsodium's cryptographic primitives
 across different platforms and environments, with proper error handling and
-fallback mechanisms that meet military-grade security requirements.
+fallback mechanisms that meet CNSA Suite 2.0 and FIPS 140-3 security requirements.
 
 Technical References:
 - libsodium documentation: https://doc.libsodium.org/

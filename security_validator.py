@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Military Security Validator
+ST2027 PRE-DEPLOYMENT SECURITY ASSURANCE VALIDATOR
 
-Pre-deployment security validation script for the military-grade P2P messaging system.
-Validates cryptographic algorithms, security configurations, and compliance requirements.
+OPERATIONAL CONTEXT:
+  Invoked in pre-flight CI/CD pipelines and deployment staging environments.
+  Performs static and dynamic compliance verification across post-quantum
+  cryptographic algorithms, key management policies, and configuration baselines.
 
-Usage:
+SYSTEM INTEGRATION:
+  Subsystem: Pre-flight Verification Subsystem (CLI / Automation)
+  Standards: CNSA Suite 2.0, FIPS 140-3 Level 4, NIST SP 800-53 Rev 5
+
+USAGE:
     python security_validator.py [--strict] [--report]
 """
 

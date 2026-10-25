@@ -1,19 +1,20 @@
 """
-Secure File Transfer - Military-Grade File Transfer with HMAC-SHA384 Chunk Verification
+ST2027 SEGMENTED FILE TRANSPORT AND MEDIA SANITIZATION ENGINE
 
-This module implements secure file transfer with per-chunk HMAC-SHA384 verification
-as specified in Requirements 11.2, 11.3, 11.4, 11.5.
+OPERATIONAL CONTEXT:
+  Invoked by application services and messaging sessions to transport binary payloads
+  over unreliable or adversarial tactical channels. Chunks are individually verified
+  prior to disk commit, and completed files are cryptographically validated against
+  root hashes.
 
-Key Features:
-- 64KB chunks with HMAC-SHA384 per chunk (Requirement 11.2)
-- Reject corrupted chunks before data written (Requirement 11.3)
-- Complete file verification with SHA3-512 (Requirement 11.4)
-- DoD 5220.22-M 3-pass secure file deletion (Requirement 11.5)
-
-Standards Compliance:
-- HMAC-SHA384 for chunk integrity (NIST FIPS 198-1)
-- SHA3-512 for file integrity (NIST FIPS 202)
-- DoD 5220.22-M for secure deletion
+SYSTEM INTEGRATION:
+  Subsystem: Payload Transfer Subsystem (Layer 6 Presentation / Transport)
+  Standards:
+    - NIST FIPS 198-1: HMAC-SHA384 per-chunk authentication tags (64KB payload bounds)
+    - NIST FIPS 202: SHA3-512 complete artifact digest validation
+    - DoD 5220.22-M / NIST SP 800-88 Rev 1: 3-pass overwrite and zeroization for temporary spools
+  Behavior:
+    - Fail-closed: corrupted or out-of-sequence chunks are dropped immediately before disk I/O.
 """
 
 import os

@@ -4,13 +4,14 @@
 //! - Native Post-Quantum Cryptographic Secure Core:
 //!   * Noise_XXhfs P-384 + ML-KEM-1024 + ML-DSA-87 handshake (`destroyer_core::handshake`).
 //!   * Pure-Rust FIPS 204 ML-DSA-87 signatures with domain separation (`destroyer_core::auth`).
-//!   * Sparse Post-Quantum Ratchet (SPQR / Triple Ratchet per Dodis et al. EUROCRYPT 2025)
-//!     with fresh-KEM braiding per step (`destroyer_core::ratchet`).
+//!   * Project-specific fresh-KEM-per-step ratchet inspired by SPQR/Triple
+//!     Ratchet research; not Signal SPQR or a standards-conformant implementation
+//!     (`destroyer_core::ratchet`).
 //!   * 3-of-5 threshold PKI quorum verification & CRL revocation (`destroyer_core::pki`).
 //!   * Authenticated hybrid KEX (ML-KEM-1024 + X25519) (`destroyer_core::kem`, `destroyer_core::kex_auth`).
 //!   * Sealed key-file custody (0600 / exclusive lock / memory zeroization) (`destroyer_core::keystore`).
 //!   * NIST SP 800-88 Rev 1 media sanitization (`destroyer_core::purge`).
-//! - Military-Grade Data-Plane:
+//! - High-Assurance Data-Plane:
 //!   * AEAD AES-256-GCM framing with header whitening (`destroyer_core::aead`).
 //!   * Strict 64-bit anti-replay sliding window (`destroyer_core::replay`).
 //!   * Cauchy-Reed-Solomon Forward Error Correction (`destroyer_core::fec`).
@@ -1965,7 +1966,7 @@ fn is_lab_mode() -> bool {
 }
 
 fn kex_auth_required() -> bool {
-    // Military-grade fail-closed: authentication is REQUIRED by default.
+    // Strict fail-closed: authentication is REQUIRED by default.
     // Unauthenticated KEX is strictly refused unless explicit lab mode is enabled.
     !is_lab_mode()
 }
