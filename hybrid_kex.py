@@ -1766,11 +1766,8 @@ class HybridKeyExchange:
                     hybrid_kex_logger.critical(f"SECURITY ALERT: Key bundle failed TOFU pin continuity for peer '{peer_id}'! Identity key changed!")
                     return False
                 if pin_status == 'new':
-                    try:
-                        from production_gate import is_production as _gate_prod
-                        _prod_pin = _gate_prod()
-                    except Exception:
-                        _prod_pin = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                    from production_gate import is_production as _gate_prod
+                    _prod_pin = _gate_prod()
                     if _prod_pin or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
                         auth_fps = getattr(self, 'authorized_peer_fingerprints', None)
                         if auth_fps is not None and fingerprint not in auth_fps:
@@ -1778,11 +1775,8 @@ class HybridKeyExchange:
                             return False
             except Exception as e_pin:
                 hybrid_kex_logger.error(f"FAIL-CLOSED: TOFU pin continuity check failed for peer '{peer_id}': {e_pin}")
-                try:
-                    from production_gate import is_production as _gate_prod
-                    _prod_pin_err = _gate_prod()
-                except Exception:
-                    _prod_pin_err = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                from production_gate import is_production as _gate_prod
+                _prod_pin_err = _gate_prod()
                 if _prod_pin_err or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
                     return False
 
@@ -2638,7 +2632,13 @@ class HybridKeyExchange:
             # --- Verify FALCON signature ---
             message_signature = deserialize_key_or_sig(message_signature_b64)
             try:
-                self.dss.verify(peer_verified_eph_falcon_pk, message_hash_that_was_signed, message_signature)
+                # A4-01 (2026-10-17): FALCON verify() returns bool (False on
+                # invalid signature) and does NOT raise. The previous code
+                # discarded the return value, so any malformed/forged
+                # signature passed as long as verify() did not raise.
+                sig_ok = self.dss.verify(peer_verified_eph_falcon_pk, message_hash_that_was_signed, message_signature)
+                if not sig_ok:
+                    raise ValueError("signature invalid (verify returned False)")
                 hybrid_kex_logger.debug("Message signature verified successfully with ephemeral FALCON key")
             except Exception as e:
                 hybrid_kex_logger.error(f"SECURITY ALERT: FALCON message signature verification failed: {e}")
@@ -3242,13 +3242,8 @@ class HybridKeyExchange:
         raises SecurityError on v1 (fail-closed downgrade protection).
         Lab stays interoperable at v1 with a warning.
         """
-        import os as _os
-        try:
-            from production_gate import is_ts_mode as _gate_ts
-            _prod = _gate_ts()
-        except Exception:
-            _prod = (_os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                     or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_ts_mode as _gate_ts
+        _prod = _gate_ts()
         _floor = int(getattr(type(self), "PROTOCOL_VERSION_MIN_PRODUCTION", 2)) if _prod else int(type(self).PROTOCOL_VERSION_MIN)
         peer_v = type(self).PROTOCOL_VERSION_MIN
         try:
@@ -3284,16 +3279,9 @@ class HybridKeyExchange:
 
     @staticmethod
     def _production_posture() -> bool:
-        """True when production/TS posture is active (sticky fail-closed gate)."""
-        try:
-            from production_gate import is_production, is_ts_mode
-            return bool(is_production() or is_ts_mode())
-        except Exception:
-            import os as _os
-            _truthy = ("1", "true", "yes", "on")
-            return (_os.environ.get("P2P_PRODUCTION", "").strip().lower() in _truthy
-                    or _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in _truthy
-                    or _os.environ.get("P2P_TS_MODE", "").strip().lower() in _truthy)
+        """True when canonical production/TS posture is active."""
+        from production_gate import is_ts_mode
+        return is_ts_mode()
 
     def derive_root_v2(self, dh1: bytes, dh2: bytes, dh3: bytes, dh4: bytes,
                        ss_hybrid: bytes, transcript: bytes) -> bytes:

@@ -330,13 +330,24 @@ class StunClient:
             attr_type = int.from_bytes(data[pos:pos+2], 'big')
             attr_len = int.from_bytes(data[pos+2:pos+4], 'big')
 
+            # A4-12 (2026-10-17): validate the declared attribute length
+            # before touching payload bytes. Previously a truncated
+            # datagram could claim XOR-MAPPED-ADDRESS with a short body and
+            # trigger IndexError/OSError (remote DoS on the parse path).
+            if pos + 4 + attr_len > len(data):
+                return None
+
             # Process XOR-MAPPED-ADDRESS attribute
             if attr_type == StunClient.XOR_MAPPED_ADDRESS:
                 addr_pos = pos + 4
+                if attr_len < 4:
+                    return None
                 family_byte = data[addr_pos + 1]
                 port = int.from_bytes(data[addr_pos+2:addr_pos+4], 'big') ^ (StunClient.MAGIC_COOKIE >> 16)
 
                 if family_byte == 0x02:  # IPv6
+                    if attr_len < 20:
+                        return None
                     # Create XOR mask: Magic Cookie + Transaction ID
                     xor_mask = magic_cookie + transaction_id
 
@@ -349,6 +360,8 @@ class StunClient:
                     ipv6 = socket.inet_ntop(socket.AF_INET6, bytes(ip_bytes))
                     return ipv6, port
                 elif family_byte == 0x01:  # IPv4
+                    if attr_len < 8:
+                        return None
                     # Create XOR mask: Magic Cookie (first 4 bytes)
                     xor_mask = magic_cookie[:4]
                     ip_bytes = bytearray(data[addr_pos+4:addr_pos+8])
@@ -1353,11 +1366,8 @@ class SimpleP2PChat:
                 from destroyer_core import SecureEngine
                 self._rust_engine = SecureEngine()
             except ImportError as e:
-                try:
-                    from production_gate import is_production as _gate_prod
-                    _p2p_prod = _gate_prod()
-                except Exception:
-                    _p2p_prod = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+                from production_gate import is_production as _gate_prod
+                _p2p_prod = _gate_prod()
                 if _p2p_prod or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
                     raise RuntimeError(
                         "MILITARY FATAL: P2P_DATA_PLANE=rust required in production but native module "
@@ -1505,7 +1515,9 @@ class SimpleP2PChat:
         try:
             # Pass empty string to input() since prompt was already printed
             result = await loop.run_in_executor(None, lambda: input(''))
-            p2p_logger.debug(f"Input received: {result}")
+            # A4-20 (2026-10-17): never log raw interactive input (may carry
+            # chat content, passphrases typed at a prompt, or commands).
+            p2p_logger.debug(f"Input received (length={len(result)})")
             return result
         except KeyboardInterrupt:
             # Handle Ctrl+C (must be before Exception)
@@ -2380,6 +2392,13 @@ class SimpleP2PChat:
         - Validates incoming connection parameters
         """
         server_socket = None
+        if os.environ.get("P2P_ALLOW_LEGACY_PLAINTEXT_SERVER", "").strip().lower() not in {"1", "true", "yes"}:
+            p2p_logger.critical(
+                "SECURITY REJECTION: legacy SimpleP2PChat server listener is disabled; "
+                "use SecureP2PChat from secure_p2p.py"
+            )
+            print(f"{RED}Legacy unauthenticated server mode is disabled. Use the secure P2P client/Ratchet transport.{RESET}")
+            return
         # Create IPv6-only server socket
         listen_port = self.public_port or secure_randbelow(50001) + 10000
 

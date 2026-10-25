@@ -6,9 +6,12 @@ fail-closed boot/integrity checks, honest fallback labeling, and the
 Linux detection probes. No network, no TPM/COM/WMI, no registry writes.
 RAF: hermetic HOME redirection for file-backed tests.
 """
+import hashlib
 import os
+import secrets
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import platform_hsm_interface as phi
 
@@ -105,6 +108,61 @@ def test_kek_file_wrong_label_fails_closed():
     assert phi.retrieve_key_file_secure("gatelabel-nope") is None  # nosec: B101
 
 
+def test_kek_file_v2_is_not_hardware_id_derivable(monkeypatch):
+    """A stolen disk + public hardware ID must not decrypt stored keys."""
+    monkeypatch.setattr(phi, "get_hardware_unique_id", lambda: b"PUBLIC-MACHINE-GUID")
+    assert phi.store_key_file_secure("v2probe", b"secret" * 8) is True  # nosec: B101
+
+    path = os.path.join(phi._keyfile_secure_dir(), "v2probe.bin")
+    with open(path, "rb") as f:
+        payload = f.read()
+    assert payload.startswith(phi._KEYFILE_MAGIC)  # nosec: B101
+
+    legacy_kek = hashlib.sha3_256(b"PUBLIC-MACHINE-GUID").digest()
+    with pytest.raises(Exception):
+        AESGCM(legacy_kek).decrypt(
+            payload[len(phi._KEYFILE_MAGIC) + 32:len(phi._KEYFILE_MAGIC) + 44],
+            payload[len(phi._KEYFILE_MAGIC) + 44:],
+            f"key_file_{'v2probe'}".encode("utf-8"),
+        )
+    assert phi.retrieve_key_file_secure("v2probe") == b"secret" * 8  # nosec: B101
+
+
+def test_kek_file_legacy_v1_migrates_to_v2(monkeypatch):
+    monkeypatch.setattr(phi, "get_hardware_unique_id", lambda: b"LEGACY-HW-ID")
+    label = "legacyprobe"
+    nonce = secrets.token_bytes(12)
+    aad = f"key_file_{label}".encode("utf-8")
+    legacy = AESGCM(hashlib.sha3_256(b"LEGACY-HW-ID").digest()).encrypt(
+        nonce, b"legacy-key-material", aad
+    )
+    path = os.path.join(phi._keyfile_secure_dir(), f"{label}.bin")
+    with open(path, "wb") as f:
+        f.write(nonce + legacy)
+
+    assert phi.retrieve_key_file_secure(label) == b"legacy-key-material"  # nosec: B101
+    with open(path, "rb") as f:
+        assert f.read().startswith(phi._KEYFILE_MAGIC)  # nosec: B101
+
+
+def test_kek_file_legacy_v1_refused_in_production(monkeypatch):
+    monkeypatch.setattr(phi, "get_hardware_unique_id", lambda: b"LEGACY-HW-ID")
+    monkeypatch.setenv("P2P_PRODUCTION", "true")
+    label = "legacyprodprobe"
+    nonce = secrets.token_bytes(12)
+    aad = f"key_file_{label}".encode("utf-8")
+    legacy = AESGCM(hashlib.sha3_256(b"LEGACY-HW-ID").digest()).encrypt(
+        nonce, b"legacy-key-material", aad
+    )
+    path = os.path.join(phi._keyfile_secure_dir(), f"{label}.bin")
+    with open(path, "wb") as f:
+        f.write(nonce + legacy)
+
+    assert phi.retrieve_key_file_secure(label) is None  # nosec: B101
+    with open(path, "rb") as f:
+        assert not f.read().startswith(phi._KEYFILE_MAGIC)  # nosec: B101
+
+
 def test_sign_hash_id_is_canonical_cng_name():
     # Regression guard for the L"sha3_512" bug: CNG requires hyphenated
     # "SHA3-512", and the lookup uppercases input, so the map key must be
@@ -168,4 +226,95 @@ def test_pcr_bank_is_sha256():
     assert hasattr(phi, "_get_linux_tpm_pcr_values")  # nosec: B101
     src = inspect.getsource(phi._get_linux_tpm_pcr_values)
     assert "sha256" in src  # nosec: B101
+
+
+def _fake_hardware(monkeypatch):
+    def seal(data):
+        return phi._KEYFILE_HW_MAGIC + b"TEST" + bytes(b ^ 0xA5 for b in data)
+
+    def unseal(blob):
+        if not blob.startswith(phi._KEYFILE_HW_MAGIC + b"TEST"):
+            raise phi.KeyfileHardwareUnavailable("bad fake blob")
+        return bytes(b ^ 0xA5 for b in blob[len(phi._KEYFILE_HW_MAGIC) + 4:])
+
+    monkeypatch.setattr(phi, "_keyfile_hw_available", lambda: True)
+    monkeypatch.setattr(phi, "_keyfile_hw_seal", seal)
+    monkeypatch.setattr(phi, "_keyfile_hw_unseal", unseal)
+
+
+def _keyfile_root():
+    return phi._keyfile_secure_dir()
+
+
+def test_keyfile_hardware_policy_defaults(monkeypatch):
+    for var in ("P2P_KEYFILE_HARDWARE_KEK", "P2P_PRODUCTION",
+                "SECURE_P2P_PRODUCTION"):
+        monkeypatch.delenv(var, raising=False)
+    assert phi._keyfile_hardware_policy() == "prefer"  # nosec: B101
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    assert phi._keyfile_hardware_policy() == "require"  # nosec: B101
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "disabled")
+    assert phi._keyfile_hardware_policy() == "disabled"  # nosec: B101
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "typo")
+    with pytest.raises(RuntimeError, match="disabled, prefer, or require"):
+        phi._keyfile_hardware_policy()
+
+
+def test_keyfile_hardware_require_fails_without_tpm(monkeypatch):
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "require")
+    monkeypatch.setattr(phi, "_keyfile_hw_available", lambda: False)
+    assert phi.store_key_file_secure("nohw", b"k" * 32) is False  # nosec: B101
+    root = _keyfile_root()
+    assert not os.path.exists(os.path.join(root, "keyfile.master.dpapi"))  # nosec: B101
+    assert not os.path.exists(os.path.join(root, "keyfile.master.seed"))  # nosec: B101
+    assert not os.path.exists(os.path.join(root, phi._KEYFILE_HW_BLOB))  # nosec: B101
+
+
+def test_keyfile_hardware_migrates_software_master(monkeypatch):
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "disabled")
+    assert phi.store_key_file_secure("migrate", b"m" * 48) is True  # nosec: B101
+    root = _keyfile_root()
+    software_paths = (
+        os.path.join(root, "keyfile.master.dpapi"),
+        os.path.join(root, "keyfile.master.seed"),
+    )
+    assert any(os.path.exists(p) for p in software_paths)  # nosec: B101
+
+    _fake_hardware(monkeypatch)
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "require")
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    assert phi.retrieve_key_file_secure("migrate") == b"m" * 48  # nosec: B101
+    assert os.path.exists(os.path.join(root, phi._KEYFILE_HW_BLOB))  # nosec: B101
+    assert not any(os.path.exists(p) for p in software_paths)  # nosec: B101
+    assert phi.retrieve_key_file_secure("migrate") == b"m" * 48  # nosec: B101
+
+
+def test_keyfile_hardware_migration_failure_does_not_use_software(monkeypatch):
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "disabled")
+    assert phi.store_key_file_secure("nodegrade", b"n" * 32) is True  # nosec: B101
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "require")
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    monkeypatch.setattr(phi, "_keyfile_hw_available", lambda: True)
+
+    def _boom(_data):
+        raise phi.KeyfileHardwareUnavailable("TPM failure")
+
+    monkeypatch.setattr(phi, "_keyfile_hw_seal", _boom)
+    assert phi.retrieve_key_file_secure("nodegrade") is None  # nosec: B101
+
+
+def test_keyfile_hardware_unseal_failure_is_fatal(monkeypatch):
+    monkeypatch.setenv("P2P_KEYFILE_HARDWARE_KEK", "require")
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    root = _keyfile_root()
+    with open(os.path.join(root, phi._KEYFILE_HW_BLOB), "wb") as fh:
+        fh.write(phi._KEYFILE_HW_MAGIC + b"TEST" + b"\x00" * 32)
+
+    def _boom(_blob):
+        raise phi.KeyfileHardwareUnavailable("unseal failed")
+
+    monkeypatch.setattr(phi, "_keyfile_hw_unseal", _boom)
+    with pytest.raises(phi.KeyfileHardwareUnavailable, match="cannot be unsealed"):
+        phi._keyfile_master_key()
 

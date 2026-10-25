@@ -160,18 +160,9 @@ logger = logging.getLogger(__name__)
 
 
 def _pq_ratchet_production_mode() -> bool:
-    """True when running in production (fresh-KEM failures escalate to CRITICAL).
-
-    F-01: delegates to production_gate (canonical sticky detector).
-    """
-    try:
-        from production_gate import is_production
-        return is_production()
-    except Exception:
-        return (
-            os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-        )
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 def _pq_strict_abort() -> bool:
@@ -2120,12 +2111,8 @@ class DoubleRatchet:
         # 2028 hardening: classical-only (enable_pq=False) requires explicit
         # lab opt-in; production fail-closes (PQ PCS required per PQXDH/Braid).
         import os as _os
-        try:
-            from production_gate import is_production as _gate_prod
-            _prod = _gate_prod()
-        except Exception:
-            _prod = (_os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                     or _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production as _gate_prod
+        _prod = _gate_prod()
         if not enable_pq and _prod and _os.environ.get("P2P_ALLOW_CLASSICAL", "0") != "1":
             raise SecurityError("MILITARY FATAL: enable_pq=False refused in production (classical-only, no PQ PCS)")
         if not enable_pq:
@@ -2856,11 +2843,11 @@ class DoubleRatchet:
         except (TypeError, ValueError):
             local_v = 1
         negotiated = min(local_v, peer_v)
+        from production_gate import is_production
         is_strict = (
             getattr(self, '_strict_ratchet', False)
-            or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+            or is_production()
             or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
         )
         if is_strict and negotiated < 2:
             raise SecurityError(
@@ -4609,12 +4596,8 @@ class DoubleRatchet:
         if strict:
             raise SecurityError(
                 f"Handshake binding required for {op} (P2P_REQUIRE_HANDSHAKE_BINDING=1)")
-        try:
-            from production_gate import is_production as _gate_prod
-            prod = _gate_prod()
-        except Exception:
-            prod = (_os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                    or _os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production as _gate_prod
+        prod = _gate_prod()
         if prod and not getattr(self, "_binding_warned", False):
             try:
                 self._binding_warned = True

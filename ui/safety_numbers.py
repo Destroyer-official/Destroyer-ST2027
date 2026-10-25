@@ -218,12 +218,8 @@ def _atomic_write_json(path: Path, data: dict) -> None:
         # 2028 hardening: plaintext pins rely on 0600 ACL only -- tamper is
         # undetected without KEK MAC. Fail-closed in production (sticky prod);
         # lab keeps ACL-only write with an explicit warning.
-        try:
-            from production_gate import is_production as _gate_prod
-            _prod = _gate_prod()
-        except Exception:
-            _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                     or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production as _gate_prod
+        _prod = _gate_prod()
         if _prod:
             raise ValueError("FAIL-CLOSED: refusing plaintext pins.json write in production (set P2P_PIN_KEK or P2P_STORAGE_PASSPHRASE to seal TOFU trust anchors)")
         import logging as _logging

@@ -123,13 +123,25 @@ class ActiveCyberDefenseEngine:
         if self.quarantine_file.exists():
             try:
                 with open(self.quarantine_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                now = time.time()
-                for peer, exp in data.items():
-                    if exp > now:
-                        self.quarantined_peers[peer] = exp
+                    raw = f.read().strip()
+                if raw:
+                    data = json.loads(raw)
+                    now = time.time()
+                    for peer, exp in data.items():
+                        if exp > now:
+                            self.quarantined_peers[peer] = exp
+                else:
+                    # Empty file == no persisted state yet (not corruption).
+                    logger.debug("Quarantine file exists but is empty")
             except Exception as e:
-                logger.warning(f"Failed to load quarantine file: {e}")
+                # HIGH (sec_modules_batch1 L45): a corrupt quarantine file
+                # must not be silently treated as "no quarantines" — that
+                # would re-admit currently quarantined peers.
+                logger.error(f"Failed to load quarantine file: {e}")
+                raise RuntimeError(
+                    f"refusing to start with unreadable quarantine state "
+                    f"({self.quarantine_file}): {e}"
+                ) from e
 
     def _persist_quarantine(self) -> None:
         try:
@@ -427,8 +439,10 @@ def sign_and_export_acd_report(
 
     report_path.write_bytes(canonical_json)
 
+    from report_trust import load_or_create_audit_signer
+
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = load_or_create_audit_signer()
     sig = signer.sign(sk, canonical_json)
 
     sig_path.write_bytes(sig)
@@ -437,17 +451,21 @@ def sign_and_export_acd_report(
     return report_path, sig_path, pub_path
 
 
-def verify_acd_report_signature(report_path: Path, sig_path: Path, pub_path: Path) -> bool:
-    """Verify ML-DSA-87 digital signature over Active Cyber Defense report."""
+def verify_acd_report_signature(
+    report_path: Path,
+    sig_path: Path,
+    pub_path: Path,
+    anchor_path: Optional[Path] = None,
+) -> bool:
+    """Verify the report against the pinned audit anchor, not its own ``.pub``."""
     if not (report_path.exists() and sig_path.exists() and pub_path.exists()):
         return False
     try:
-        report_bytes = report_path.read_bytes()
-        sig_bytes = sig_path.read_bytes()
-        pub_bytes = pub_path.read_bytes()
+        from report_trust import verify_with_anchor
 
-        verifier = LibOQS_MLDSA_87()
-        return verifier.verify(pub_bytes, report_bytes, sig_bytes)
+        return verify_with_anchor(
+            report_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+        )
     except Exception as e:
         logger.error(f"ACD report signature verification failed: {e}")
         return False

@@ -134,18 +134,8 @@ def _pal_decrypt(key: bytes, nonce: bytes, ciphertext: bytes,
         # Strict postures never fall back: a failed AES open in production
         # or TOP SECRET mode is a fail-closed integrity event, not a cue to
         # try weaker primitives.
-        try:
-            import os as _os
-
-            try:
-                from production_gate import is_production as _gate_prod
-                _strict = _gate_prod() or _os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
-            except Exception:
-                _strict = (_os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
-                           or _os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                           or _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
-        except Exception:
-            _strict = False
+        from production_gate import is_ts_mode
+        _strict = is_ts_mode()
         if _strict:
             raise DualCustodyViolation(
                 "PAL open refused: AES-256-GCM authentication failed; "
@@ -178,14 +168,8 @@ class OfficerIdentity:
             # spellings for both env vars). Prior check accepted only
             # == "true" and missed P2P_PRODUCTION=1, allowing secret-key
             # serialization under a production label.
-            try:
-                from production_gate import is_production as _gate_prod
-                _prod_ser = _gate_prod()
-            except Exception:
-                _prod_ser = (
-                    os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                    or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                )
+            from production_gate import is_production as _gate_prod
+            _prod_ser = _gate_prod()
             if _prod_ser:
                 raise NC3SecurityError(
                     "MILITARY FATAL: Serialization of NC3 secret signing keys to dictionaries/JSON "
@@ -1215,9 +1199,42 @@ class NC3CommandController:
         cust1_sig = bytes.fromhex(custodians[0]["signature"])
         cust2_sig = bytes.fromhex(custodians[1]["signature"])
 
-        if not self.dsa.verify(sender_officer_1_pub, expected_digest, cust1_sig):
+        # HIGH (nc3_consoles L...): the EAM carries its own custodian public
+        # keys. Bind them to the provisioned officer identities (and to any
+        # caller-supplied keys) so two attacker-generated keypairs cannot
+        # satisfy the two-person rule.
+        declared_1 = bytes.fromhex(custodians[0]["public_key"])
+        declared_2 = bytes.fromhex(custodians[1]["public_key"])
+        cust1_id = str(custodians[0].get("officer_id", ""))
+        cust2_id = str(custodians[1].get("officer_id", ""))
+        try:
+            from production_gate import is_production as _is_prod
+            _prod = bool(_is_prod())
+        except Exception:
+            _prod = False
+        for label, cid, declared, supplied in (
+            ("Officer 1", cust1_id, declared_1, sender_officer_1_pub),
+            ("Officer 2", cust2_id, declared_2, sender_officer_2_pub),
+        ):
+            if supplied is not None and not secrets.compare_digest(
+                bytes(supplied), declared
+            ):
+                raise NC3SecurityError(
+                    f"{label} public key does not match the EAM custodian record.")
+            expected = load_officer_public_key(cid)
+            if expected is not None:
+                if not secrets.compare_digest(expected, declared):
+                    raise NC3SecurityError(
+                        f"{label} ({cid}) public key does not match the "
+                        f"provisioned officer identity.")
+            elif _prod:
+                raise DualCustodyViolation(
+                    f"{label} ({cid or 'unknown'}) is not a provisioned officer; "
+                    f"refusing self-asserted custodian keys in production.")
+
+        if not self.dsa.verify(declared_1, expected_digest, cust1_sig):
             raise NC3SecurityError("Officer 1 signature verification FAILED.")
-        if not self.dsa.verify(sender_officer_2_pub, expected_digest, cust2_sig):
+        if not self.dsa.verify(declared_2, expected_digest, cust2_sig):
             raise NC3SecurityError("Officer 2 signature verification FAILED.")
 
         # 5. Decrypt PAL payload with war-order key or reconstructed VSS shares
@@ -1414,14 +1431,8 @@ def get_default_token_backend(pin: Optional[str] = None) -> Any:
     # F-01: canonical sticky production detector (all truthy spellings for
     # both P2P_PRODUCTION and SECURE_P2P_PRODUCTION).
     _fail_closed = os.environ.get("P2P_FAIL_ON_SOFTWARE_FALLBACK", "").strip() == "1"
-    try:
-        from production_gate import is_production as _gate_prod
-        _fail_closed = _fail_closed or _gate_prod()
-    except Exception:
-        _fail_closed = _fail_closed or (
-            os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-        )
+    from production_gate import is_production as _gate_prod
+    _fail_closed = _fail_closed or _gate_prod()
     if _fail_closed:
         raise HardwareTokenAuthenticationError("Physical PKCS#11 hardware token mandatory in production mode.")
     return SoftwareTokenBackend()
@@ -1435,7 +1446,8 @@ def get_or_create_tactical_officer(
     officer_id: str,
     rank: str = "O-6",
     duty_title: str = "Command Duty Officer",
-    officers_dir: Optional[str] = None
+    officers_dir: Optional[str] = None,
+    allow_create: Optional[bool] = None,
 ) -> OfficerIdentity:
     """
     Retrieves an officer's post-quantum credentials from sealed storage,
@@ -1447,13 +1459,29 @@ def get_or_create_tactical_officer(
     and held in RAM only. Legacy plaintext credential files are migrated
     (loaded once, re-saved sealed, original shredded). A present-but-corrupt
     file RAISES instead of silently minting a replacement identity.
+
+    ``allow_create`` defaults to False in production: minting an officer
+    identity on demand would let one process manufacture both halves of a
+    "two-person" custody check.
     """
     import base64
     import getpass
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+    if allow_create is None:
+        try:
+            from production_gate import is_production as _gate_prod
+            allow_create = not bool(_gate_prod())
+        except Exception:
+            allow_create = True
+
     if os.environ.get('P2P_EPHEMERAL_MODE') == '1' or os.environ.get('P2P_ANONYMOUS') == '1':
         # Pure in-memory ephemeral custodian credentials (zero disk persistence)
+        if not allow_create:
+            raise NC3SecurityError(
+                f"Officer {officer_id} is not provisioned and ephemeral "
+                f"custodian identities are prohibited here (fail-closed)."
+            )
         return nc3_controller.generate_officer_credentials(officer_id, rank, duty_title)
 
     if officers_dir is None:
@@ -1466,6 +1494,24 @@ def get_or_create_tactical_officer(
         pass
 
     cred_path = os.path.join(officers_dir, f"{officer_id}.json")
+    pub_path = os.path.join(officers_dir, f"{officer_id}.pub.json")
+
+    def _write_public_record(officer: OfficerIdentity) -> None:
+        """Publish the officer's PUBLIC key so verifiers can bind identities.
+
+        HIGH (nc3_consoles L...): verifiers previously trusted public keys
+        carried inside the EAM itself. This sidecar contains no secrets.
+        """
+        tmp = pub_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(
+                {"officer_id": officer.officer_id,
+                 "public_key_hex": officer.public_key.hex()},
+                f,
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, pub_path)
 
     def _seal_save(officer: OfficerIdentity) -> None:
         seal_key = _officer_file_seal_key()
@@ -1493,6 +1539,7 @@ def get_or_create_tactical_officer(
             os.chmod(cred_path, 0o600)
         except OSError:
             pass
+        _write_public_record(officer)
 
     def _seal_open() -> OfficerIdentity:
         with open(cred_path, "r", encoding="utf-8") as f:
@@ -1525,7 +1572,9 @@ def get_or_create_tactical_officer(
                 f"refusing to mint a replacement identity: {e}"
             )
         if isinstance(probe, dict) and probe.get("v") == 2:
-            return _seal_open()
+            officer = _seal_open()
+            _write_public_record(officer)
+            return officer
         if isinstance(probe, dict) and "secret_key_hex" in probe:
             # One-time migration: legacy plaintext → sealed, then shred.
             officer = OfficerIdentity.from_dict(probe)
@@ -1551,9 +1600,53 @@ def get_or_create_tactical_officer(
         )
 
     # Generate fresh sovereign officer credentials (first provisioning only).
+    if not allow_create:
+        raise NC3SecurityError(
+            f"Officer {officer_id} is not provisioned; refusing to mint a new "
+            f"custodian identity in this mode (fail-closed)."
+        )
     officer = nc3_controller.generate_officer_credentials(officer_id, rank, duty_title)
     _seal_save(officer)
     return officer
+
+
+def load_officer_public_key(
+    officer_id: str, officers_dir: Optional[str] = None
+) -> Optional[bytes]:
+    """Return the provisioned public key for an officer, or None if unknown.
+
+    Consults ``P2P_OFFICER_PUBKEY_REGISTRY`` (JSON mapping officer_id to hex)
+    first, then the public sidecar written at provisioning time. Never opens
+    the sealed private-key file and never prompts for a passphrase.
+    """
+    if not officer_id or not isinstance(officer_id, str):
+        return None
+    # IDs are file names: reject traversal / separators outright.
+    if any(ch in officer_id for ch in ("/", "\\", "\x00")) or ".." in officer_id:
+        return None
+    registry = os.environ.get("P2P_OFFICER_PUBKEY_REGISTRY")
+    if registry:
+        try:
+            with open(registry, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                value = data.get(officer_id)
+                if isinstance(value, str) and value:
+                    return bytes.fromhex(value)
+        except Exception:
+            return None
+    if officers_dir is None:
+        officers_dir = os.path.join(PROJECT_ROOT, "credentials", "officers")
+    pub_path = os.path.join(officers_dir, f"{officer_id}.pub.json")
+    try:
+        with open(pub_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        value = data.get("public_key_hex")
+        if isinstance(value, str) and value:
+            return bytes.fromhex(value)
+    except Exception:
+        return None
+    return None
 
 
 _officer_seal_key_cache: Optional[bytes] = None

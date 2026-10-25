@@ -116,6 +116,27 @@ from logging_config import get_security_summary_logger
 logger = logging.getLogger("secure_file_sharing")
 security_logger = get_security_summary_logger()
 
+
+def _sanitize_transfer_filename(filename: str) -> str:
+    """Sanitize a peer-supplied filename to a safe basename (A4-07).
+
+    Module-level helper so every class in this module (SecureFileTransfer
+    Manager, DoubleRatchetFileExtension, ...) applies identical rules.
+    """
+    safe_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_')
+    sanitized = ''.join(c if c in safe_chars else '_' for c in str(filename))
+
+    # Ensure filename is not empty and not too long
+    if not sanitized or sanitized.startswith('.'):
+        sanitized = f"file_{secrets.token_hex(4)}"
+
+    if len(sanitized) > 255:
+        name_part = sanitized[:200]
+        ext_part = sanitized[-50:] if '.' in sanitized[-50:] else ''
+        sanitized = f"{name_part}_{ext_part}"
+
+    return sanitized
+
 class FileMessageType(Enum):
     """File message types for the protocol extension."""
     FILE_OFFER = 0x01      # Initial file offer with metadata
@@ -1111,20 +1132,7 @@ class SecureFileTransferManager:
 
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename to prevent directory traversal and other attacks."""
-        # Remove path separators and dangerous characters
-        safe_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_')
-        sanitized = ''.join(c if c in safe_chars else '_' for c in filename)
-        
-        # Ensure filename is not empty and not too long
-        if not sanitized or sanitized.startswith('.'):
-            sanitized = f"file_{secrets.token_hex(4)}"
-        
-        if len(sanitized) > 255:
-            name_part = sanitized[:200]
-            ext_part = sanitized[-50:] if '.' in sanitized[-50:] else ''
-            sanitized = f"{name_part}_{ext_part}"
-        
-        return sanitized
+        return _sanitize_transfer_filename(filename)
 
     async def store_file_chunk(self, file_id: str, chunk: FileChunk) -> Tuple[bool, str]:
         """Store received file chunk with validation."""
@@ -1632,8 +1640,20 @@ class DoubleRatchetFileExtension:
         # Convert chunks dict to sorted list
         chunks = [transfer['received_chunks'][i] for i in range(metadata.total_chunks)]
         
-        # Reassemble file
-        output_path = Path(output_dir) / metadata.filename
+        # A4-07 (2026-10-17): peer-supplied filename must never be joined raw
+        # to output_dir. Sanitize it and verify the resolved path stays
+        # inside the output directory (defense against traversal and
+        # pre-planted symlink redirection).
+        safe_name = _sanitize_transfer_filename(str(metadata.filename))
+        out_root = Path(output_dir).resolve()
+        output_path = out_root / safe_name
+        resolved = output_path.resolve()
+        if resolved.parent != out_root and out_root not in resolved.parents:
+            logger.error(
+                f"Rejected file transfer {file_id}: resolved output path escapes output_dir"
+            )
+            return False
+        output_path = resolved
         
         try:
             self.file_handler.reassemble_file(chunks, output_path, metadata.checksum)

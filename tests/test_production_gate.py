@@ -12,7 +12,9 @@ nc3_nuclear_command, platform_hsm_interface, double_ratchet, hybrid_kex ...)
 are covered here through production_gate plus direct module-function probes.
 """
 
+import ast
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -79,12 +81,36 @@ def test_reset_for_tests_clears_latch(monkeypatch):
     assert pg.is_production() is False
 
 
-def test_unknown_spelling_fails_open_but_logs(monkeypatch, caplog):
-    # Typo like "tru" must NOT arm the gate (and must be loudly reported).
-    monkeypatch.setenv("P2P_PRODUCTION", "tru")
+@pytest.mark.parametrize("var", BOTH_VARS)
+def test_unknown_spelling_fails_closed_and_latches(var, monkeypatch, caplog):
+    monkeypatch.delenv("P2P_PRODUCTION", raising=False)
+    monkeypatch.delenv("SECURE_P2P_PRODUCTION", raising=False)
+    monkeypatch.setenv(var, "tru")
     with caplog.at_level("CRITICAL", logger="production_gate"):
-        assert pg.is_production() is False
+        assert pg.is_production() is True
     assert any("unrecognized value" in r.message for r in caplog.records)
+    monkeypatch.delenv(var)
+    assert pg.is_production() is True
+    assert "unrecognized" in pg.production_reason()
+
+
+@pytest.mark.parametrize("unknown_var", BOTH_VARS)
+@pytest.mark.parametrize("false_value", FALSEY)
+def test_unknown_value_wins_over_other_variable_falsey(
+    unknown_var, false_value, monkeypatch
+):
+    other_var = next(v for v in BOTH_VARS if v != unknown_var)
+    monkeypatch.setenv(unknown_var, "tru")
+    monkeypatch.setenv(other_var, false_value)
+    assert pg.is_production() is True
+
+
+@pytest.mark.parametrize("truthy_var", BOTH_VARS)
+def test_truthy_value_wins_over_other_variable_falsey(truthy_var, monkeypatch):
+    other_var = next(v for v in BOTH_VARS if v != truthy_var)
+    monkeypatch.setenv(truthy_var, "1")
+    monkeypatch.setenv(other_var, "0")
+    assert pg.is_production() is True
 
 
 # --- direct module-gate probes (the sites named in the audit) -------------
@@ -141,7 +167,7 @@ def test_module_gates_false_when_unset(label, fn, monkeypatch):
 
 
 @pytest.mark.parametrize("var", BOTH_VARS)
-@pytest.mark.parametrize("value", ("1", "true", "yes", "on"))
+@pytest.mark.parametrize("value", ("1", "true", "yes", "on", "tru"))
 def test_fresh_interpreter_arms_import_time(var, value):
     """Import-order independence: a fresh process started with the env var
     armed at import of production_gate (no explicit call required)."""
@@ -165,3 +191,60 @@ def test_fresh_interpreter_arms_import_time(var, value):
         f"fresh interpreter with {var}={value!r} must report production: "
         f"stderr={out.stderr[-500:]}"
     )
+
+
+def test_no_direct_production_environment_parsers():
+    """Security gates must not reintroduce independent production parsing.
+
+    Environment save/restore belongs in tests; production modules must use the
+    canonical gate (directly or through an audited adapter) instead of reading
+    either production variable from ``os.environ``/``os.getenv`` themselves.
+    """
+    root = Path(__file__).resolve().parents[1]
+    excluded = {".venv", "notupload", "target", "node_modules", "tests"}
+    violations = []
+    for path in root.rglob("*.py"):
+        relative = path.relative_to(root)
+        if any(
+            part in excluded or part.startswith(".audit-") or part == "site-packages"
+            for part in relative.parts[:-1]
+        ):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            violations.append(f"{relative}: source could not be audited: {exc}")
+            continue
+        for node in ast.walk(tree):
+            names = ()
+            if isinstance(node, ast.Call) and node.args:
+                arg = node.args[0]
+                if isinstance(arg, ast.Constant) and arg.value in BOTH_VARS:
+                    func = node.func
+                    if isinstance(func, ast.Name) and func.id == "getenv":
+                        names = (arg.value,)
+                    elif isinstance(func, ast.Attribute) and func.attr == "get":
+                        owner = func.value
+                        if (
+                            isinstance(owner, ast.Name)
+                            and owner.id in {"environ", "os"}
+                        ) or (
+                            isinstance(owner, ast.Attribute)
+                            and owner.attr == "environ"
+                        ):
+                            names = (arg.value,)
+                    elif isinstance(func, ast.Attribute) and func.attr == "getenv":
+                        names = (arg.value,)
+            elif isinstance(node, ast.Subscript):
+                key = node.slice
+                if isinstance(key, ast.Constant) and key.value in BOTH_VARS:
+                    owner = node.value
+                    if (
+                        isinstance(owner, ast.Name) and owner.id == "environ"
+                    ) or (
+                        isinstance(owner, ast.Attribute) and owner.attr == "environ"
+                    ):
+                        names = (key.value,)
+            for name in names:
+                violations.append(f"{relative}:{node.lineno}: direct read of {name}")
+    assert not violations, "\n".join(violations)

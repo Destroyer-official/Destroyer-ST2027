@@ -415,11 +415,18 @@ class MultiHopRouter:
         self._onion = OnionEncryption() if HAS_CRYPTOGRAPHY else None
         self._route_cache: Dict[str, List[RelayNode]] = {}
         self._lock = threading.Lock()
+        self._local_private_key: Optional[bytes] = None
         
         if relay_nodes:
             for node in relay_nodes:
                 self.add_relay_node(node)
     
+    def set_local_private_key(self, private_key: bytes) -> None:
+        """Set this node's 32-byte X25519 private key used for per-hop ECDH."""
+        if not isinstance(private_key, (bytes, bytearray)) or len(private_key) != 32:
+            raise MultiHopRoutingError("X25519 private key must be 32 bytes")
+        self._local_private_key = bytes(private_key)
+
     def add_relay_node(self, node: RelayNode) -> None:
         with self._lock:
             self._relay_nodes[node.node_id] = node
@@ -471,13 +478,20 @@ class MultiHopRouter:
             
             return selected
     
-    def build_onion_message(self, message: bytes, route: List[RelayNode], destination_key: bytes) -> bytes:
+    def build_onion_message(self, message: bytes, route: List[RelayNode], destination_key: bytes,
+                            local_private_key: Optional[Any] = None) -> bytes:
         if not self._onion:
             raise MultiHopRoutingError("Onion encryption not available")
+        key_material = local_private_key if local_private_key is not None else self._local_private_key
+        if key_material is None:
+            raise MultiHopRoutingError(
+                "Onion routing requires a local X25519 private key (set_local_private_key); "
+                "refusing to derive layer keys from public data (fail-closed)"
+            )
         
         layers = []
         for node in route:
-            shared_key = self._derive_shared_key(node.public_key)
+            shared_key = self._derive_shared_key(node.public_key, key_material)
             layer = OnionLayer(
                 hop_id=node.node_id,
                 hop_address=node.address,
@@ -498,28 +512,29 @@ class MultiHopRouter:
     
     def _derive_shared_key(self, public_key: bytes, local_private_key: Optional[Any] = None) -> bytes:
         """
-        Derive shared encryption key using Diffie-Hellman key agreement with HKDF.
-        If a local private key is provided, performs X25519 ECDH.
+        Derive a per-hop shared key via X25519 ECDH + HKDF. Fails closed:
+        a layer key must never be derivable from public material alone.
         """
         if not HAS_CRYPTOGRAPHY:
-            return hashlib.sha512(public_key).digest()[:32]
-        
+            raise MultiHopRoutingError("Onion routing requires the 'cryptography' library for ECDH (fail-closed)")
+        if local_private_key is None:
+            raise MultiHopRoutingError("Onion routing requires a local X25519 private key (fail-closed)")
+        if len(public_key) != 32:
+            raise MultiHopRoutingError("Relay node public keys must be 32-byte X25519 keys (fail-closed)")
         try:
-            if local_private_key is not None and len(public_key) == 32:
-                from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey, X25519PrivateKey
-                peer_pub = X25519PublicKey.from_public_bytes(public_key)
-                if isinstance(local_private_key, bytes):
-                    priv = X25519PrivateKey.from_private_bytes(local_private_key)
-                else:
-                    priv = local_private_key
-                shared_secret = priv.exchange(peer_pub)
-                hkdf = HKDF(algorithm=hashes.SHA512(), length=32, salt=b"SecureP2P::OnionRouting::v1", info=b"onion-routing-key")
-                return hkdf.derive(shared_secret)
+            from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey, X25519PrivateKey
+            peer_pub = X25519PublicKey.from_public_bytes(public_key)
+            if isinstance(local_private_key, (bytes, bytearray)):
+                priv = X25519PrivateKey.from_private_bytes(bytes(local_private_key))
+            else:
+                priv = local_private_key
+            shared_secret = priv.exchange(peer_pub)
+            hkdf = HKDF(algorithm=hashes.SHA512(), length=32, salt=b"SecureP2P::OnionRouting::v1", info=b"onion-routing-key")
+            return hkdf.derive(shared_secret)
+        except MultiHopRoutingError:
+            raise
         except Exception as e:
-            logger.debug(f"ECDH derivation fallback: {e}")
-
-        hkdf = HKDF(algorithm=hashes.SHA512(), length=32, salt=b"SecureP2P::OnionRouting::v1", info=b"onion-routing-key")
-        return hkdf.derive(public_key)
+            raise MultiHopRoutingError(f"Onion ECDH key derivation failed (fail-closed): {e}") from e
     
     def process_incoming_onion(self, onion_message: bytes, my_key: bytes) -> Tuple[bytes, Optional[str], Optional[int]]:
         if not self._onion:
@@ -807,6 +822,10 @@ class NetworkAdversaryResistanceManager:
     def add_relay_node(self, node: RelayNode) -> None:
         self.multi_hop_router.add_relay_node(node)
     
+    def set_onion_private_key(self, private_key: bytes) -> None:
+        """Provide this node's 32-byte X25519 private key for onion layer ECDH."""
+        self.multi_hop_router.set_local_private_key(private_key)
+
     def start(self) -> None:
         if self._use_traffic_shaping:
             self.traffic_shaper.start()

@@ -164,8 +164,10 @@ def sign_and_export_csrmc_report(output_dir: Path | None = None) -> Tuple[Path, 
 
     report_path.write_bytes(canonical_json)
 
+    from report_trust import load_or_create_audit_signer
+
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = load_or_create_audit_signer()
     sig = signer.sign(sk, canonical_json)
 
     sig_path.write_bytes(sig)
@@ -174,17 +176,21 @@ def sign_and_export_csrmc_report(output_dir: Path | None = None) -> Tuple[Path, 
     return report_path, sig_path, pub_path
 
 
-def verify_csrmc_report_signature(report_path: Path, sig_path: Path, pub_path: Path) -> bool:
-    """Verify ML-DSA-87 signature over CSRMC Phase 5 report."""
+def verify_csrmc_report_signature(
+    report_path: Path,
+    sig_path: Path,
+    pub_path: Path,
+    anchor_path: Path | None = None,
+) -> bool:
+    """Verify the report against the pinned audit anchor, not its own ``.pub``."""
     if not (report_path.exists() and sig_path.exists() and pub_path.exists()):
         return False
     try:
-        report_bytes = report_path.read_bytes()
-        sig_bytes = sig_path.read_bytes()
-        pub_bytes = pub_path.read_bytes()
+        from report_trust import verify_with_anchor
 
-        verifier = LibOQS_MLDSA_87()
-        return verifier.verify(pub_bytes, report_bytes, sig_bytes)
+        return verify_with_anchor(
+            report_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+        )
     except Exception as e:
         logger.error(f"CSRMC report signature verification failed: {e}")
         return False

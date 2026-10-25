@@ -281,3 +281,21 @@ def test_anonymous_data_phase_carries_channel_frames(tmp_path, monkeypatch):
     assert len(delivered) == 1
     ftype, msg = srv.open(delivered[0])
     assert ftype == st.FRAME_TYPE_DATA and msg == payload
+
+def test_shaper_tx_queue_accounting_releases_capacity():
+    """Frames must be counted down as cells drain, not just bounded upward."""
+    import secrets as _secrets
+
+    tx = ta.ShaperTx(_secrets.token_bytes(32), direction=0xA5, start_seq=1)
+    for _ in range(ta.OUT_QUEUE_CAP):
+        tx.enqueue_frame(b"x")
+    with pytest.raises(ta.OverlayError):
+        tx.enqueue_frame(b"y")
+    for _ in range(ta.OUT_QUEUE_CAP + 8):
+        tx.next_cell()
+        if tx._queued_frames == 0:
+            break
+    assert tx._queued_frames == 0  # nosec: B101
+    assert not tx._frame_remaining  # nosec: B101
+    tx.enqueue_frame(b"z")
+    assert tx._queued_frames == 1  # nosec: B101

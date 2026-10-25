@@ -85,6 +85,61 @@ def get_zero_trust_engine(min_threshold: int = 50) -> Any:
     return native.CoreZeroTrustEngine(min_threshold)
 
 
+def is_rust_primary() -> bool:
+    """Return True if Rust secure-core is available and active as PRIMARY data plane."""
+    return available()
+
+
+def get_native_engine() -> Any:
+    """Instantiate native Rust SecureEngine (fail-closed, memory-locked)."""
+    native = require_native()
+    return native.SecureEngine()
+
+
+def get_native_ratchet(session_key: bytes) -> Any:
+    """Instantiate native Rust fresh-KEM SPQR ratchet."""
+    native = require_native()
+    return native.CoreRatchet(list(session_key))
+
+
+def get_native_transport(k_send: bytes, k_recv: bytes, is_initiator: bool) -> Any:
+    """Instantiate native Rust post-handshake transport engine."""
+    native = require_native()
+    return native.CoreTransport(list(k_send), list(k_recv), is_initiator)
+
+
+def get_native_group_ratchet(
+    group_id: str, member_id: str, epoch_secret: bytes
+) -> Any:
+    """Instantiate native Rust SovereignGroupRatchet."""
+    native = require_native()
+    return native.CoreGroupRatchet(group_id, member_id, list(epoch_secret))
+
+
+def get_native_signer() -> Any:
+    """Instantiate native Rust ML-DSA-87 signer."""
+    native = require_native()
+    return native.CoreMldsaSigner()
+
+
+def get_native_attest_store() -> Any:
+    """Instantiate native Rust RATS attestation trust store."""
+    native = require_native()
+    return native.CoreAttestStore()
+
+
+def get_native_hs_initiator() -> Any:
+    """Instantiate native Rust Noise_XXhfs handshake initiator."""
+    native = require_native()
+    return native.CoreHsInitiator()
+
+
+def get_native_hs_responder() -> Any:
+    """Instantiate native Rust Noise_XXhfs handshake responder."""
+    native = require_native()
+    return native.CoreHsResponder()
+
+
 def secure_wipe_buffer(buf: bytearray) -> None:
     """Perform multi-pass DoD 5220.22-M / NIST SP 800-88 cryptographic wipe."""
     if available():
@@ -94,4 +149,5 @@ def secure_wipe_buffer(buf: bytearray) -> None:
         # Fallback Python wipe
         for i in range(len(buf)):
             buf[i] = 0
+
 

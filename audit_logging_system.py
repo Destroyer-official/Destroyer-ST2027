@@ -5,6 +5,7 @@ import json
 import sqlite3
 import threading
 import hashlib
+import hmac
 import os
 import base64
 import secrets
@@ -19,13 +20,81 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class SecurityError(Exception):
+    """Raised when audit integrity or key material cannot be trusted."""
+
+
+def _get_audit_salt() -> bytes:
+    """Return the per-install random PBKDF2 salt (A4-15, 2026-10-17).
+
+    The previous implementation used a hardcoded module-constant salt,
+    identical in every deployment, which lets an offline attacker who
+    recovers the DB precompute rainbow/brute-force work across all
+    installs. The salt is now a 32-byte per-install random value persisted
+    0600 next to the sealed KEK.
+
+    Migrating from a pre-A4-15 deployment: set P2P_AUDIT_LEGACY_SALT=1 once
+    to decrypt the historical database with the legacy static salt.
+    """
+    if os.environ.get("P2P_AUDIT_LEGACY_SALT", "").strip().lower() in ("1", "true", "yes", "on"):
+        logger.warning(
+            "P2P_AUDIT_LEGACY_SALT=1: using STATIC historical salt for legacy "
+            "database compatibility. Unset this after migration completes."
+        )
+        return b"SecureP2P::AuditDbSalt::v1::StrictEntropy"
+
+    key_dir = os.environ.get("P2P_BASE_DIR") or os.path.dirname(os.path.abspath(__file__))
+    salt_path = os.path.join(key_dir, ".secure_audit_salt")
+    try:
+        if os.path.exists(salt_path):
+            with open(salt_path, "rb") as f:
+                salt = f.read()
+            if len(salt) == 32:
+                return salt
+            # A4-15b (2026-10-17): Windows os.open/os.write text-mode artifact.
+            # Without O_BINARY every 0x0A byte was stored as CRLF, inflating
+            # the file; reversing the expansion recovers the exact original
+            # salt, so the derived KEK is unchanged.
+            repaired = salt.replace(b"\r\n", b"\n")
+            if len(repaired) == 32:
+                try:
+                    with open(salt_path, "wb") as f:
+                        f.write(repaired)
+                except Exception:  # nosec: B110 - best-effort repair persistence
+                    pass
+                return repaired
+            if len(salt) > 32:
+                return salt  # legacy longer salt: preserve as-is
+        salt = secrets.token_bytes(32)
+        fd = os.open(salt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        try:
+            os.write(fd, salt)
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(salt_path, 0o600)
+        except Exception:  # nosec: B110 - best-effort on Windows (ACL inherited from profile)
+            pass
+        return salt
+    except FileExistsError:
+        with open(salt_path, "rb") as f:
+            return f.read()
+    except Exception as e:
+        raise SecurityError(
+            "Cannot persist per-install audit salt (.secure_audit_salt). "
+            "Set P2P_AUDIT_LEGACY_SALT=1 ONLY to access a legacy database, "
+            "or provide P2P_AUDIT_PASSPHRASE with a writable P2P_BASE_DIR."
+        ) from e
+
+
 def _get_audit_encryption_key() -> bytes:
     """Derive 256-bit AES-GCM audit encryption key with PBKDF2-210k or sealed DPAPI (Finding 3)."""
     passphrase = os.environ.get("P2P_AUDIT_PASSPHRASE") or os.environ.get("P2P_STORAGE_PASSPHRASE")
     if passphrase:
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         from cryptography.hazmat.primitives import hashes
-        salt = b"SecureP2P::AuditDbSalt::v1::StrictEntropy"
+        salt = _get_audit_salt()
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA512(),
             length=32,
@@ -44,10 +113,22 @@ def _get_audit_encryption_key() -> bytes:
             from air_gapped_operation import win_dpapi_unprotect
             with open(sealed_key_path, 'rb') as f:
                 raw_key = win_dpapi_unprotect(f.read())
-        except Exception:
-            raw_key = None
-
-    if not raw_key or len(raw_key) < 32:
+        except Exception as e:
+            # HIGH (audit_logging L75): never silently replace an existing
+            # sealed KEK; that would make all encrypted audit history
+            # permanently unreadable.
+            raise SecurityError(
+                "Existing sealed audit KEK could not be unprotected; refusing to "
+                "generate a replacement key (encrypted audit history would be "
+                "unrecoverable). Restore the original KEK or provide "
+                "P2P_AUDIT_PASSPHRASE."
+            ) from e
+        if not raw_key or len(raw_key) < 32:
+            raise SecurityError(
+                "Existing sealed audit KEK is invalid or too short; refusing to "
+                "replace it (encrypted audit history would be unrecoverable)."
+            )
+    else:
         new_secret = secrets.token_bytes(32)
         try:
             from air_gapped_operation import win_dpapi_protect
@@ -71,6 +152,72 @@ def _get_audit_encryption_key() -> bytes:
         info=b"SecureP2P::AuditEncryptionKey::v1"
     )
     return hkdf.derive(raw_key)
+
+_chain_key_cache: Optional[bytes] = None
+_CHAIN_MAC_PREFIX = "k1:"
+_WORM_CHAIN_PREFIX = "w2:"
+_WORM_GENESIS = (
+    "GENESIS_WORM_BLOCK_0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+
+def _worm_chain_value(serialized: str, key: bytes) -> str:
+    """Keyed WORM chain value; unkeyed SHA3-512 chains are forgeable."""
+    return _WORM_CHAIN_PREFIX + hmac.new(
+        key, serialized.encode("utf-8"), hashlib.sha3_256
+    ).hexdigest()
+
+
+def _get_audit_chain_key() -> bytes:
+    """Derive the keyed-chain MAC key from the audit encryption key.
+
+    HKDF domain separation ensures the chain key differs from the
+    field-encryption key. Cached for the process lifetime.
+    """
+    global _chain_key_cache
+    if _chain_key_cache is None:
+        base_key = _get_audit_encryption_key()
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+        hkdf = HKDF(
+            algorithm=hashes.SHA3_512(),
+            length=32,
+            salt=b"SecureP2P::AuditChainSalt::v2",
+            info=b"SecureP2P::AuditChainKey::v2",
+        )
+        _chain_key_cache = hkdf.derive(base_key)
+    return _chain_key_cache
+
+
+def _chain_mac(event_data: str) -> str:
+    """Keyed chain value (HMAC-SHA3-256) for a new audit record."""
+    import hmac as _hmacmod
+    return _CHAIN_MAC_PREFIX + _hmacmod.new(
+        _get_audit_chain_key(), event_data.encode("utf-8"), hashlib.sha3_256
+    ).hexdigest()
+
+
+def _legacy_chain_allowed() -> bool:
+    """Legacy unkeyed chains are attacker-recomputable; opt-in only."""
+    return os.environ.get("P2P_ALLOW_LEGACY_AUDIT_CHAIN", "").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+
+
+def _verify_chain_value(event_data: str, stored: str) -> bool:
+    """Verify a chain value; legacy unkeyed SHA-512 rows are gated."""
+    import hmac as _hmacmod
+    if isinstance(stored, str) and stored.startswith(_CHAIN_MAC_PREFIX):
+        expected = _CHAIN_MAC_PREFIX + _hmacmod.new(
+            _get_audit_chain_key(), event_data.encode("utf-8"), hashlib.sha3_256
+        ).hexdigest()
+        return _hmacmod.compare_digest(expected, stored)
+    if not _legacy_chain_allowed():
+        return False
+    return _hmacmod.compare_digest(
+        hashlib.sha512(event_data.encode("utf-8")).hexdigest(), str(stored)
+    )
+
 
 def _encrypt_db_field(val: Any) -> str:
     if val is None:
@@ -411,11 +558,109 @@ class AuditLogger:
             if row and row[0]:
                 self._last_event_hash = row[0]
 
-            logger.info(f"Audit database initialized at {self.db_path} (WAL + WORM triggers + Merkle chaining active)")
+            # HIGH (audit_logging L28/L64): verify the keyed head anchor so
+            # tail truncation and rollback are detected at startup.
+            self._verify_startup_anchor(cursor)
 
+            logger.info(f"Audit database initialized at {self.db_path} (WAL + WORM triggers + keyed chaining + head anchor active)")
+
+        except SecurityError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize audit database: {e}")
+            try:
+                if self.db_connection is not None:
+                    self.db_connection.close()
+            except Exception:  # nosec: B110 - cleanup best-effort
+                pass
             self.db_connection = None
+            # Fail closed: silently running an audit logger without its
+            # backend would disable all audit persistence.
+            raise SecurityError(f"Audit database initialization failed: {e}") from e
+
+    def _anchor_path(self) -> str:
+        # The DB file name may contain characters that are illegal in a
+        # Windows path component (e.g. ':' from a peer address such as
+        # "session_127.0.0.1:server_audit.db").  Sanitize the stem so the
+        # anchor is a real sibling file rather than an alternate data stream.
+        db = str(self.db_path)
+        parent = os.path.dirname(db)
+        stem = os.path.basename(db)
+        safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in stem)
+        name = (safe or "audit") + ".anchor"
+        return os.path.join(parent, name) if parent else name
+
+    def _anchor_mac(self, canonical: str) -> str:
+        return hmac.new(
+            _get_audit_chain_key(), canonical.encode("utf-8"), hashlib.sha3_256
+        ).hexdigest()
+
+    def _write_anchor(self, count: int, last_hash: str) -> None:
+        """Atomically persist the authenticated chain head (anti-truncation)."""
+        data = {
+            "count": int(count),
+            "last_hash": last_hash or "",
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        data["mac"] = self._anchor_mac(canonical)
+        path = self._anchor_path()
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:  # nosec: B110 - Windows ACL inherited from profile
+            pass
+
+    def _verify_startup_anchor(self, cursor) -> None:
+        cursor.execute(
+            "SELECT COUNT(*), (SELECT hash_integrity FROM audit_events "
+            "ORDER BY rowid DESC LIMIT 1) FROM audit_events"
+        )
+        row = cursor.fetchone()
+        count = int(row[0] or 0)
+        last_hash = row[1] or ""
+
+        path = self._anchor_path()
+        if not os.path.exists(path):
+            # First run under anchored mode: baseline the current state.
+            self._write_anchor(count, last_hash)
+            return
+
+        with open(path, "r", encoding="utf-8") as f:
+            anchor = json.load(f)
+        mac = anchor.pop("mac", None)
+        canonical = json.dumps(anchor, sort_keys=True, separators=(",", ":"))
+        if not mac or not hmac.compare_digest(str(mac), self._anchor_mac(canonical)):
+            raise SecurityError(
+                "Audit head anchor MAC verification failed (possible tampering)"
+            )
+
+        a_count = int(anchor.get("count", 0))
+        a_hash = anchor.get("last_hash", "")
+        if count < a_count:
+            raise SecurityError(
+                f"Audit tail truncation detected: ledger has {count} rows but "
+                f"the authenticated anchor recorded {a_count}"
+            )
+        if a_count > 0:
+            cursor.execute(
+                "SELECT hash_integrity FROM audit_events ORDER BY rowid ASC "
+                "LIMIT 1 OFFSET ?",
+                (a_count - 1,),
+            )
+            head_row = cursor.fetchone()
+            if not head_row or head_row[0] != a_hash:
+                raise SecurityError(
+                    "Audit rollback/rewrite detected: anchored head hash mismatch"
+                )
+        # A crash between commit and anchor write can leave the ledger ahead
+        # of the anchor; accept and re-baseline in that window only.
+        self._write_anchor(count, last_hash)
 
     def _start_flush_thread(self):
         """Start background thread to flush events to database."""
@@ -433,16 +678,19 @@ class AuditLogger:
                 logger.error(f"Error in flush loop: {e}")
 
     def flush_buffer(self):
-        """Flush buffered events to database."""
+        """Flush buffered events to database, retaining them on failure.
+
+        HIGH (audit_logging L84): the previous implementation cleared the
+        buffer before inserting, so one failure (for example an event_id
+        primary-key collision) silently dropped the rest of the batch.
+        """
         if not self.db_connection:
             return
 
         with self.buffer_lock:
             if not self.event_buffer:
                 return
-
             events_to_flush = list(self.event_buffer)
-            self.event_buffer.clear()
 
         with self.db_lock:
             try:
@@ -450,29 +698,57 @@ class AuditLogger:
                 for event in events_to_flush:
                     et_val = getattr(event.event_type, 'value', str(event.event_type))
                     sev_val = getattr(event.severity, 'value', str(event.severity))
-                    cursor.execute('''
-                        INSERT INTO audit_events (
-                            event_id, timestamp, event_type, severity, message,
-                            user_id, source_ip, destination_ip, user_agent, session_id,
-                            details, threat_indicators, compliance_tags, hash_integrity,
-                            previous_hash
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        event.event_id, event.timestamp.isoformat(), et_val,
-                        sev_val, event.message, event.user_id, event.source_ip,
-                        event.destination_ip, event.user_agent, event.session_id,
-                        _encrypt_db_field(event.details), _encrypt_db_field(event.threat_indicators),
-                        json.dumps(event.compliance_tags), event.hash_integrity,
-                        event.previous_hash
-                    ))
+                    try:
+                        cursor.execute('''
+                            INSERT INTO audit_events (
+                                event_id, timestamp, event_type, severity, message,
+                                user_id, source_ip, destination_ip, user_agent, session_id,
+                                details, threat_indicators, compliance_tags, hash_integrity,
+                                previous_hash
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            event.event_id, event.timestamp.isoformat(), et_val,
+                            sev_val, event.message, event.user_id, event.source_ip,
+                            event.destination_ip, event.user_agent, event.session_id,
+                            _encrypt_db_field(event.details), _encrypt_db_field(event.threat_indicators),
+                            json.dumps(event.compliance_tags), event.hash_integrity,
+                            event.previous_hash
+                        ))
+                    except sqlite3.IntegrityError as dup_err:
+                        # Already durable from a retried batch: skip instead of
+                        # dropping the remaining events.
+                        logger.error(
+                            f"Audit event {event.event_id} already persisted; "
+                            f"skipping duplicate ({dup_err})"
+                        )
 
                 self.db_connection.commit()
                 enforce_audit_db_permissions(self.db_path)
                 self.stats['last_flush'] = datetime.datetime.now()
+
+                cursor.execute(
+                    "SELECT COUNT(*), (SELECT hash_integrity FROM audit_events "
+                    "ORDER BY rowid DESC LIMIT 1) FROM audit_events"
+                )
+                row = cursor.fetchone()
+                self._write_anchor(int(row[0] or 0), row[1] or "")
+
+                with self.buffer_lock:
+                    for event in events_to_flush:
+                        try:
+                            self.event_buffer.remove(event)
+                        except ValueError:
+                            pass
                 logger.debug(f"Flushed {len(events_to_flush)} events to database")
 
             except Exception as e:
                 logger.error(f"Failed to flush events to database: {e}")
+                try:
+                    self.db_connection.rollback()
+                except Exception:  # nosec: B110 - rollback best-effort
+                    pass
+                # The buffer was not cleared before the insert attempt, so
+                # the batch is retried on the next flush.
 
     def store_event(self, event: AuditEvent):
         """Store an audit event in the buffer for eventual persistence with Merkle chaining."""
@@ -483,7 +759,12 @@ class AuditLogger:
             event_type = getattr(event.event_type, 'value', str(event.event_type))
             severity = getattr(event.severity, 'value', str(event.severity))
             event_data = f"{prev}{event.event_id}{event.timestamp.isoformat()}{event_type}{severity}{event.message}"
-            event.hash_integrity = hashlib.sha512(event_data.encode('utf-8')).hexdigest()
+            if self.db_path:
+                # Keyed chain for persisted audits (an unkeyed chain can be
+                # recomputed by anyone with write access to the database).
+                event.hash_integrity = _chain_mac(event_data)
+            else:
+                event.hash_integrity = hashlib.sha512(event_data.encode('utf-8')).hexdigest()
             self._last_event_hash = event.hash_integrity
 
             self.event_buffer.append(event)
@@ -544,8 +825,31 @@ class AuditLogger:
         if not siem_endpoint:
             return
         try:
-            # Format as JSON payload for SIEM ingest
-            payload = (json.dumps(redacted_payload) + "\n").encode('utf-8')
+            # HIGH (audit_logging L93): network sinks receive an authenticated
+            # copy; production refuses unauthenticated/plaintext transports.
+            siem_key_raw = os.environ.get("P2P_SIEM_KEY")
+            try:
+                from production_gate import is_production as _gate_prod
+                _prod = _gate_prod()
+            except Exception:
+                _prod = False
+            if _prod:
+                if not (siem_endpoint.startswith('tls://') or siem_endpoint.startswith('ssl://')):
+                    logger.error("Refusing non-TLS SIEM transport in production")
+                    return
+                if not siem_key_raw:
+                    logger.error(
+                        "Refusing unauthenticated SIEM stream in production "
+                        "(set P2P_SIEM_KEY)"
+                    )
+                    return
+            record = dict(redacted_payload)
+            if siem_key_raw:
+                body = json.dumps(redacted_payload, sort_keys=True, separators=(",", ":"))
+                record["siem_auth_hmac_sha384"] = hmac.new(
+                    siem_key_raw.encode("utf-8"), body.encode("utf-8"), hashlib.sha384
+                ).hexdigest()
+            payload = (json.dumps(record) + "\n").encode('utf-8')
             if siem_endpoint.startswith('udp://'):
                 import socket
                 parts = siem_endpoint[6:].split(':')
@@ -612,9 +916,8 @@ class AuditLogger:
                     return False, f"Broken chain link at row {idx} (event {event_id}): expected previous {expected_prev[:16]}, got {str(previous_hash)[:16]}"
                 
                 event_data = f"{previous_hash}{event_id}{timestamp}{event_type}{severity}{message}"
-                computed_hash = hashlib.sha512(event_data.encode('utf-8')).hexdigest()
-                if computed_hash != hash_integrity:
-                    return False, f"Hash integrity failure at row {idx} (event {event_id}): recomputed {computed_hash[:16]} != stored {hash_integrity[:16]}"
+                if not _verify_chain_value(event_data, hash_integrity):
+                    return False, f"Hash integrity failure at row {idx} (event {event_id}): stored chain value does not verify"
                 
                 expected_prev = hash_integrity
 
@@ -753,14 +1056,21 @@ class AuditLogger:
         """Get audit logging statistics."""
         return self.stats.copy()
 
-    def export_worm_log(self, export_path: Optional[str] = None) -> str:
+    def export_worm_log(
+        self, export_path: Optional[str] = None, hmac_key: Optional[bytes] = None
+    ) -> str:
         """
-        Export audit records to an immutable, cryptographically hash-chained WORM log file.
-        Each record is chained to the previous record using SHA3-512 to ensure tamper evidence.
+        Export audit records to an immutable, keyed hash-chained WORM log file.
+
+        Each record is chained with HMAC-SHA3-256 under the audit chain key
+        (or an explicitly supplied ``hmac_key`` for offline verification), so
+        an attacker with write access cannot recompute the chain without the
+        key. Unkeyed SHA3-512 chains were forgeable by design.
         """
         self.flush_buffer()
         if not self.db_connection:
             raise RuntimeError("Database connection not initialized")
+        chain_key = bytes(hmac_key) if hmac_key is not None else _get_audit_chain_key()
 
         if not export_path:
             base_dir = os.path.dirname(self.db_path) if self.db_path else "."
@@ -777,7 +1087,7 @@ class AuditLogger:
             ''')
             rows = cursor.fetchall()
 
-        previous_hash = "GENESIS_WORM_BLOCK_0000000000000000000000000000000000000000000000000000000000000000"
+        previous_hash = _WORM_GENESIS
         with open(export_path, 'w', encoding='utf-8') as f:
             for idx, row in enumerate(rows):
                 record = {
@@ -792,15 +1102,15 @@ class AuditLogger:
                     "destination_ip": row[7],
                     "user_agent": row[8],
                     "session_id": row[9],
-                    "details": json.loads(row[10]) if row[10] else {},
-                    "threat_indicators": json.loads(row[11]) if row[11] else {},
+                    "details": _decrypt_db_field(row[10]),
+                    "threat_indicators": _decrypt_db_field(row[11]),
                     "compliance_tags": json.loads(row[12]) if row[12] else [],
                     "event_hash": row[13],
                     "created_at": str(row[14]),
                     "previous_chain_hash": previous_hash
                 }
                 serialized = json.dumps(record, sort_keys=True)
-                chain_hash = hashlib.sha3_512(serialized.encode('utf-8')).hexdigest()
+                chain_hash = _worm_chain_value(serialized, chain_key)
                 record["chain_hash"] = chain_hash
                 previous_hash = chain_hash
                 f.write(json.dumps(record) + "\n")
@@ -809,32 +1119,62 @@ class AuditLogger:
         return export_path
 
     @staticmethod
-    def verify_worm_log(export_path: str) -> Tuple[bool, int, str]:
+    def verify_worm_log(
+        export_path: str, hmac_key: Optional[bytes] = None
+    ) -> Tuple[bool, int, str]:
         """
-        Verify the cryptographic SHA3-512 hash chain of a WORM audit export file.
+        Verify the keyed HMAC-SHA3-256 chain of a WORM audit export file.
+
+        ``hmac_key`` allows offline verification on a host that does not hold
+        the audit KEK. Legacy unkeyed SHA3-512 exports are rejected unless
+        P2P_ALLOW_LEGACY_WORM_CHAIN=1 (they are forgeable by anyone with write
+        access to the file).
         Returns: (is_valid, record_count, status_message)
         """
         if not os.path.exists(export_path):
             return False, 0, f"File not found: {export_path}"
 
-        previous_hash = "GENESIS_WORM_BLOCK_0000000000000000000000000000000000000000000000000000000000000000"
+        chain_key = bytes(hmac_key) if hmac_key is not None else _get_audit_chain_key()
+        legacy_allowed = os.environ.get(
+            "P2P_ALLOW_LEGACY_WORM_CHAIN", ""
+        ).strip().lower() in ("1", "true", "yes", "on")
+        previous_hash = _WORM_GENESIS
         count = 0
         with open(export_path, 'r', encoding='utf-8') as f:
             for line_no, line in enumerate(f, 1):
                 if not line.strip():
                     continue
-                record = json.loads(line.strip())
+                try:
+                    record = json.loads(line.strip())
+                except Exception:
+                    return False, count, f"Malformed JSON at line {line_no}"
+                if not isinstance(record, dict):
+                    return False, count, f"Malformed record at line {line_no}"
                 stored_chain_hash = record.get("chain_hash")
-                if record.get("previous_chain_hash") != previous_hash:
+                previous = record.get("previous_chain_hash")
+                if not isinstance(stored_chain_hash, str) or not isinstance(previous, str):
+                    return False, count, f"Missing chain fields at line {line_no}"
+                if not hmac.compare_digest(previous, previous_hash):
                     return False, count, f"Hash chain break at line {line_no}: previous hash mismatch"
 
-                # Recompute chain hash
                 verify_record = record.copy()
                 del verify_record["chain_hash"]
                 serialized = json.dumps(verify_record, sort_keys=True)
-                expected_chain_hash = hashlib.sha3_512(serialized.encode('utf-8')).hexdigest()
+                if stored_chain_hash.startswith(_WORM_CHAIN_PREFIX):
+                    expected_chain_hash = _worm_chain_value(serialized, chain_key)
+                elif legacy_allowed:
+                    expected_chain_hash = hashlib.sha3_512(
+                        serialized.encode('utf-8')
+                    ).hexdigest()
+                else:
+                    return (
+                        False,
+                        count,
+                        f"Unkeyed legacy chain at line {line_no} rejected "
+                        f"(set P2P_ALLOW_LEGACY_WORM_CHAIN=1 only for migration)",
+                    )
 
-                if stored_chain_hash != expected_chain_hash:
+                if not hmac.compare_digest(stored_chain_hash, expected_chain_hash):
                     return False, count, f"Hash tampering at line {line_no}: computed hash does not match stored hash"
 
                 previous_hash = stored_chain_hash

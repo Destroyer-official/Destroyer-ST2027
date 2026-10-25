@@ -35,6 +35,24 @@ GENESIS_HMAC = "0" * 96  # 96 hex characters = 48 bytes (SHA-384)
 AUDIT_HMAC_KEY_BYTES = 48  # HMAC-SHA384 key size
 
 
+class SiemAuditChainError(RuntimeError):
+    """Raised when the audit chain cannot be established or verified safely."""
+
+
+def _ct_eq_str(a: Any, b: Any) -> bool:
+    """Constant-time comparison for ASCII hex digest strings (A4-03).
+
+    Returns False (without leaking timing position information via Python's
+    short-circuiting ``!=``) for missing or non-string operands.
+    """
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    try:
+        return hmac.compare_digest(a.encode("ascii"), b.encode("ascii"))
+    except (UnicodeEncodeError, TypeError):
+        return False
+
+
 class TamperEvidentAuditChain:
     """Thread-safe cryptographic audit log manager with HMAC-SHA384 chaining."""
 
@@ -59,7 +77,7 @@ class TamperEvidentAuditChain:
         else:
             self.ledger_path = Path(ledger_path)
             self.anchor_path = Path(anchor_path)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
         # Resolve the chain HMAC key. Tamper-evidence holds ONLY if this key
         # is secret: a publicly derivable key lets anyone forge the chain.
@@ -74,17 +92,37 @@ class TamperEvidentAuditChain:
         else:
             env_key = os.environ.get("P2P_SIEM_KEY")
             if env_key:
-                self.hmac_key = env_key.encode("utf-8")
+                key_bytes = env_key.encode("utf-8")
+                if len(key_bytes) < 32:
+                    raise SiemAuditChainError(
+                        "P2P_SIEM_KEY must be at least 32 bytes"
+                    )
+                self.hmac_key = key_bytes
             else:
                 self.hmac_key = self._load_or_create_key_file()
 
         self.last_hmac = GENESIS_HMAC
         self.seq = 0
+        # How often (in events) the authenticated head anchor is refreshed.
+        # A fresh anchor makes tail truncation detectable immediately.
+        try:
+            self.anchor_refresh_every = max(
+                1, int(os.environ.get("P2P_SIEM_ANCHOR_REFRESH_EVENTS", "10")))
+        except ValueError:
+            self.anchor_refresh_every = 10
         if not self.memory_only:
             self._recover_state()
 
     def _key_file_path(self) -> Path:
         return self.ledger_path.with_name(self.ledger_path.stem + ".hmac.key")
+
+    @staticmethod
+    def _production() -> bool:
+        try:
+            from production_gate import is_production
+            return bool(is_production())
+        except Exception:
+            return False
 
     def _load_or_create_key_file(self) -> bytes:
         """Load the persisted chain key (0600) or create one at random.
@@ -92,7 +130,16 @@ class TamperEvidentAuditChain:
         A pre-existing non-empty ledger without key material means prior
         entries were chained under the legacy deterministic key (publicly
         forgeable): log that once (CRITICAL) and start a new random epoch.
+
+        HIGH (audit_logging L18): in production the chain key must come from
+        P2P_SIEM_KEY. A plaintext key file next to the ledger can be read by
+        anyone who can write the ledger, which defeats tamper-evidence.
         """
+        if self._production():
+            raise SiemAuditChainError(
+                "P2P_SIEM_KEY (at least 32 bytes) is required in production; "
+                "refusing to persist a plaintext chain key beside the audit ledger."
+            )
         key_path = self._key_file_path()
         try:
             raw = key_path.read_bytes()
@@ -235,18 +282,52 @@ class TamperEvidentAuditChain:
         except Exception as exc:
             logger.critical("Audit ledger rotation failed (%r); truncating live file to last valid entry", exc)
 
+    def _anchor_hmac(self, anchor: Dict[str, Any]) -> str:
+        canonical = self.canonical_json(anchor)
+        return hmac.new(self.hmac_key, canonical.encode("utf-8"), hashlib.sha384).hexdigest()
+
     def _check_anchor_against_ledger(self) -> None:
-        """Detect tail truncation: ledger shorter than the anchored head."""
+        """Detect tail truncation and head rewrites against the signed anchor.
+
+        HIGH (audit_logging L28): the anchor used to be unauthenticated and
+        truncation was only logged. The anchor now carries an HMAC, and in
+        production a mismatch or truncation refuses startup.
+        """
         try:
             if not self.anchor_path.exists():
                 return
             anchor = json.loads(self.anchor_path.read_text(encoding="utf-8"))
+            stored_mac = anchor.pop("mac", None)
+            if stored_mac is not None and not _ct_eq_str(
+                stored_mac, self._anchor_hmac(anchor)
+            ):
+                logger.critical("Audit head anchor MAC mismatch (anchor tampered)")
+                if self._production():
+                    raise SiemAuditChainError(
+                        "Audit head anchor MAC verification failed"
+                    )
+                return
             anchored_seq = int(anchor.get("seq", 0))
-            if anchored_seq > self.seq:
+            anchored_head = anchor.get("head_hmac")
+            truncated = anchored_seq > self.seq
+            rewritten = bool(
+                anchored_seq == self.seq
+                and anchored_head
+                and not _ct_eq_str(anchored_head, self.last_hmac)
+            )
+            if truncated:
                 logger.critical(
                     "Audit tail truncation suspected: anchor seq %d > ledger seq %d",
                     anchored_seq, self.seq)
-        except Exception:
+            if rewritten:
+                logger.critical(
+                    "Audit head rewrite suspected: anchor head HMAC != ledger head")
+            if (truncated or rewritten) and self._production():
+                raise SiemAuditChainError(
+                    "Audit chain truncation/rewrite detected against authenticated anchor")
+        except SiemAuditChainError:
+            raise
+        except Exception:  # nosec: B110 - malformed anchor handled above in prod by MAC path
             pass
 
     @staticmethod
@@ -311,6 +392,18 @@ class TamperEvidentAuditChain:
                     f.write(json.dumps(entry) + "\n")
 
             self.last_hmac = entry_hmac
+
+            # Refresh the authenticated head anchor so a tail-truncation
+            # attack is always detectable.  Without this, no production
+            # path ever wrote an anchor and truncation was only visible
+            # when a stale anchor happened to exist.
+            if not self.memory_only and self.seq % self.anchor_refresh_every == 0:
+                try:
+                    self.export_head_anchor()
+                except Exception as e:
+                    logger.error(f"Head anchor export failed: {e}")
+                    if self._production():
+                        raise
             return entry
 
     def export_head_anchor(self) -> Dict[str, Any]:
@@ -324,7 +417,14 @@ class TamperEvidentAuditChain:
                 "hash_algorithm": "HMAC-SHA384",
             }
             if not self.memory_only:
-                self.anchor_path.write_text(json.dumps(anchor, indent=2), encoding="utf-8")
+                signed = dict(anchor)
+                signed["mac"] = self._anchor_hmac(anchor)
+                tmp = str(self.anchor_path) + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(signed, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, str(self.anchor_path))
             return anchor
 
     def verify_ledger(self) -> Tuple[bool, int, str]:
@@ -378,7 +478,10 @@ def verify_audit_log_chain(ledger_path: Path, hmac_key: bytes) -> Tuple[bool, in
                 )
 
             prev_hmac = entry.get("prev_hmac")
-            if prev_hmac != expected_prev:
+            # A4-03 (2026-10-17): constant-time comparison. Python's `!=` on
+            # str short-circuits at the first differing char, leaking how
+            # many leading hex digits of a guessed chain link are correct.
+            if not _ct_eq_str(prev_hmac, expected_prev):
                 return (
                     False,
                     count,
@@ -394,7 +497,7 @@ def verify_audit_log_chain(ledger_path: Path, hmac_key: bytes) -> Tuple[bool, in
             )
             recomputed = hmac.new(hmac_key, commitment, hashlib.sha384).hexdigest()
 
-            if recomputed != entry.get("hmac"):
+            if not _ct_eq_str(recomputed, entry.get("hmac")):
                 return (
                     False,
                     count,

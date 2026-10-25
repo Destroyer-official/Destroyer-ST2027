@@ -50,6 +50,36 @@ class ConnectionManager(BaseModule):
         self._max_active_connections = 16
         self._active_connections = {}
         self._connection_lock = asyncio.Lock()
+
+    def _active_session_count(self) -> int:
+        """Count unique sessions; aliases (IP and conn_key) share one context."""
+        return len({id(context) for context in self._active_connections.values()})
+
+    def _close_connection_context(self, connection) -> None:
+        """Close a SessionContext or legacy connection dict exactly once."""
+        if hasattr(connection, "secure_cleanup"):
+            try:
+                connection.secure_cleanup()
+            except Exception as exc:
+                self.logger.error(f"Session cleanup failed: {exc}")
+            return
+        if isinstance(connection, dict):
+            for field in ("socket", "writer"):
+                target = connection.get(field)
+                if target is None:
+                    continue
+                try:
+                    if hasattr(target, "is_closing") and target.is_closing():
+                        continue
+                    target.close()
+                except Exception as _sock_err:
+                    self.logger.debug(f"Socket close suppressed: {_sock_err}")
+
+    def _remove_connection_aliases(self, connection) -> None:
+        """Remove every table alias referring to the same session context."""
+        for key, value in list(self._active_connections.items()):
+            if value is connection:
+                self._active_connections.pop(key, None)
     
     async def handle_incoming_connection(self, client_socket, client_address, listen_port) -> None:
         """
@@ -154,18 +184,20 @@ class ConnectionManager(BaseModule):
                         module="network.connection",
                         function="handle_incoming_connection"
                     )
-                
+
                 self.logger.info("[CONNECTION] Secure session initialized successfully")
                 
                 # Track connection with full security context (fingerprint or ip:port)
                 conn_key = getattr(session_context, 'peer_fingerprint', None) or f"[{client_ip}]:{client_port}"
                 async with self._connection_lock:
-                    if conn_key not in self._active_connections and len(self._active_connections) >= self._max_active_connections:
+                    if conn_key not in self._active_connections and self._active_session_count() >= self._max_active_connections:
                         raise SecurityError(
                             "Connection table full - rejecting inbound (DoS protection)",
                             module="network.connection",
                             function="handle_incoming_connection"
                         )
+                    if self.orchestrator and hasattr(self.orchestrator, "_register_session_auth_key"):
+                        self.orchestrator._register_session_auth_key(client_ip, session_context)
                     self._active_connections[conn_key] = session_context
                     self._active_connections[client_ip] = session_context
                 
@@ -395,18 +427,20 @@ class ConnectionManager(BaseModule):
                                 except Exception as _sock_err:
                                     self.logger.debug(f"Socket close suppressed: {_sock_err}")
                                 continue
-                            
+
                             self.logger.info("[CONNECTION] Secure session initialized successfully")
                             
                             # Track connection with full security context
                             conn_key = getattr(session_context, 'peer_fingerprint', None) or f"[{peer_ip}]:{peer_port}"
                             async with self._connection_lock:
-                                if conn_key not in self._active_connections and len(self._active_connections) >= self._max_active_connections:
+                                if conn_key not in self._active_connections and self._active_session_count() >= self._max_active_connections:
                                     raise SecurityError(
                                         "Connection table full - rejecting outbound (DoS protection)",
                                         module="network.connection",
                                         function="handle_outgoing_connection"
                                     )
+                                if self.orchestrator and hasattr(self.orchestrator, "_register_session_auth_key"):
+                                    self.orchestrator._register_session_auth_key(peer_ip, session_context)
                                 self._active_connections[conn_key] = session_context
                                 self._active_connections[peer_ip] = session_context
                             
@@ -520,10 +554,12 @@ class ConnectionManager(BaseModule):
             async with self._connection_lock:
                 if peer_id and peer_id in self._active_connections:
                     conn_info = self._active_connections.pop(peer_id)
-                    try:
-                        conn_info['socket'].close()
-                    except Exception as _sock_err:
-                        self.logger.debug(f"Socket close suppressed: {_sock_err}")
+                    self._remove_connection_aliases(conn_info)
+                    self._close_connection_context(conn_info)
+                    if hasattr(self.orchestrator, "_forget_session_auth_key"):
+                        session_peer_id = getattr(conn_info, "peer_id", None)
+                        for auth_peer_id in {peer_id, session_peer_id} - {None}:
+                            self.orchestrator._forget_session_auth_key(auth_peer_id)
             
             # Close orchestrator socket
             if self.orchestrator:
@@ -566,12 +602,14 @@ class ConnectionManager(BaseModule):
     async def cleanup(self) -> None:
         """Cleanup connection resources."""
         async with self._connection_lock:
-            for peer_id, conn_info in self._active_connections.items():
-                try:
-                    conn_info['socket'].close()
-                except Exception as _sock_err:
-                    self.logger.debug(f"Socket close suppressed: {_sock_err}")
+            closed = set()
+            for conn_info in self._active_connections.values():
+                identity = id(conn_info)
+                if identity in closed:
+                    continue
+                closed.add(identity)
+                self._close_connection_context(conn_info)
             self._active_connections.clear()
         
         self.logger.debug("Connection manager cleaned up")
-        await super().cleanup()
+        super().cleanup()

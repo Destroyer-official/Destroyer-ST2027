@@ -653,7 +653,7 @@ class CommandProcessor(BaseModule):
                 "expires_at": time.time() + 120.0,
                 "originator": getattr(self.orchestrator, 'local_username', 'COMMAND_NODE'),
                 "directive": directive,
-                "two_person_rule": "VERIFIED_2_OF_2",
+                "two_person_rule": "UNVERIFIED_SINGLE_OPERATOR_CLI",
                 "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
             }
             raw_json = json.dumps(eam_payload)
@@ -670,15 +670,18 @@ class CommandProcessor(BaseModule):
                 res = self.orchestrator.p2p.send_framed(self.orchestrator.tcp_socket, enc)
                 if asyncio.iscoroutine(res):
                     await res
-            elif hasattr(self.orchestrator, 'p2p') and hasattr(self.orchestrator, 'tcp_socket'):
-                res = self.orchestrator.p2p.send_framed(self.orchestrator.tcp_socket, f"EAM:{raw_json}".encode("utf-8"))
-                if asyncio.iscoroutine(res):
-                    await res
+            else:
+                # Fail closed: a classified NC3 directive must never be sent
+                # as plaintext over the wire.
+                raise RuntimeError(
+                    "NC3 EAM directive requires an authenticated encrypted "
+                    "channel (send_chat_message or _encrypt_message); "
+                    "refusing plaintext fallback.")
 
             print(f"\n{BOLD}{GREEN}[NC3 DIRECTIVE RELEASED]{RESET}")
             print(f"  Classification:     {EAM_CLASSIFICATION}")
             print(f"  Validity Window:    120.0s (Strict temporal expiration)")
-            print(f"  Dual Custody:       2-of-2 Rule Verified")
+            print(f"  Dual Custody:       UNVERIFIED (single-operator CLI path)")
             print(f"  Authenticator SHA3: {eam_payload['authenticator_hash'][:32]}...")
             print(f"  Directive Content:  {directive}")
         except Exception as e:
@@ -692,11 +695,8 @@ class CommandProcessor(BaseModule):
         print("\r" + " " * 100)
         try:
             mil_mode = os.environ.get("P2P_MILITARY_MODE", "0") in ("1", "true")
-            try:
-                from production_gate import is_production as _gate_prod
-                prod_mode = _gate_prod()
-            except Exception:
-                prod_mode = os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
+            from production_gate import is_production as _gate_prod
+            prod_mode = _gate_prod()
             try:
                 from destroyer_core import SecureEngine
                 rust_avail = True

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<system>
+    <!-- Physical Memory Regions -->
+    <memory_region name="red_crypto_ring" size="0x10000" page_size="0x1000" />
+    <memory_region name="crypto_black_ring" size="0x10000" page_size="0x1000" />
+    <memory_region name="crypto_locked_keys" size="0x4000" page_size="0x1000" />
+
+    <!-- 1. RED Protection Domain: Plaintext User Space (No Network Direct Access) -->
+    <protection_domain name="red_domain" priority="100">
+        <program_image path="red_domain.elf" />
+        <map mr="red_crypto_ring" vaddr="0x10000000" perms="rw" cached="true" />
+    </protection_domain>
+
+    <!-- 2. CRYPTO Protection Domain: Sovereign Cryptographic Engine & Key Storage -->
+    <protection_domain name="crypto_domain" priority="120">
+        <program_image path="crypto_domain.elf" />
+        <map mr="red_crypto_ring" vaddr="0x10000000" perms="rw" cached="true" />
+        <map mr="crypto_black_ring" vaddr="0x20000000" perms="rw" cached="true" />
+        <map mr="crypto_locked_keys" vaddr="0x30000000" perms="rw" cached="false" />
+    </protection_domain>
+
+    <!-- 3. BLACK Protection Domain: Untrusted Ciphertext Network Transport -->
+    <protection_domain name="black_domain" priority="90">
+        <program_image path="black_domain.elf" />
+        <map mr="crypto_black_ring" vaddr="0x20000000" perms="rw" cached="true" />
+    </protection_domain>
+
+    <!-- Notification Channels (seL4 Endpoints) -->
+    <channel>
+        <end pd="red_domain" id="1" />
+        <end pd="crypto_domain" id="1" />
+    </channel>
+    <channel>
+        <end pd="crypto_domain" id="2" />
+        <end pd="black_domain" id="2" />
+    </channel>
+</system>

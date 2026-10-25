@@ -298,6 +298,65 @@ class TestFullPipelineSealOpen(unittest.TestCase):
         self.assertEqual(new_epoch_2, 2)
         self.assertEqual(pipeline.status()["current_epoch"], 2)
 
+    def test_continuous_messaging_exceeding_cer_interval(self):
+        """Continuous messaging past CER_EPOCH_INTERVAL (128) must not desynchronize or fail."""
+        pipeline_a = UnifiedSecurePipeline()
+        pipeline_b = UnifiedSecurePipeline()
+        root_key = secrets.token_bytes(32)
+        pipeline_a.establish_rust_layer(root_key, is_initiator=True)
+        pipeline_b.establish_rust_layer(root_key, is_initiator=False)
+        ratchet_a, ratchet_b = self._make_mock_ratchet()
+
+        for i in range(150):
+            msg = f"Tactical Cover/Chat Packet #{i}".encode("utf-8")
+            sealed = pipeline_a.seal(msg, ratchet_a)
+            msg_type, recovered = pipeline_b.open(sealed, ratchet_b)
+            self.assertEqual(msg, recovered, f"Message #{i} failed roundtrip")
+
+        self.assertEqual(pipeline_a.status()["sealed_count"], 150)
+        self.assertEqual(pipeline_b.status()["opened_count"], 150)
+
+    def test_synchronized_cer_epoch_rotation(self):
+        """Verify synchronized epoch rotation across endpoints preserves message roundtrip."""
+        pipeline_a = UnifiedSecurePipeline()
+        pipeline_b = UnifiedSecurePipeline()
+        root_key = secrets.token_bytes(32)
+        pipeline_a.establish_rust_layer(root_key, is_initiator=True)
+        pipeline_b.establish_rust_layer(root_key, is_initiator=False)
+        ratchet_a, ratchet_b = self._make_mock_ratchet()
+
+        # Messages under Epoch 0
+        s0 = pipeline_a.seal(b"Epoch 0 Message", ratchet_a)
+        _, r0 = pipeline_b.open(s0, ratchet_b)
+        self.assertEqual(r0, b"Epoch 0 Message")
+
+        # Synchronized CER step to Epoch 1
+        ea = pipeline_a.rotate_epoch()
+        eb = pipeline_b.rotate_epoch()
+        self.assertEqual(ea, 1)
+        self.assertEqual(eb, 1)
+
+        # Messages under Epoch 1
+        s1 = pipeline_a.seal(b"Epoch 1 Message", ratchet_a)
+        _, r1 = pipeline_b.open(s1, ratchet_b)
+        self.assertEqual(r1, b"Epoch 1 Message")
+
+    def test_outer_rust_aead_failure_fails_closed(self):
+        """Corrupted or tampered outer Rust AEAD frame must raise PipelineSecurityError (fail closed)."""
+        pipeline_a = UnifiedSecurePipeline()
+        pipeline_b = UnifiedSecurePipeline()
+        root_key = secrets.token_bytes(32)
+        pipeline_a.establish_rust_layer(root_key, is_initiator=True)
+        pipeline_b.establish_rust_layer(root_key, is_initiator=False)
+        ratchet_a, ratchet_b = self._make_mock_ratchet()
+
+        sealed = bytearray(pipeline_a.seal(b"Sensory payload", ratchet_a))
+        # Tamper with the outer ciphertext
+        sealed[-5] ^= 0xFF
+
+        with self.assertRaises(PipelineSecurityError):
+            pipeline_b.open(bytes(sealed), ratchet_b)
+
     def test_triple_hybrid_kem_pipeline(self):
         """Verify Triple-Hybrid KEM session establishment for initiator and responder."""
         pipeline_init = UnifiedSecurePipeline()

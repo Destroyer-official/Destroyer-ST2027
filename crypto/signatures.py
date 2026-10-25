@@ -39,19 +39,23 @@ class SignatureOperations(BaseModule):
     
     @property
     def slh_dsa_256f(self):
-        """Lazy load SLH-DSA-256f implementation."""
+        """Lazy load SLH-DSA-256f implementation (FIPS 205 FAST variant)."""
         if self._slh_dsa_256f is None:
             try:
-                from pqc_algorithms import EnhancedSPHINCS_256s
-                self._slh_dsa_256f = EnhancedSPHINCS_256s()
-            except ImportError as e:
-                self.logger.error(f"Failed to import SLH-DSA-256f: {e}", exc_info=True)
-                raise CryptoError(
-                    f"Failed to load SLH-DSA-256f implementation: {e}",
-                    module="crypto.signatures",
-                    function="slh_dsa_256f",
-                    severity="CRITICAL"
-                )
+                from liboqs_wrapper import LibOQS_SLH_DSA_256f
+                self._slh_dsa_256f = LibOQS_SLH_DSA_256f()
+            except Exception:
+                try:
+                    from pqc_algorithms import EnhancedSPHINCS_256s
+                    self._slh_dsa_256f = EnhancedSPHINCS_256s()
+                except ImportError as e:
+                    self.logger.error(f"Failed to import SLH-DSA-256f: {e}", exc_info=True)
+                    raise CryptoError(
+                        f"Failed to load SLH-DSA-256f implementation: {e}",
+                        module="crypto.signatures",
+                        function="slh_dsa_256f",
+                        severity="CRITICAL"
+                    )
         return self._slh_dsa_256f
     
     def sign_with_ml_dsa_87(self, message: bytes, private_key: bytes) -> bytes:

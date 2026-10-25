@@ -372,6 +372,11 @@ class SecureFileTransfer:
         """
         output_path = Path(output_path)
         
+        # HIGH (file_transfer L18): never write through a symlink; the final
+        # path component must not be a link (O_NOFOLLOW-style refusal).
+        if output_path.is_symlink():
+            raise ValueError(f"refusing to reassemble through symlink: {output_path}")
+
         if file_id not in self._received_chunks:
             raise ValueError(f"No chunks received for file {file_id}")
         
@@ -451,6 +456,11 @@ class SecureFileTransfer:
         """
         file_path = Path(file_path)
         
+        if file_path.is_symlink():
+            # HIGH (file_transfer L26): the wipe passes would follow the link
+            # and destroy the target; refuse instead.
+            raise SecureDeletionError(f"refusing to wipe symlink target: {file_path}")
+
         if not file_path.exists():
             return True
         

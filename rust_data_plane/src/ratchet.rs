@@ -98,7 +98,7 @@ impl PcsRatchet {
 
     /// Sending step against the peer's advertised `(peer_x_pub, peer_ek)`:
     /// fresh-encaps both halves, evolve root+chain, emit message key plus
-    /// fresh step material. NEVER reuses KEM material; rotates our bundle.
+    /// fresh step material. Every fallible operation precedes the state commit.
     pub fn send_step(
         &mut self,
         peer_x_pub: &[u8; 32],
@@ -107,25 +107,26 @@ impl PcsRatchet {
         if peer_ek.len() != MLKEM_PK {
             return Err(CoreError::Malformed);
         }
+        let next_seq = self.send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
+        let next_epoch = self.epoch.checked_add(1).ok_or(CoreError::Oversize)?;
         let (ml_ct, hybrid, eph_pub) =
             EphemeralKeys::encapsulate(peer_x_pub, peer_ek).map_err(|_| CoreError::Malformed)?;
         if ml_ct.len() != MLKEM_CT {
             return Err(CoreError::Malformed);
         }
-        self.evolve(&hybrid)?;
-        let msg_key = self.message_key()?;
-        self.send_seq = self.send_seq.wrapping_add(1);
-        self.epoch = self.epoch.wrapping_add(1);
-        // Strict rotation: fresh bundle for the next step.
+        // Generate the next bundle before mutating the current state. An RNG
+        // failure therefore cannot consume the current root/chain or bundle.
         let fresh = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
+        let (new_root, new_chain) = self.evolved(&hybrid)?;
+        let msg_key = Self::message_key_for(&new_chain, self.send_seq)?;
         let step = RatchetStep {
             eph_x_pub: eph_pub,
             ml_ct,
             next_x_pub: fresh.x_public,
             next_ek: fresh.ml_ek.clone(),
-            epoch: self.epoch,
+            epoch: next_epoch,
         };
-        self.bundle = fresh;
+        self.commit(new_root, new_chain, next_seq, next_epoch, fresh);
         Ok((step, msg_key))
     }
 
@@ -140,20 +141,24 @@ impl PcsRatchet {
         if peer_ml_ct.len() != MLKEM_CT {
             return Err(CoreError::Malformed);
         }
+        let next_seq = self.send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
+        let next_epoch = self.epoch.checked_add(1).ok_or(CoreError::Oversize)?;
         let hybrid: Zeroizing<[u8; HYBRID_SS]> = self
             .bundle
             .decapsulate(peer_eph_x_pub, peer_ml_ct)
             .map_err(|_| CoreError::Malformed)?;
-        self.evolve(&hybrid)?;
-        let msg_key = self.message_key()?;
-        self.send_seq = self.send_seq.wrapping_add(1);
-        self.epoch = self.epoch.wrapping_add(1);
-        self.bundle = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
+        let fresh = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
+        let (new_root, new_chain) = self.evolved(&hybrid)?;
+        let msg_key = Self::message_key_for(&new_chain, self.send_seq)?;
+        self.commit(new_root, new_chain, next_seq, next_epoch, fresh);
         Ok(msg_key)
     }
 
-    /// Evolve root+chain over a fresh hybrid secret; zeroize predecessors.
-    fn evolve(&mut self, hybrid: &[u8; HYBRID_SS]) -> Result<(), CoreError> {
+    /// Calculate the next root+chain without mutating the current state.
+    fn evolved(
+        &self,
+        hybrid: &[u8; HYBRID_SS],
+    ) -> Result<([u8; 32], [u8; 32]), CoreError> {
         let epoch_b = self.epoch.to_be_bytes();
         let mut root_info = Vec::with_capacity(DOMAIN_RATCHET_ROOT.len() + 8);
         root_info.extend_from_slice(DOMAIN_RATCHET_ROOT);
@@ -165,22 +170,35 @@ impl PcsRatchet {
         let new_chain_full = hkdf64(&self.chain, hybrid, &chain_info)?;
         let mut new_chain = [0u8; 32];
         new_chain.copy_from_slice(&new_chain_full[..32]);
-        self.root.zeroize();
-        self.chain.zeroize();
         let mut r32 = [0u8; 32];
         r32.copy_from_slice(&new_root[..32]);
-        self.root = r32;
-        self.chain = new_chain;
-        Ok(())
+        Ok((r32, new_chain))
     }
 
-    /// Message key for the current sequence number (does not advance).
-    fn message_key(&self) -> Result<[u8; 32], CoreError> {
-        let seq_b = self.send_seq.to_be_bytes();
+    fn commit(
+        &mut self,
+        new_root: [u8; 32],
+        new_chain: [u8; 32],
+        next_seq: u64,
+        next_epoch: u64,
+        fresh: EphemeralKeys,
+    ) {
+        self.root.zeroize();
+        self.chain.zeroize();
+        self.root = new_root;
+        self.chain = new_chain;
+        self.send_seq = next_seq;
+        self.epoch = next_epoch;
+        self.bundle = fresh;
+    }
+
+    /// Message key for a candidate chain and sequence number.
+    fn message_key_for(chain: &[u8; 32], seq: u64) -> Result<[u8; 32], CoreError> {
+        let seq_b = seq.to_be_bytes();
         let mut info = Vec::with_capacity(3 + 8);
         info.extend_from_slice(b"msg");
         info.extend_from_slice(&seq_b);
-        hkdf32(&self.chain, DOMAIN_RATCHET_CHAIN, &info)
+        hkdf32(chain, DOMAIN_RATCHET_CHAIN, &info)
     }
 
     /// Store a skipped message key (bounded; over-budget fails closed).
@@ -244,6 +262,25 @@ mod tests {
         let k2r = b.receive_step(&step2.eph_x_pub, &step2.ml_ct).unwrap();
         assert_eq!(k2, k2r);
         assert_ne!(k_send, k2);
+    }
+
+    #[test]
+    fn counters_fail_closed_at_exhaustion() {
+        let sk = [0x33u8; 32];
+        let mut a = PcsRatchet::new(&sk).unwrap();
+        let mut b = PcsRatchet::new(&sk).unwrap();
+        let (b_x, b_ek) = b.advertise();
+        a.send_seq = u64::MAX;
+        assert!(a.send_step(&b_x, &b_ek).is_err());
+        assert_eq!(a.send_seq, u64::MAX);
+        assert_eq!(a.epoch, 0);
+
+        a.send_seq = 0;
+        let (step, _) = a.send_step(&b_x, &b_ek).unwrap();
+        b.epoch = u64::MAX;
+        assert!(b.receive_step(&step.eph_x_pub, &step.ml_ct).is_err());
+        assert_eq!(b.epoch, u64::MAX);
+        assert_eq!(b.send_seq, 0);
     }
 
     #[test]

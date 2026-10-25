@@ -26,11 +26,14 @@ import argparse
 import collections
 import enum
 import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +53,72 @@ from liboqs_wrapper import LibOQS_MLDSA_87
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("cjadc2_allied_gateway")
+
+
+def _is_production() -> bool:
+    from production_gate import is_production
+    return is_production()
+
+
+def _audit_signer_paths() -> Tuple[Path, Path]:
+    """Pinned compliance-report trust anchor (same key as the audit receipt)."""
+    key_dir = Path(os.environ.get("P2P_AUDIT_SIGNER_KEY_DIR", REPO_ROOT / "keys"))
+    return (
+        key_dir / "audit_signer.mldsa87.pk",
+        key_dir / "audit_signer.mldsa87.sk",
+    )
+
+
+def _load_or_create_report_signing_key() -> Tuple[bytes, bytes]:
+    """Load the persistent audit signer keypair; bootstrap only outside production.
+
+    An ephemeral per-invocation key makes every forged report verify against
+    the attacker's own published ``.pub``. Production must be provisioned.
+    """
+    pk_path, sk_path = _audit_signer_paths()
+    if sk_path.exists() != pk_path.exists():
+        raise RuntimeError(
+            "CJADC2 report signing keypair is half-present; refusing to rotate"
+        )
+    signer = LibOQS_MLDSA_87()
+    if sk_path.exists():
+        pk = pk_path.read_bytes()
+        sk = sk_path.read_bytes()
+        if len(pk) != 2592:
+            raise RuntimeError("CJADC2 report signing public key is malformed")
+        if len(sk) != 4896:
+            repaired = sk.replace(b"\r\n", b"\n")
+            if len(repaired) != 4896:
+                raise RuntimeError("CJADC2 report signing secret key is malformed")
+            sk = repaired
+            with open(sk_path, "wb") as f:
+                f.write(sk)
+        probe = b"st2027-cjadc2-report-signer-probe"
+        if not signer.verify(pk, probe, signer.sign(sk, probe)):
+            raise RuntimeError("CJADC2 report signing keypair failed its probe")
+        return pk, sk
+    if _is_production():
+        raise RuntimeError(
+            "CJADC2 report signing key is not provisioned; refusing an "
+            "ephemeral keypair in production (fail-closed)"
+        )
+    pk_path.parent.mkdir(parents=True, exist_ok=True)
+    pk, sk = signer.keygen()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(str(sk_path), flags, 0o600)
+    except FileExistsError:
+        return _load_or_create_report_signing_key()
+    try:
+        os.write(fd, sk)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    pk_path.write_bytes(pk)
+    log.warning(
+        "Bootstrapped CJADC2 report signing key at %s (lab/drill only)", sk_path
+    )
+    return pk, sk
 
 
 class CoalitionAlliance(str, enum.Enum):
@@ -105,8 +174,8 @@ def _strict_cdr_quarantine_required() -> bool:
     working in tests). Explicit ``=0`` opts out in lab only; ignored
     with a CRITICAL log in production.
     """
-    from utils.helpers import is_env_true
-    prod = is_env_true("SECURE_P2P_PRODUCTION") or is_env_true("P2P_PRODUCTION")
+    from production_gate import is_production
+    prod = is_production()
     explicit = os.environ.get("P2P_GATEWAY_QUARANTINE_HOSTILE", "")
     if prod:
         if explicit == "0":
@@ -125,6 +194,9 @@ class AlliedCoalitionGateway:
         self.gateway_id = gateway_id
         self.signer = LibOQS_MLDSA_87()
         self.pk, self.sk = self.signer.keygen()
+        # Enrolled partner gateway ML-DSA-87 public keys (hex strings).
+        # Incoming releases must be signed by this gateway or an enrolled partner.
+        self.trusted_gateway_pubkeys_hex: set = set()
         self.redacted_transfers_count = 0
         self.blocked_noforn_count = 0
         self.quarantined_count = 0
@@ -138,6 +210,18 @@ class AlliedCoalitionGateway:
         # (release/block/quarantine/review) is recorded for forensics.
         self.decision_log: collections.deque = collections.deque(maxlen=4096)
         self._decision_seq = 0
+        # Replay defense for inbound coalition releases: every accepted token
+        # is nonce-bound and single-use.  Cache is bounded to avoid unbounded
+        # memory growth on a busy gateway.
+        self._consumed_release_nonces: collections.deque = collections.deque(maxlen=8192)
+        self._consumed_release_set: set = set()
+        self._replay_lock = threading.Lock()
+        try:
+            self.release_max_age_seconds = float(
+                os.environ.get("P2P_COALITION_RELEASE_MAX_AGE_SECONDS", "900")
+            )
+        except ValueError:
+            self.release_max_age_seconds = 900.0
 
     def _audit_decision(self, decision: str, **fields: Any) -> Dict[str, Any]:
         """Append one transfer-decision audit record; returns it."""
@@ -345,9 +429,14 @@ class AlliedCoalitionGateway:
         release_id = f"REL-{target_alliance.value}-{target_partner_nation}-{int(time.time()*1000)}"
         release_header = f"// {source_classification.name} // REL TO {target_alliance.value} //"
 
+        issued_at = time.time()
         release_token_payload = {
             "release_id": release_id,
             "gateway_id": self.gateway_id,
+            "nonce": secrets.token_hex(16),
+            "issued_at": issued_at,
+            "expires_at": issued_at + self.release_max_age_seconds,
+            "max_age_seconds": self.release_max_age_seconds,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "source_classification": source_classification.name,
             "coalition_header": release_header,
@@ -403,9 +492,14 @@ class AlliedCoalitionGateway:
         if approve:
             self.reviewed_count += 1
             release_id = held["quarantine_id"].replace("Q-", "REL-", 1) + "-RVW"
+            issued_at = time.time()
             token_payload = {
                 "release_id": release_id,
                 "gateway_id": self.gateway_id,
+                "nonce": secrets.token_hex(16),
+                "issued_at": issued_at,
+                "expires_at": issued_at + self.release_max_age_seconds,
+                "max_age_seconds": self.release_max_age_seconds,
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "source_classification": held["source_classification"],
                 "coalition_header": f"// {held['source_classification']} // REL TO {held['target_alliance']} //",
@@ -467,12 +561,56 @@ class AlliedCoalitionGateway:
             sig = bytes.fromhex(release_package["release_token_signature_hex"])
             pk = bytes.fromhex(release_package["gateway_ml_dsa_87_pubkey_hex"])
 
+            # 0. Anchor the signing key: own gateway or an enrolled trusted
+            # partner. A package-supplied pubkey is NEVER its own trust anchor.
+            if pk != self.pk and release_package["gateway_ml_dsa_87_pubkey_hex"] not in self.trusted_gateway_pubkeys_hex:
+                log.warning("Coalition Release Verification Failed: signer gateway pubkey is not trusted.")
+                return False
+
             # 1. Verify digital signature
             if not self.signer.verify(pk, token_bytes, sig):
                 log.warning("Coalition Release Verification Failed: Invalid ML-DSA-87 signature.")
                 return False
 
-            # 2. Verify payload hash match
+            # 2. Freshness + single-use replay defense (HIGH: release tokens
+            # previously carried no nonce/expiry and could be replayed forever).
+            nonce = str(token.get("nonce", ""))
+            if len(nonce) < 16:
+                log.warning("Coalition Release Verification Failed: missing nonce.")
+                return False
+            try:
+                issued_at = float(token["issued_at"])
+                expires_at = float(token["expires_at"])
+            except (KeyError, TypeError, ValueError):
+                log.warning("Coalition Release Verification Failed: missing timestamps.")
+                return False
+            now = time.time()
+            if now > expires_at:
+                log.warning("Coalition Release Verification Failed: token expired.")
+                return False
+            if issued_at > now + 60.0:
+                log.warning("Coalition Release Verification Failed: token issued in the future.")
+                return False
+            if now - issued_at > self.release_max_age_seconds:
+                log.warning("Coalition Release Verification Failed: token exceeds max age.")
+                return False
+
+            replay_key = hashlib.sha3_256(
+                f"{token.get('release_id', '')}:{nonce}".encode("utf-8")
+            ).hexdigest()
+            with self._replay_lock:
+                if replay_key in self._consumed_release_set:
+                    log.warning(
+                        "Coalition Release Verification Failed: replayed release token."
+                    )
+                    return False
+                if len(self._consumed_release_nonces) == self._consumed_release_nonces.maxlen:
+                    evicted = self._consumed_release_nonces[0]
+                    self._consumed_release_set.discard(evicted)
+                self._consumed_release_nonces.append(replay_key)
+                self._consumed_release_set.add(replay_key)
+
+            # 3. Verify payload hash match
             payload_str = release_package["sanitized_payload"]
             actual_hash = hashlib.sha3_256(payload_str.encode("utf-8")).hexdigest()
             if actual_hash != token["payload_sha3_256"]:
@@ -570,7 +708,11 @@ def sign_and_export_allied_gateway_report(output_dir: Optional[Path] = None) -> 
     }
 
     report_bytes = json.dumps(report_data, indent=2, sort_keys=True).encode("utf-8")
-    sig_bytes = gw.signer.sign(gw.sk, report_bytes)
+    signer = LibOQS_MLDSA_87()
+    pk, sk = _load_or_create_report_signing_key()
+    sig_bytes = signer.sign(sk, report_bytes)
+    if not signer.verify(pk, report_bytes, sig_bytes):
+        raise RuntimeError("CJADC2 report verify-after-sign probe failed (fail-closed)")
 
     report_path = target_dir / "cjadc2_allied_gateway_report.json"
     sig_path = target_dir / "cjadc2_allied_gateway_report.json.mldsa87.sig"
@@ -578,7 +720,7 @@ def sign_and_export_allied_gateway_report(output_dir: Optional[Path] = None) -> 
 
     report_path.write_bytes(report_bytes)
     sig_path.write_bytes(sig_bytes)
-    pub_path.write_bytes(gw.pk)
+    pub_path.write_bytes(pk)
 
     return report_path, sig_path, pub_path
 
@@ -586,14 +728,41 @@ def sign_and_export_allied_gateway_report(output_dir: Optional[Path] = None) -> 
 def verify_allied_gateway_report_signature(
     report_path: Path,
     sig_path: Path,
-    pub_path: Path
+    pub_path: Path,
+    anchor_path: Optional[Path] = None,
 ) -> bool:
-    """Verify ML-DSA-87 signature over CJADC2 Allied Coalition Gateway audit report."""
-    if not (report_path.exists() and sig_path.exists() and pub_path.exists()):
+    """Verify the report against a PINNED trust anchor, never its own ``.pub``.
+
+    The old implementation trusted the ``.pub`` shipped next to the report,
+    so anyone could generate a keypair, sign a forged report, and publish the
+    matching public key. Production now refuses to fall back to the embedded
+    key; labs log a warning for backwards compatibility.
+    """
+    if not (report_path.exists() and sig_path.exists()):
         return False
     data = report_path.read_bytes()
     sig = sig_path.read_bytes()
-    pk = pub_path.read_bytes()
+
+    if anchor_path is None:
+        anchor_path, _ = _audit_signer_paths()
+    anchor_path = Path(anchor_path)
+    if anchor_path.exists():
+        pk = anchor_path.read_bytes()
+        if pub_path.exists() and not hmac.compare_digest(pub_path.read_bytes(), pk):
+            log.error("CJADC2 report embedded public key does not match trust anchor")
+            return False
+    else:
+        if _is_production():
+            log.error("CJADC2 report trust anchor missing in production (fail-closed)")
+            return False
+        if not pub_path.exists():
+            return False
+        log.warning(
+            "CJADC2 report verified against an UNPINNED embedded public key "
+            "(lab fallback); provision %s for trustworthy verification",
+            anchor_path,
+        )
+        pk = pub_path.read_bytes()
 
     signer = LibOQS_MLDSA_87()
     return signer.verify(pk, data, sig)
@@ -608,6 +777,7 @@ def verify_cjadc2_report(
     report_path: Optional[Path] = None,
     sig_path: Optional[Path] = None,
     pub_path: Optional[Path] = None,
+    anchor_path: Optional[Path] = None,
 ) -> bool:
     """Verify CJADC2 Allied Coalition Gateway audit report signature."""
     if report_path is None or sig_path is None or pub_path is None:
@@ -615,7 +785,9 @@ def verify_cjadc2_report(
         report_path = target_dir / "cjadc2_allied_gateway_report.json"
         sig_path = target_dir / "cjadc2_allied_gateway_report.json.mldsa87.sig"
         pub_path = target_dir / "cjadc2_allied_gateway_report.json.mldsa87.pub"
-    return verify_allied_gateway_report_signature(report_path, sig_path, pub_path)
+    return verify_allied_gateway_report_signature(
+        report_path, sig_path, pub_path, anchor_path=anchor_path
+    )
 
 
 if __name__ == "__main__":

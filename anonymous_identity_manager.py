@@ -72,6 +72,9 @@ except ImportError:
     logger.warning("Secure memory manager not available")
 
 
+_DISPOSAL_VERIFICATION_UNAVAILABLE_WARNED = False
+
+
 class IdentityDisposalError(Exception):
     """Raised when identity disposal fails verification."""
 
@@ -308,14 +311,9 @@ class AnonymousIdentityManager:
         Uses ML-KEM-1024 + ML-DSA-87 per CNSA 2.0 requirements.
         FAIL-CLOSED: Raises error if PQC not available in production mode.
         """
-        # Check for production mode enforcement
-        import os
-        try:
-            from production_gate import is_production as _gate_prod
-            production_mode = _gate_prod()
-        except Exception:
-            production_mode = (os.environ.get('SECURE_P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on')
-                               or os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on'))
+        # Check the canonical fail-closed production posture.
+        from production_gate import is_production as _gate_prod
+        production_mode = _gate_prod()
         
         if PQC_AVAILABLE:
             try:
@@ -458,25 +456,24 @@ class AnonymousIdentityManager:
         Format: base32(pubkey || checksum || version).onion
         
         Args:
-            public_key: Source public key for derivation
+            public_key: Source public key (retained for API compatibility; NOT
+                used for key derivation)
             
         Returns:
             Tuple of (onion_address, ed25519_private_key)
             
         Requirements: 15.3
         """
-        # Generate Ed25519 keypair for Tor v3 onion address
-        # Use SHA3-512 of the source key as seed for deterministic derivation
-        seed = hashlib.sha3_512(public_key + b"tor_v3_onion_derivation").digest()[:32]
-        
-        # Generate Ed25519 keypair from seed
+        # Generate a FRESH random Ed25519 keypair for Tor v3 onion addressing.
+        # Deriving this key from public material would let any observer of the
+        # public key reconstruct the "private" onion key (audit CRITICAL).
         # For Tor v3, we need a 32-byte Ed25519 public key
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
             from cryptography.hazmat.primitives import serialization
             
-            # Generate Ed25519 key from seed
-            private_key = Ed25519PrivateKey.from_private_bytes(seed)
+            # Generate Ed25519 keypair (CSPRNG)
+            private_key = Ed25519PrivateKey.generate()
             public_key_ed = private_key.public_key().public_bytes(
                 encoding=serialization.Encoding.Raw,
                 format=serialization.PublicFormat.Raw
@@ -714,28 +711,25 @@ class AnonymousIdentityManager:
                 continue
         
         # Use secure memory manager's verification if available
-        if self._memory_manager:
+        if self._memory_manager and hasattr(self._memory_manager, 'verify_wipe'):
             try:
-                # Verify through secure memory manager
-                if hasattr(self._memory_manager, 'verify_wipe'):
-                    return self._memory_manager.verify_wipe(key_hashes)
+                return bool(self._memory_manager.verify_wipe(key_hashes))
             except Exception as e:
-                logger.warning(f"Memory scan via manager failed: {e}")
+                logger.error(f"Memory scan via manager failed: {e}")
+                return False
         
-        # Platform-specific memory verification
-        try:
-            if sys.platform.startswith('win'):
-                return self._verify_memory_windows(key_hashes)
-            elif sys.platform.startswith('linux'):
-                return self._verify_memory_linux(key_hashes)
-            else:
-                # For other platforms, trust DoD wipe + GC
-                logger.debug("Platform-specific memory scan not available, trusting DoD wipe")
-                return True
-        except Exception as e:
-            logger.warning(f"Platform memory scan failed: {e}")
-            # Fail-closed: if we can't verify, assume success after DoD wipe
-            return True
+        # HIGH (pki_identity L54): the platform-specific paths below are
+        # stubs that always return True; certifying an unverified disposal
+        # is fail-open. Refuse to certify unless a real scan backend exists.
+        if not _DISPOSAL_VERIFICATION_UNAVAILABLE_WARNED:
+            logger.error(
+                "Disposal verification refused: no memory-scan backend "
+                "available (SecureMemoryManager lacks verify_wipe); callers "
+                "perform secure_dispose with verify_disposal=False to skip "
+                "certification, or install a verifier."
+            )
+            globals()['_DISPOSAL_VERIFICATION_UNAVAILABLE_WARNED'] = True
+        return False
     
     def _verify_memory_windows(self, key_hashes: List[bytes]) -> bool:
         """Windows-specific memory verification using VirtualQuery."""

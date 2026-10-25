@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import logging
+import secrets
 import struct
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Any
@@ -57,6 +58,29 @@ logger = logging.getLogger(__name__)
 # ML-KEM+McEliece public bundle (~1.8MB base64 JSON). 2MB fits it with
 # margin and aborts allocation-amplification probes before readexactly.
 _MAX_HANDSHAKE_FRAME = 2 * 1024 * 1024
+
+
+def _derive_session_auth_key(shared_secret: bytes) -> bytes:
+    """Derive an independent, bidirectional auth-tag key from the handshake secret.
+
+    The handshake root secret is never used directly as an HMAC key. Both peers
+    feed the same transcript-derived secret through a fixed, domain-separated
+    HKDF-SHA3-512 expansion so either side can verify the other's tags without
+    sharing the Double Ratchet root key.
+    """
+    if not isinstance(shared_secret, (bytes, bytearray)) or len(shared_secret) != 32:
+        raise SecurityError("Session auth-key derivation requires a 32-byte handshake secret")
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.backends import default_backend
+    hkdf = HKDF(
+        algorithm=hashes.SHA3_512(),
+        length=64,
+        salt=b"SecureP2P::SessionAuthTag::Salt::v1",
+        info=b"SecureP2P::SessionAuthTag::Key::v1",
+        backend=default_backend(),
+    )
+    return hkdf.derive(bytes(shared_secret))
 
 
 async def _send_frame(w: asyncio.StreamWriter, payload: Dict[str, Any]) -> None:
@@ -118,6 +142,7 @@ class SessionContext:
     message_count: int = 0
     encryption_enabled: bool = True
     session_id: str = ""
+    session_auth_key: Optional[bytes] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -133,6 +158,7 @@ class SessionContext:
             'message_count': self.message_count,
             'encryption_enabled': self.encryption_enabled,
             'session_id': self.session_id,
+            'has_session_auth_key': bool(self.session_auth_key),
             'has_double_ratchet': self.double_ratchet is not None,
             'has_hybrid_kex': self.hybrid_kex is not None,
             'has_audit_logger': self.audit_logger is not None
@@ -183,6 +209,16 @@ class SessionContext:
                 pass
             finally:
                 self.audit_logger = None
+
+        if self.session_auth_key is not None:
+            try:
+                from secure_key_manager import secure_erase
+                secure_erase(self.session_auth_key)
+            # AUDITED (B110): cleanup must not abort remaining zeroization
+            except Exception:  # nosec: B110
+                pass
+            finally:
+                self.session_auth_key = None
 
     def update_activity(self):
         """
@@ -369,6 +405,7 @@ class SessionManager:
         hybrid_kex = None
         double_ratchet = None
         shared_secret = None
+        session_auth_key = None
         session_audit_db = None
 
         try:
@@ -415,6 +452,7 @@ class SessionManager:
             shared_secret = await self._perform_handshake(
                 hybrid_kex, peer_id, reader, writer, is_initiator, session_audit_logger
             )
+            session_auth_key = _derive_session_auth_key(shared_secret)
             
             # Initialize DoubleRatchet with shared secret from handshake
             double_ratchet = DoubleRatchet(
@@ -442,7 +480,8 @@ class SessionManager:
                 hybrid_kex=hybrid_kex,
                 audit_logger=session_audit_logger,  # Store session-specific audit logger
                 session_id=session_id,
-                encryption_enabled=True
+                encryption_enabled=True,
+                session_auth_key=session_auth_key,
             )
             
             # Store session under lock
@@ -492,6 +531,13 @@ class SessionManager:
                 # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
                 except Exception:  # nosec: B110
                     pass
+            if session_auth_key:
+                try:
+                    from secure_key_manager import secure_erase
+                    secure_erase(session_auth_key)
+                # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
+                except Exception:  # nosec: B110
+                    pass
             if double_ratchet:
                 try:
                     if hasattr(double_ratchet, 'secure_cleanup'):
@@ -529,7 +575,49 @@ class SessionManager:
                 )
             
             raise
-    
+
+    def _load_trusted_ak_pubs(self) -> list:
+        """Load enrolled TPM AK public keys (hex) for quote verification.
+
+        Sources (first hit wins): P2P_TPM_TRUSTED_AK_PUBS env (comma/space
+        separated hex or JSON list), then keys/tpm_ak_pubs.json in the repo
+        root.  Returns [] when nothing is enrolled — callers must treat an
+        empty set as fail-closed (no quote can be attributed).
+        """
+        raw = os.environ.get("P2P_TPM_TRUSTED_AK_PUBS", "").strip()
+        pubs: list = []
+        if raw:
+            try:
+                import json as _json
+                parsed = _json.loads(raw)
+                if isinstance(parsed, list):
+                    pubs = [str(x) for x in parsed]
+                else:
+                    pubs = [p.strip() for p in raw.replace(",", " ").split()]
+            except Exception:
+                pubs = [p.strip() for p in raw.replace(",", " ").split()]
+        else:
+            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            reg = os.path.join(repo_root, "keys", "tpm_ak_pubs.json")
+            try:
+                with open(reg, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    pubs = [str(v) for v in data.values()]
+                elif isinstance(data, list):
+                    pubs = [str(x) for x in data]
+            except Exception:
+                pubs = []
+        out = []
+        for p in pubs:
+            try:
+                b = bytes.fromhex(p)
+                if b:
+                    out.append(b)
+            except ValueError:
+                continue
+        return out
+
     async def _perform_handshake(
         self,
         hybrid_kex: Any,
@@ -632,10 +720,12 @@ class SessionManager:
                     raise SecurityError(f"MILITARY FATAL: Host posture evaluation failed: {e_posture}") from e_posture
 
             if is_initiator:
-                # 1. Initiator sends its public bundle (with optional TPM quote)
+                # 1. Initiator sends its public bundle plus a fresh TPM
+                #    challenge nonce.  The responder's quote must echo THIS
+                #    challenge (never the quote's own embedded nonce).
                 offer_payload = {'type': 'BUNDLE_OFFER', 'bundle': our_bundle}
-                if our_quote is not None:
-                    offer_payload['tpm_quote'] = our_quote
+                if tpm_quote_required:
+                    offer_payload['tpm_challenge'] = secrets.token_bytes(32).hex()
                 await _send_frame(writer, offer_payload)
 
                 # 2. Receive responder's bundle
@@ -654,7 +744,10 @@ class SessionManager:
                     # Degraded simulation stubs forbidden in production or when fail-on-fallback is set
                     is_prod = is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK") or is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
                     allow_deg = not is_prod
-                    if not validate_handshake_quote(peer_quote, expected_nonce=peer_quote.get("nonce", ""), allow_degraded=allow_deg):
+                    challenge = bytes.fromhex(offer_payload.get("tpm_challenge", ""))
+                    trusted = _load_trusted_ak_pubs()
+                    if not validate_handshake_quote(peer_quote, expected_nonce=challenge,
+                                                    trusted_pubs=trusted, allow_degraded=allow_deg):
                         raise SecurityError(f"Responder {peer_id} TPM attestation quote validation failed")
 
                 # 3. Verify responder bundle signatures
@@ -664,8 +757,16 @@ class SessionManager:
                 # 4. Initiate handshake to generate message and shared secret
                 handshake_msg, shared_secret = hybrid_kex.initiate_handshake(peer_bundle)
 
-                # 5. Send handshake message to responder
-                await _send_frame(writer, {'type': 'HANDSHAKE_INIT', 'message': handshake_msg})
+                # 5. Send handshake message to responder.  Our own TPM quote
+                #    (when required) is bound to the responder's challenge so
+                #    the responder can verify it after the fact.
+                init_payload = {'type': 'HANDSHAKE_INIT', 'message': handshake_msg}
+                if tpm_quote_required:
+                    resp_challenge = resp.get('tpm_challenge')
+                    if resp_challenge:
+                        init_payload['tpm_quote'] = attach_quote_to_handshake(
+                            peer_id, nonce=bytes.fromhex(resp_challenge))
+                await _send_frame(writer, init_payload)
 
                 # 6. Await confirmation from responder
                 confirm = await _recv_frame(reader)
@@ -679,7 +780,9 @@ class SessionManager:
                 if not peer_bundle:
                     raise SecurityError("Initiator did not provide public key bundle")
 
-                # Verify initiator's TPM quote if required
+                # Verify initiator's TPM quote if required.  The quote must be
+                # bound to a challenge WE issued (tpm_challenge in the offer),
+                # never to the quote's own embedded nonce.
                 if tpm_quote_required:
                     peer_quote = offer.get('tpm_quote')
                     if not peer_quote:
@@ -688,13 +791,22 @@ class SessionManager:
                     from utils.helpers import is_env_true
                     is_prod = is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK") or is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
                     allow_deg = not is_prod
-                    if not validate_handshake_quote(peer_quote, expected_nonce=peer_quote.get("nonce", ""), allow_degraded=allow_deg):
+                    challenge = bytes.fromhex(offer.get('tpm_challenge', ''))
+                    trusted = _load_trusted_ak_pubs()
+                    if not validate_handshake_quote(peer_quote, expected_nonce=challenge,
+                                                    trusted_pubs=trusted, allow_degraded=allow_deg):
                         raise SecurityError(f"Initiator {peer_id} TPM attestation quote validation failed")
 
-                # 2. Send our public bundle (with optional TPM quote)
+                # 2. Send our public bundle.  Our quote is bound to the
+                #    initiator's challenge; we also issue a fresh challenge the
+                #    initiator must echo in its HANDSHAKE_INIT quote.
                 resp_payload = {'type': 'BUNDLE_RESPONSE', 'bundle': our_bundle}
-                if our_quote is not None:
-                    resp_payload['tpm_quote'] = our_quote
+                if tpm_quote_required:
+                    init_challenge = offer.get('tpm_challenge')
+                    if init_challenge:
+                        resp_payload['tpm_quote'] = attach_quote_to_handshake(
+                            peer_id, nonce=bytes.fromhex(init_challenge))
+                    resp_payload['tpm_challenge'] = secrets.token_bytes(32).hex()
                 await _send_frame(writer, resp_payload)
 
                 # 3. Verify initiator bundle signatures
@@ -706,6 +818,18 @@ class SessionManager:
                 handshake_msg = init_frame.get('message')
                 if not handshake_msg:
                     raise SecurityError("Initiator did not provide handshake message")
+
+                # 4b. Verify the initiator's quote bound to our challenge.
+                if tpm_quote_required:
+                    init_quote = init_frame.get('tpm_quote')
+                    if not init_quote:
+                        raise SecurityError(f"Initiator {peer_id} omitted required TPM attestation quote")
+                    from tpm_quote import validate_handshake_quote as _vhq
+                    challenge2 = bytes.fromhex(resp_payload.get('tpm_challenge', ''))
+                    trusted2 = _load_trusted_ak_pubs()
+                    if not _vhq(init_quote, expected_nonce=challenge2,
+                                trusted_pubs=trusted2, allow_degraded=allow_deg):
+                        raise SecurityError(f"Initiator {peer_id} TPM attestation quote validation failed")
 
                 # 5. Respond to handshake to derive shared secret
                 shared_secret = hybrid_kex.respond_to_handshake(handshake_msg, peer_bundle)

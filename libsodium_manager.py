@@ -466,21 +466,12 @@ def _load_generic_dll(dll_path: str) -> Tuple[bool, Optional[CDLL]]:
             log.warning(f"CDLL load failed: {e1}")
 
             try:
-                # Try WinDLL on Windows
-                if platform.system() == 'Windows':
-                    lib = ctypes.WinDLL(dll_path)
-                    log.info(f"Successfully loaded {dll_path} using WinDLL")
-                    return True, lib
-            except Exception as e2:
-                log.warning(f"WinDLL load failed: {e2}")
-
-                try:
-                    # Last resort: LoadLibrary
-                    lib = ctypes.LibraryLoader(ctypes.CDLL).LoadLibrary(dll_path)
-                    log.info(f"Successfully loaded {dll_path} using LibraryLoader")
-                    return True, lib
-                except Exception as e3:
-                    log.error(f"All loading methods failed. Last error: {e3}")
+                # Last resort: LoadLibrary
+                lib = ctypes.LibraryLoader(ctypes.CDLL).LoadLibrary(dll_path)
+                log.info(f"Successfully loaded {dll_path} using LibraryLoader")
+                return True, lib
+            except Exception as e3:
+                log.error(f"All loading methods failed. Last error: {e3}")
 
         return False, None
     except Exception as e:
@@ -533,10 +524,13 @@ def _load_libsodium_from_path(dll_path: str) -> Tuple[bool, Optional[CDLL]]:
             PINNED_SODIUM_DIGESTS = {
                 "79a55a5140befc28772cd4b23501b322ae9ab8cf3435253b98906a4b2090cd910e9c3e038a499f4ccc8c80a5e09f12251dd82941ed93485da7f2aed957b15a98",
             }
-            if any(hmac.compare_digest(dll_sha512, d) for d in PINNED_SODIUM_DIGESTS):
+            pinned_match = any(hmac.compare_digest(dll_sha512, d) for d in PINNED_SODIUM_DIGESTS)
+            if pinned_match:
                 verified = True
 
-            if not verified and os.name == 'nt' and abs_dll_path.lower().endswith("libsodium.dll"):
+            if os.name == 'nt' and abs_dll_path.lower().endswith("libsodium.dll") and not pinned_match:
+                # Sidecar .hashes manifests are NOT trusted on Windows: an
+                # attacker who can plant the DLL can plant a matching sidecar.
                 log.critical(f"SUPPLY CHAIN INTEGRITY VIOLATION: {abs_dll_path} hash {dll_sha512} does not match trusted digest!")
                 return False, None
 
@@ -562,15 +556,13 @@ def _load_libsodium_from_path(dll_path: str) -> Tuple[bool, Optional[CDLL]]:
             os.environ['PATH'] = dll_directory + os.pathsep + current_path
             log.debug(f"Added to PATH: {dll_directory}")
 
-        # Try multiple loading methods
+        # Try multiple loading methods.  libsodium is a cdecl library on all
+        # platforms; WinDLL (stdcall) is NEVER used because it corrupts the
+        # stack on 32-bit x86 for any call with arguments.
         loading_methods = [
             ("ctypes.CDLL", lambda: ctypes.CDLL(dll_path)),
             ("ctypes.cdll.LoadLibrary", lambda: ctypes.cdll.LoadLibrary(dll_path)),
         ]
-
-        # Add Windows-specific methods
-        if platform.system() == 'Windows':
-            loading_methods.insert(0, ("ctypes.WinDLL", lambda: ctypes.WinDLL(dll_path)))
 
         last_error = None
         for method_name, loader in loading_methods:
@@ -882,6 +874,23 @@ def download_file(urls, target_path):
     log.error(f"Failed to download from all provided URLs after multiple attempts")
     return False
 
+def _safe_archive_target(root: str, member_name: str) -> str:
+    if not member_name or "\x00" in member_name:
+        raise SecurityError("Archive member has an invalid name")
+    normalized = member_name.replace("\\", "/")
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        raise SecurityError(f"Absolute archive member rejected: {member_name}")
+    parts = [p for p in normalized.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        raise SecurityError(f"Archive path traversal rejected: {member_name}")
+    target = os.path.abspath(os.path.join(root, *parts))
+    try:
+        if os.path.commonpath([root, target]) != root:
+            raise SecurityError(f"Archive path traversal rejected: {member_name}")
+    except ValueError:
+        raise SecurityError(f"Archive path traversal rejected: {member_name}")
+    return target
+
 def extract_archive(archive_path, extract_dir):
     """
     Extract contents from ZIP or TAR.GZ archives with security validation.
@@ -915,28 +924,44 @@ def extract_archive(archive_path, extract_dir):
         - Performs format validation before extraction
     """
     try:
-        resolved_extract_dir = os.path.abspath(extract_dir)
+        resolved_extract_dir = os.path.realpath(os.path.abspath(extract_dir))
+        max_total = int(os.environ.get("P2P_ARCHIVE_MAX_BYTES", str(4 * 1024 ** 3)))
         if archive_path.endswith('.zip'):
             with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                total_uncompressed = 0
                 for member in zip_ref.infolist():
-                    target_path = os.path.abspath(os.path.join(resolved_extract_dir, member.filename))
-                    if not target_path.startswith(resolved_extract_dir + os.sep) and target_path != resolved_extract_dir:
-                        log.critical(f"Zip-slip attack detected in {archive_path}: member {member.filename}")
-                        raise SecurityError(f"Zip-slip path traversal attempt rejected: {member.filename}")
-                zip_ref.extractall(resolved_extract_dir)  # nosec B202 B613 B615 - zip-slip traversal rejected above
+                    if member.flag_bits & 0x1:
+                        raise SecurityError(f"Encrypted archive member rejected: {member.filename}")
+                    mode = (member.external_attr >> 16) & 0o170000
+                    if mode == 0o120000:
+                        log.critical(f"Archive symlink member rejected: {member.filename}")
+                        raise SecurityError(f"Zip symlink member rejected: {member.filename}")
+                    total_uncompressed += int(getattr(member, "file_size", 0) or 0)
+                    if total_uncompressed > max_total:
+                        raise SecurityError("Archive uncompressed size limit exceeded")
+                    _safe_archive_target(resolved_extract_dir, member.filename)
+                zip_ref.extractall(resolved_extract_dir)  # nosec B202 B613 B615 - traversal, symlink, encryption, and size rejected above
         elif archive_path.endswith('.tar.gz') or archive_path.endswith('.tgz'):
             with tarfile.open(archive_path, 'r:gz') as tar_ref:
+                total_uncompressed = 0
                 for member in tar_ref.getmembers():
-                    target_path = os.path.abspath(os.path.join(resolved_extract_dir, member.name))
-                    if not target_path.startswith(resolved_extract_dir + os.sep) and target_path != resolved_extract_dir:
-                        log.critical(f"Tar-slip attack detected in {archive_path}: member {member.name}")
-                        raise SecurityError(f"Tar-slip path traversal attempt rejected: {member.name}")
+                    _safe_archive_target(resolved_extract_dir, member.name)
                     if member.issym() or member.islnk():
-                        link_target = os.path.abspath(os.path.join(resolved_extract_dir, member.linkname))
-                        if not link_target.startswith(resolved_extract_dir + os.sep):
-                            log.critical(f"Malicious archive symlink detected: {member.linkname}")
-                            raise SecurityError(f"Malicious archive symlink rejected: {member.name}")
-                tar_ref.extractall(resolved_extract_dir)  # nosec B202 B615 B613 - tar-slip + symlink rejected above
+                        log.critical(f"Archive link member rejected: {member.name} -> {member.linkname}")
+                        raise SecurityError(f"Archive link member rejected: {member.name}")
+                    if member.isdev() or member.isfifo():
+                        log.critical(f"Archive contains device/FIFO member: {member.name}")
+                        raise SecurityError(f"Archive device/FIFO member rejected: {member.name}")
+                    total_uncompressed += int(getattr(member, "size", 0) or 0)
+                    if total_uncompressed > max_total:
+                        raise SecurityError("Archive uncompressed size limit exceeded")
+                # A4-16: apply PEP 706 data filter when available
+                # (Python >= 3.12) for defense-in-depth; the manual checks
+                # above remain authoritative on older interpreters.
+                _extract_kwargs = {}
+                if hasattr(tarfile, "data_filter"):
+                    _extract_kwargs["filter"] = "data"
+                tar_ref.extractall(resolved_extract_dir, **_extract_kwargs)  # nosec B202 B615 B613 - traversal, links, device/FIFO, and size rejected above
         else:
             log.error(f"Unsupported archive format: {archive_path}")
             return False
@@ -1224,6 +1249,27 @@ def compile_libsodium_from_source():
         # Download the archive
         if not download_file(download_urls, archive_path):
             return False, None, None
+
+        # Supply-chain gate: on non-Windows the binary is compiled from
+        # downloaded source, so the artifact MUST be pinned by a known
+        # SHA-512 digest.  No pin => refuse (fail closed).
+        if os.name != "nt":
+            import hashlib as _hashlib
+            pin = os.environ.get("P2P_LIBSODIUM_TARBALL_SHA512", "").strip().lower()
+            if not pin:
+                log.error(
+                    "Refusing to compile libsodium from an unpinned download "
+                    "(set P2P_LIBSODIUM_TARBALL_SHA512 to the release tarball "
+                    "SHA-512 to enable; fail-closed).")
+                return False, None, None
+            with open(archive_path, "rb") as _f:
+                actual = _hashlib.sha512(_f.read()).hexdigest()
+            if not hmac.compare_digest(actual, pin):
+                log.error(
+                    "libsodium tarball digest mismatch: expected %s got %s "
+                    "(fail-closed).", pin[:16], actual[:16])
+                return False, None, None
+            log.info("libsodium tarball digest verified against pin")
 
         # Extract the archive
         if not extract_archive(archive_path, temp_dir):

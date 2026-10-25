@@ -1171,9 +1171,8 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
         passphrase = os.environ.get("P2P_ENCLAVE_PASSPHRASE", "").strip()
         if not passphrase:
             no_persist = os.environ.get("P2P_NO_PERSISTENT_SEEDS", "").strip().lower() in ("1", "true", "yes", "on")
-            prod = (os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                     or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                     or os.environ.get("P2P_ENV", "").strip().lower() == "production")
+            from production_gate import is_production
+            prod = is_production() or os.environ.get("P2P_ENV", "").strip().lower() == "production"
             if no_persist or prod:
                 raise SecurityError(
                     "Enclave KEK seed persistence prohibited under military zero-trust policy. "
@@ -1210,6 +1209,25 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
                     fd = os.open(seed_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, 'wb') as f:
                         f.write(seed_to_write)
+                    # A4-22 (2026-10-17): 0o600 is a no-op on Windows; strip
+                    # inherited ACLs so the fallback seed is at least
+                    # user-only readable (ACL-grade protection, as documented).
+                    if os.name == 'posix':
+                        try:
+                            os.chmod(seed_file, 0o600)
+                        except Exception:  # nosec: B110 - best-effort
+                            pass
+                    elif os.name == 'nt':
+                        try:
+                            _user = os.environ.get("USERNAME")
+                            if _user:
+                                import subprocess as _sp
+                                _sp.run(  # nosec: B603 B607 - fixed argv, no shell
+                                    ["icacls.exe", seed_file, "/inheritance:r", "/grant:r", f"{_user}:F"],
+                                    check=False, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                                )
+                        except Exception:  # nosec: B110 - best-effort ACL hardening
+                            pass
                 except FileExistsError:
                     with open(seed_file, "rb") as f:
                         raw_data = f.read()
@@ -1666,12 +1684,8 @@ class SecureEnclaveKeyStorage:
         # SECURE_P2P_PRODUCTION, any truthy spelling) fail-closes unless
         # operator explicitly opts out via P2P_ALLOW_SOFTWARE_FALLBACK=1.
         # F-01: delegates to production_gate (canonical sticky detector).
-        try:
-            from production_gate import is_production as _gate_prod
-            _prod = _gate_prod()
-        except Exception:
-            _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                     or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production as _gate_prod
+        _prod = _gate_prod()
         if _prod and self._active_backend_type == KeyStorageBackend.SOFTWARE_FALLBACK:
             if os.environ.get("P2P_ALLOW_SOFTWARE_FALLBACK", "0") != "1" and not self.fail_on_software_fallback:
                 raise EnclaveSecurityError("MILITARY FATAL: production requires hardware-backed key storage (TPM/SecureEnclave/HSM); software fallback refused. Set P2P_FAIL_ON_SOFTWARE_FALLBACK=1 and provision HSM, or explicitly set P2P_ALLOW_SOFTWARE_FALLBACK=1 to acknowledge risk.")

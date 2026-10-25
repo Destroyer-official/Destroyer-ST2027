@@ -78,8 +78,8 @@ class SessionTerminated(Exception):
 # ----------------------------------------------------------------------------
 # Lightweight role model used by critical_release.authorize() and other
 # hardening call sites. Kept alongside the full RBACPolicyEngine above.
-# Backward compat: check_permission() defaults to ALLOW unless
-# P2P_RBAC_STRICT=1, in which case it is deny-by-default.
+# check_permission() is deny-by-default; P2P_RBAC_STRICT no longer weakens
+# authorization (it is kept only for diagnostics/backward-compatible reads).
 # ============================================================================
 
 class Role(str, Enum):
@@ -457,15 +457,43 @@ class ZeroTrustEngine:
                         peer_id=peer_id,
                         operation="authenticate_peer"
                     )
-            
-            # Store peer identity
+            else:
+                # HIGH (monitoring L...): a peer that has never been pinned must
+                # not implicitly receive an operational role. In production the
+                # trust anchor is mandatory before AUTHENTICATED; in lab the
+                # peer is admitted but restricted to VIEWER (TOFU posture).
+                if _prod_strict_on():
+                    self._terminate_session(
+                        peer_id, "No pinned certificate (production trust anchor required)")
+                    raise CertificatePinningFailure(
+                        "Unpinned peer refused in production (no trust anchor)",
+                        peer_id=peer_id,
+                        operation="authenticate_peer"
+                    )
+                logger.warning(
+                    "Peer %s authenticated without a pinned certificate; "
+                    "restricting to VIEWER (TOFU lab posture)", peer_id[:8])
+
+            # Store peer identity, preserving any pre-auth role assignment so a
+            # downgrade applied before authentication is not silently lost.
+            existing = self._peer_identities.get(peer_id)
+            assigned = self._minimal_roles.get(peer_id)
+            if assigned is None and existing is not None:
+                assigned = _normalize_minimal_role(getattr(existing, "role", "viewer"))
+            if assigned is None:
+                assigned = (
+                    Role.OPERATOR
+                    if peer_id in self._pinned_certificates
+                    else Role.VIEWER
+                )
             cert_fingerprint = self._compute_certificate_fingerprint(peer_public_key)
             self._peer_identities[peer_id] = PeerIdentity(
                 peer_id=peer_id,
                 public_key=peer_public_key,
                 certificate_fingerprint=cert_fingerprint,
                 last_verified=time.time(),
-                verification_count=1
+                verification_count=1,
+                role=assigned.value,
             )
             
             # Update session state
@@ -770,16 +798,21 @@ class ZeroTrustEngine:
         return normalized
 
     def get_minimal_role(self, peer_id: str) -> Role:
-        """Look up minimal role: identity -> override map -> VIEWER (unknown)."""
+        """Look up minimal role: explicit override -> identity -> VIEWER.
+
+        An explicit ``set_peer_role`` assignment takes precedence over the
+        (possibly re-derived) identity record so a pre-auth restriction is
+        not lost when the peer authenticates.
+        """
+        if peer_id in self._minimal_roles:
+            return self._minimal_roles[peer_id]
         identity = self._peer_identities.get(peer_id)
         if identity is not None:
             try:
-                return _normalize_minimal_role(getattr(identity, "role", "operator"))
+                return _normalize_minimal_role(getattr(identity, "role", "viewer"))
             # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
             except Exception:  # nosec: B110
                 pass
-        if peer_id in self._minimal_roles:
-            return self._minimal_roles[peer_id]
         return Role.VIEWER
 
     def check_permission(self, peer_id: str, action: str) -> bool:
@@ -789,15 +822,13 @@ class ZeroTrustEngine:
         OPERATOR via PeerIdentity.role; unknown peers default to VIEWER)
         and tests membership in PERMISSIONS.
 
-        Backward compat: returns True (allow) for all callers unless
-        P2P_RBAC_STRICT=1, in which case deny-by-default applies and a
-        denial raises AuthenticationFailure (AuthorizationFailure).
+        Deny-by-default always: authorization must never depend on an
+        environment variable being set.  A denial raises
+        AuthenticationFailure (AuthorizationFailure).
 
         Raises:
-            AuthenticationFailure: If strict mode denies the action.
+            AuthenticationFailure: If the peer's role lacks the action.
         """
-        if not is_rbac_strict():
-            return True
         role = self.get_minimal_role(peer_id)
         allowed_actions = PERMISSIONS.get(role, set())
         if str(action) in allowed_actions:

@@ -230,8 +230,10 @@ def sign_and_export_crypto_agility_audit(engine: CryptoAgilityEngine,
     canon_bytes = json.dumps(report, indent=2, sort_keys=True).encode("utf-8")
     rep_path.write_bytes(canon_bytes)
 
+    from report_trust import load_or_create_audit_signer
+
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = load_or_create_audit_signer()
     sig = signer.sign(sk, canon_bytes, public_key=pk)
 
     sig_path.write_bytes(sig)
@@ -239,16 +241,20 @@ def sign_and_export_crypto_agility_audit(engine: CryptoAgilityEngine,
     return rep_path, sig_path, pub_path
 
 
-def verify_crypto_agility_audit_signature(rep_path: Path, sig_path: Path, pub_path: Path) -> bool:
-    """Verify ML-DSA-87 digital signature of Crypto-Agility Audit Report."""
+def verify_crypto_agility_audit_signature(
+    rep_path: Path,
+    sig_path: Path,
+    pub_path: Path,
+    anchor_path: Optional[Path] = None,
+) -> bool:
+    """Verify the report against the pinned audit anchor, not its own ``.pub``."""
     if not (rep_path.exists() and sig_path.exists() and pub_path.exists()):
         return False
-    data = rep_path.read_bytes()
-    sig = sig_path.read_bytes()
-    pk = pub_path.read_bytes()
+    from report_trust import verify_with_anchor
 
-    signer = LibOQS_MLDSA_87()
-    return signer.verify(pk, data, sig)
+    return verify_with_anchor(
+        rep_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+    )
 
 
 if __name__ == "__main__":

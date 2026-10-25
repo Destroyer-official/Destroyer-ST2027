@@ -36,6 +36,15 @@ class UtilsManager(BaseModule):
             from .cleanup import Cleanup
             self._cleanup = Cleanup(self.orchestrator)
         return self._cleanup
+
+    async def cleanup_all(self):
+        """Run the utility cleanup sub-module.
+
+        ``cleanup`` is a lazy-loaded sub-module, not a callable, so callers
+        that invoked it directly raised TypeError.  This explicit entry
+        point gives the orchestrator a callable, awaitable cleanup.
+        """
+        return await self.cleanup.cleanup()
     
     @property
     def memory(self):

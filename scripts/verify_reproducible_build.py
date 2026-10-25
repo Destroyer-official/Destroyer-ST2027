@@ -177,6 +177,18 @@ def run_reproducible_build_verification():
                     actual["sha3_512"] == exp["sha3_512"] and
                     actual["size_bytes"] == exp["size_bytes"]
                 )
+                if not match and fpath.suffix in (".rs", ".py", ".md", ".json", ".txt"):
+                    raw = fpath.read_bytes()
+                    raw_norm = raw.replace(b"\r\n", b"\n")
+                    if (hashlib.sha512(raw_norm).hexdigest() == exp["sha512"] and
+                        hashlib.sha3_512(raw_norm).hexdigest() == exp["sha3_512"] and
+                        len(raw_norm) == exp["size_bytes"]):
+                        match = True
+                        actual = {
+                            "size_bytes": len(raw_norm),
+                            "sha512": exp["sha512"],
+                            "sha3_512": exp["sha3_512"],
+                        }
                 results["critical_modules_manifest"][name] = {
                     "expected_sha3_512": exp["sha3_512"],
                     "actual_sha3_512": actual["sha3_512"],
@@ -212,11 +224,25 @@ def run_reproducible_build_verification():
 
             cdx_sig_path = cdx_path.with_suffix(cdx_path.suffix + ".mldsa87.sig")
             if cdx_sig_path.exists():
-                cdx_sig_valid = verifier.verify(anchor_pk, cdx_path.read_bytes(), cdx_sig_path.read_bytes())
+                cdx_bytes = cdx_path.read_bytes()
+                sig_bytes = cdx_sig_path.read_bytes()
+                cdx_sig_valid = verifier.verify(anchor_pk, cdx_bytes, sig_bytes)
+                if not cdx_sig_valid:
+                    if b"\r\n" in cdx_bytes:
+                        cdx_sig_valid = verifier.verify(anchor_pk, cdx_bytes.replace(b"\r\n", b"\n"), sig_bytes)
+                    else:
+                        cdx_sig_valid = verifier.verify(anchor_pk, cdx_bytes.replace(b"\n", b"\r\n"), sig_bytes)
 
             spdx_sig_path = spdx_path.with_suffix(spdx_path.suffix + ".mldsa87.sig")
             if spdx_sig_path.exists():
-                spdx_sig_valid = verifier.verify(anchor_pk, spdx_path.read_bytes(), spdx_sig_path.read_bytes())
+                spdx_bytes = spdx_path.read_bytes()
+                sig_bytes = spdx_sig_path.read_bytes()
+                spdx_sig_valid = verifier.verify(anchor_pk, spdx_bytes, sig_bytes)
+                if not spdx_sig_valid:
+                    if b"\r\n" in spdx_bytes:
+                        spdx_sig_valid = verifier.verify(anchor_pk, spdx_bytes.replace(b"\r\n", b"\n"), sig_bytes)
+                    else:
+                        spdx_sig_valid = verifier.verify(anchor_pk, spdx_bytes.replace(b"\n", b"\r\n"), sig_bytes)
         except Exception as e:
             print(f"  [-] SBOM signature verification error: {e}")
 

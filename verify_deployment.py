@@ -512,10 +512,8 @@ class DeploymentVerifier:
         """
         print("\n=== TLS Post-Quantum Key-Exchange Posture ===")
         ok = True
-        prod = any(
-            os.environ.get(k, "").strip().lower() in ("1", "true", "yes", "on")
-            for k in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE")
-        )
+        from production_gate import is_ts_mode
+        prod = is_ts_mode()
         ssl_mod = None
         try:
             import ssl as ssl_mod
@@ -657,6 +655,9 @@ class DeploymentVerifier:
         print("\n=== Secure Environment & Anti-Downgrade Verification ===")
 
         def _truthy(name: str) -> bool:
+            if name.upper() in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+                from production_gate import is_production
+                return is_production()
             for k, v in os.environ.items():
                 if k.upper() == name.upper() and str(v).strip().lower() in ("1", "true", "yes", "on"):
                     return True
@@ -762,15 +763,16 @@ class DeploymentVerifier:
         Never fails the run on detection errors (reports WARN instead).
         """
         print("\n=== Host Security Posture ===")
+        from production_gate import is_production
+        prod = is_production()
         try:
             from platform_hsm_interface import get_host_security_posture
             posture = get_host_security_posture()
         except Exception as e:
-            self._add_result("Host Posture: detection", VerificationStatus.WARN,
+            level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+            self._add_result("Host Posture: detection", level,
                              f"posture detection unavailable: {str(e)[:80]}")
-            return True
-        prod = (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
+            return not prod
         ok = True
         sb = posture.get("secure_boot")
         if sb is True:

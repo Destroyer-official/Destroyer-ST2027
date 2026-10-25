@@ -186,3 +186,17 @@ final_security_status.json
 redesign/
 deploy_st2027/
 stateful_keys/
+
+# A4-23 (2026-10-17): locally generated secrets / scratch artifacts
+.secure_audit_salt
+.secure_audit_kek.sealed
+scratch/
+unsent_messages/
+diode_station.key
+diode_station.state
+
+# Audit scratch environments
+.audit-deps/
+.audit-lock-venv/
+.audit-venv/
+docs/review_tmp/

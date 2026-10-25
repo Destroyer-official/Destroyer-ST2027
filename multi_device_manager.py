@@ -180,24 +180,9 @@ class UserIdentityDevices:
 
 # --- Prod-strict gate (central helper reuse, guarded; tiny duplicate fallback) ---
 def _crl_prod_strict_on() -> bool:
-    """Sticky-prod gate: True in prod without extra env. Lab default False."""
-    try:
-        from utils.message_caps import prod_strict_on as _central_prod_strict
-        return bool(_central_prod_strict())
-    # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-    except Exception:  # nosec: B110
-        pass
-    try:
-        if os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"):
-            return True
-        if os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"):
-            return True
-        if os.environ.get("P2P_ENV", "").strip().lower() == "production":
-            return True
-    # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-    except Exception:  # nosec: B110
-        pass
-    return False
+    """Return canonical production posture, including legacy P2P_ENV."""
+    from production_gate import is_production
+    return is_production() or os.environ.get("P2P_ENV", "").strip().lower() == "production"
 
 
 def crl_require_sig() -> bool:
@@ -258,6 +243,9 @@ class MultiDeviceManager:
         # Device-specific Double Ratchet sessions for message sync
         self._device_ratchet_sessions: Dict[str, Any] = {}
         self._lock = threading.RLock()
+        # Latched when an existing registry could not be read/authenticated.
+        # Saving afterwards would overwrite revocations with empty state.
+        self._registry_load_failed = False
         
         # Initialize ML-DSA-87 for signatures
         self._sig = None
@@ -1377,7 +1365,13 @@ class MultiDeviceManager:
         with self._lock:
             if self.in_memory_only:
                 return
-            
+            if getattr(self, "_registry_load_failed", False):
+                raise ValueError(
+                    "FAIL-CLOSED: refusing to overwrite devices.json after a "
+                    "failed load (would destroy existing revocations). "
+                    "Restore the registry from backup and reload first."
+                )
+
             filepath = filepath or str(self.storage_path / "devices.json")
             target_path = Path(filepath)
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1421,12 +1415,8 @@ class MultiDeviceManager:
                     # revocation list tamper is undetected without sealing. Fail-closed
                     # in production (sticky prod); lab keeps ACL-only write + warning.
                     # F-01: canonical sticky production detector.
-                    try:
-                        from production_gate import is_production as _gate_prod
-                        _prod = _gate_prod()
-                    except Exception:
-                        _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                                 or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+                    from production_gate import is_production as _gate_prod
+                    _prod = _gate_prod()
                     if _prod:
                         raise ValueError("FAIL-CLOSED: refusing plaintext devices.json write in production (set P2P_STORAGE_PASSPHRASE to seal registry incl. revocation list)")
                     with open(temp_filepath, 'w', encoding='utf-8') as f:
@@ -1446,6 +1436,14 @@ class MultiDeviceManager:
                             "devices.json stored WITHOUT at-rest sealing "
                             "(set P2P_STORAGE_PASSPHRASE to seal it).")
 
+                # Preserve the previous registry before overwriting it.
+                try:
+                    if os.path.exists(filepath):
+                        import shutil as _shutil
+                        _shutil.copy2(filepath, filepath + ".bak")
+                except OSError as e:
+                    logger.warning(f"Could not write devices.json backup: {e}")
+
                 # Atomic replacement
                 os.replace(temp_filepath, filepath)
                 logger.info(f"Saved device data atomically to {filepath}")
@@ -1462,25 +1460,49 @@ class MultiDeviceManager:
             filepath = filepath or str(self.storage_path / "devices.json")
 
             if not os.path.exists(filepath):
+                self._registry_load_failed = False
                 return
 
-            with open(filepath, 'rb') as f:
-                raw = f.read()
-            if not raw:
-                return
-            if raw.startswith(self._DEVENC_MAGIC):
-                key = self._devices_envelope_key()
-                if key is None:
-                    raise ValueError(
-                        "devices.json is sealed but P2P_STORAGE_PASSPHRASE is not "
-                        "set: refusing to run blind (fail-closed)")
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-                nonce, ct = raw[len(self._DEVENC_MAGIC):][:12], raw[len(self._DEVENC_MAGIC) + 12:]
-                data = json.loads(AESGCM(key).decrypt(
-                    nonce, ct, b"MultiDeviceRegistry::v1").decode('utf-8'))
-            else:
-                data = json.loads(raw.decode('utf-8'))
-            
+            raw = b""
+            try:
+                with open(filepath, 'rb') as f:
+                    raw = f.read()
+                if not raw:
+                    self._registry_load_failed = False
+                    return
+                if raw.startswith(self._DEVENC_MAGIC):
+                    key = self._devices_envelope_key()
+                    if key is None:
+                        raise ValueError(
+                            "devices.json is sealed but P2P_STORAGE_PASSPHRASE is not "
+                            "set: refusing to run blind (fail-closed)")
+                    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                    nonce, ct = raw[len(self._DEVENC_MAGIC):][:12], raw[len(self._DEVENC_MAGIC) + 12:]
+                    data = json.loads(AESGCM(key).decrypt(
+                        nonce, ct, b"MultiDeviceRegistry::v1").decode('utf-8'))
+                else:
+                    # Downgrade defense: an unsealed registry must never be
+                    # silently trusted in production (revocations could be
+                    # stripped offline). Symmetric with the sealed write gate.
+                    from production_gate import is_production as _gate_prod
+                    _prod = _gate_prod()
+                    if _prod:
+                        raise ValueError(
+                            "FAIL-CLOSED: refusing to load a plaintext devices.json "
+                            "in production (registry downgrade; set "
+                            "P2P_STORAGE_PASSPHRASE and re-seal).")
+                    logger.warning(
+                        "Loaded devices.json WITHOUT at-rest sealing (plaintext "
+                        "downgrade is rejected in production).")
+                    data = json.loads(raw.decode('utf-8'))
+            except Exception:
+                self._registry_load_failed = True
+                logger.error(
+                    f"Device registry load FAILED for {filepath}; further saves "
+                    f"are refused until a successful reload (fail-closed)")
+                raise
+
+            self._registry_load_failed = False
             for user_id, user_data in data.get('user_devices', {}).items():
                 user_devices = UserIdentityDevices(
                     user_identity_id=user_data['user_identity_id']

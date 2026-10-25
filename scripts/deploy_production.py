@@ -109,16 +109,13 @@ class ProductionDeployer:
         """Check required and recommended environment variables."""
         all_required = True
         
-        # Check production mode (SECURE_P2P_PRODUCTION or P2P_PRODUCTION or P2P_TS_MODE)
-        try:
-            from production_gate import is_production as _gate_prod
-            _any_strict = _gate_prod() or os.environ.get('P2P_TS_MODE', '').strip().lower() in ('1', 'true', 'yes', 'on')
-        except Exception:
-            _any_strict = False
-        prod_mode = next((v for v in (os.environ.get('SECURE_P2P_PRODUCTION', '').strip(),
-                                     os.environ.get('P2P_PRODUCTION', '').strip(),
-                                     os.environ.get('P2P_TS_MODE', '').strip())
-                          if v.lower() in ('1', 'true', 'yes', 'on')), None)
+        # Check canonical production/TS posture (unknown values fail closed).
+        from production_gate import is_ts_mode, production_reason
+        _any_strict = is_ts_mode()
+        prod_mode = production_reason() or (
+            'P2P_TS_MODE' if os.environ.get('P2P_TS_MODE', '').strip().lower()
+            in ('1', 'true', 'yes', 'on') else None
+        )
         if _any_strict or prod_mode:
             self.log_pass(f"Environment: Production mode is set ({prod_mode})")
         else:

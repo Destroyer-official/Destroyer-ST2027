@@ -699,6 +699,7 @@ class ByzantineQuorumEngine:
 
             elif cmd_type == CriticalCommandType.TACTICAL_REKEY_ALL:
                 rekey_count = 0
+                failures = []
                 try:
                     from forward_secrecy_manager import get_global_fs_manager
                     fs_mgr = get_global_fs_manager()
@@ -707,6 +708,7 @@ class ByzantineQuorumEngine:
                         rekey_count += 1
                 except Exception as e_fs:
                     logger.warning(f"[BYZANTINE ACTUATOR] FS manager rekey notification error: {e_fs}")
+                    failures.append(f"fs:{e_fs}")
 
                 try:
                     from active_cyber_defense import get_active_cyber_defense_engine
@@ -715,7 +717,11 @@ class ByzantineQuorumEngine:
                     rekey_count += 1
                 except Exception as e_acd:
                     logger.warning(f"[BYZANTINE ACTUATOR] ACD rekey notification error: {e_acd}")
+                    failures.append(f"acd:{e_acd}")
 
+                if rekey_count == 0:
+                    logger.error(f"[BYZANTINE ACTUATOR] TACTICAL_REKEY_ALL failed on all subsystems: {failures}")
+                    return False
                 logger.info(f"[BYZANTINE ACTUATOR] Enforced TACTICAL_REKEY_ALL across subsystems ({rekey_count} notified)")
                 return True
 
@@ -730,11 +736,13 @@ class ByzantineQuorumEngine:
                     return False
 
                 # Revoke TOFU pin in safety_numbers
+                failures = []
                 try:
                     from ui.safety_numbers import revoke_pin
                     revoke_pin(str(peer_id))
                 except Exception as e_pin:
                     logger.warning(f"[BYZANTINE ACTUATOR] Safety number revocation warning for '{peer_id}': {e_pin}")
+                    failures.append(f"pin:{e_pin}")
 
                 # Sever session and quarantine in ACD
                 try:
@@ -746,7 +754,11 @@ class ByzantineQuorumEngine:
                     )
                 except Exception as e_acd:
                     logger.warning(f"[BYZANTINE ACTUATOR] ACD quarantine warning for '{peer_id}': {e_acd}")
+                    failures.append(f"acd:{e_acd}")
 
+                if failures:
+                    logger.error(f"[BYZANTINE ACTUATOR] REVOKE_NODE_CREDENTIAL partial failure on '{peer_id}': {failures}")
+                    return False
                 logger.info(f"[BYZANTINE ACTUATOR] Enforced REVOKE_NODE_CREDENTIAL on peer '{peer_id}'")
                 return True
 
@@ -757,7 +769,8 @@ class ByzantineQuorumEngine:
                     acd = get_active_cyber_defense_engine()
                     acd._execute_force_cloak(reason=f"Emergency silence order via Byzantine consensus: {proposal_id}")
                 except Exception as e_acd:
-                    logger.warning(f"[BYZANTINE ACTUATOR] ACD force cloak warning: {e_acd}")
+                    logger.error(f"[BYZANTINE ACTUATOR] ACD force cloak failed: {e_acd}")
+                    return False
 
                 logger.info("[BYZANTINE ACTUATOR] Enforced EMERGENCY_SILENCE (tactical cloaking activated)")
                 return True
@@ -793,8 +806,10 @@ def sign_and_export_byzantine_receipt(
 
     receipt_path.write_bytes(canonical_json)
 
+    from report_trust import load_or_create_audit_signer
+
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = load_or_create_audit_signer()
     sig = signer.sign(sk, canonical_json)
 
     sig_path.write_bytes(sig)
@@ -803,17 +818,21 @@ def sign_and_export_byzantine_receipt(
     return receipt_path, sig_path, pub_path
 
 
-def verify_byzantine_receipt_signature(receipt_path: Path, sig_path: Path, pub_path: Path) -> bool:
-    """Verify ML-DSA-87 signature over Byzantine consensus receipt."""
+def verify_byzantine_receipt_signature(
+    receipt_path: Path,
+    sig_path: Path,
+    pub_path: Path,
+    anchor_path: Optional[Path] = None,
+) -> bool:
+    """Verify the receipt against the pinned audit anchor, not its own ``.pub``."""
     if not (receipt_path.exists() and sig_path.exists() and pub_path.exists()):
         return False
     try:
-        r_bytes = receipt_path.read_bytes()
-        s_bytes = sig_path.read_bytes()
-        p_bytes = pub_path.read_bytes()
+        from report_trust import verify_with_anchor
 
-        verifier = LibOQS_MLDSA_87()
-        return verifier.verify(p_bytes, r_bytes, s_bytes)
+        return verify_with_anchor(
+            receipt_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+        )
     except Exception as e:
         logger.error(f"Byzantine receipt signature verification failed: {e}")
         return False

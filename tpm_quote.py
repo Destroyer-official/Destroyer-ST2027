@@ -176,11 +176,8 @@ def _verify_ek_chain(ek_cert_chain: list[bytes], vendor: str = "amd") -> bool:
     
     # Verify root is in trusted vendor roots
     try:
-        try:
-            from utils.helpers import is_env_true
-            is_prod = is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
-        except Exception:
-            is_prod = os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on") or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
+        from production_gate import is_production
+        is_prod = is_production()
 
         root_cert = chain[-1]
         root_fp = root_cert.fingerprint(hashes.SHA256()).hex().lower()
@@ -493,6 +490,7 @@ def sign_quote(
     ts: float | None = None,
     *,
     degraded: bool = False,
+    ak_pub: bytes | None = None,
 ) -> dict:
     """Sign a quote envelope with the software AK stand-in.
 
@@ -509,6 +507,10 @@ def sign_quote(
         ts: unix timestamp float; defaults to secure now.
         degraded: if True, stamp ``degraded=True`` + degraded mode branding
             into the signed body (stub/local-PCR quotes only).
+        ak_pub: the ML-DSA-87 public key matching ``sk``.  When present it
+            is bound INTO the signed body, so a verifier can attribute the
+            quote to an enrolled key and a swapped public key breaks the
+            signature.
 
     Returns:
         Envelope dict ``{"v":1,"pcr":..,"nonce":..,"ts":..,"alg":..,
@@ -533,6 +535,10 @@ def sign_quote(
         "alg": QUOTE_ALG,
         "kid": kid,
     }
+    if ak_pub:
+        if not isinstance(ak_pub, (bytes, bytearray)) or not ak_pub:
+            raise TypeError("ak_pub must be non-empty bytes")
+        body["ak_pub"] = bytes(ak_pub).hex()
     if degraded:
         body["degraded"] = True
         body["mode"] = DEGRADED_MODE
@@ -656,6 +662,17 @@ def verify_quote(envelope, expected_nonce, max_skew_s: float = 60, trusted_pubs=
                 else:
                     continue
                 if mldsa.verify(pub_b, msg, sig_bytes):
+                    # If the envelope binds its AK public key, the key that
+                    # verified MUST be that key (constant-time compare).  A
+                    # swapped public key therefore fails closed.
+                    env_pub = envelope.get("ak_pub")
+                    if env_pub:
+                        try:
+                            env_pub_b = bytes.fromhex(str(env_pub).strip().lower())
+                        except Exception:
+                            return False
+                        if not hmac.compare_digest(env_pub_b, pub_b):
+                            continue
                     return True
             # AUDITED (B112): intentional best-effort loop guard; no security decision swallowed (triaged 2026-09 waves)
             except Exception:  # nosec: B112
@@ -692,7 +709,9 @@ def attach_quote_to_handshake(
         try:
             mldsa = _load_mldsa()
             pub, sk = mldsa.keygen()
-            _ = pub  # ephemeral stub: discarded; quote stays unauthenticated
+            # The AK public key is NOT discarded: it is bound into the signed
+            # envelope so a verifier can attribute the quote to an enrolled
+            # key (and a swapped public key breaks the signature).
         except Exception:
             return None
         try:
@@ -708,7 +727,8 @@ def attach_quote_to_handshake(
                 except Exception:
                     pcr = {}
             is_degraded = not bool(pcr)
-            return sign_quote(pcr, nonce, f"ak-{peer_id}", bytes(sk), degraded=is_degraded)
+            return sign_quote(pcr, nonce, f"ak-{peer_id}", bytes(sk),
+                              degraded=is_degraded, ak_pub=bytes(pub))
         except Exception:
             return None
     except Exception:

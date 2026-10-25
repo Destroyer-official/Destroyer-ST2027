@@ -436,7 +436,8 @@ class ThreatDetectionEngine:
                 )
 
         except Exception as e:
-            self.logger.error(f"Dependency status check failed: {str(e)}")
+            self._handle_check_failure(
+                "Dependency status check", e, ThreatType.DEPENDENCY_FAILURE)
 
     def _check_hardware_security_status(self):
         """Check hardware security availability and status"""
@@ -470,7 +471,9 @@ class ThreatDetectionEngine:
             self.security_status.hardware_security_available = hardware_available
 
         except Exception as e:
-            self.logger.error(f"Hardware security status check failed: {str(e)}")
+            self._handle_check_failure(
+                "Hardware security status check", e,
+                ThreatType.HARDWARE_SECURITY_FAILURE)
 
     def _check_hardware_security(self) -> bool:
         """Check if hardware security features are available"""
@@ -572,7 +575,9 @@ class ThreatDetectionEngine:
             self.security_status.platform_security_features = available_features
 
         except Exception as e:
-            self.logger.error(f"Platform security features check failed: {str(e)}")
+            self._handle_check_failure(
+                "Platform security features check", e,
+                ThreatType.PLATFORM_SECURITY_FAILURE)
 
     def _get_feature_alternatives(self, feature: str) -> List[str]:
         """Get alternative implementations for unavailable features"""
@@ -610,6 +615,27 @@ class ThreatDetectionEngine:
         }
         return remediation.get(feature, ["Review platform documentation", "Contact system administrator"])
 
+    def _handle_check_failure(self, check_name: str, exc: Exception,
+                              threat_type: "ThreatType") -> None:
+        """Surface a detection-routine failure instead of silently going blind.
+
+        HIGH (monitoring L...): a swallowed exception in a detection check means
+        the engine reports "no threats" while the check never ran. Emit a HIGH
+        auto-recoverable event so the failure is visible and tracked.
+        """
+        self.logger.error(f"{check_name} failed: {exc}")
+        try:
+            self._generate_threat_event(
+                threat_type,
+                ThreatLevel.HIGH,
+                f"{check_name} failed",
+                f"{check_name} could not run ({exc}); detection coverage is degraded",
+                auto_recoverable=True,
+            )
+        # AUDITED (B110): failure to report must not crash the monitor loop
+        except Exception:  # nosec: B110
+            pass
+
     def _analyze_system_integrity(self):
         """Analyze system integrity using available methods"""
         try:
@@ -617,6 +643,10 @@ class ThreatDetectionEngine:
                 # Use process monitor for integrity checking
                 current_pid = os.getpid()
                 integrity_result = self.process_monitor.check_process_integrity(current_pid)
+
+                if getattr(integrity_result, "integrity_valid", None) is None:
+                    raise ValueError(
+                        "integrity_result missing 'integrity_valid' attribute")
 
                 if not integrity_result.integrity_valid:
                     self._generate_threat_event(
@@ -640,7 +670,8 @@ class ThreatDetectionEngine:
                     )
 
         except Exception as e:
-            self.logger.error(f"System integrity analysis failed: {str(e)}")
+            self._handle_check_failure(
+                "System integrity analysis", e, ThreatType.INTEGRITY_VIOLATION)
 
     def _perform_comprehensive_security_check(self):
         """Perform comprehensive security status assessment"""

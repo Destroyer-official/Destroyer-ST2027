@@ -55,7 +55,13 @@ __all__ = [
 ]
 
 # Canonical truthy spellings. Keep in sync with config._env_wants_prod.
-TRUTHY = frozenset({"1", "true", "yes", "on"})
+# Unknown non-empty values also arm production: an operator typo must never
+# silently disable cryptographic, attestation, or deployment hardening.
+TRUTHY = frozenset({
+    "1", "true", "yes", "on",
+    "t", "y", "2", "enabled", "enable",
+    "prod", "production", "true prod",
+})
 
 # The two environment variables that request production posture.
 PRODUCTION_VARS = ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION")
@@ -82,7 +88,7 @@ def _truthy(name: str) -> bool:
 
 
 def _wants() -> tuple[bool, str]:
-    """Return (wants_production, reason)."""
+    """Return (wants_production, reason), failing closed on ambiguity."""
     for var in PRODUCTION_VARS:
         raw = os.environ.get(var)
         if raw is None:
@@ -90,19 +96,17 @@ def _wants() -> tuple[bool, str]:
         norm = raw.strip().lower()
         if norm in TRUTHY:
             return True, f"{var}={norm!r}"
-        # Explicit falsey values are fine (lab mode).
+        # Only explicit falsey values select lab mode.
         if norm in ("0", "false", "no", "off", ""):
             continue
-        # Unknown spelling: fail-closed toward lab, but scream — a typo
-        # like "tru" must never be silently treated as production AND
-        # must never be silently treated as safe either.
+        reason = f"{var}=unrecognized:{norm!r}"
         _log.critical(
-            "production_gate: %s has unrecognized value %r "
-            "(accepted: 1/true/yes/on). Treating as NOT production. "
-            "This is fail-open for hardening gates — fix the spelling.",
+            "production_gate: %s has unrecognized value %r. "
+            "Treating as PRODUCTION (fail-closed); fix the spelling.",
             var,
             raw,
         )
+        return True, reason
     return False, ""
 
 
@@ -180,7 +184,6 @@ def reset_for_tests() -> None:
         _unset_logged = False
 
 
-# Import-time arm: if the operator launched with production env set, the
-# sticky bit is set immediately so import-order cannot create a lab window.
-if _wants()[0]:
-    is_production()
+# Import-time evaluation arms the latch before callers can create a lab
+# window. is_production() performs the single environment read and audit.
+is_production()

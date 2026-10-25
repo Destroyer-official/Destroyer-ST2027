@@ -108,9 +108,12 @@ def main():
         card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, "Compiler warnings present")
     else:
         code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
-        passed = (code2 == 0 and "0 failed" in out2 and ("110 passed" in out2 or "91 passed" in out2 or "88 passed" in out2 or "86 passed" in out2 or "75 passed" in out2 or "65 passed" in out2 or "52 passed" in out2 or "51 passed" in out2 or "49 passed" in out2) and ("37 passed" in out2 or "34 passed" in out2 or "30 passed" in out2 or "29 passed" in out2))
+        import re
+        passed_matches = [int(m) for m in re.findall(r"(\d+) passed; 0 failed", out2) if int(m) > 0]
+        passed = (code2 == 0 and "0 failed" in out2 and len(passed_matches) >= 2 and passed_matches[0] >= 110 and passed_matches[1] >= 30)
+        total_passed = sum(passed_matches) if passed_matches else 0
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         "147 tests passed (110 lib incl. TPM 2.0 NV rollback guard, S-01/S-02 replay protection, Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + 37 kani harness); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
+                         f"{total_passed} tests passed ({passed_matches[0] if passed_matches else 0} lib incl. TPM 2.0 NV rollback guard, S-01/S-02 replay protection, Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + {passed_matches[1] if len(passed_matches) > 1 else 0} kani harness); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
 
     # Gate 2: Native Top-Secret Runtime (ts_rt)
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")
@@ -220,14 +223,23 @@ def main():
         "score": "10/10" if card.overall_pass else "DEFICIENT",
         "gates": card.gates
     }
-    with open(receipt_file, "w", encoding="utf-8") as f:
-        json.dump(receipt_data, f, indent=2)
 
-    # Attempt post-quantum signing with ML-DSA-87 root
+    # Sign with the centrally-managed persistent ML-DSA-87 audit signer.
+    # report_trust owns custody: repo-local drill keys are refused in
+    # production unless explicitly overridden, the secret is owner-only,
+    # symlinks/hardlinks are rejected, and verify-after-sign is mandatory.
     try:
         from pqc_algorithms import LibOQS_MLDSA_87
+        from report_trust import audit_signer_fingerprint, load_or_create_audit_signer
+
         signer = LibOQS_MLDSA_87()
-        pk, sk = signer.keygen()
+        pk, sk = load_or_create_audit_signer()
+        signer_fp = audit_signer_fingerprint(pk)
+        receipt_data["signer_pk_sha3_256"] = signer_fp
+
+        with open(receipt_file, "w", encoding="utf-8") as f:
+            json.dump(receipt_data, f, indent=2)
+
         canonical_bytes = json.dumps(receipt_data, sort_keys=True).encode("utf-8")
         sig = signer.sign(sk, canonical_bytes)
         if not signer.verify(pk, canonical_bytes, sig):
@@ -239,9 +251,15 @@ def main():
         print(f"\n[+] Master defense evaluation receipt cryptographically signed with ML-DSA-87 (VAS verified):")
         print(f"    Receipt  : {receipt_file}")
         print(f"    Signature: {receipt_file}.sig ({len(sig)} bytes)")
+        print(f"    Signer   : {signer_fp} (persistent audit signer, owner-only custody)")
     except Exception as e:
+        # Still persist the unsigned receipt so gate results are not lost.
+        try:
+            with open(receipt_file, "w", encoding="utf-8") as f:
+                json.dump(receipt_data, f, indent=2)
+        except Exception:  # nosec: B110 - best-effort receipt persistence
+            pass
         print(f"[-] Note: could not sign receipt with ML-DSA-87: {e}")
-
     return 0 if card.overall_pass else 1
 
 

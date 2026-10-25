@@ -60,16 +60,15 @@ if not log.handlers:
     log.setLevel(logging.INFO)
 
 
+class SecurityPolicyViolationError(RuntimeError):
+    """Raised when a hardware security policy (attestation/sealing) is violated."""
+
+
 
 def _is_production() -> bool:
-    """True when P2P_PRODUCTION or SECURE_P2P_PRODUCTION is truthy."""
-    try:
-        from utils.helpers import is_env_true
-        return is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
-    except ImportError:
-        val = os.environ.get("P2P_PRODUCTION", "").strip().lower()
-        val2 = os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower()
-        return val in ("1", "true", "yes", "on") or val2 in ("1", "true", "yes", "on")
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -404,10 +403,13 @@ class IntelSGXBackend(TEEBackendInterface):
         if not report.quote_data or not report.signature:
             return False
         
-        # Verify quote structure
-        if len(report.quote_data) < 48:
+        # Verify quote structure. A real SGX quote carries a 64-byte report
+        # body and an ECDSA signature; here we can only enforce shape.
+        if len(report.quote_data) < 48 or len(report.nonce) < 20:
             return False
-        
+        if len(report.signature) != 48:  # SHA-384/ECDSA-P256 shape
+            return False
+
         # Verify nonce is in quote
         if report.nonce[:20] not in report.quote_data:
             return False
@@ -422,8 +424,14 @@ class IntelSGXBackend(TEEBackendInterface):
             log.error(report.error_message)
             return False
 
+        # Lab-only structural verification. This is NOT a cryptographic
+        # vendor attestation (no IAS/DCAP); it must never be represented as
+        # hardware-verified outside test/drill use.
         report.status = AttestationStatus.VERIFIED
-        log.info("Intel SGX attestation verified")
+        log.critical(
+            "Intel SGX attestation passed LAB STRUCTURE CHECK ONLY (no "
+            "IAS/DCAP signature verification); do not treat as production "
+            "hardware attestation.")
         return True
     
     def execute_in_enclave(self, operation: Callable, *args, **kwargs) -> Any:
@@ -623,21 +631,20 @@ class ARMTrustZoneBackend(TEEBackendInterface):
         if not report.quote_data.startswith(b"TZAT"):
             return False
         
-        # Verify signature using SHA-512
+        # Verify signature using the provisioned device key. There is no
+        # default/static key: an unprovisioned (or placeholder) key fails
+        # closed in every environment.
         prov_key = os.environ.get("P2P_TRUSTZONE_DEVICE_KEY")
-        if _is_production():
-            if not prov_key or prov_key == "trustzone_device_key":
-                report.status = AttestationStatus.FAILED
-                report.error_message = (
-                    "ARM TrustZone attestation requires authenticated hardware device key "
-                    "(P2P_TRUSTZONE_DEVICE_KEY) in production; static simulation key rejected (fail-closed)."
-                )
-                log.error(report.error_message)
-                return False
-            key = hashlib.sha512(prov_key.encode("utf-8") if isinstance(prov_key, str) else bytes(prov_key)).digest()
-        else:
-            raw_k = prov_key.encode("utf-8") if prov_key else b"trustzone_device_key"
-            key = hashlib.sha512(raw_k).digest()
+        if not prov_key or prov_key == "trustzone_device_key":
+            report.status = AttestationStatus.FAILED
+            report.error_message = (
+                "ARM TrustZone attestation requires an authenticated hardware "
+                "device key (P2P_TRUSTZONE_DEVICE_KEY); static simulation key "
+                "rejected (fail-closed)."
+            )
+            log.error(report.error_message)
+            return False
+        key = hashlib.sha512(prov_key.encode("utf-8") if isinstance(prov_key, str) else bytes(prov_key)).digest()
 
         expected_sig = hmac.new(key, report.quote_data, hashlib.sha512).digest()
         if not hmac.compare_digest(report.signature, expected_sig):
@@ -858,21 +865,18 @@ class AMDSEVBackend(TEEBackendInterface):
         if len(report.quote_data) < 100:
             return False
         
-        # Verify signature
+        # Verify signature against the provisioned VCEK. No default/static
+        # key exists; unprovisioned (or placeholder) fails closed always.
         prov_vcek = os.environ.get("P2P_SEV_VCEK")
-        if _is_production():
-            if not prov_vcek or prov_vcek == "sev_vcek":
-                report.status = AttestationStatus.FAILED
-                report.error_message = (
-                    "AMD SEV attestation requires authenticated VCEK (P2P_SEV_VCEK) in production; "
-                    "static simulation key rejected (fail-closed)."
-                )
-                log.error(report.error_message)
-                return False
-            key = hashlib.sha512(prov_vcek.encode("utf-8") if isinstance(prov_vcek, str) else bytes(prov_vcek)).digest()
-        else:
-            raw_v = prov_vcek.encode("utf-8") if prov_vcek else b"sev_vcek"
-            key = hashlib.sha512(raw_v).digest()
+        if not prov_vcek or prov_vcek == "sev_vcek":
+            report.status = AttestationStatus.FAILED
+            report.error_message = (
+                "AMD SEV attestation requires an authenticated VCEK "
+                "(P2P_SEV_VCEK); static simulation key rejected (fail-closed)."
+            )
+            log.error(report.error_message)
+            return False
+        key = hashlib.sha512(prov_vcek.encode("utf-8") if isinstance(prov_vcek, str) else bytes(prov_vcek)).digest()
 
         expected_sig = hmac.new(key, report.quote_data, hashlib.sha512).digest()
         if not hmac.compare_digest(report.signature, expected_sig):

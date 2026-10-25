@@ -536,8 +536,12 @@ def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
         from trust_anchor import pki_required as _pki_req
         _need_pki = bool(_pki_req())
         _need_eph = bool(_eph_req())
-    except Exception:
-        _need_pki, _need_eph = False, False
+    except Exception as e:
+        # FAIL CLOSED: inability to evaluate trust policy must never silently
+        # downgrade the session to TOFU.
+        raise SecurityError(
+            f"trust_anchor policy unavailable (refusing to downgrade to TOFU): {e}"
+        ) from e
     if _need_pki:
         from trust_anchor import require_cert_for_remote as _cert_gate
         _cert_gate(peer_sig_pk, peer_cert,
@@ -593,7 +597,10 @@ def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
 
 def _production_strict() -> bool:
     import os as _os
-    for var in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION", "P2P_TS_MODE", "P2P_STRICT_PIN"):
+    from production_gate import is_ts_mode
+    if is_ts_mode():
+        return True
+    for var in ("P2P_STRICT_PIN", "P2P_REQUIRE_PKI", "P2P_EPHEMERAL"):
         if _os.environ.get(var, "0").strip().lower() in ("1", "true", "yes", "on"):
             return True
     return False
@@ -612,16 +619,19 @@ def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
             raise SecurityError("stale")
         if len(m2) < 97 + 1568 + 16:
             raise SecurityError("handshake size violation")
-        if _production_strict() and expected_peer_pk is None:
+        if _production_strict() and expected_peer_pk is None and not peer_cert:
             # Fail-closed pinning: production never connects to an unpinned peer
             # (TOFU only in lab). Prevents MITM via rogue peer + silent TOFU store.
+            # A trusted certificate is an equivalent identity anchor and is
+            # verified by the PKI gate below (_xxhfs_peer_gates).
             raise SecurityError("unpinned peer refused in production (expected_peer_pk required)")
         sig_pk, _sig_sk, signer = _xxhfs_identity(kp)
         _npq.initiator_finish(
             sess,
             bytes(m2),
             expected_peer_pk=expected_peer_pk,
-            allow_unpinned=(expected_peer_pk is None and not _production_strict()),
+            allow_unpinned=(expected_peer_pk is None
+                            and not (_production_strict() and not peer_cert)),
         )  # verify sig_r BEFORE derive
         peer_pk = sess._peer_sig_pk
         # IDENTITY-HIDING PROPERTY (SIGMA / Noise XX): Gating the responder's identity
@@ -670,14 +680,15 @@ def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
             raise SecurityError("stale")
         if len(m3) < 2592 + 16 + 1:
             raise SecurityError("handshake size violation")
-        if _production_strict() and expected_peer_pk is None:
+        if _production_strict() and expected_peer_pk is None and not peer_cert:
             raise SecurityError("unpinned peer refused in production (expected_peer_pk required)")
         sig_pk, _sig_sk, _signer = _xxhfs_identity(kp)
         _npq.responder_complete(
             sess,
             bytes(m3),
             expected_peer_pk=expected_peer_pk,
-            allow_unpinned=(expected_peer_pk is None and not _production_strict()),
+            allow_unpinned=(expected_peer_pk is None
+                            and not (_production_strict() and not peer_cert)),
         )  # verify sig_i BEFORE Split
         peer_pk = sess._peer_sig_pk
         # GATE BEFORE SPLIT: Verify initiator's identity before deriving transport keys
@@ -852,7 +863,11 @@ class Channel:
         aad = frame[:12]  # magic||seq||len bound into tag (header auth)
         ct = AESGCM(self.state.key()).encrypt(self._nonce(seq, self.direction_out), frame[12:], aad)
         self.state.bytes_under_key += len(ct)
-        self.state.msgs_under_key += 1  # CER epoch counter (rotation erases)
+        if ftype != FRAME_TYPE_CHAFF:
+            # CER epoch counter counts sealed RECORDS only.  Cover traffic
+            # is not a record: counting it made the constant-rate anonymity
+            # transport hit the rekey threshold within seconds.
+            self.state.msgs_under_key += 1  # CER epoch counter (rotation erases)
         return frame[:12] + ct
 
     def open(self, wire: bytes) -> Tuple[int, bytes]:
@@ -1112,8 +1127,12 @@ def make_server_context(certfile: str, keyfile: str, cafile: str) -> ssl.SSLCont
     return ctx
 
 
+_TLS_HOSTNAME_WARNED = False
+
+
 def make_client_context(certfile: str, keyfile: str, cafile: str,
                         check_hostname: Optional[bool] = None) -> ssl.SSLContext:
+    global _TLS_HOSTNAME_WARNED
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = TLS_MIN
     ctx.maximum_version = TLS_MAX
@@ -1128,6 +1147,19 @@ def make_client_context(certfile: str, keyfile: str, cafile: str,
         ctx.check_hostname = check_hostname
     else:
         ctx.check_hostname = _env_true("P2P_CHECK_HOSTNAME")
+    if not ctx.check_hostname and not _TLS_HOSTNAME_WARNED:
+        # A4-F4 (2026-10-17): deliberate domain-fronting design - the outer
+        # SNI is the cover domain (default cdn-front.example.net) while peer
+        # identity is pinned inside the Noise/PQ handshake. PKI hostname
+        # checking therefore cannot validate the real peer name. Documented
+        # residual risk; warn once so operators see the trade-off.
+        _TLS_HOSTNAME_WARNED = True
+        log.warning(
+            "TLS hostname verification DISABLED (A4-F4): outer SNI is the "
+            "cover domain; peer identity is authenticated by the inner "
+            "Noise/PQ handshake, not PKI. Set P2P_CHECK_HOSTNAME=1 for "
+            "direct (non-fronted) operation with a matching certificate."
+        )
     ctx.options |= getattr(ssl, "OP_NO_TICKET", 0)
     return ctx
 
@@ -1403,6 +1435,9 @@ def rehandshake(ch: Channel, tls_sock: socket.socket,
 # + sign_with_mldsa (PKCS#11 CKA_EXTRACTABLE=False / CNG+TPM sealed).
 
 def _env_true(name: str) -> bool:
+    if name in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+        from production_gate import is_production
+        return is_production()
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -1900,8 +1935,27 @@ def _gate_hw_admin(a) -> None:
     if not want_admin and not ts_mode:
         return
     if ts_mode:
-        for _v in _hw.collect():
+        verdicts = list(_hw.collect())
+        for _v in verdicts:
             print(_v.headline())
+        # TOP SECRET posture: a missing (or undeterminable) TS-required
+        # hardware component refuses the transmission.  Previously the gate
+        # only printed the advisory table, so a TOP SECRET session could run
+        # on a node with no HSM/TPM at all.
+        unmet = [v for v in verdicts
+                 if getattr(v, "ts_required", False)
+                 and getattr(v, "status", "") != getattr(_hw, "HAVE", "HAVE")]
+        if unmet:
+            waiver = os.environ.get("P2P_TS_HW_WAIVER_FILE", "").strip()
+            if not waiver:
+                raise SecurityError(
+                    "TOP SECRET hardware posture not met: "
+                    + ", ".join(f"{v.id}={v.status}" for v in unmet)
+                    + " (refusing transmission; an audited waiver must name "
+                      "P2P_TS_HW_WAIVER_FILE)")
+            log.warning(
+                "TOP SECRET hardware gate waived by %s for: %s",
+                waiver, ", ".join(v.id for v in unmet))
     if want_admin or (ts_mode and not no_elevate):
         result = _hw.ensure_admin(no_elevate=no_elevate)
         if want_admin and result in ("skipped", "declined"):

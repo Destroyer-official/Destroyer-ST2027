@@ -44,6 +44,15 @@ class SecurityError(Exception):
 logger = logging.getLogger(__name__)
 
 
+def _production() -> bool:
+    """Best-effort production gate; detection failure is treated as lab."""
+    try:
+        from production_gate import is_production
+        return bool(is_production())
+    except Exception:
+        return False
+
+
 # ============================================================================
 # Constants
 # ============================================================================
@@ -112,12 +121,8 @@ def _pow_difficulty() -> int:
                                                str(DEFAULT_POW_DIFFICULTY_BYTES))))
     except (TypeError, ValueError):
         configured = DEFAULT_POW_DIFFICULTY_BYTES
-    try:
-        from production_gate import is_production as _gate_prod
-        _prod = bool(_gate_prod())
-    except Exception:
-        _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                 or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+    from production_gate import is_production as _gate_prod
+    _prod = _gate_prod()
     if _prod and configured < PRODUCTION_POW_FLOOR_BYTES:
         logger.warning(
             "PRODUCTION PoW floor active: elevating DHT PoW difficulty "
@@ -463,12 +468,8 @@ class DHTRoutingTable:
             return False
 
         # 2028 hardening: production refuses downgraded DHT policy.
-        try:
-            from production_gate import is_production as _gate_prod
-            _prod = _gate_prod()
-        except Exception:
-            _prod = (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                     or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production as _gate_prod
+        _prod = _gate_prod()
         if _prod and os.environ.get("P2P_ENFORCE_DHT_POW", "1") != "1":
             logger.critical("MILITARY FATAL: production refuses P2P_ENFORCE_DHT_POW!=1 (Sybil downgrade)")
             return False
@@ -606,6 +607,50 @@ def verify_dht_signature(key: bytes, value: bytes, signature: bytes, sig_public_
             pass
 
     return False
+
+
+def _bind_dht_peer_record(key: bytes, value: bytes,
+                          sig_public_key: Optional[bytes]) -> bool:
+    """Bind a peer record to its DHT key and signing identity.
+
+    Signatures alone only prove *some* key signed *some* bytes.  A record
+    shaped like ``DHTNodeInfo`` must additionally prove:
+
+      * ``key == sha3(node_id)`` (the record answers the lookup it claims to),
+      * ``node_id == sha3(public_key + pow_nonce)`` (PoW identity binding),
+      * ``sig_public_key == value.sig_public_key`` (no foreign signer).
+
+    Opaque application values (CRL bundles, blobs) have no peer identity and
+    are only signature-verified.  Never raises.
+    """
+    try:
+        data = json.loads(value.decode("utf-8"))
+    except Exception:
+        return True
+    if not isinstance(data, dict):
+        return True
+    if "node_id" not in data or "public_key" not in data:
+        return True
+    try:
+        node_id = bytes.fromhex(data["node_id"])
+        if key != hashlib.sha3_256(node_id).digest():
+            logger.warning("DHT binding rejected: key is not sha3(node_id)")
+            return False
+        claimed_sig_pk = data.get("sig_public_key")
+        if not claimed_sig_pk or not sig_public_key:
+            logger.warning("DHT binding rejected: missing signer identity")
+            return False
+        if not hmac.compare_digest(sig_public_key, bytes.fromhex(claimed_sig_pk)):
+            logger.warning("DHT binding rejected: signer != record sig_public_key")
+            return False
+        candidate = DHTNodeInfo.from_dict(data)
+        if not candidate.verify_pow_and_identity():
+            logger.warning("DHT binding rejected: node_id/public_key PoW mismatch")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"DHT binding rejected: malformed peer record ({e})")
+        return False
 
 
 def _try_merge_crl_bundle(value: bytes) -> int:
@@ -1289,6 +1334,16 @@ class DecentralizedPeerDiscovery:
                 }
                 self._send_message(response, addr)
                 return
+            if not _bind_dht_peer_record(key, value, sig_pubkey):
+                logger.warning(f"Rejecting STORE with unbound peer identity from {addr} for key {key.hex()[:16]}")
+                response = {
+                    'type': 'STORE_ACK',
+                    'node_id': self.node_id.hex(),
+                    'key': key.hex(),
+                    'success': False,
+                }
+                self._send_message(response, addr)
+                return
         
         # CRL gossip (air-gap, optional, non-breaking): if the value carries a
         # CRL bundle, merge it locally. Fail-open: never reject STORE on CRL
@@ -1366,13 +1421,31 @@ class DecentralizedPeerDiscovery:
         key_hex = message.get('key')
         found = message.get('found', False)
 
-        # Correlate response with active pending lookup
+        # Correlate response strictly by txid (never by the public key alone:
+        # that let any host inject unsolicited responses into a lookup).
         lookup = None
-        with self._lock:
-            if txid and hasattr(self, '_pending_lookups') and txid in self._pending_lookups:
-                lookup = self._pending_lookups[txid]
-            elif key_hex and hasattr(self, '_pending_lookups_by_key') and key_hex in self._pending_lookups_by_key:
-                lookup = self._pending_lookups_by_key[key_hex]
+        if txid:
+            with self._lock:
+                if hasattr(self, '_pending_lookups'):
+                    lookup = self._pending_lookups.get(txid)
+        if lookup is None:
+            logger.debug("Ignoring FIND_VALUE_RESPONSE for unknown txid")
+            return
+        if key_hex != lookup['key'].hex():
+            logger.warning("Rejecting FIND_VALUE_RESPONSE: key does not match lookup")
+            return
+
+        responder = (str(addr[0]), int(addr[1]))
+        with lookup['lock']:
+            if responder not in lookup.get('queried_addrs', set()):
+                logger.warning(
+                    f"Rejecting FIND_VALUE_RESPONSE from unqueried responder {responder}")
+                return
+            if responder in lookup.get('responders', set()):
+                logger.warning(
+                    f"Ignoring duplicate FIND_VALUE_RESPONSE from {responder}")
+                return
+            lookup.setdefault('responders', set()).add(responder)
 
         if found:
             value_hex = message.get('value')
@@ -1403,11 +1476,15 @@ class DecentralizedPeerDiscovery:
                     if not pubkey_to_verify or not verify_dht_signature(key_bytes, val_bytes, sig_bytes, pubkey_to_verify, ts):
                         logger.warning(f"Rejecting FIND_VALUE response with unverified signature from {addr}")
                         return
+                    if not _bind_dht_peer_record(key_bytes, val_bytes, pubkey_to_verify):
+                        logger.warning(f"Rejecting FIND_VALUE response with unbound record from {addr}")
+                        return
 
                 if lookup:
                     with lookup['lock']:
                         lookup['responses'].append(candidate)
-                        lookup['raw_values'].append((val_bytes, sig_bytes, sig_pubkey, ts))
+                        lookup['raw_values'].append(
+                            (candidate.node_id, val_bytes, sig_bytes, sig_pubkey, ts))
                         lookup['event'].set()
 
             except Exception as e:
@@ -1497,6 +1574,16 @@ class DecentralizedPeerDiscovery:
         Returns:
             True if stored successfully
         """
+        if not getattr(self, 'sig_public_key', None) or not getattr(self, 'sig_private_key', None):
+            logger.warning("Rejecting store_peer_info: no ML-DSA-87 signing identity")
+            return False
+        # The record's signer must be this node's key: publishing a mapping
+        # under another signer would allow identity spoofing.
+        if peer_info.sig_public_key and peer_info.sig_public_key != self.sig_public_key:
+            logger.warning("Rejecting store_peer_info: record signer is not this node")
+            return False
+        peer_info.sig_public_key = self.sig_public_key
+
         key = hashlib.sha3_256(peer_id).digest()
         value = json.dumps(peer_info.to_dict()).encode('utf-8')
         ts = int(time.time())
@@ -1568,6 +1655,8 @@ class DecentralizedPeerDiscovery:
             'responses': [],
             'raw_values': [],
             'closest_nodes': [],
+            'queried_addrs': set(),
+            'responders': set(),
             'event': threading.Event(),
             'lock': threading.Lock()
         }
@@ -1587,6 +1676,8 @@ class DecentralizedPeerDiscovery:
 
                 for node in to_query:
                     queried.add(node.node_id)
+                    lookup_state['queried_addrs'].add(
+                        (str(node.address), int(node.port)))
                     message = {
                         'type': 'FIND_VALUE',
                         'txid': txid,
@@ -1618,8 +1709,12 @@ class DecentralizedPeerDiscovery:
                     for nid, c in counts.items():
                         if c >= quorum_needed:
                             chosen = next(r for r in current_responses if r.node_id == nid)
-                            for rv, sig, spk, ts in raw_items:
-                                self.storage.store(key, rv, DHT_EXPIRY_TIME, sig, spk or chosen.sig_public_key, ts)
+                            for raw in raw_items:
+                                if raw[0] != chosen.node_id:
+                                    continue
+                                _, rv, sig, spk, ts = raw
+                                self.storage.store(key, rv, DHT_EXPIRY_TIME,
+                                                   sig, spk or chosen.sig_public_key, ts)
                                 break
                             return chosen
 
@@ -1642,8 +1737,12 @@ class DecentralizedPeerDiscovery:
                 for nid, c in counts.items():
                     if c >= quorum_needed:
                         chosen = next(r for r in final_responses if r.node_id == nid)
-                        for rv, sig, spk, ts in final_raw:
-                            self.storage.store(key, rv, DHT_EXPIRY_TIME, sig, spk or chosen.sig_public_key, ts)
+                        for raw in final_raw:
+                            if raw[0] != chosen.node_id:
+                                continue
+                            _, rv, sig, spk, ts = raw
+                            self.storage.store(key, rv, DHT_EXPIRY_TIME,
+                                               sig, spk or chosen.sig_public_key, ts)
                             break
                         return chosen
 
@@ -1946,6 +2045,11 @@ class RelayNode:
         # Message queues per recipient
         self._queues: Dict[bytes, List[RelayMessage]] = {}
         self._lock = threading.Lock()
+        # Origin-identity binding: sender_id -> enrolled/pinned public key.
+        # Production refuses messages from senders that are not pinned; labs
+        # pin on first use (TOFU) so spoofed later messages are rejected.
+        self._pinned_sender_keys: Dict[bytes, bytes] = {}
+        self._pin_lock = threading.Lock()
 
         # Load persisted messages
         if storage_path:
@@ -1962,18 +2066,55 @@ class RelayNode:
                               n=32768, r=8, p=1,
                               maxmem=64 * 1024 * 1024, dklen=32)
 
+    def register_peer_sender_key(self, sender_id: bytes, pubkey: bytes) -> None:
+        """Pre-enroll a relay sender identity (recommended for production)."""
+        with self._pin_lock:
+            self._pinned_sender_keys[bytes(sender_id)] = bytes(pubkey)
+
     def _verify_relay_message(self, message: RelayMessage) -> bool:
-        """Authenticate a relay message when a verifier is configured."""
-        if self._verifier is None:
-            return True
+        """Authenticate a relay message and bind sender_id to its public key.
+
+        Signatures alone prove possession of *a* key, not the claimed sender.
+        Production requires a pre-enrolled sender key; labs pin on first use.
+        """
         if not message.sender_sig or not message.sender_pubkey:
+            if self._verifier is None and not _production():
+                logger.warning(
+                    f"Accepting unsigned relay message {message.message_id} "
+                    "without a verifier (lab-only legacy path)")
+                return True
             logger.warning(f"Rejecting unsigned relay message {message.message_id}: signature required")
             return False
+        if self._verifier is None:
+            logger.warning(
+                f"Rejecting relay message {message.message_id}: no signature verifier")
+            return False
         try:
-            return bool(self._verifier(message.sender_pubkey, message.signing_bytes(), message.sender_sig))
+            if not self._verifier(message.sender_pubkey, message.signing_bytes(),
+                                  message.sender_sig):
+                return False
         except Exception as e:
             logger.warning(f"Relay signature verification error: {e}")
             return False
+
+        with self._pin_lock:
+            pinned = self._pinned_sender_keys.get(message.sender_id)
+            if pinned is None:
+                if _production():
+                    logger.warning(
+                        "Rejecting relay message from unpinned sender "
+                        f"{message.sender_id.hex()[:16]}")
+                    return False
+                self._pinned_sender_keys[message.sender_id] = message.sender_pubkey
+                logger.warning(
+                    "TOFU-pinned relay sender key for %s (lab mode)",
+                    message.sender_id.hex()[:16])
+            elif not hmac.compare_digest(pinned, message.sender_pubkey):
+                logger.warning(
+                    "Rejecting relay message: sender key does not match pinned "
+                    f"identity for {message.sender_id.hex()[:16]}")
+                return False
+        return True
     
     def _load_from_disk(self) -> None:
         """Load queued messages from disk (sealed envelope or legacy JSON)."""
@@ -2147,6 +2288,9 @@ class RelayNode:
         Returns:
             True if message was found and removed
         """
+        # NOTE: _save_to_disk() re-acquires self._lock (non-reentrant), so it
+        # MUST be called after the lock is released (self-deadlock fix).
+        removed = False
         with self._lock:
             if peer_id not in self._queues:
                 return False
@@ -2155,10 +2299,13 @@ class RelayNode:
             for i, msg in enumerate(queue):
                 if msg.message_id == message_id:
                     queue.pop(i)
-                    self._save_to_disk()
-                    logger.debug(f"Acknowledged message {message_id}")
-                    return True
+                    removed = True
+                    break
         
+        if removed:
+            self._save_to_disk()
+            logger.debug(f"Acknowledged message {message_id}")
+            return True
         return False
     
     def cleanup_expired(self) -> int:
@@ -2399,7 +2546,21 @@ class WiFiDirectTransport(DeviceSyncTransport):
                     return None
                 
                 length = struct.unpack('>I', length_data)[0]
-                
+
+                # A4-06 (2026-10-17): bound declared frame length. The old
+                # code trusted a 32-bit peer-supplied length and could be
+                # driven to allocate/accumulate up to 4 GiB per frame
+                # (memory-exhaustion DoS). 16 MiB is far above any legitimate
+                # WiFi Direct control frame.
+                MAX_FRAME_BYTES = 16 * 1024 * 1024
+                if length == 0 or length > MAX_FRAME_BYTES:
+                    logger.warning(
+                        f"Rejecting oversized/empty WiFi Direct frame "
+                        f"(declared {length} bytes, cap {MAX_FRAME_BYTES})"
+                    )
+                    self._connected = False
+                    return None
+
                 # Receive data
                 data = b''
                 while len(data) < length:

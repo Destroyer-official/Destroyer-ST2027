@@ -160,3 +160,71 @@ def test_threshold_tbs_interop_rust_signs_python_verifies():
                         sig=bytes(signers[i].sign(
                             b"", trust_anchor.revoke_bytes(rev)))) for i in range(3)]
     trust_anchor.verify_revocation(rev, custodians)
+
+
+def test_rust_backend_primary_helpers():
+    """Verify rust_backend correctly exposes Rust as PRIMARY data plane."""
+    assert rust_backend.available() is True
+    assert rust_backend.is_rust_primary() is True
+    engine = rust_backend.get_native_engine()
+    assert engine is not None
+    signer = rust_backend.get_native_signer()
+    vk = bytes(signer.verifying_bytes())
+    assert len(vk) == 2592
+    sig = bytes(signer.sign(b"TEST_DOMAIN", b"CLASSIFIED_PAYLOAD"))
+    assert len(sig) == 4627
+    rust_backend.require_native().CoreMldsaSigner.verify(vk, b"TEST_DOMAIN", b"CLASSIFIED_PAYLOAD", sig)
+
+
+def test_rust_group_ratchet_native_and_interop():
+    """Verify native CoreGroupRatchet multi-member communication and epoch advancement."""
+    epoch_secret = os.urandom(48)
+    alpha = rust_backend.get_native_group_ratchet("TACTICAL-HQ", "ALPHA", epoch_secret)
+    bravo = rust_backend.get_native_group_ratchet("TACTICAL-HQ", "BRAVO", epoch_secret)
+
+    assert alpha.epoch == 0
+    assert alpha.group_id == "TACTICAL-HQ"
+    assert alpha.local_member_id == "ALPHA"
+
+    # Compute cross-member initial chain keys under epoch_secret using HKDF-SHA384
+    import hashlib
+    import hmac
+    def derive_chain(member_id: str):
+        hk = hmac.new(b"member-init-salt", epoch_secret, hashlib.sha384).digest()
+        info = member_id.encode("utf-8") + (0).to_bytes(8, "big")
+        # expand 48 bytes
+        out = b""
+        t = b""
+        counter = 1
+        while len(out) < 48:
+            h = hmac.new(hk, t + info + bytes([counter]), hashlib.sha384)
+            t = h.digest()
+            out += t
+            counter += 1
+        return out[:48]
+
+    bravo_chain = derive_chain("BRAVO")
+    alpha_chain = derive_chain("ALPHA")
+
+    alpha.add_member("BRAVO", bravo_chain)
+    bravo.add_member("ALPHA", alpha_chain)
+
+    # Outbound encrypted frame from ALPHA -> BRAVO
+    classified_msg = b"TOP SECRET STRATCOM DIRECTIVE 2027"
+    frame = bytes(alpha.encrypt(classified_msg))
+    assert len(frame) > len(classified_msg)
+
+    # BRAVO decrypts
+    decrypted = bytes(bravo.decrypt("ALPHA", frame))
+    assert decrypted == classified_msg
+
+    # Replay protection: same frame must fail
+    with pytest.raises(Exception):
+        bravo.decrypt("ALPHA", frame)
+
+    # PCS Healing: Advance epoch with fresh 48-byte entropy
+    fresh_entropy = os.urandom(48)
+    new_epoch = alpha.advance_epoch(fresh_entropy)
+    assert new_epoch == 1
+    assert alpha.epoch == 1
+

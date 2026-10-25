@@ -22,11 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 def _env_wants_prod() -> bool:
-    """True if current process env requests production mode."""
-    return (
-        os.environ.get('P2P_PRODUCTION', '').lower() in ('1', 'true', 'yes', 'on')
-        or os.environ.get('SECURE_P2P_PRODUCTION', '').lower() in ('1', 'true', 'yes', 'on')
-    )
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 # Sticky production latch: captured once at import. Never allowed to unset.
@@ -568,6 +566,13 @@ class ConfigManager:
 
             pub_key = serialization.load_pem_public_key(pub_bytes)
             if isinstance(pub_key, ed25519.Ed25519PublicKey):
+                if _is_production():
+                    # CNSA 2.0: legacy Ed25519 boot signatures are lab-only.
+                    logger.critical(
+                        f"Legacy Ed25519 boot signature REJECTED in production for "
+                        f"'{config_path}' - re-sign with ML-DSA-87 (CNSA 2.0)"
+                    )
+                    return False
                 pub_key.verify(sig_bytes, config_bytes)
                 # 2028: legacy Ed25519 accepted only as lab-migration shim (CNSA 2.0 requires ML-DSA-87)
                 logger.warning(f"Legacy Ed25519 boot signature accepted for '{config_path}' - re-sign with ML-DSA-87 (CNSA 2.0)")

@@ -244,7 +244,10 @@ class TestTacticalCoTSuite:
             callsign="BOGEY_09"
         )
         cot_hostile.sign_event(sk, pk)
-        bundle_hostile = cot_hostile.to_ddil_bundle("RADAR_POST_01", "COMMAND_HQ", seq=501)
+        ddil_key = secrets.token_bytes(32)
+        bundle_hostile = cot_hostile.to_ddil_bundle(
+            "RADAR_POST_01", "COMMAND_HQ", seq=501, symmetric_key=ddil_key
+        )
         # Hostile alerts MUST map to EMERGENCY priority
         assert bundle_hostile.priority == BundlePriority.EMERGENCY  # nosec: B101
 
@@ -255,7 +258,9 @@ class TestTacticalCoTSuite:
             callsign="CONVOY_02"
         )
         cot_friendly.sign_event(sk, pk)
-        bundle_friendly = cot_friendly.to_ddil_bundle("RADAR_POST_01", "COMMAND_HQ", seq=502)
+        bundle_friendly = cot_friendly.to_ddil_bundle(
+            "RADAR_POST_01", "COMMAND_HQ", seq=502, symmetric_key=ddil_key
+        )
         assert bundle_friendly.priority == BundlePriority.COMMAND  # nosec: B101
 
 

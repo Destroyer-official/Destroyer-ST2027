@@ -456,13 +456,8 @@ def _warn_unproven_profile_once() -> None:
     global _PROD_UNPROVEN_WARNED
     if _PROD_UNPROVEN_WARNED:
         return
-    import os as _os
-    prod = (
-        _os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower()
-        in ("1", "true", "yes", "on")
-        or _os.environ.get("P2P_PRODUCTION", "").strip().lower()
-        in ("1", "true", "yes", "on")
-    )
+    from production_gate import is_production
+    prod = is_production()
     if not prod:
         return
     import warnings as _warnings

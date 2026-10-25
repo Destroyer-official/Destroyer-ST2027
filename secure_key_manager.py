@@ -2469,10 +2469,105 @@ if __name__ == "__main__":
                 log.debug(f"Failed to close socket during error cleanup: {e_clean}")
             return False
 
+    def _get_or_create_storage_master_key(self) -> Optional[bytes]:
+        """Return a random DPAPI-sealed master KEK, creating it on first use.
+
+        A4-14 (2026-10-17): the master key is 32 bytes of CSPRNG output
+        sealed with the user's DPAPI profile, so possession of the key-store
+        directory alone is no longer sufficient to decrypt stored keys.
+        Returns None on platforms where DPAPI sealing is unavailable.
+        """
+        if os.name != 'nt':
+            return None
+        try:
+            from air_gapped_operation import win_dpapi_protect, win_dpapi_unprotect
+        except Exception:
+            return None
+
+        sealed_dir = Path(self.secure_dir) if getattr(self, 'secure_dir', None) else self._get_default_secure_storage_path(self.app_name)
+        os.makedirs(sealed_dir, mode=0o700, exist_ok=True)
+        sealed_path = Path(sealed_dir) / ".keystore_master.dpapi"
+
+        if sealed_path.exists():
+            try:
+                master = win_dpapi_unprotect(sealed_path.read_bytes())
+            except Exception as e:
+                # FAIL CLOSED: never silently rotate over an unreadable
+                # sealed master (that would orphan every stored key).
+                raise SecurityPolicyViolationError(
+                    f"Sealed key-store master key unreadable ({sealed_path}): {e}. "
+                    "Restore the user DPAPI profile or re-provision keys."
+                ) from e
+            if not master or len(master) < 32:
+                raise SecurityPolicyViolationError(
+                    f"Sealed key-store master key malformed: {sealed_path}"
+                )
+            return master
+
+        master = secrets.token_bytes(32)
+        try:
+            sealed_path.write_bytes(win_dpapi_protect(master))
+            try:
+                os.chmod(sealed_path, 0o600)
+            except Exception:  # nosec: B110 - best-effort; DPAPI seal is the actual protection
+                pass
+            return master
+        except Exception as e:
+            raise SecurityPolicyViolationError(
+                f"Cannot seal key-store master key with DPAPI: {e}"
+            ) from e
+
     def _derive_storage_key(self, salt: bytes) -> bytes:
-        """Derive an AES-256-GCM storage key bound to the local user/app context using PBKDF2-HMAC-SHA512 (600,000 iterations)."""
+        """Derive an AES-256-GCM storage key for encrypted file storage.
+
+        A4-14 (2026-10-17): hardened derivation precedence. The historical
+        fallback derived the AES key from *public* host attributes
+        (USERNAME/USERDOMAIN/home path) — anyone who knew the host could
+        decrypt every stored key. New precedence:
+
+          1. ``P2P_KEY_STORAGE_PASSPHRASE`` / ``P2P_STORAGE_PASSPHRASE``
+             (operator-supplied secret, PBKDF2-HMAC-SHA512 600k).
+          2. Random DPAPI-sealed per-install master KEK (Windows; HKDF).
+          3. Lab-only legacy host-attribute derivation with a loud warning;
+             PROHIBITED (fails closed) in production mode.
+        """
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         from cryptography.hazmat.primitives import hashes
+        from utils.helpers import is_env_true
+
+        passphrase = os.environ.get('P2P_KEY_STORAGE_PASSPHRASE') or os.environ.get('P2P_STORAGE_PASSPHRASE')
+        if passphrase:
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA512(),
+                length=32,
+                salt=salt,
+                iterations=600000,
+            )
+            return kdf.derive(passphrase.encode('utf-8'))
+
+        master = self._get_or_create_storage_master_key()
+        if master is not None:
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            hkdf = HKDF(
+                algorithm=hashes.SHA3_512(),
+                length=32,
+                salt=salt,
+                info=b"P2P_KEYSTORE_MASTER_KEK_V1",
+            )
+            return hkdf.derive(master)
+
+        if is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION"):
+            raise SecurityPolicyViolationError(
+                "No strong at-rest key source available: set "
+                "P2P_KEY_STORAGE_PASSPHRASE (or P2P_STORAGE_PASSPHRASE) or enable "
+                "DPAPI sealing. Host-attribute-derived storage keys are "
+                "prohibited in production (A4-14)."
+            )
+        log.warning(
+            "SECURITY NOTICE (A4-14): deriving key-store file encryption from "
+            "PUBLIC host attributes (lab fallback). Set P2P_KEY_STORAGE_PASSPHRASE "
+            "or run on Windows with DPAPI to protect stored keys at rest."
+        )
         user = os.environ.get('USERNAME') or os.environ.get('USER') or 'default_user'
         domain = os.environ.get('USERDOMAIN') or 'local_domain'
         secret_material = f"{self.app_name}::{user}::{domain}::{Path.home()}".encode('utf-8')
@@ -4303,8 +4398,10 @@ class QuantumResistanceFutureProfing:
 
             try:
                 if algo_name == "FALCON-1024":
-                    algo_instance.verify(public_key, message, signature)
-                    results[algo_name] = True
+                    # A4-02 (2026-10-17): verify() returns bool; the return
+                    # value was previously discarded and True was reported
+                    # unconditionally, silently accepting forged signatures.
+                    results[algo_name] = bool(algo_instance.verify(public_key, message, signature))
                 elif algo_name == "SPHINCS+":
                     results[algo_name] = algo_instance.verify(public_key, message, signature)
                 else:

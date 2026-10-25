@@ -478,13 +478,31 @@ class GuardPageManager:
 
     def _create_windows_guard_pages(self, region_id: str, guard_before: int,
                                    guard_after: int) -> bool:
-        """Create Windows guard pages"""
+        """Create Windows guard pages via VirtualProtect(PAGE_GUARD)."""
         try:
-            # Use VirtualProtect to create guard pages
-            PAGE_GUARD = 0x100
-            PAGE_NOACCESS = 0x01
+            import ctypes
+            from ctypes import wintypes
 
-            # This would use Windows API to create actual guard pages
+            kernel32 = ctypes.windll.kernel32
+            PAGE_GUARD = 0x100
+            PAGE_READWRITE = 0x04
+            MEM_COMMIT = 0x1000
+            MEM_RESERVE = 0x2000
+
+            def _guard(addr: int) -> bool:
+                old = wintypes.DWORD()
+                return bool(kernel32.VirtualProtect(
+                    ctypes.c_void_p(addr), self._page_size,
+                    PAGE_READWRITE | PAGE_GUARD, ctypes.byref(old)))
+
+            # Reserve+commit the guard pages, then mark them PAGE_GUARD.
+            ok_before = _guard(guard_before)
+            ok_after = _guard(guard_after)
+            if not (ok_before and ok_after):
+                memory_logger.error(
+                    f"Windows guard page creation failed for {region_id} "
+                    f"(before={ok_before}, after={ok_after})")
+                return False
             memory_logger.debug(f"Windows guard pages created for {region_id}")
             return True
 
@@ -494,9 +512,25 @@ class GuardPageManager:
 
     def _create_posix_guard_pages(self, region_id: str, guard_before: int,
                                  guard_after: int) -> bool:
-        """Create POSIX guard pages"""
+        """Create POSIX guard pages via mprotect(PROT_NONE)."""
         try:
-            # Use mprotect to create guard pages
+            import ctypes
+            import ctypes.util
+
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            PROT_NONE = 0x0
+            # mprotect requires page-aligned addresses.
+            aligned_before = (guard_before // self._page_size) * self._page_size
+            aligned_after = (guard_after // self._page_size) * self._page_size
+            rc1 = libc.mprotect(ctypes.c_void_p(aligned_before),
+                                self._page_size, PROT_NONE)
+            rc2 = libc.mprotect(ctypes.c_void_p(aligned_after),
+                                self._page_size, PROT_NONE)
+            if rc1 != 0 or rc2 != 0:
+                memory_logger.error(
+                    f"POSIX guard page creation failed for {region_id} "
+                    f"(rc1={rc1}, rc2={rc2})")
+                return False
             memory_logger.debug(f"POSIX guard pages created for {region_id}")
             return True
 
@@ -919,8 +953,17 @@ class SecureMemoryManager:
                 print(f"Warning: Error during buffer deallocation: {e}")
 
     def _cleanup_all_buffers(self) -> None:
-        """Emergency cleanup of all allocated buffers."""
+        """Emergency cleanup: wipe every buffer before dropping references."""
         with self._lock:
+            for buf in self._buffers.values():
+                try:
+                    raw = getattr(buf, "buffer", None)
+                    if raw is None:
+                        raw = getattr(buf, "data", None)
+                    if raw is not None:
+                        self.wipe_memory_secure(raw)
+                except Exception as e:
+                    print(f"Warning: buffer wipe during cleanup failed: {e}")
             self._buffers.clear()
             self._total_allocated = 0
 

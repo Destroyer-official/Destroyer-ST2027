@@ -314,6 +314,25 @@ class Test2027DefenseHardening(unittest.TestCase):
         receipt_file = ceremony.generate_ceremony_receipt()
         self.assertTrue(receipt_file.exists())
 
+        # The lab self-approval helper is a lab-only path: it must refuse in
+        # production/TS posture so a quorum receipt can never be minted
+        # without independent human custody.
+        for prod_var in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION",
+                         "P2P_TS_MODE"):
+            old = os.environ.get(prod_var)
+            os.environ[prod_var] = "1"
+            try:
+                prod_ceremony = WitnessedKeyCeremony(
+                    ceremony_id=f"TEST-CEREMONY-PROD-{int(time.time())}")
+                self.assertTrue(prod_ceremony.register_custodians())
+                with self.assertRaises(RuntimeError):
+                    prod_ceremony._lab_self_approve()
+            finally:
+                if old is None:
+                    os.environ.pop(prod_var, None)
+                else:
+                    os.environ[prod_var] = old
+
         with open(receipt_file, "r", encoding="utf-8") as f:
             receipt_data = json.load(f)
 

@@ -215,8 +215,10 @@ def sign_and_export_ssdf_attestation(
     sig = out_dir / "ssdf_self_attestation.json.mldsa87.sig"
     pub = out_dir / "ssdf_self_attestation.json.mldsa87.pub"
     rep.write_bytes(canonical)
+    from report_trust import load_or_create_audit_signer
+
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = load_or_create_audit_signer()
     sig_bytes = signer.sign(sk, canonical)
     # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
     assert signer.verify(pk, canonical, bytes(sig_bytes)) is True  # nosec: B101
@@ -225,16 +227,18 @@ def sign_and_export_ssdf_attestation(
     return rep, sig, pub
 
 
-def verify_ssdf_attestation_signature(report_path: Path, sig_path: Path,
-                                      pub_path: Path) -> bool:
-    """Verify the detached ML-DSA-87 signature (offline, fail-closed False)."""
+def verify_ssdf_attestation_signature(
+        report_path: Path, sig_path: Path, pub_path: Path,
+        anchor_path: Path | None = None) -> bool:
+    """Verify against the pinned audit anchor (offline, fail-closed False)."""
     try:
         from liboqs_wrapper import LibOQS_MLDSA_87
+        from report_trust import verify_with_anchor
         if not (report_path.exists() and sig_path.exists() and pub_path.exists()):
             return False
-        v = LibOQS_MLDSA_87()
-        return bool(v.verify(pub_path.read_bytes(), report_path.read_bytes(),
-                             sig_path.read_bytes()))
+        return bool(verify_with_anchor(
+            report_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+        ))
     except Exception:
         return False
 

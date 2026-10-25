@@ -43,6 +43,7 @@ pub mod ct;
 pub mod fec;
 pub mod ffi;
 pub mod frame;
+pub mod group_ratchet;
 pub mod handshake;
 pub mod kem;
 pub mod kex_auth;
@@ -164,6 +165,12 @@ impl SecureEngine {
         if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF {
             return Err(PyValueError::new_err("unknown frame type"));
         }
+        // u64::MAX is an exhaustion sentinel, never a wire sequence. Reserve
+        // the next value before sealing so failure cannot emit a frame or
+        // wrap the nonce counter back to zero under the same key.
+        let next_seq = self.send_seq.checked_add(1).ok_or_else(|| {
+            PyValueError::new_err("send sequence exhausted: establish a fresh session key")
+        })?;
         let (quantum, _pad) = pad_to_quantum(payload.len())
             .ok_or_else(|| PyValueError::new_err("payload exceeds largest quantum (1205B)"))?;
         let true_len = payload.len();
@@ -180,7 +187,7 @@ impl SecureEngine {
             &padded,
         )
         .map_err(|e| PyValueError::new_err(format!("seal failed: {e:?}")))?;
-        self.send_seq = self.send_seq.wrapping_add(1);
+        self.send_seq = next_seq;
         Ok((quantum, frame))
     }
 
@@ -452,4 +459,28 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NativeHybridKex>()?;
     ffi::register(m)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod secure_engine_tests {
+    use super::*;
+
+    #[test]
+    fn send_sequence_exhaustion_fails_without_nonce_reuse() {
+        let mut engine = SecureEngine::new();
+        engine.establish_session(vec![0x42; 32], u64::MAX, true).unwrap();
+        let error = engine.seal_msg(FTYPE_MSG, b"last sequence".to_vec());
+        assert!(error.is_err(), "an exhausted sequence must not wrap to zero");
+        assert_eq!(engine.send_seq, u64::MAX);
+    }
+
+    #[test]
+    fn penultimate_send_sequence_advances_exactly_once() {
+        let mut engine = SecureEngine::new();
+        engine.establish_session(vec![0x42; 32], u64::MAX - 1, true).unwrap();
+        assert!(engine.seal_msg(FTYPE_MSG, b"penultimate".to_vec()).is_ok());
+        assert_eq!(engine.send_seq, u64::MAX);
+        assert!(engine.seal_msg(FTYPE_MSG, b"exhausted".to_vec()).is_err());
+        assert_eq!(engine.send_seq, u64::MAX);
+    }
 }

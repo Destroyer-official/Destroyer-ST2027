@@ -202,7 +202,41 @@ class TestCliWiring:
         with pytest.raises(st.SecurityError):
             st._gate_hw_admin(ns)
 
-    def test_gate_ts_advisory_prints_and_continues(self, monkeypatch, capsys):
+    def test_gate_ts_refuses_when_required_hardware_missing(self, monkeypatch, capsys):
+        """TS mode refuses transmission when TS-required hardware is absent."""
+        import types
+        import secure_transmit_2027 as st
+        v = hw.Verdict("tpm", "TPM 2.0 device", hw.MISSING, "cng key",
+                       "install TPM", True)
+        fake = types.SimpleNamespace(
+            collect=lambda: [v],
+            ensure_admin=lambda **k: "skipped")
+        monkeypatch.setitem(sys.modules, "hw_readiness", fake)
+        monkeypatch.setenv("P2P_TS_MODE", "1")
+        monkeypatch.delenv("P2P_TS_HW_WAIVER_FILE", raising=False)
+        ns = types.SimpleNamespace(require_admin=False, no_elevate=True)
+        with pytest.raises(st.SecurityError):
+            st._gate_hw_admin(ns)
+        assert "TPM 2.0 device" in capsys.readouterr().out
+
+    def test_gate_ts_allows_with_audited_waiver(self, monkeypatch, capsys):
+        """An explicit waiver file permits a waived TS hardware gap."""
+        import types
+        import secure_transmit_2027 as st
+        v = hw.Verdict("tpm", "TPM 2.0 device", hw.MISSING, "cng key",
+                       "install TPM", True)
+        fake = types.SimpleNamespace(
+            collect=lambda: [v],
+            ensure_admin=lambda **k: "skipped")
+        monkeypatch.setitem(sys.modules, "hw_readiness", fake)
+        monkeypatch.setenv("P2P_TS_MODE", "1")
+        monkeypatch.setenv("P2P_TS_HW_WAIVER_FILE", "waiver.signed.json")
+        ns = types.SimpleNamespace(require_admin=False, no_elevate=True)
+        assert st._gate_hw_admin(ns) is None
+        assert "TPM 2.0 device" in capsys.readouterr().out
+
+    def test_gate_ts_allows_when_required_hardware_present(self, monkeypatch, capsys):
+        """All TS-required hardware present => no refusal."""
         import types
         import secure_transmit_2027 as st
         v = hw.Verdict("tpm", "TPM 2.0 device", hw.HAVE, "cng key",
@@ -212,8 +246,8 @@ class TestCliWiring:
             ensure_admin=lambda **k: "skipped")
         monkeypatch.setitem(sys.modules, "hw_readiness", fake)
         monkeypatch.setenv("P2P_TS_MODE", "1")
-        ns = types.SimpleNamespace(require_admin=False, no_elevate=False)
-        assert st._gate_hw_admin(ns) is None  # advisory only: no refusal
+        ns = types.SimpleNamespace(require_admin=False, no_elevate=True)
+        assert st._gate_hw_admin(ns) is None
         assert "TPM 2.0 device" in capsys.readouterr().out
 
 

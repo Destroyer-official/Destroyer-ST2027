@@ -226,6 +226,7 @@ class SecurityTierEngine:
         hash_or_kdf_name: str,
         kem_name: Optional[str] = None,
         sig_name: Optional[str] = None,
+        has_hybrid_kem: Optional[bool] = None,
     ) -> Tuple[bool, List[str]]:
         """Validate whether cryptographic selections fulfill the tier policy.
         
@@ -260,6 +261,20 @@ class SecurityTierEngine:
                 s_upper = sig_name.upper().replace("_", "-")
                 if not any(approved in s_upper for approved in APPROVED_PQ_SIGS):
                     violations.append(f"Signature '{sig_name}' does not meet NIST Level 5 requirements: {APPROVED_PQ_SIGS}")
+
+        # 4. Hybrid KEM requirement (tier profiles that mandate a hybrid KEM
+        #    must not be satisfied by a classical-only or PQ-only KEM).
+        if getattr(req, "requires_hybrid_kem", False):
+            if has_hybrid_kem is False:
+                violations.append(
+                    f"Tier {tier.value} requires a hybrid KEM (classical + PQ); "
+                    "the deployment reports none")
+            elif has_hybrid_kem is None and kem_name:
+                k_upper = kem_name.upper().replace("_", "-")
+                if "+" not in k_upper:
+                    violations.append(
+                        f"Tier {tier.value} requires a hybrid KEM; "
+                        f"KEM '{kem_name}' is not a hybrid (classical + PQ) KEM")
 
         return (len(violations) == 0, violations)
 
@@ -376,6 +391,10 @@ class SecurityTierEngine:
             # Check PQC
             if req.requires_pqc:
                 if not capabilities.get("has_pqc_kem", False) or not capabilities.get("has_pqc_sig", False):
+                    meets_tier = False
+            # Check hybrid KEM when required
+            if getattr(req, "requires_hybrid_kem", False):
+                if not capabilities.get("has_hybrid_kem", False):
                     meets_tier = False
 
             # Check VAS
@@ -1045,7 +1064,9 @@ class TripleRatchetEngine:
             kem_ct, kem_ss = self._kem.encaps(self._remote_kem_pub)
             next_kem_pub = self._local_kem_pk
         else:
-            kem_ss = b"\x00" * 32
+            raise SecurityTierViolationError(
+                "PQC KEM ciphertext missing; refusing classical-only ratchet "
+                "(fail-closed).")
 
         # Hybrid KDF mix into root key
         hkdf = HKDF(
@@ -1134,11 +1155,12 @@ class TripleRatchetEngine:
                 self._n_r = 0
                 self._remote_dh_pub_bytes = msg.sender_dh_pub
 
-                # Post-quantum KEM decapsulation if KEM ciphertext included
-                if msg.kem_ciphertext is not None:
-                    kem_ss = self._kem.decaps(self._local_kem_sk, msg.kem_ciphertext)
-                else:
-                    kem_ss = b"\x00" * 32
+                # Post-quantum KEM decapsulation required (fail-closed on absence)
+                if msg.kem_ciphertext is None:
+                    raise SecurityTierViolationError(
+                        "PQC KEM ciphertext missing in incoming message "
+                        "(fail-closed).")
+                kem_ss = self._kem.decaps(self._local_kem_sk, msg.kem_ciphertext)
 
                 if msg.next_kem_pub is not None:
                     self._remote_kem_pub = msg.next_kem_pub
@@ -1635,13 +1657,19 @@ class EmergencyPurgeCeremony:
                     "Two-Person Integrity failure: operator_alpha and operator_bravo must be distinct"
                 )
 
-            if self.authority is not None:
-                # Authenticate both operators with authority
-                if hasattr(self.authority, "authorize"):
-                    self.authority.authorize(operator_alpha, passphrase_alpha, operator_bravo, passphrase_bravo)
-                elif hasattr(self.authority, "authenticate"):
-                    self.authority.authenticate(operator_alpha, passphrase_alpha)
-                    self.authority.authenticate(operator_bravo, passphrase_bravo)
+            if self.authority is None:
+                raise SecurityTierViolationError(
+                    "Emergency purge requires a dual-operator authority "
+                    "(fail-closed).")
+            if hasattr(self.authority, "authorize"):
+                self.authority.authorize(operator_alpha, passphrase_alpha, operator_bravo, passphrase_bravo)
+            elif hasattr(self.authority, "authenticate"):
+                self.authority.authenticate(operator_alpha, passphrase_alpha)
+                self.authority.authenticate(operator_bravo, passphrase_bravo)
+            else:
+                raise SecurityTierViolationError(
+                    "Emergency purge authority lacks authorize/authenticate "
+                    "(fail-closed).")
 
             # 2. Multi-pass memory shredding
             total_bytes_shredded = 0

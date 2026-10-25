@@ -27,6 +27,7 @@ import os
 import sys
 import time
 import uuid
+import hmac
 import socket
 import struct
 import hashlib
@@ -243,6 +244,35 @@ DIODE_MAGIC = b"TDD1"  # Tactical Data Diode v1 (4 bytes)
 DIODE_HEADER_FORMAT = ">4s16sIIHHH32s"
 DIODE_HEADER_SIZE = struct.calcsize(DIODE_HEADER_FORMAT)
 # 4s(magic) + 16s(tx_id) + I(total_len) + I(chunk_len) + H(k) + H(m) + H(chunk_idx) + 32s(sha3) = 68 bytes
+_DIODE_MAC_INPUT_FORMAT = ">4s16sIIHHH"
+
+# A4-25 (2026-10-17): optional pre-shared wire key. With a key configured the
+# 32-byte integrity slot carries HMAC-SHA3-256 (authenticated frames, not
+# merely corruption-checked). Shared out of band via P2P_DIODE_WIRE_KEY (hex,
+# 16-64 bytes) or the constructor argument; both ends must match.
+_DIODE_WIRE_KEY_ENV = "P2P_DIODE_WIRE_KEY"
+
+
+def _resolve_diode_wire_key(explicit: Optional[bytes]) -> Optional[bytes]:
+    if explicit is not None:
+        if isinstance(explicit, str):
+            try:
+                explicit = bytes.fromhex(explicit.strip())
+            except ValueError as e:
+                raise ValueError(f"invalid diode wire key hex: {e}") from e
+        if not (16 <= len(explicit) <= 64):
+            raise ValueError("diode wire key must be 16-64 bytes")
+        return bytes(explicit)
+    env_val = os.environ.get(_DIODE_WIRE_KEY_ENV, "").strip()
+    if env_val:
+        try:
+            key = bytes.fromhex(env_val)
+        except ValueError as e:
+            raise ValueError(f"invalid {_DIODE_WIRE_KEY_ENV} hex: {e}") from e
+        if not (16 <= len(key) <= 64):
+            raise ValueError(f"{_DIODE_WIRE_KEY_ENV} must be 16-64 bytes (32-128 hex chars)")
+        return key
+    return None
 
 
 @dataclass
@@ -258,7 +288,20 @@ class DiodePacket:
     chunk_sha3: bytes
     chunk_data: bytes
 
-    def serialize(self) -> bytes:
+    def serialize(self, mac_key: Optional[bytes] = None) -> bytes:
+        tag = self.chunk_sha3
+        if mac_key is not None:
+            mac_input = struct.pack(
+                _DIODE_MAC_INPUT_FORMAT,
+                self.magic,
+                self.tx_id,
+                self.total_len,
+                self.chunk_len,
+                self.k,
+                self.m,
+                self.chunk_index,
+            ) + self.chunk_data
+            tag = hmac.new(mac_key, mac_input, hashlib.sha3_256).digest()
         header = struct.pack(
             DIODE_HEADER_FORMAT,
             self.magic,
@@ -268,19 +311,19 @@ class DiodePacket:
             self.k,
             self.m,
             self.chunk_index,
-            self.chunk_sha3
+            tag
         )
         return header + self.chunk_data
 
     @classmethod
-    def deserialize(cls, wire_bytes: bytes) -> "DiodePacket":
+    def deserialize(cls, wire_bytes: bytes, mac_key: Optional[bytes] = None) -> "DiodePacket":
         if len(wire_bytes) < DIODE_HEADER_SIZE:
             raise ValueError(f"Packet too short: {len(wire_bytes)} bytes")
 
         header_bytes = wire_bytes[:DIODE_HEADER_SIZE]
         chunk_data = wire_bytes[DIODE_HEADER_SIZE:]
 
-        magic, tx_id, total_len, chunk_len, k, m, chunk_index, chunk_sha3 = struct.unpack(
+        magic, tx_id, total_len, chunk_len, k, m, chunk_index, chunk_tag = struct.unpack(
             DIODE_HEADER_FORMAT, header_bytes
         )
 
@@ -289,10 +332,21 @@ class DiodePacket:
         if len(chunk_data) != chunk_len:
             raise ValueError(f"Chunk data length mismatch: expected {chunk_len}, got {len(chunk_data)}")
 
-        # Verify integrity hash
-        actual_sha3 = hashlib.sha3_256(chunk_data).digest()
-        if not secrets.compare_digest(actual_sha3, chunk_sha3):
-            raise ValueError(f"Packet chunk {chunk_index} integrity check failed")
+        if mac_key is not None:
+            mac_input = struct.pack(
+                _DIODE_MAC_INPUT_FORMAT,
+                magic, tx_id, total_len, chunk_len, k, m, chunk_index,
+            ) + chunk_data
+            expected = hmac.new(mac_key, mac_input, hashlib.sha3_256).digest()
+            if not secrets.compare_digest(expected, chunk_tag):
+                raise ValueError(f"Packet chunk {chunk_index} AUTHENTICATION failed (HMAC-SHA3-256)")
+            chunk_sha3 = chunk_tag
+        else:
+            # Unkeyed mode: corruption check only (legacy behaviour).
+            actual_sha3 = hashlib.sha3_256(chunk_data).digest()
+            if not secrets.compare_digest(actual_sha3, chunk_tag):
+                raise ValueError(f"Packet chunk {chunk_index} integrity check failed")
+            chunk_sha3 = chunk_tag
 
         return cls(
             magic=magic,
@@ -382,8 +436,26 @@ class DiodeTransmitter:
     SO_BINDTODEVICE). Fail-closed on invalid/unbindable interfaces.
     """
     def __init__(self, target_host: str = "127.0.0.1", target_port: int = 55100, chunk_payload_size: int = 1024,
-                 egress_source_ip: Optional[str] = None, egress_ifname: Optional[str] = None):
+                 egress_source_ip: Optional[str] = None, egress_ifname: Optional[str] = None,
+                 wire_key: Optional[bytes] = None):
         import ipaddress as _ip
+        self._wire_key = _resolve_diode_wire_key(wire_key)
+        if self._wire_key is None:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Diode transmitter running with UNKEYED integrity (SHA3-256 tag only, "
+                "no authenticity). Set P2P_DIODE_WIRE_KEY on both ends for HMAC-SHA3-256 "
+                "authenticated frames.")
+            try:
+                from production_gate import is_production as _is_prod
+                _prod = _is_prod()
+            except Exception:
+                _prod = False
+            if _prod:
+                # HIGH (airgap_diode L22): unkeyed wire is lab-only.
+                raise ValueError(
+                    "diode wire key is required in production: set P2P_DIODE_WIRE_KEY "
+                    "(unauthenticated diode frames are refused)")
         try:
             _ip.ip_address(target_host)
         except ValueError as e:
@@ -477,7 +549,7 @@ class DiodeTransmitter:
                 chunk_sha3=sha3,
                 chunk_data=chunk
             )
-            wire_bytes = packet.serialize()
+            wire_bytes = packet.serialize(mac_key=self._wire_key)
             self._sock.sendto(wire_bytes, (self.target_host, self.target_port))
             if delay > 0:
                 time.sleep(delay)
@@ -495,8 +567,25 @@ class DiodeReceiver:
     allow_wildcard=True is passed deliberately (logged loudly).
     """
     def __init__(self, bind_host: str = "127.0.0.1", bind_port: int = 55100,
-                 allow_wildcard: bool = False):
+                 allow_wildcard: bool = False, wire_key: Optional[bytes] = None):
         import ipaddress as _ip
+        self._wire_key = _resolve_diode_wire_key(wire_key)
+        if self._wire_key is None:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Diode receiver running with UNKEYED integrity (SHA3-256 tag only, "
+                "no authenticity). Set P2P_DIODE_WIRE_KEY on both ends for HMAC-SHA3-256 "
+                "authenticated frames.")
+            try:
+                from production_gate import is_production as _is_prod
+                _prod = _is_prod()
+            except Exception:
+                _prod = False
+            if _prod:
+                # HIGH (airgap_diode L22): unkeyed wire is lab-only.
+                raise ValueError(
+                    "diode wire key is required in production: set P2P_DIODE_WIRE_KEY "
+                    "(unauthenticated diode frames are refused)")
         try:
             parsed = _ip.ip_address(bind_host)
         except ValueError as e:
@@ -544,7 +633,7 @@ class DiodeReceiver:
                 break
 
             try:
-                pkt = DiodePacket.deserialize(data)
+                pkt = DiodePacket.deserialize(data, mac_key=self._wire_key)
             # AUDITED (B112): intentional best-effort loop guard; no security decision swallowed (triaged 2026-09 waves)
             except Exception:  # nosec: B112
                 continue
@@ -554,13 +643,29 @@ class DiodeReceiver:
                 received_by_tx[tx_id] = {}
                 meta_by_tx[tx_id] = (pkt.total_len, pkt.chunk_len, pkt.k, pkt.m)
 
+            # HIGH (airgap_diode L31): malformed header fields must be dropped,
+            # not allowed to abort the listener or reach the coder unchecked.
+            if not (1 <= pkt.k <= 255 and 0 <= pkt.m <= 255 and pkt.total_len >= 0
+                    and pkt.chunk_len >= 0 and 0 <= pkt.chunk_index < pkt.k + pkt.m):
+                received_by_tx.pop(tx_id, None)
+                meta_by_tx.pop(tx_id, None)
+                continue
+
             received_by_tx[tx_id][pkt.chunk_index] = pkt.chunk_data
 
             # Check if threshold K is reached for this transmission
             total_len, chunk_len, k, m = meta_by_tx[tx_id]
             if len(received_by_tx[tx_id]) >= k:
-                coder = CauchyErasureCoder(k=k, m=m)
-                recovered_chunks = coder.decode(received_by_tx[tx_id], chunk_len)
+                # HIGH (airgap_diode L31): decoding runs outside the
+                # deserialize guard; a malformed chunk set must not crash
+                # receive_payload. Drop the transmission and keep listening.
+                try:
+                    coder = CauchyErasureCoder(k=k, m=m)
+                    recovered_chunks = coder.decode(received_by_tx[tx_id], chunk_len)
+                except Exception:
+                    received_by_tx.pop(tx_id, None)
+                    meta_by_tx.pop(tx_id, None)
+                    continue
                 full_stream = b"".join(recovered_chunks)
                 # Slice to exact original unpadded payload length
                 return full_stream[:total_len]

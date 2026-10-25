@@ -37,11 +37,9 @@ class SecurityError(Exception):
 
 
 def _is_production() -> bool:
-    """Return True if running in production mode."""
-    return (
-        os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-        or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-    )
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 class SecurityHardening:

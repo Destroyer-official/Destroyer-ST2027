@@ -255,9 +255,9 @@ class ConstantTimeOperations:
         return result == 0
     
     @staticmethod
-    def constant_time_select(condition: bool, true_value: int, false_value: int) -> int:
+    def constant_time_select_int(condition: bool, true_value: int, false_value: int) -> int:
         """
-        Constant-time conditional selection.
+        Constant-time conditional selection (integer variant).
         
         Selects between two values without branching to prevent
         timing attacks based on branch prediction.
@@ -438,18 +438,27 @@ class ConstantTimeOperations:
         return is_valid, clean_len
 
     @staticmethod
-    def constant_time_select(condition: bool, a: bytes, b: bytes) -> bytes:
+    def constant_time_select(condition: bool, a, b):
         """
-        Constant-time selection between two byte strings of equal length without branching.
-        
+        Constant-time selection dispatching on operand type.
+
+        NOTE: this name previously had two definitions in this class; the
+        bytes version silently shadowed the integer version, so integer
+        callers (e.g. mask selection) crashed or mis-selected. Ints and
+        bytes are now handled by one entry point.
+
         Args:
             condition: True to select a, False to select b
-            a: First byte string
-            b: Second byte string
-            
+            a: Integer or byte string
+            b: Integer or byte string (same type/length as a)
+
         Returns:
             a if condition is True, else b
         """
+        if isinstance(a, int) and isinstance(b, int) and not isinstance(a, bool) and not isinstance(b, bool):
+            return ConstantTimeOperations.constant_time_select_int(condition, a, b)
+        if not (isinstance(a, (bytes, bytearray)) and isinstance(b, (bytes, bytearray))):
+            raise TypeError("constant_time_select requires two ints or two byte strings")
         if len(a) != len(b):
             raise ValueError("Byte sequences must be of identical length for constant-time select")
         mask = 0xFF if condition else 0x00

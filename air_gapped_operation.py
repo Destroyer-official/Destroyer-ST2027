@@ -853,6 +853,24 @@ class LocalPeerDiscovery:
         except Exception:
             return False
 
+    @staticmethod
+    def _require_signed_discovery() -> bool:
+        """Signed discovery broadcast policy.
+
+        Signed discovery is the DEFAULT in every environment: an unsigned
+        broadcast has no authenticated origin and was previously admitted
+        under the default lab posture, which let any host on the segment
+        announce itself.  Legacy interop requires an explicit opt-in
+        (P2P_ALLOW_UNSIGNED_DISCOVERY=1), which is ignored in production.
+        """
+        from production_gate import is_production
+        prod = is_production()
+        if prod:
+            return True
+        if os.environ.get("P2P_ALLOW_UNSIGNED_DISCOVERY", "").strip().lower() in ("1", "true", "yes", "on"):
+            return False
+        return True
+
     def _handle_discovery_message(self, data: bytes, addr: Tuple[str, int]) -> None:
         """Handle incoming discovery message with robust validation and DoS protection."""
         source_ip = addr[0]
@@ -941,11 +959,32 @@ class LocalPeerDiscovery:
                 logger.warning(f"Trailing bytes in discovery packet from {source_ip}")
                 return
 
-            # Verify node_id matches public key SHA3-256 hash if public key is present
-            if public_key and len(public_key) >= 32:
+            # Node identity binding: whenever identity is asserted (a
+            # signature is present) or signed discovery is required, the
+            # ML-KEM public key must be present and its SHA3-256 must equal
+            # node_id.  A pk-less broadcast previously bypassed the binding
+            # and let a host register any node_id it liked.
+            identity_asserted = bool(broadcast_sig or sig_public_key)
+            if identity_asserted or self._require_signed_discovery():
+                if not public_key or len(public_key) < 32:
+                    logger.warning(
+                        f"Discovery broadcast missing ML-KEM public key from "
+                        f"{source_ip}; refusing (identity unbound).")
+                    return
                 expected_node_id = hashlib.sha3_256(public_key).digest()
-                if node_id != expected_node_id:
-                    logger.warning(f"Node ID does not bind to public key from {source_ip}")
+                if not hmac.compare_digest(node_id, expected_node_id):
+                    logger.warning(
+                        f"Node ID does not bind to public key from {source_ip}")
+                    return
+            elif not public_key or len(public_key) < 32:
+                logger.warning(
+                    f"Unsigned discovery broadcast from {source_ip} carries no "
+                    "ML-KEM public key; accepted in lab only (unbound).")
+            else:
+                expected_node_id = hashlib.sha3_256(public_key).digest()
+                if not hmac.compare_digest(node_id, expected_node_id):
+                    logger.warning(
+                        f"Node ID does not bind to public key from {source_ip}")
                     return
 
             # Replay cache: exact (node_id, timestamp) rebroadcasts dropped.
@@ -971,10 +1010,30 @@ class LocalPeerDiscovery:
                 if not self._verify_broadcast_sig(known_sig_pk, signed_bytes, broadcast_sig):
                     logger.warning(f"Broadcast signature INVALID for {node_id.hex()[:16]} from {source_ip}: rejecting")
                     return
-            elif broadcast_sig and sig_public_key:
-                if self._verify_broadcast_sig(sig_public_key, signed_bytes, broadcast_sig):
-                    self._sig_verified_peers[node_id] = sig_public_key
-                    logger.info(f"Broadcast signature verified for {node_id.hex()[:16]}; continuity pinned")
+            elif broadcast_sig or sig_public_key:
+                # A4-08 (2026-10-17): a *provided* signature that fails
+                # verification (or a half-populated sig pair) must reject the
+                # broadcast. Previously an invalid signature was silently
+                # ignored and the unauthenticated peer was still accepted.
+                if not (broadcast_sig and sig_public_key):
+                    logger.warning(f"Partial signature material in discovery broadcast from {source_ip}: rejecting")
+                    return
+                if not self._verify_broadcast_sig(sig_public_key, signed_bytes, broadcast_sig):
+                    logger.warning(f"Broadcast signature INVALID for {node_id.hex()[:16]} from {source_ip}: rejecting")
+                    return
+                self._sig_verified_peers[node_id] = sig_public_key
+                logger.info(f"Broadcast signature verified for {node_id.hex()[:16]}; continuity pinned")
+            elif self._require_signed_discovery():
+                # A4-08: no signature material at all — reject in production
+                # (or when strict policy is requested). Lab default stays
+                # tolerant for legacy/interop senders, with a warning.
+                logger.warning(f"Unsigned discovery broadcast from {source_ip} rejected (signed discovery required)")
+                return
+            else:
+                logger.warning(
+                    f"Unsigned discovery broadcast accepted for {node_id.hex()[:16]} from {source_ip} "
+                    "(lab mode; set P2P_REQUIRE_SIGNED_DISCOVERY=1 or production mode to reject)"
+                )
             
             # Create peer object
             peer = LocalPeer(
@@ -1641,6 +1700,8 @@ class CertificateCache:
         Raises:
             CertificateIntegrityError: If integrity verification fails
         """
+        cert = None
+        expired = False
         with self._lock:
             cert = self._certificates.get(peer_id)
             
@@ -1650,15 +1711,17 @@ class CertificateCache:
             if cert.is_expired():
                 # Remove expired certificate
                 del self._certificates[peer_id]
-                self._save_to_disk()
-                return None
-            
+                expired = True
             # Verify integrity
-            if not self._verify_certificate_integrity(cert):
+            elif not self._verify_certificate_integrity(cert):
                 logger.error(f"Certificate integrity verification failed for peer {peer_id.hex()[:16]}")
                 raise CertificateIntegrityError("Certificate integrity verification failed")
-            
-            return cert
+
+        # _save_to_disk() re-acquires the non-reentrant lock: call after release.
+        if expired:
+            self._save_to_disk()
+            return None
+        return cert
     
     def verify_certificate(
         self,
@@ -1716,13 +1779,18 @@ class CertificateCache:
         Returns:
             True if certificate was removed, False if not found
         """
+        removed = False
         with self._lock:
             if peer_id in self._certificates:
                 del self._certificates[peer_id]
-                self._save_to_disk()
-                logger.info(f"Removed cached certificate for peer {peer_id.hex()[:16]}...")
-                return True
-            return False
+                removed = True
+
+        # _save_to_disk() re-acquires the non-reentrant lock: call after release.
+        if removed:
+            self._save_to_disk()
+            logger.info(f"Removed cached certificate for peer {peer_id.hex()[:16]}...")
+            return True
+        return False
     
     def list_cached_peers(self) -> List[bytes]:
         """Get list of peer IDs with cached certificates."""

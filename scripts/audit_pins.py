@@ -59,11 +59,14 @@ def main():
     pins = parse_pins()
     print(f"Auditing {len(pins)} pinned packages against OSV...")
     failures = []
+    query_errors = []
     for name, ver in pins:
         try:
             data = osv_query(name, ver)
         except Exception as e:
-            print(f"  WARN {name}=={ver}: OSV query failed ({e})")
+            # Fail closed: an unaudited pin is not a clean pin.
+            print(f"  ERROR {name}=={ver}: OSV query failed ({e})")
+            query_errors.append((name, ver))
             continue
         vulns = data.get("vulns", [])
         if vulns:
@@ -78,6 +81,9 @@ def main():
             print(f"  OK   {name}=={ver}: no known vulns")
     if failures:
         print(f"\n{len(failures)} pinned package(s) with known vulns - FAIL")
+        return 1
+    if query_errors:
+        print(f"\n{len(query_errors)} pinned package(s) could not be audited (OSV unreachable) - FAIL (fail-closed)")
         return 1
     print("\nAll pinned packages clean - PASS")
     return 0

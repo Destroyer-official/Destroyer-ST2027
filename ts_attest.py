@@ -166,23 +166,12 @@ def evaluate_policy(posture: Dict[str, Any]) -> Tuple[bool, List[str]]:
 
 
 def is_lab_mode() -> bool:
-    """True ONLY when explicit lab/testing override is set.
-
-    Production and unconfigured environments run in strict fail-closed mode
-    by default (RFC 9334 RATS verifier policy: identity trust is independent
-    of the evidence itself).
-    """
     return os.environ.get("P2P_LAB_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def is_strict_attest() -> bool:
-    """True by default (fail-closed).
-
-    Refuses unanchored self-supplied device keys unless P2P_LAB_MODE=1
-    is explicitly set.
-    """
-    if is_lab_mode():
-        return False
+    # TOFU is never permitted for authorization: lab mode only downgrades
+    # informational posture, never identity trust.
     return True
 
 
@@ -246,14 +235,12 @@ def appraise_evidence(env: Dict[str, Any], expected_nonce: bytes,
             raise AttestError("enrolled device key corrupt")
         if len(expected_pub) != 72 or not hmac.compare_digest(expected_pub, bytes(pub)):
             raise AttestError("device key mismatch (not the enrolled device)")
-    elif is_strict_attest():
+    else:
+        # Fail-closed: TOFU is not permitted even in lab mode for trust
+        # decisions. Callers that need diagnostics must enroll trusted_keys.
         raise AttestError(
             "device identity unanchored: trusted_keys enrollment required "
-            "by default (self-supplied pub refused; set P2P_LAB_MODE=1 for lab testing)")
-    else:
-        log.warning(
-            "ts_attest TOFU: appraising self-supplied device key without "
-            "enrollment (kid=%s); lab only — never use for authorization", kid)
+            "(self-supplied pub refused in all environments)")
     body = {"v": env["v"], "nonce": env["nonce"], "ts": env["ts"],
             "posture": posture, "native": env.get("native")}
     _verify_tpm_sig(pub, hashlib.sha256(_canonical(body)).digest(), sig)

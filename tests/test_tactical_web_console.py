@@ -79,26 +79,44 @@ class TestTacticalWebConsole(unittest.TestCase):
         self.assertTrue(data.get("simulated"))
         self.assertIn("PENTAGON_BRAVO", data.get("reply", ""))
 
-    def test_api_eam_nuclear_directive_endpoint(self):
-        """Verify POST /api/eam seals emergency directive under Two-Person Integrity."""
+    def test_api_eam_rejects_bare_signature_strings(self):
+        """A4-09: mere signature strings must NOT be claimed as verified 2-of-2.
+
+        The old handler marked any two string fields '2-OF-2_VERIFIED'. The
+        hardened handler reports an explicit simulated fixture unless a
+        complete, cryptographically valid ML-DSA-87 custody package is given.
+        """
         directive = "DEFCON-1 AUTHORIZE STRATCOM STRIKE PACKAGE CHARLIE"
-        handler, wfile = self._create_handler("POST", "/api/eam", {
+        payload = {
             "originator": "NORAD_ALPHA",
             "directive": directive,
             "officer_1_sig": "SIG_OFFICER_ALPHA_TEST",
             "officer_2_sig": "SIG_OFFICER_BRAVO_TEST"
-        })
-        handler._handle_api_eam({
-            "originator": "NORAD_ALPHA",
-            "directive": directive,
-            "officer_1_sig": "SIG_OFFICER_ALPHA_TEST",
-            "officer_2_sig": "SIG_OFFICER_BRAVO_TEST"
-        })
+        }
+        handler, wfile = self._create_handler("POST", "/api/eam", payload)
+        handler._handle_api_eam(payload)
         data = self._parse_response(wfile)
-        self.assertEqual(data.get("status"), "EAM_RELEASED_AND_SEALED")
-        self.assertEqual(data.get("dual_custody"), "2-OF-2_VERIFIED")
-        self.assertEqual(data.get("validity_seconds"), 120.0)
+        self.assertEqual(data.get("status"), "EAM_SIMULATED_DEMO_FIXTURE")
+        self.assertTrue(data.get("simulated"))
+        self.assertFalse(data.get("dual_custody", "").startswith("2-OF-2"))
+        self.assertEqual(
+            data.get("dual_custody"), "UNVERIFIED_NO_CUSTODY_PACKAGE_SUPPLIED"
+        )
         self.assertTrue(len(data.get("authenticator_sha3_512", "")) == 128)
+
+    def test_api_eam_rejects_incomplete_custody_package(self):
+        """A4-09: partial custody packages are rejected, not silently verified."""
+        payload = {
+            "originator": "NORAD_ALPHA",
+            "directive": "DEFCON-2 ORDER",
+            "officer_1_id": "OFFICER_ALPHA",
+            "officer_1_sig_b64": "AAAA",
+        }
+        handler, wfile = self._create_handler("POST", "/api/eam", payload)
+        handler._handle_api_eam(payload)
+        data = self._parse_response(wfile)
+        self.assertEqual(data.get("status"), "EAM_REJECTED_INCOMPLETE_CUSTODY_PACKAGE")
+        self.assertEqual(data.get("dual_custody"), "REJECTED_INCOMPLETE")
 
     def test_api_zgdp_telemetry_endpoint(self):
         """Verify POST /api/zgdp executes live pipeline roundtrip."""

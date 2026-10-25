@@ -121,6 +121,9 @@ class TSRequiredError(TSError):
 
 
 def _env_true(name: str) -> bool:
+    if name in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+        from production_gate import is_production
+        return is_production()
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -476,12 +479,35 @@ def _iter_token_infos(libs: List[str]):
             continue
 
 
+_PQC_MECHANISM_TOKENS = (
+    "ML_DSA", "ML_KEM", "MLDSA", "MLKEM",
+)
+
+
+def _has_pqc_mechanism(mechs) -> bool:
+    """True only when the token advertises a PQC mechanism.
+
+    An allowlisted manufacturer/model alone proves nothing: a non-PQC token
+    with a spoofable model string must never grant Tier-A custody.
+    """
+    for mech in mechs or ():
+        name = str(getattr(mech, "name", mech)).upper()
+        if any(tok in name for tok in _PQC_MECHANISM_TOKENS):
+            return True
+    return False
+
+
 def probe_pqc_token() -> Optional[CustodyAttestation]:
     """TIER-A: token performing ML-DSA/ML-KEM private ops in hardware."""
     base = probe_hardware_custody()
     if not base.pkcs11_libs:
         return None
-    for _lib_path, mfr, model, fw, _mechs in _iter_token_infos(base.pkcs11_libs):
+    for _lib_path, mfr, model, fw, mechs in _iter_token_infos(base.pkcs11_libs):
+        if not _has_pqc_mechanism(mechs):
+            log.warning(
+                "Rejecting PQC token candidate %s %s: no ML-DSA/ML-KEM "
+                "mechanism advertised", mfr, model)
+            continue
         for rule in _token_allowlist():
             if rule.get("manufacturer_substr", "").lower() not in mfr.lower():
                 continue
@@ -1220,7 +1246,9 @@ def diode_send(blob: bytes, signer: Any, kid: str, target_host: str,
             raise TSError(f"diode FEC parameter {name} violation")
     blob = bytes(blob)  # normalize: manifest framing needs immutable bytes
     if isinstance(signer, (bytes, bytearray)):
-        if _env_true("P2P_REQUIRE_HARDWARE_IDENTITY") or _env_true("P2P_PRODUCTION"):
+        if (_env_true("P2P_REQUIRE_HARDWARE_IDENTITY")
+                or _env_true("P2P_PRODUCTION")
+                or _env_true("P2P_TS_MODE")):
             raise TSRequiredError("diode manifest needs hardware-custody signing in TS mode")
         from liboqs_wrapper import LibOQS_MLDSA_87
         sk = bytes(signer)

@@ -216,13 +216,19 @@ class TestPFSPCS(unittest.TestCase):
     def test_auth_tag_derives_independent_key(self):
         from crypto.auth_tags import AuthTagOperations
         mat = AuthTagOperations()
+        key = b"k" * 32
         ct = b"sample_ciphertext"
         msg_hash = b"sample_message_hash_32bytes_len"
-        tag = mat.generate_military_auth_tag(ct, msg_hash)
+        tag = mat.generate_military_auth_tag(ct, msg_hash, auth_key=key)
         self.assertEqual(len(tag), 64)
-        self.assertTrue(mat.verify_military_auth_tag(ct, msg_hash, tag))
+        self.assertTrue(mat.verify_military_auth_tag(ct, msg_hash, tag, auth_key=key))
         # Tampered ciphertext fails
-        self.assertFalse(mat.verify_military_auth_tag(b"tampered_ct", msg_hash, tag))
+        self.assertFalse(
+            mat.verify_military_auth_tag(b"tampered_ct", msg_hash, tag, auth_key=key)
+        )
+        # No key => no authentication (fail-closed, never a random secret)
+        with self.assertRaises(Exception):
+            mat.generate_military_auth_tag(ct, msg_hash)
 
 
 # 9. Cover Indistinguishability & Padding

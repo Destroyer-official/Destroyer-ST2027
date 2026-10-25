@@ -171,7 +171,22 @@ class WitnessedKeyCeremony:
         return True
 
     def _lab_self_approve(self) -> None:
-        """Harness-held auto-approval for lab runs only (loud warning)."""
+        """Harness-held auto-approval for lab runs only (loud warning).
+
+        Fail-closed in production: auto-approving with the harness-held
+        custodian keys would mint a quorum receipt without independent
+        human custody, which is exactly what the ceremony exists to
+        prevent.
+        """
+        from production_gate import is_ts_mode
+        prod = is_ts_mode()
+        if prod:
+            raise RuntimeError(
+                "LAB-ONLY helper refused: automatic custodian approval is "
+                "not permitted in production/TS posture.")
+        logger.warning(
+            "LAB MODE: custodians auto-approved by the harness; this is not "
+            "a two-person ceremony and must never run operationally.")
         for cid, priv in self._custodian_private.items():
             sig = priv.sign(self._approval_message(cid, self.current_hash.hex()))
             self.approve(cid, bytes(sig))

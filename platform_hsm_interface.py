@@ -1573,6 +1573,7 @@ if IS_WINDOWS:
         _NCryptFreeObject = None
         _NCryptSetProperty = None
         _NCryptGetProperty = None
+        _NCryptDecrypt = None
         logger.warning(
             f"Windows CNG/NCrypt libraries (bcrypt.dll, ncrypt.dll) or their functions not available: {e}. TPM-backed key operations via CNG will be disabled.")
     except Exception as e:  # Catch other potential errors during initial Win32 setup
@@ -3511,6 +3512,14 @@ if IS_WINDOWS:
         ]
         _NCryptEncrypt.restype = wintypes.LONG
 
+        _NCryptDecrypt = ncrypt.NCryptDecrypt
+        _NCryptDecrypt.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(ctypes.c_ubyte), wintypes.DWORD,
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), wintypes.DWORD,
+            ctypes.POINTER(wintypes.ULONG), wintypes.DWORD
+        ]
+        _NCryptDecrypt.restype = wintypes.LONG
+
         _Windows_CNG_Supported = True
         logger.debug("Windows CNG/KSP functions loaded.")
     except Exception as e:
@@ -4011,104 +4020,701 @@ def retrieve_key_kernel_keyring(label_or_id: str, timeout: int = 20) -> dict:
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"[:160]}
 
 # Cross-platform encrypted key file storage using AES-GCM
+#
+# 2026-10-21 (forensic audit): the previous format derived the AES-GCM KEK
+# directly from get_hardware_unique_id() -- a PUBLIC value (Windows
+# MachineGuid, SMBIOS UUID, /etc/machine-id). Anyone holding a stolen disk or
+# backup could therefore recompute the KEK and decrypt every stored key.
+# The v2 format below wraps a random per-installation master key with, in
+# order of preference: an operator passphrase (PBKDF2-SHA512), Windows DPAPI
+# (user/machine scoped), or the OS keyring. A random 0600 seed file is used
+# only as an explicitly-labelled last resort outside production; production
+# fails closed. Legacy v1 files are decrypted with the old hardware-ID KEK
+# exactly once and migrated to v2 on read.
+
+_KEYFILE_MAGIC = b"P2PKF2\x00"
+_KEYFILE_AAD_PREFIX = b"P2P-KEYFILE-v2:"
+_KEYFILE_MASTER_LABEL = "keyfile-master-v2"
+_KEYFILE_PBKDF2_ITERATIONS = 600_000
+_KEYFILE_HW_MAGIC = b"P2PKF2HW\x00"
+_KEYFILE_HW_BLOB = "keyfile.master.tpm"
+_KEYFILE_HW_KEY_NAME = "p2p-keyfile-master-kek-v2"
+
+
+class KeyfileHardwareUnavailable(RuntimeError):
+    """Raised when a hardware-sealed keyfile master cannot be provided."""
+
+
+def _keyfile_hardware_policy() -> str:
+    """Return disabled/prefer/require, defaulting to hardware in production."""
+    raw = os.environ.get("P2P_KEYFILE_HARDWARE_KEK", "").strip().lower()
+    if not raw:
+        return "require" if _keyfile_production() else "prefer"
+    if raw in ("disabled", "off", "0", "false", "no"):
+        return "disabled"
+    if raw in ("prefer", "auto", "on", "1", "true", "yes"):
+        return "prefer"
+    if raw in ("require", "required", "mandatory"):
+        return "require"
+    raise RuntimeError(
+        "P2P_KEYFILE_HARDWARE_KEK must be disabled, prefer, or require "
+        "(fail-closed)"
+    )
+
+
+def _keyfile_hw_backend() -> str:
+    if IS_WINDOWS:
+        return "windows-tpm-cng"
+    if IS_LINUX:
+        return "linux-tpm2-tools"
+    return "unavailable"
+
+
+def _keyfile_hw_available() -> bool:
+    """Probe a real TPM sealing backend; never reports simulation as hardware."""
+    try:
+        if IS_WINDOWS:
+            if not (
+                _tpm_native_allowed()
+                and is_tpm_available()
+                and _check_cng_available()
+                and _NCryptDecrypt is not None
+            ):
+                return False
+            return bool(_windows_tbs_get_device_info().get("tpm_present"))
+        if IS_LINUX:
+            import shutil as _sh
+
+            if not (
+                os.path.exists("/dev/tpmrm0") or os.path.exists("/dev/tpm0")
+            ):
+                return False
+            required = (
+                "tpm2_createprimary",
+                "tpm2_create",
+                "tpm2_load",
+                "tpm2_unseal",
+            )
+            return bool(
+                is_tpm_available()
+                and all(_sh.which(name) for name in required)
+            )
+    except Exception as exc:
+        logger.warning("Keyfile hardware backend probe failed: %s", exc)
+    return False
+
+
+def _keyfile_hw_blob_path() -> str:
+    return os.path.join(_keyfile_secure_dir(), _KEYFILE_HW_BLOB)
+
+
+def _keyfile_windows_seal(data: bytes) -> bytes:
+    if not _CRYPTOGRAPHY_AVAILABLE or crypto_padding is None or crypto_hashes is None:
+        raise KeyfileHardwareUnavailable("cryptography RSA padding unavailable")
+    handle, public_key = generate_tpm_backed_key(
+        _KEYFILE_HW_KEY_NAME, key_size=2048, allow_export=False, overwrite=False
+    )
+    if not handle or public_key is None:
+        raise KeyfileHardwareUnavailable("TPM key creation failed")
+    try:
+        ciphertext = public_key.encrypt(
+            data,
+            crypto_padding.OAEP(
+                mgf=crypto_padding.MGF1(algorithm=crypto_hashes.SHA256()),
+                algorithm=crypto_hashes.SHA256(),
+                label=None,
+            ),
+        )
+    finally:
+        try:
+            _NCryptFreeObject(handle)
+        except Exception:
+            pass
+    return _KEYFILE_HW_MAGIC + b"WCNG" + ciphertext
+
+
+def _keyfile_windows_unseal(blob: bytes) -> bytes:
+    if _NCryptDecrypt is None:
+        raise KeyfileHardwareUnavailable("NCryptDecrypt unavailable")
+    if not _open_cng_provider_platform():
+        raise KeyfileHardwareUnavailable("TPM CNG provider unavailable")
+    ciphertext = blob[len(_KEYFILE_HW_MAGIC) + 4:]
+    if not ciphertext:
+        raise KeyfileHardwareUnavailable("hardware keyfile blob is empty")
+
+    handle = NCRYPT_KEY_HANDLE()
+    status = _NCryptOpenKey(
+        _ncrypt_provider_handle,
+        ctypes.byref(handle),
+        wintypes.LPCWSTR(_KEYFILE_HW_KEY_NAME),
+        0,
+        NCRYPT_SILENT_FLAG,
+    )
+    if status != STATUS_SUCCESS.value or not handle.value:
+        raise KeyfileHardwareUnavailable(
+            f"TPM keyfile sealing key cannot be opened ({status:#010x})"
+        )
+
+    class BCRYPT_OAEP_PADDING_INFO(ctypes.Structure):
+        _fields_ = [
+            ("pszAlgId", wintypes.LPCWSTR),
+            ("pbLabel", ctypes.POINTER(wintypes.BYTE)),
+            ("cbLabel", wintypes.ULONG),
+        ]
+
+    padding_info = BCRYPT_OAEP_PADDING_INFO()
+    padding_info.pszAlgId = wintypes.LPCWSTR("SHA256")
+    padding_info.pbLabel = None
+    padding_info.cbLabel = 0
+    in_buf = (ctypes.c_ubyte * len(ciphertext)).from_buffer_copy(ciphertext)
+    out_buf = (ctypes.c_ubyte * len(ciphertext))()
+    result_len = wintypes.ULONG(0)
+    try:
+        status = _NCryptDecrypt(
+            handle,
+            ctypes.cast(in_buf, ctypes.POINTER(ctypes.c_ubyte)),
+            len(ciphertext),
+            ctypes.byref(padding_info),
+            out_buf,
+            len(out_buf),
+            ctypes.byref(result_len),
+            NCRYPT_SILENT_FLAG.value | 0x00000004,
+        )
+        if status != STATUS_SUCCESS.value:
+            raise KeyfileHardwareUnavailable(
+                f"TPM keyfile unseal failed ({status:#010x})"
+            )
+        return bytes(out_buf[:result_len.value])
+    finally:
+        try:
+            _NCryptFreeObject(handle)
+        except Exception:
+            pass
+
+
+def _keyfile_linux_run(argv: list[str], timeout: int = 30) -> None:
+    import subprocess as _sp
+
+    proc = _sp.run(  # nosec: B603
+        argv,
+        stdout=_sp.PIPE,
+        stderr=_sp.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or b"")[:160].decode("utf-8", "replace")
+        raise KeyfileHardwareUnavailable(f"TPM command failed: {detail}")
+
+
+def _keyfile_linux_tool(name: str) -> str:
+    import shutil as _sh
+
+    path = _sh.which(name)
+    if not path:
+        raise KeyfileHardwareUnavailable(f"{name} not installed")
+    return path
+
+
+def _keyfile_linux_seal(data: bytes) -> bytes:
+    import shutil as _sh
+    import struct as _struct
+    import tempfile as _tempfile
+
+    secure_dir = _keyfile_secure_dir()
+    createprimary = _keyfile_linux_tool("tpm2_createprimary")
+    create = _keyfile_linux_tool("tpm2_create")
+    load = _keyfile_linux_tool("tpm2_load")
+    _keyfile_linux_tool("tpm2_unseal")
+    work = _tempfile.mkdtemp(prefix=".keyfile-tpm-", dir=secure_dir)
+    try:
+        primary = os.path.join(work, "primary.ctx")
+        secret = os.path.join(work, "secret.bin")
+        public = os.path.join(work, "object.pub")
+        private = os.path.join(work, "object.priv")
+        for path, payload in ((secret, data),):
+            with open(path, "wb") as fh:
+                fh.write(payload)
+            os.chmod(path, 0o600)
+        _keyfile_linux_run([
+            createprimary, "-C", "o", "-g", "sha256", "-G", "rsa",
+            "-P", "", "-c", primary,
+        ])
+        _keyfile_linux_run([
+            create, "-C", primary, "-g", "sha256", "-G", "keyedhash",
+            "-p", "", "-u", public, "-r", private, "-i", secret,
+        ])
+        with open(public, "rb") as fh:
+            pub = fh.read()
+        with open(private, "rb") as fh:
+            priv = fh.read()
+        if not pub or not priv:
+            raise KeyfileHardwareUnavailable("TPM produced empty key blobs")
+        return (
+            _KEYFILE_HW_MAGIC
+            + b"LTPM"
+            + _struct.pack(">II", len(pub), len(priv))
+            + pub
+            + priv
+        )
+    finally:
+        _sh.rmtree(work, ignore_errors=True)
+
+
+def _keyfile_linux_unseal(blob: bytes) -> bytes:
+    import shutil as _sh
+    import struct as _struct
+    import tempfile as _tempfile
+
+    body = blob[len(_KEYFILE_HW_MAGIC) + 4:]
+    if len(body) < 8:
+        raise KeyfileHardwareUnavailable("hardware keyfile blob is truncated")
+    pub_len, priv_len = _struct.unpack(">II", body[:8])
+    if pub_len == 0 or priv_len == 0 or len(body) != 8 + pub_len + priv_len:
+        raise KeyfileHardwareUnavailable("hardware keyfile blob is malformed")
+    pub = body[8:8 + pub_len]
+    priv = body[8 + pub_len:]
+    secure_dir = _keyfile_secure_dir()
+    createprimary = _keyfile_linux_tool("tpm2_createprimary")
+    load = _keyfile_linux_tool("tpm2_load")
+    unseal = _keyfile_linux_tool("tpm2_unseal")
+    work = _tempfile.mkdtemp(prefix=".keyfile-tpm-", dir=secure_dir)
+    try:
+        primary = os.path.join(work, "primary.ctx")
+        public = os.path.join(work, "object.pub")
+        private = os.path.join(work, "object.priv")
+        object_ctx = os.path.join(work, "object.ctx")
+        output = os.path.join(work, "secret.bin")
+        for path, payload in ((public, pub), (private, priv)):
+            with open(path, "wb") as fh:
+                fh.write(payload)
+            os.chmod(path, 0o600)
+        _keyfile_linux_run([
+            createprimary, "-C", "o", "-g", "sha256", "-G", "rsa",
+            "-P", "", "-c", primary,
+        ])
+        _keyfile_linux_run([
+            load, "-C", primary, "-P", "", "-u", public, "-r", private,
+            "-c", object_ctx,
+        ])
+        _keyfile_linux_run([
+            unseal, "-c", object_ctx, "-p", "", "-o", output,
+        ])
+        with open(output, "rb") as fh:
+            return fh.read()
+    finally:
+        _sh.rmtree(work, ignore_errors=True)
+
+
+def _keyfile_hw_seal(data: bytes) -> bytes:
+    if IS_WINDOWS:
+        return _keyfile_windows_seal(data)
+    if IS_LINUX:
+        return _keyfile_linux_seal(data)
+    raise KeyfileHardwareUnavailable("no TPM sealing backend on this platform")
+
+
+def _keyfile_hw_unseal(blob: bytes) -> bytes:
+    if not blob.startswith(_KEYFILE_HW_MAGIC):
+        raise KeyfileHardwareUnavailable("hardware keyfile magic mismatch")
+    backend = blob[len(_KEYFILE_HW_MAGIC):len(_KEYFILE_HW_MAGIC) + 4]
+    if backend == b"WCNG":
+        if not IS_WINDOWS:
+            raise KeyfileHardwareUnavailable("Windows TPM blob on non-Windows host")
+        return _keyfile_windows_unseal(blob)
+    if backend == b"LTPM":
+        if not IS_LINUX:
+            raise KeyfileHardwareUnavailable("Linux TPM blob on non-Linux host")
+        return _keyfile_linux_unseal(blob)
+    raise KeyfileHardwareUnavailable("unknown hardware keyfile backend")
+
+
+def _keyfile_hw_store(data: bytes) -> None:
+    blob = _keyfile_hw_seal(data)
+    if _keyfile_hw_unseal(blob) != data:
+        raise KeyfileHardwareUnavailable("TPM keyfile seal verification failed")
+    _write_keyfile_atomic(_keyfile_hw_blob_path(), blob)
+
+
+def _keyfile_hw_load() -> typing.Optional[bytes]:
+    path = _keyfile_hw_blob_path()
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    try:
+        raw = _keyfile_hw_unseal(blob)
+    except Exception as exc:
+        raise KeyfileHardwareUnavailable(
+            "hardware-sealed keyfile master exists but cannot be unsealed"
+        ) from exc
+    if len(raw) != 32:
+        raise KeyfileHardwareUnavailable(
+            "hardware-sealed keyfile master has wrong length"
+        )
+    return raw
+
+
+def keyfile_hardware_status() -> dict:
+    """Expose non-secret keyfile KEK policy and backend status."""
+    return {
+        "policy": _keyfile_hardware_policy(),
+        "backend": _keyfile_hw_backend(),
+        "available": _keyfile_hw_available(),
+        "sealed_master_present": os.path.exists(_keyfile_hw_blob_path()),
+    }
+
+
+def _keyfile_production() -> bool:
+    return (
+        is_env_true("P2P_PRODUCTION")
+        or is_env_true("SECURE_P2P_PRODUCTION")
+    )
+
+
+def _validate_keyfile_label(label: str) -> str:
+    """Reject traversal / separators: labels become file names."""
+    import re as _re
+
+    value = str(label or "")
+    if not _re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value) or ".." in value:
+        raise ValueError(f"invalid key file label: {label!r}")
+    return value
+
+
+def _keyfile_secure_dir() -> str:
+    secure_dir = os.path.expanduser("~/.cross_platform_secure")
+    os.makedirs(secure_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(secure_dir, 0o700)
+    except OSError:
+        pass
+    return secure_dir
+
+
+def _write_keyfile_atomic(path: str, data: bytes) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _keyfile_passphrase() -> typing.Optional[bytes]:
+    for name in ("P2P_KEYFILE_PASSPHRASE", "P2P_STORAGE_PASSPHRASE"):
+        value = os.environ.get(name)
+        if value:
+            return value.encode("utf-8")
+    return None
+
+
+def _keyfile_remove_software_secret(
+    paths: typing.Iterable[str] = (),
+    *,
+    keyring_entry: bool = True,
+    strict: bool = False,
+) -> None:
+    errors = []
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError as exc:
+            errors.append(f"{path}: {exc}")
+    if keyring_entry and _KEYRING_AVAILABLE and keyring is not None:
+        try:
+            if keyring.get_password(
+                "cross_platform_security", _KEYFILE_MASTER_LABEL
+            ) is not None:
+                keyring.delete_password(
+                    "cross_platform_security", _KEYFILE_MASTER_LABEL
+                )
+        except Exception as exc:
+            errors.append(f"keyring: {exc}")
+    if errors:
+        message = "failed to remove software keyfile KEK copies: " + "; ".join(errors)
+        if strict:
+            raise RuntimeError(message + " (fail-closed)")
+        logger.warning(message)
+
+
+def _keyfile_use_hardware(
+    raw: bytes,
+    *,
+    cleanup_paths: typing.Iterable[str] = (),
+    cleanup_keyring: bool = False,
+) -> typing.Optional[bytes]:
+    policy = _keyfile_hardware_policy()
+    if policy == "disabled":
+        return None
+    if not _keyfile_hw_available():
+        if policy == "require":
+            raise KeyfileHardwareUnavailable(
+                "hardware-backed keyfile KEK is required but no usable TPM "
+                "backend is available; enable the TPM/native gate or set "
+                "P2P_KEYFILE_HARDWARE_KEK=disabled only for non-production labs"
+            )
+        return None
+    try:
+        _keyfile_hw_store(raw)
+    except Exception as exc:
+        if policy == "require":
+            raise KeyfileHardwareUnavailable(
+                f"hardware-backed keyfile KEK failed: {exc}"
+            ) from exc
+        logger.warning("Hardware keyfile KEK failed; using software KEK: %s", exc)
+        return None
+    _keyfile_remove_software_secret(
+        cleanup_paths, keyring_entry=cleanup_keyring, strict=policy == "require"
+    )
+    logger.info("Keyfile master is sealed by %s", _keyfile_hw_backend())
+    return raw
+
+
+def _keyfile_master_key() -> bytes:
+    """Return the 32-byte per-installation master KEK, hardware-sealed by default."""
+    secure_dir = _keyfile_secure_dir()
+    policy = _keyfile_hardware_policy()
+    dpapi_path = os.path.join(secure_dir, "keyfile.master.dpapi")
+    seed_path = os.path.join(secure_dir, "keyfile.master.seed")
+
+    hardware_master = _keyfile_hw_load()
+    if hardware_master is not None:
+        _keyfile_remove_software_secret(
+            (dpapi_path, seed_path), strict=policy == "require"
+        )
+        return hardware_master
+
+    passphrase = _keyfile_passphrase()
+    if passphrase:
+        salt_path = os.path.join(secure_dir, "keyfile.kdf.salt")
+        if os.path.exists(salt_path):
+            with open(salt_path, "rb") as f:
+                salt = f.read()
+            if len(salt) != 32:
+                raise RuntimeError("key file KDF salt is corrupt (fail-closed)")
+        else:
+            salt = secrets.token_bytes(32)
+            _write_keyfile_atomic(salt_path, salt)
+        raw = hashlib.pbkdf2_hmac(
+            "sha512", passphrase, salt, _KEYFILE_PBKDF2_ITERATIONS, dklen=32
+        )
+        wrapped = _keyfile_use_hardware(raw)
+        return wrapped if wrapped is not None else raw
+
+    if os.name == "nt":
+        if os.path.exists(dpapi_path):
+            try:
+                with open(dpapi_path, "rb") as f:
+                    blob = f.read()
+                from air_gapped_operation import win_dpapi_unprotect
+
+                raw = win_dpapi_unprotect(blob)
+            except Exception as e:
+                raise RuntimeError(
+                    "DPAPI-sealed key file master exists but cannot be unsealed; "
+                    "refusing to rotate the master and orphan existing key files "
+                    "(set P2P_KEYFILE_PASSPHRASE if this is a restored backup)"
+                ) from e
+            if len(raw) != 32:
+                raise RuntimeError(
+                    "DPAPI-sealed key file master has wrong length (fail-closed)"
+                )
+            wrapped = _keyfile_use_hardware(raw, cleanup_paths=(dpapi_path,))
+            return wrapped if wrapped is not None else raw
+        raw = secrets.token_bytes(32)
+        wrapped = _keyfile_use_hardware(raw)
+        if wrapped is not None:
+            return wrapped
+        try:
+            from air_gapped_operation import win_dpapi_protect
+
+            blob = win_dpapi_protect(raw)
+            _write_keyfile_atomic(dpapi_path, blob)
+            return raw
+        except Exception as e:
+            logger.warning("DPAPI sealing of key file master failed: %s", e)
+
+    if _KEYRING_AVAILABLE and keyring is not None:
+        try:
+            existing = keyring.get_password(
+                "cross_platform_security", _KEYFILE_MASTER_LABEL
+            )
+            if existing:
+                raw = bytes.fromhex(existing)
+                if len(raw) != 32:
+                    raise RuntimeError(
+                        "OS keyring key file master has wrong length (fail-closed)"
+                    )
+                wrapped = _keyfile_use_hardware(raw, cleanup_keyring=True)
+                return wrapped if wrapped is not None else raw
+            raw = secrets.token_bytes(32)
+            wrapped = _keyfile_use_hardware(raw)
+            if wrapped is not None:
+                return wrapped
+            keyring.set_password(
+                "cross_platform_security", _KEYFILE_MASTER_LABEL, raw.hex()
+            )
+            return raw
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.warning("OS keyring unavailable for key file master: %s", e)
+
+    if os.path.exists(seed_path):
+        with open(seed_path, "rb") as f:
+            raw = f.read()
+        if len(raw) != 32:
+            raise RuntimeError("key file master seed is corrupt (fail-closed)")
+        wrapped = _keyfile_use_hardware(raw, cleanup_paths=(seed_path,))
+        if wrapped is not None:
+            return wrapped
+        if _keyfile_production():
+            raise RuntimeError(
+                "key file master is stored in an unsealed seed file; production "
+                "requires a hardware-sealed key (fail-closed)"
+            )
+        logger.warning(
+            "key file master KEK uses an UNSEALED 0600 seed file (lab fallback); "
+            "set P2P_KEYFILE_PASSPHRASE for at-rest protection"
+        )
+        return raw
+
+    raw = secrets.token_bytes(32)
+    wrapped = _keyfile_use_hardware(raw)
+    if wrapped is not None:
+        return wrapped
+    if _keyfile_production():
+        raise RuntimeError(
+            "no hardened key file KEK available; production requires a "
+            "hardware-sealed master (fail-closed)"
+        )
+    _write_keyfile_atomic(seed_path, raw)
+    logger.warning(
+        "key file master KEK generated into an UNSEALED 0600 seed file (lab "
+        "fallback); set P2P_KEYFILE_PASSPHRASE for at-rest protection"
+    )
+    return raw
+
+
+def _keyfile_file_key(master: bytes, salt: bytes, label: str) -> bytes:
+    hkdf = HKDF(
+        algorithm=hashes.SHA3_512(),
+        length=32,
+        salt=salt,
+        info=_KEYFILE_AAD_PREFIX + label.encode("utf-8"),
+    )
+    return hkdf.derive(master)
 
 
 def store_key_file_secure(label: str, key_data: bytes) -> bool:
     """
-    Store `key_data` encrypted on disk (AES-GCM), then load into a locked buffer when retrieved.
+    Store `key_data` encrypted on disk (AES-GCM with a v2 sealed master KEK).
     Works across Windows, Linux, and macOS.
     """
     if not _AESGCM_AVAILABLE:
         logger.error("AESGCM not available; cannot store secure key file.")
         return False
     try:
-        # Get a unique hardware identifier for deriving the key
-        try:
-            hw_id = get_hardware_unique_id()
-        except Exception as e:
-            logger.warning(f"CRITICAL: Fallback attempted - production security violation")
-            hw_id = b"fallback_hardware_id_" + secrets.token_bytes(16)
-
-        # Derive a key encryption key (KEK) from hardware ID
-        kek = hashlib.sha3_256(hw_id).digest()
-        # Initialize AESGCM with the key
-        aesgcm = AESGCM(kek)
-        # Generate a random 96-bit nonce (12 bytes)
+        label = _validate_keyfile_label(label)
+        master = _keyfile_master_key()
+        salt = secrets.token_bytes(32)
         nonce = secrets.token_bytes(12)
-        # Add AAD data for authentication (optional)
-        aad = f"key_file_{label}".encode('utf-8')
-        # Encrypt the data
-        ciphertext = aesgcm.encrypt(nonce, key_data, aad)
-        # Combine nonce and ciphertext for storage
-        payload = nonce + ciphertext
-        # Create secure directory if needed
-        secure_dir = os.path.expanduser("~/.cross_platform_secure")
-        os.makedirs(secure_dir, mode=0o700, exist_ok=True)
-        os.chmod(secure_dir, 0o700)
-        # Save the encrypted key data
+        aad = _KEYFILE_AAD_PREFIX + label.encode("utf-8")
+        ciphertext = AESGCM(_keyfile_file_key(master, salt, label)).encrypt(
+            nonce, key_data, aad
+        )
+        payload = _KEYFILE_MAGIC + salt + nonce + ciphertext
+        secure_dir = _keyfile_secure_dir()
         path = os.path.join(secure_dir, f"{label}.bin")
-        with open(path, "wb") as f:
-            f.write(payload)
-            # Set restrictive permissions
-        os.chmod(path, 0o600)
+        _write_keyfile_atomic(path, payload)
         return True
     except Exception as e:
         logger.error("Secure key file store failed: %s", e)
         return False
 
 
+def _retrieve_legacy_key_file(label: str, payload: bytes) -> typing.Optional[bytes]:
+    """Decrypt a v1 hardware-ID-bound file (migration path only)."""
+    if len(payload) < 12:
+        return None
+    nonce, ciphertext = payload[:12], payload[12:]
+    hw_id = get_hardware_unique_id()
+    kek = hashlib.sha3_256(hw_id).digest()
+    aad = f"key_file_{label}".encode("utf-8")
+    return AESGCM(kek).decrypt(nonce, ciphertext, aad)
+
+
 def retrieve_key_file_secure(label: str):
     """
-    Retrieve and decrypt a key stored via store_key_file_secure, then lock it in memory.
-    Returns a ctypes buffer containing the key (pinned), or None on failure.
-    Works across Windows, Linux, and macOS.
+    Retrieve and decrypt a key stored via store_key_file_secure.
+    Returns the exact key bytes, or None on failure. Legacy v1 files are
+    migrated to the sealed v2 format on successful read.
     """
     if not _AESGCM_AVAILABLE:
         logger.error("AESGCM not available; cannot retrieve secure key file.")
         return None
     try:
-        # First, check if this is a regular file or if we need to look for a chunked key
-        secure_dir = os.path.expanduser("~/.cross_platform_secure")
+        label = _validate_keyfile_label(label)
+        secure_dir = _keyfile_secure_dir()
         path = os.path.join(secure_dir, f"{label}.bin")
 
-        # Check if regular key file exists
         if not os.path.exists(path):
-            # Check if this might be a chunked key
             chunked_ref_path = os.path.join(secure_dir, f"{label}_ref.bin")
             if os.path.exists(chunked_ref_path):
-                # This might be a chunked key, try to retrieve it
                 return retrieve_chunked_key(label)
             logger.error(f"Key file not found: {path}")
             return None
 
         with open(path, "rb") as f:
             payload = f.read()
-        # Extract nonce (first 12 bytes)
-        nonce = payload[:12]
-        # Extract ciphertext (remainder)
-        ciphertext = payload[12:]
-        # Get hardware ID and derive KEK
+
+        if payload.startswith(_KEYFILE_MAGIC):
+            body = payload[len(_KEYFILE_MAGIC):]
+            if len(body) < 32 + 12 + 16:
+                logger.error("Secure key file is truncated (fail-closed)")
+                return None
+            salt, nonce, ciphertext = body[:32], body[32:44], body[44:]
+            aad = _KEYFILE_AAD_PREFIX + label.encode("utf-8")
+            key_data = AESGCM(
+                _keyfile_file_key(_keyfile_master_key(), salt, label)
+            ).decrypt(nonce, ciphertext, aad)
+            return bytes(key_data)
+
+        # Legacy v1: hardware-ID KEK. Decrypt once, then migrate atomically.
+        key_data = _retrieve_legacy_key_file(label, payload)
+        if key_data is None:
+            return None
+        if _keyfile_production():
+            logger.error(
+                "legacy hardware-ID key file %r read in production; re-provision "
+                "it with the sealed v2 format (fail-closed migration)",
+                label,
+            )
+            return None
         try:
-            hw_id = get_hardware_unique_id()
+            if store_key_file_secure(label, key_data):
+                logger.warning(
+                    "migrated legacy hardware-ID key file %r to sealed v2 format",
+                    label,
+                )
+            else:
+                logger.error(
+                    "legacy key file %r decrypted but v2 migration failed; "
+                    "plaintext-equivalent legacy file remains on disk",
+                    label,
+                )
         except Exception as e:
-            logger.warning(f"CRITICAL: Fallback attempted - production security violation")
-            hw_id = b"fallback_hardware_id_" + secrets.token_bytes(16)
-
-        kek = hashlib.sha3_256(hw_id).digest()
-        # Create AESGCM instance
-        aesgcm = AESGCM(kek)
-        # Create AAD data for authentication (must match what was used for encryption)
-        aad = f"key_file_{label}".encode('utf-8')
-        # Decrypt the data
-        # 2026-09-19 fix: KEK MUST be sha3_256 to match store_key_file_secure
-        # (which writes sha3_256). A prior sha3_512 here produced a 64B key
-        # that AESGCM always rejects, making every stored file unreadable.
-        key_data = aesgcm.decrypt(nonce, ciphertext, aad)
-
-        # 2026-09-19 fix: return the exact decrypted bytes. The old code
-        # returned a ctypes.create_string_buffer (len+1 with trailing NUL),
-        # corrupting every retrieved key by one zero byte — and the buffer
-        # died with this frame anyway, so its mlock was theater.
+            logger.error("legacy key file %r migration failed: %s", label, e)
         return bytes(key_data)
     except Exception as e:
         logger.error("Secure key file retrieve failed: %s", e)
@@ -8752,20 +9358,9 @@ def get_available_pkcs11_libraries():
 
 
 def _softhsm_prod_strict() -> bool:
-    """True in production (sticky-prod aware): default PINs never allowed.
-
-    F-01: delegates to production_gate (canonical sticky detector).
-    """
-    try:
-        from production_gate import is_production
-        return is_production()
-    except Exception:
-        try:
-            if os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"):
-                return True
-            return os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-        except Exception:
-            return False
+    """True in production: default PINs are never allowed."""
+    from production_gate import is_production
+    return is_production()
 
 
 def _resolve_pkcs11_pin(pin, platform_config, pkcs11_lib_path):

@@ -11,6 +11,7 @@ with /nc3-verify under Dual-Custody, tests /zeroize, and validates 100% operatio
 import os
 import sys
 import time
+import secrets
 import subprocess  # nosec: B404
 import threading
 import pytest
@@ -56,6 +57,8 @@ def run_live_nc3_test():
     # passphrase are injected via environment so scripted stations never
     # block on getpass prompts. NEVER set these operationally — custodians
     # type them interactively (no echo) in production.
+    # A4-24 (2026-10-17): the war key is generated fresh per test run
+    # instead of a hardcoded constant committed to the repository.
     run_env = dict(
         os.environ,
         PYTHONUNBUFFERED="1",
@@ -64,7 +67,7 @@ def run_live_nc3_test():
         # terminals run with that dir as script home, so repo root rides
         # PYTHONPATH for sibling imports (protocol_manager, ...).
         PYTHONPATH=BASE_DIR + os.pathsep + os.environ.get("PYTHONPATH", ""),
-        P2P_NC3_WAR_KEY="058d3327d4d78bb641a4adab8d7d967c7c05c0035d29141be2dea7a3b9bfd342",
+        P2P_NC3_WAR_KEY=secrets.token_hex(32),
         P2P_OFFICER_SEAL_PW="nc3-live-transfer-test-seal-only",
     )
 

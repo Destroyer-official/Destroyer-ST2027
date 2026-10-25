@@ -36,6 +36,39 @@ class PQTreeKEMError(Exception):
     pass
 
 
+def _strict_group_auth_required() -> bool:
+    """True when remote commits must carry an ML-DSA-87 signature.
+
+    Explicit ``P2P_GROUP_REQUIRE_SIGNED_COMMITS=1``, or automatic in
+    production (the opt-out is ignored there).
+    """
+    import os as _os
+    from production_gate import is_production
+    _prod = is_production()
+    _explicit = _os.environ.get("P2P_GROUP_REQUIRE_SIGNED_COMMITS", "")
+    if _prod:
+        return True
+    return _explicit.strip().lower() in ("1", "true", "yes", "on")
+
+
+def pq_commit_canonical(group_id: str, update_path: Any) -> bytes:
+    """Canonical bytes covered by a PQ commit signature.
+
+    ``group_key_manager._pq_commit_canonical`` delegates here so both the
+    manager path and the library path authenticate exactly the same bytes.
+    """
+    gid = group_id.encode("utf-8")
+    uid = str(getattr(update_path, "updater_id", "")).encode("utf-8")
+    out = (b"PQ-COMMIT-V1:" + struct.pack(">I", len(gid)) + gid
+           + struct.pack(">I", len(uid)) + uid
+           + struct.pack(">I", int(getattr(update_path, "updater_leaf", 0)))
+           + struct.pack(">Q", int(getattr(update_path, "epoch_id", 0))))
+    claimed_tx = getattr(update_path, "tree_hash_before", b"")
+    if isinstance(claimed_tx, str):
+        claimed_tx = bytes.fromhex(claimed_tx)
+    return out + bytes(claimed_tx)
+
+
 def _hkdf_expand_sha3_512(prk: bytes, info: bytes, length: int = 32) -> bytes:
     """HKDF-Expand using SHA3-512 for NIST Level-5 cryptographic domain separation."""
     if len(prk) < 32:
@@ -101,6 +134,56 @@ class PQTreeKEM:
         self._node_keys: Dict[int, PQNodeKey] = {}
         self.current_epoch: int = 1
         self.epoch_secret: bytes = secrets.token_bytes(32)
+        # Commit signing: member_id -> ML-DSA-87 public key.  Without a
+        # registered key a commit cannot be attributed, so it is refused.
+        self._member_sig_pubs: Dict[str, bytes] = {}
+        # Local commit signer: (canonical_bytes) -> signature
+        self._commit_signer: Optional[Any] = None
+        # Optional commit verifier override: (pub, msg, sig) -> bool
+        self._commit_verifier: Optional[Any] = None
+
+    def register_member_sig_key(self, member_id: str, sig_public_key: bytes) -> None:
+        """Register a member's ML-DSA-87 public key for commit attribution."""
+        if not isinstance(member_id, str) or not member_id:
+            raise PQTreeKEMError("member_id must be a non-empty string")
+        if not isinstance(sig_public_key, (bytes, bytearray)) or not sig_public_key:
+            raise PQTreeKEMError("sig_public_key must be non-empty bytes")
+        with self._lock:
+            self._member_sig_pubs[member_id] = bytes(sig_public_key)
+
+    def set_commit_signer(self, signer: Optional[Any]) -> None:
+        """Install a local commit signer: (canonical_bytes) -> signature."""
+        self._commit_signer = signer
+
+    def set_commit_verifier(self, verifier: Optional[Any]) -> None:
+        """Install a commit verifier override: (pub, msg, sig) -> bool."""
+        self._commit_verifier = verifier
+
+    def _verify_commit_signature(self, update_path: PQUpdatePath,
+                                 commit_sig: bytes,
+                                 commit_pub: Optional[bytes] = None,
+                                 verify_cb: Optional[Any] = None) -> None:
+        """Verify a commit signature; raise PQTreeKEMError on any failure."""
+        updater_id = str(getattr(update_path, "updater_id", ""))
+        pub = commit_pub if commit_pub else self._member_sig_pubs.get(updater_id)
+        if pub is None:
+            raise PQTreeKEMError(
+                f"commit signer {updater_id!r} is not enrolled: the commit "
+                "cannot be attributed (refused)")
+        canonical = pq_commit_canonical(self.group_id, update_path)
+        verifier = verify_cb or self._commit_verifier
+        if verifier is None:
+            def verifier(pk: bytes, msg: bytes, sig: bytes) -> bool:
+                return bool(LibOQS_MLDSA_87().verify(pk, msg, sig))
+        try:
+            ok = bool(verifier(bytes(pub), canonical, bytes(commit_sig)))
+        except Exception as exc:
+            raise PQTreeKEMError(
+                f"commit signature verification error for {updater_id!r}: {exc}"
+            ) from exc
+        if not ok:
+            raise PQTreeKEMError(
+                f"commit signature invalid for {updater_id!r} (refused)")
 
     def add_member(self, member_id: str, kem_public_key: bytes) -> int:
         """
@@ -218,9 +301,20 @@ class PQTreeKEM:
                 epoch_id=self.current_epoch,
                 tree_hash_before=tree_hash_before,
             )
+            # Sign the commit when a local signer is installed.  An unsigned
+            # commit is refused by receivers in strict/production posture.
+            if self._commit_signer is not None:
+                try:
+                    update_path.commit_sig = bytes(self._commit_signer(
+                        pq_commit_canonical(self.group_id, update_path)))
+                except Exception as exc:
+                    raise PQTreeKEMError(
+                        f"commit signing failed: {exc}") from exc
             return update_path, new_epoch_secret
 
-    def apply_update_path(self, updater_leaf: int, update_path: PQUpdatePath) -> bytes:
+    def apply_update_path(self, updater_leaf: int, update_path: PQUpdatePath,
+                          commit_pub: Optional[bytes] = None,
+                          verify_cb: Optional[Any] = None) -> bytes:
         """
         Process an incoming PQUpdatePath from another group member.
 
@@ -236,8 +330,10 @@ class PQTreeKEM:
           secrecy depends on monotonicity).
         - tree_hash_before MUST match the local tree (stale/forked views
           refused; prevents cross-fork application).
-        - Caller MUST have authenticated the updater out-of-band: this
-          method verifies structure and cryptography, not authorship.
+        - The commit MUST carry a valid ML-DSA-87 signature from the
+          enrolled updater, and the signature is verified BEFORE any state
+          mutation.  Unsigned commits are refused in strict/production
+          posture (lab may accept them with a warning).
 
         Returns:
             bytes: The synchronized new_epoch_secret.
@@ -250,6 +346,18 @@ class PQTreeKEM:
             if local_leaf == updater_leaf:
                 # Local member was updater: epoch already updated
                 return self.epoch_secret
+
+            # Commit authentication (before any state mutation).
+            commit_sig = getattr(update_path, "commit_sig", None)
+            if commit_sig:
+                self._verify_commit_signature(update_path, bytes(commit_sig),
+                                             commit_pub=commit_pub,
+                                             verify_cb=verify_cb)
+            elif _strict_group_auth_required():
+                raise PQTreeKEMError(
+                    f"unsigned PQ update from "
+                    f"{getattr(update_path, 'updater_id', '?')!r} refused "
+                    "(strict posture requires a signed commit)")
 
             if update_path.epoch_id != self.current_epoch + 1:
                 raise PQTreeKEMError(

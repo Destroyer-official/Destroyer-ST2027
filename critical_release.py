@@ -86,16 +86,23 @@ class CriticalReleaseAuthority:
         """Require ADMIN for critical_release. Backward-compat allow unless strict."""
         # Engine-backed check (preferred when caller has a ZeroTrustEngine).
         if zero_trust_engine is not None and requester_peer_id is not None:
+            allowed = None
             try:
                 check = getattr(zero_trust_engine, "check_permission", None)
                 if callable(check):
-                    check(requester_peer_id, "critical_release")
-                    return
+                    allowed = check(requester_peer_id, "critical_release")
             except Exception as e:
                 # check_permission raises AuthenticationFailure on deny in
                 # strict mode; convert to ceremony error + lockout accounting.
                 self._register_failure()
                 raise ReleaseAuthError(f"RBAC denied critical_release: {e}") from e
+            if allowed is not None:
+                if allowed is False:
+                    self._register_failure()
+                    raise ReleaseAuthError(
+                        "RBAC denied critical_release: engine check_permission returned False"
+                    )
+                return
             # Engine without check_permission API -> fall through to role logic.
         if requester_role is not None:
             role_val = getattr(requester_role, "value", requester_role)
@@ -105,17 +112,27 @@ class CriticalReleaseAuthority:
                     f"RBAC denied critical_release: ADMIN required (got '{role_val}')"
                 )
             return
-        if os.environ.get("P2P_RBAC_STRICT") == "1":
-            # Deny-by-default: no role proof supplied in strict mode.
+        # Fail-closed by default: no role proof => denied.
+        # Lab default: allow backward-compat callers that do not pass role
+        # proof, but production fail-closed unless explicitly opted in.
+        try:
+            from production_gate import is_production as _gate_prod
+            _prod = bool(_gate_prod())
+        except Exception:
+            _prod = False
+        if _prod and os.environ.get(
+                "P2P_LAB_ALLOW_UNSIGNED_CRITICAL_RELEASE") != "1":
             self._register_failure()
             raise ReleaseAuthError(
-                "RBAC strict: ADMIN role required for critical_release "
-                "(deny-by-default; pass requester_role='admin' or "
+                "RBAC denied critical_release: ADMIN role required (no role "
+                "proof supplied; pass requester_role='admin' or "
                 "zero_trust_engine+requester_peer_id)"
             )
-        # Non-strict (default): allow for backward compat with existing
-        # tests/callers that do not pass role proof.
-        logger.debug("RBAC non-strict: critical_release proceeding without role proof")
+        if _prod:
+            logger.warning(
+                "LAB MODE: critical_release authorized without role proof "
+                "(P2P_LAB_ALLOW_UNSIGNED_CRITICAL_RELEASE=1).")
+        return
 
     def authorize(self, id1: str, pw1: str, id2: str, pw2: str, *,
                     requester_role=None, requester_peer_id=None,

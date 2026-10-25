@@ -175,24 +175,9 @@ _ALERT_ED25519_EPHEMERAL_PK: Optional[bytes] = None
 
 
 def _prod_strict_on() -> bool:
-    """Sticky-prod gate (guarded import; tiny duplicate fallback, no cycle)."""
-    try:
-        from utils.message_caps import prod_strict_on as _central_prod_strict
-        return bool(_central_prod_strict())
-    # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-    except Exception:  # nosec: B110
-        pass
-    try:
-        if os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"):
-            return True
-        if os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"):
-            return True
-        if os.environ.get("P2P_ENV", "").strip().lower() == "production":
-            return True
-    # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-    except Exception:  # nosec: B110
-        pass
-    return False
+    """Return canonical production posture, including legacy P2P_ENV."""
+    from production_gate import is_production
+    return is_production() or os.environ.get("P2P_ENV", "").strip().lower() == "production"
 
 
 def alerts_require_sig() -> bool:
@@ -1211,6 +1196,31 @@ class SecurityMonitor:
                 if alert.retry_count <= 5:
                     self._siem_retry_queue.append(alert)
     
+    def _persist_airgap_alert(self, alert: SecurityAlert, alert_data: Dict) -> str:
+        """Append a signed alert record to the local durable air-gap log.
+
+        Returns the path written. Raises on failure so the caller keeps the
+        alert queued rather than falsely marking it exported.
+        """
+        path = os.environ.get("P2P_AIRGAP_ALERT_LOG") or os.path.join(
+            "logs", "airgap_alerts.jsonl")
+        record = dict(alert_data)
+        record["air_gapped_local_retention"] = True
+        line = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+        with self._lock:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            # O_BINARY is mandatory on Windows to avoid newline translation.
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
+            fd = os.open(path, flags, 0o600)
+            try:
+                os.write(fd, line)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        return path
+
     def _send_to_siem(self, alert: SecurityAlert) -> bool:
         """
         Send a single alert to SIEM with cryptographic HMAC signature.
@@ -1274,9 +1284,20 @@ class SecurityMonitor:
             except Exception:
                 _air_gapped = os.environ.get("P2P_AIR_GAPPED_MODE") == "1"
             if _air_gapped:
+                # HIGH (monitoring L...): air-gapped mode has no SIEM uplink, so
+                # the alert must be durably persisted locally before it may be
+                # marked exported; otherwise CRITICAL evidence lives only in RAM.
+                try:
+                    path = self._persist_airgap_alert(alert, alert_data)
+                except Exception as e:
+                    logger.error(
+                        f"Air-gapped alert persistence failed for "
+                        f"{alert.alert_id}: {e}"
+                    )
+                    return False
                 logger.warning(
                     f"Air-gapped mode: skipping external SIEM POST for alert "
-                    f"{alert.alert_id} (retained in local audit log, no network attempt)."
+                    f"{alert.alert_id} (persisted to {path}, no network attempt)."
                 )
                 return True
 

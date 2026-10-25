@@ -30,7 +30,14 @@ try:
 except Exception:
     pass
 
-_PROCESS_MODE_VARS = ("P2P_EPHEMERAL_MODE", "P2P_ANONYMOUS")
+_PROCESS_MODE_VARS = (
+    "P2P_EPHEMERAL_MODE",
+    "P2P_ANONYMOUS",
+    "P2P_PRODUCTION",
+    "SECURE_P2P_PRODUCTION",
+    "P2P_TOP_SECRET",
+    "P2P_TS_MODE",
+)
 
 
 @pytest.fixture(autouse=True)

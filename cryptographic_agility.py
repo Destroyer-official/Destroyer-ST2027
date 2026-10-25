@@ -411,9 +411,10 @@ class AlgorithmNegotiator:
             if alg_name in self._disabled_algorithms:
                 return False
             alg = self._algorithms.get(alg_name)
-            if alg and alg.disabled:
+            if alg is None:
                 return False
-        
+            if alg.disabled:
+                return False
         return True
     
     def negotiate(

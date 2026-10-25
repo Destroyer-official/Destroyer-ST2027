@@ -333,11 +333,13 @@ class UnifiedSecurePipeline:
         if ratchet is None:
             raise PipelineSecurityError("Double Ratchet not initialized")
 
+        from production_gate import is_production
+        prod = is_production()
         try:
             is_stealth = (
                 stealth if stealth is not None else (
                     os.environ.get('P2P_STEALTH_FRAMING', '0').strip().lower() in ('1', 'true', 'yes', 'on') or
-                    os.environ.get('P2P_PRODUCTION', '0').strip().lower() in ('1', 'true', 'yes', 'on') or
+                    prod or
                     os.environ.get('P2P_MILITARY_MODE', '0').strip().lower() in ('1', 'true', 'yes', 'on')
                 )
             )
@@ -366,8 +368,7 @@ class UnifiedSecurePipeline:
                     raise PipelineSecurityError("Rust outer seal returned empty")
                 log.debug(f"[SEAL] Outer (Rust AEAD): {len(inner_sealed)} -> {len(outer_sealed)} bytes")
             elif os.environ.get('P2P_DATA_PLANE', '').lower() in ('rust', 'rust_udp', 'udp') or \
-                 os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on') or \
-                 os.environ.get('P2P_MILITARY_MODE', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+                 prod or os.environ.get('P2P_MILITARY_MODE', '').strip().lower() in ('1', 'true', 'yes', 'on'):
                 # Rust required but not available -- FAIL CLOSED
                 raise PipelineSecurityError(
                     "Rust data plane required in production/military mode but not established")
@@ -386,9 +387,9 @@ class UnifiedSecurePipeline:
             if self._seal_count % 100 == 0:
                 log.info(f"[PIPELINE {self._pipeline_id}] Sealed {self._seal_count} messages")
 
-            # Continuous Epoch Ratchet check: auto-rotate keys every CER_EPOCH_INTERVAL
+            # Continuous Epoch Ratchet notice: mark epoch interval without unilateral desynchronization
             if self._epoch_root_key is not None and (self._seal_count % CER_EPOCH_INTERVAL == 0):
-                self.rotate_epoch()
+                log.debug(f"[PIPELINE {self._pipeline_id}] CER epoch interval reached: {self._seal_count} messages sealed")
 
             return frame
 
@@ -434,13 +435,10 @@ class UnifiedSecurePipeline:
                 inner_sealed = self._rust_node.open_stream(bytes(sealed_data))
                 if inner_sealed is not None:
                     log.debug(f"[OPEN] Outer (Rust AEAD): {len(sealed_data)} -> {len(inner_sealed)} bytes")
-                elif os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on') or \
-                     os.environ.get('P2P_MILITARY_MODE', '') in ('1', 'true'):
-                    raise PipelineSecurityError("Rust AEAD outer verification failed under strict production/military mode")
                 else:
-                    # Not Rust-sealed -- try as raw ratchet (mixed-fleet peer)
-                    log.debug("[OPEN] Not Rust-sealed, trying legacy ratchet path")
-                    inner_sealed = sealed_data
+                    # Layer 2 active: authentication failure, replay, or session mismatch MUST fail closed
+                    log.error("[OPEN] Rust AEAD outer envelope verification failed (invalid MAC, replay, or session mismatch)")
+                    raise PipelineSecurityError("Rust AEAD outer verification failed")
             else:
                 inner_sealed = sealed_data
 
@@ -722,58 +720,62 @@ class AutonomousDefenseRatchet:
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives import hashes as crypto_hashes
 
+        # Derive the candidate chain/msg key without mutating receiver state.
         with self._lock:
-            # Anti-replay: strictly monotonic sequence
             if seq < self._recv_seq:
-                raise PipelineSecurityError(f"Replay detected: received seq {seq} < expected {self._recv_seq}")
-
-            # Catch up skipped keys if needed (max 32 to prevent DoS)
+                raise PipelineSecurityError(
+                    f"Replay detected: received seq {seq} < expected {self._recv_seq}")
             skipped = seq - self._recv_seq
             if skipped > 32:
-                raise PipelineSecurityError(f"Excessive sequence jump: {skipped} messages skipped")
+                raise PipelineSecurityError(
+                    f"Excessive sequence jump: {skipped} messages skipped")
 
-            while self._recv_seq < seq:
+            # Walk the chain to the target seq, collecting candidate state.
+            chain = bytearray(self._recv_chain_key)
+            cur_seq = self._recv_seq
+            while cur_seq < seq:
                 hkdf_skip = HKDF(
                     algorithm=crypto_hashes.SHA512(),
                     length=64,
                     salt=self.STEP_SALT,
-                    info=struct.pack(">Q", self._recv_seq) + b"-step",
+                    info=struct.pack(">Q", cur_seq) + b"-step",
                 )
-                skip_derived = hkdf_skip.derive(bytes(self._recv_chain_key))
-                for i in range(32):
-                    self._recv_chain_key[i] = skip_derived[i]
-                self._recv_seq += 1
+                skip_derived = hkdf_skip.derive(bytes(chain))
+                chain[:32] = skip_derived[:32]
+                cur_seq += 1
 
-            # Derive key for this message
             hkdf = HKDF(
                 algorithm=crypto_hashes.SHA512(),
                 length=64,
                 salt=self.STEP_SALT,
-                info=struct.pack(">Q", self._recv_seq) + b"-step",
+                info=struct.pack(">Q", cur_seq) + b"-step",
             )
-            derived = hkdf.derive(bytes(self._recv_chain_key))
-            new_chain = derived[:32]
+            derived = hkdf.derive(bytes(chain))
+            candidate_chain = derived[:32]
             msg_key = derived[32:64]
+            candidate_seq = cur_seq + 1
 
-            for i in range(32):
-                self._recv_chain_key[i] = new_chain[i]
-            self._recv_seq += 1
-
+        # Authenticate BEFORE committing chain/seq state.
         aad = struct.pack(">Q", seq) + PIPELINE_VERSION
-        computed_mac = hmac.new(msg_key, aad + nonce + ciphertext, hashlib.sha512).digest()[:32]
-
+        computed_mac = hmac.new(
+            msg_key, aad + nonce + ciphertext, hashlib.sha512).digest()[:32]
         if not secrets.compare_digest(computed_mac, expected_mac):
+            del msg_key
             raise PipelineSecurityError("Ratchet message authentication failed")
 
         try:
             aead = ChaCha20Poly1305(msg_key)
             plaintext = aead.decrypt(nonce, ciphertext, aad)
         except Exception as e:
-            raise PipelineSecurityError(f"AEAD decryption failed: {e}") from e
-        finally:
             del msg_key
-            del derived
+            raise PipelineSecurityError(f"AEAD decryption failed: {e}") from e
 
+        # Commit only after both MAC and AEAD succeed.
+        with self._lock:
+            self._recv_chain_key[:] = candidate_chain
+            self._recv_seq = candidate_seq
+        del msg_key
+        del derived
         return plaintext
 
     def teardown(self):

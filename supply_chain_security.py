@@ -609,8 +609,9 @@ class DependencySignatureVerifier:
         logger.info(f"Verifying all dependencies from {requirements_file}")
         
         if not os.path.exists(requirements_file):
-            logger.warning(f"Requirements file not found: {requirements_file}")
-            return True
+            # Fail closed: absence of the manifest is not evidence of integrity.
+            logger.error(f"Requirements file not found: {requirements_file} (verification refused)")
+            return False
         
         # Parse requirements file
         dependencies = self._parse_requirements(requirements_file)
@@ -625,7 +626,8 @@ class DependencySignatureVerifier:
                     if not verified:
                         all_verified = False
                 else:
-                    logger.warning(f"Package not found: {dep_name}")
+                    logger.error(f"Package not found: {dep_name}")
+                    all_verified = False
             except Exception as e:
                 logger.error(f"Error verifying {dep_name}: {e}")
                 all_verified = False
@@ -772,7 +774,8 @@ class PinnedDependencyManager:
                 
                 logger.info(f"Loaded {len(self.pinned_dependencies)} pinned dependencies")
             except Exception as e:
-                logger.warning(f"Could not load lockfile: {e}")
+                logger.error(f"Could not load lockfile: {e}")
+                raise
     
     def _save_lockfile(self):
         """Save pinned dependencies to lockfile"""
@@ -1787,12 +1790,8 @@ class TUFReleaseManager:
         """
         if os.environ.get("P2P_REQUIRE_PQ_CODE_SIG", "").strip().lower() in ("1", "true", "yes", "on"):
             return True
-        try:
-            from production_gate import is_production
-            return is_production()
-        except Exception:
-            return (os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                    or os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production
+        return is_production()
 
     def _ensure_pq_keys(self) -> Tuple[bytes, bytes]:
         """Load (or mint) the ML-DSA-87 release-signing keypair.

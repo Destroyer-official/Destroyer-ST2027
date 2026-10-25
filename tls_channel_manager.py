@@ -97,11 +97,9 @@ if not log.handlers and not logging.getLogger().handlers:
 # CRL/OCSP hard-enforcement policy (non-breaking, fail-closed in production)
 # ---------------------------------------------------------------------------
 def _tls_is_production() -> bool:
-    """True when P2P_PRODUCTION / SECURE_P2P_PRODUCTION requests production."""
-    try:
-        return is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
-    except Exception:
-        return False
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 def _pq_bundle_falcon_allowed() -> bool:
@@ -1128,15 +1126,16 @@ def _hardened_https_context() -> "ssl.SSLContext":
     Production (P2P_PRODUCTION=1) floors at TLS 1.3 (CNSA 2.0); lab stays at
     TLS 1.2 for interop.
     """
-    import os as _os
-    _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+    from production_gate import is_ts_mode
+    _prod = is_ts_mode()
     ctx = ssl.create_default_context()
     if hasattr(ssl, "TLSVersion"):
         try:
             ctx.minimum_version = ssl.TLSVersion.TLSv1_3 if _prod else ssl.TLSVersion.TLSv1_2
-        # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-        except Exception:  # nosec: B110
-            pass
+        except Exception:
+            if _prod:
+                raise
+            log.warning("TLS 1.2 floor could not be configured on this runtime")
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
     return ctx
@@ -2028,8 +2027,8 @@ class TLSSecureChannel:
             reduces security and should only be done in controlled test environments.
             Production (P2P_PRODUCTION=1) refuses both (fail-closed).
         """
-        import os as _os
-        _prod = _os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on") or _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
+        from production_gate import is_ts_mode
+        _prod = is_ts_mode()
         if _prod and not verify_certs:
             raise ValueError("verify_certs=False refused in production (MITM protection)")
         if _prod and not enforce_dane_validation:

@@ -1152,10 +1152,15 @@ class CovertChannelDefense:
         
         # Analyze for covert channels
         alert = self._detector.analyze_packet(packet, timestamp)
-        if alert and alert.severity == "critical":
-            raise CovertChannelDetectedError(
-                f"Critical covert channel detected: {alert.description}"
-            )
+        if alert:
+            # HIGH (side_channel L48): non-critical alerts were ignored.
+            # Every detected anomaly is surfaced; only critical ones abort.
+            if alert.severity == "critical":
+                raise CovertChannelDetectedError(
+                    f"Critical covert channel detected: {alert.description}"
+                )
+            log_fn = logger.warning if alert.severity in ("high", "medium") else logger.info
+            log_fn(f"Covert channel alert ({alert.severity}): {alert.description}")
         
         # Verify packet size
         if not self._normalizer.verify_size(packet):

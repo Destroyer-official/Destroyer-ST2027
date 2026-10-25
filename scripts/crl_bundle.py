@@ -102,6 +102,7 @@ def _load_manager_from_file(manager_cls, devices_file: str | None, in_memory: bo
                 mgr.load_from_file(str(candidate))
         except Exception as e:
             print(f"WARN: could not load devices file {candidate}: {e}", file=sys.stderr)
+            raise
         # Remember resolved path for later save.
         mgr._cli_devices_file = str(candidate)  # type: ignore[attr-defined]
         return mgr
@@ -217,7 +218,11 @@ def do_import(args: argparse.Namespace) -> int:
         print("passthrough check: OK (schema + version)")
         return 0
 
-    mgr = _load_manager_from_file(manager_cls, args.devices_file, in_memory=True)
+    try:
+        mgr = _load_manager_from_file(manager_cls, args.devices_file, in_memory=True)
+    except Exception as e:
+        print(f"ERROR: could not load devices file: {e}", file=sys.stderr)
+        return 4
     verify_pubkey = None
     if args.verify_key and Path(str(args.verify_key)).is_file():
         try:
@@ -243,7 +248,8 @@ def do_import(args: argparse.Namespace) -> int:
             mgr.save_to_file(str(save_target))
             print(f"  saved device registry -> {save_target}")
         except Exception as e:
-            print(f"WARN: could not save devices file {save_target}: {e}", file=sys.stderr)
+            print(f"ERROR: could not save devices file {save_target}: {e}", file=sys.stderr)
+            return 4
     if added == 0:
         print("  (0 may mean stale version, already-merged, or rejected signature - see log)")
     return 0

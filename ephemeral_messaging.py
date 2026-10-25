@@ -632,9 +632,15 @@ class EphemeralMessageManager:
         if len(envelope_bytes) > self.MAX_IMPORT_BYTES + 4096:
             raise ValueError("Envelope exceeds import size cap")
         msg = EphemeralMessage.from_encrypted_envelope(envelope_bytes, aead_key)
-        # Re-validate TTL and content bounds from the (adversarial) envelope
+        # Re-validate TTL and content bounds from the (adversarial) envelope.
+        # Expiry must be anchored to LOCAL receipt time: a peer-supplied
+        # created_at in the future would otherwise extend retention.
         ttl = int(msg.expires_at - msg.created_at) if msg.expires_at > msg.created_at else 0
         self._validate_ttl(ttl)
+        now = time.time()
+        if msg.created_at > now or msg.expires_at > now + ttl:
+            msg.created_at = now
+            msg.expires_at = now + ttl
         if len(msg.content) > self.MAX_IMPORT_BYTES:
             raise ValueError("Imported content exceeds size cap")
         with self._lock:

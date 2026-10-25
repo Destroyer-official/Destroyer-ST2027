@@ -13,11 +13,9 @@ class ConfigurationError(Exception):
 
 
 def _env_wants_prod() -> bool:
-    """True if current process env requests production mode."""
-    return (
-        os.environ.get('P2P_PRODUCTION', '').lower() in ('1', 'true', 'yes', 'on')
-        or os.environ.get('SECURE_P2P_PRODUCTION', '').lower() in ('1', 'true', 'yes', 'on')
-    )
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 # Sticky production latch: captured once at import. Never allowed to unset.
@@ -736,15 +734,26 @@ class ConfigManager:
             value: Configuration value
         """
         self.config[key] = value
-        self.logger.debug(f"Set configuration {key}={value}")
+        # A4-19 (2026-10-17): never log raw values for secret-looking keys —
+        # the previous debug line wrote passphrases/tokens to log files.
+        if self._is_sensitive_key(key):
+            self.logger.debug(f"Set configuration {key}=[REDACTED]")
+        else:
+            self.logger.debug(f"Set configuration {key}={value}")
+
+    @staticmethod
+    def _is_sensitive_key(key: Any) -> bool:
+        k_upper = str(key).upper()
+        return any(
+            pat in k_upper
+            for pat in ('KEY', 'SECRET', 'PASSWORD', 'PASSPHRASE', 'TOKEN', 'CREDENTIAL')
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Get configuration as dictionary with sensitive variables redacted (Item 53 / Finding 7.3)."""
         redacted = {}
-        sensitive_patterns = ('KEY', 'SECRET', 'PASSWORD', 'PASSPHRASE', 'TOKEN', 'CREDENTIAL')
         for k, v in self.config.items():
-            k_upper = str(k).upper()
-            if any(pat in k_upper for pat in sensitive_patterns):
+            if self._is_sensitive_key(k):
                 redacted[k] = "[REDACTED]"
             else:
                 redacted[k] = v

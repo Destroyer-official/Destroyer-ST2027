@@ -25,7 +25,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
@@ -468,9 +468,11 @@ class ACVPValidationHarness:
         report_bytes = json.dumps(report, indent=2).encode("utf-8")
         report_file.write_bytes(report_bytes)
 
-        # Dual-sign with ML-DSA-87
+        # Sign with the persistent pinned audit signer (never ephemeral)
+        from report_trust import load_or_create_audit_signer
+
         dsa = LibOQS_MLDSA_87()
-        pk, sk = dsa.keygen()
+        pk, sk = load_or_create_audit_signer()
         sig = dsa.sign(sk, report_bytes)
 
         sig_path = out_dir / "acvp_cavp_validation_report.json.mldsa87.sig"
@@ -487,17 +489,21 @@ class ACVPValidationHarness:
         return report
 
 
-def verify_acvp_report_signature(report_path: Path, sig_path: Path, pub_path: Path) -> bool:
-    """Cryptographically verify that the ACVP validation report has not been tampered with."""
+def verify_acvp_report_signature(
+    report_path: Path,
+    sig_path: Path,
+    pub_path: Path,
+    anchor_path: Optional[Path] = None,
+) -> bool:
+    """Verify the report against the pinned audit anchor, not its own ``.pub``."""
     if not (report_path.exists() and sig_path.exists() and pub_path.exists()):
         return False
     try:
-        report_bytes = report_path.read_bytes()
-        sig_bytes = sig_path.read_bytes()
-        pub_bytes = pub_path.read_bytes()
+        from report_trust import verify_with_anchor
 
-        dsa = LibOQS_MLDSA_87()
-        is_valid = dsa.verify(pub_bytes, report_bytes, sig_bytes)
+        is_valid = verify_with_anchor(
+            report_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+        )
         if is_valid:
             print("[PASS] Cryptographic verification: ACVP Report signature VERIFIED with ML-DSA-87 (FIPS 204)")
         else:

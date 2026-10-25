@@ -31,13 +31,8 @@ _PQ_ROTATION_DUAL_SIGN_WINDOW = timedelta(days=7)
 
 
 def _pq_is_production() -> bool:
-    try:
-        return (
-            os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-        )
-    except Exception:
-        return False
+    from production_gate import is_production
+    return is_production()
 
 
 def _pq_crl_refresh_hours() -> float:
@@ -544,15 +539,16 @@ class PQCertificateAuthority:
 
         tbs_data = cert.to_bytes()
         
-        # Determine which public key to use for verification
-        if cert.issuer == self.ca_name:
-            issuer_pk = self._ca_public_key
-        elif cert.issuer_public_key:
-            issuer_pk = cert.issuer_public_key
-        else:
+        # Determine which public key to use for verification.
+        # SECURITY: only certificates issued by THIS CA are verifiable here.
+        # The certificate-embedded issuer_public_key must never act as its own
+        # verification anchor (that accepts arbitrary self-issued forgeries).
+        if cert.issuer != self.ca_name:
             raise SignatureVerificationError(
-                f"Cannot verify certificate: unknown issuer '{cert.issuer}'"
+                f"Cannot verify certificate: unknown/foreign issuer "
+                f"'{cert.issuer}' (only this CA's certificates are verifiable)"
             )
+        issuer_pk = self._ca_public_key
         
         # Fast path: current signer.
         try:

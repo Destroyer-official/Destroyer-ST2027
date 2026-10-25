@@ -251,14 +251,9 @@ log = ca_logger
 # CRL/OCSP hard-enforcement helpers (non-breaking, fail-closed in production)
 # ---------------------------------------------------------------------------
 def _ca_is_production() -> bool:
-    """True when production mode is enabled via P2P_PRODUCTION / SECURE_P2P_PRODUCTION."""
-    try:
-        return (
-            os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-        )
-    except Exception:
-        return False
+    """Return the canonical sticky, fail-closed production posture."""
+    from production_gate import is_production
+    return is_production()
 
 
 def _ocsp_must_staple_enabled() -> bool:
@@ -659,6 +654,61 @@ class CAExchange:
         except Exception:  # nosec: B110
             pass
         return False
+
+    def _authorize_tofu_first_contact(self, peer_host: str, clean_fp: str,
+                                      clean_peer_pair: str = "") -> None:
+        """Fail-closed gate for a TOFU first-contact certificate.
+
+        A peer that is not already pinned must be pre-authorized out of band
+        (whitelist entry or P2P_AUTHORIZED_PEER_FINGERPRINT) before its
+        certificate is accepted.  This is a named production method so the
+        decision is directly testable (previously the logic was inlined in
+        the exchange path and duplicated in tests).
+
+        Raises:
+            SecurityError: if the peer is not pre-authorized.
+        """
+        is_authorized = False
+        auth_fps = getattr(self, 'authorized_peer_fingerprints', set()) or set()
+        if len(clean_fp) in (64, 128) and all(c in "0123456789abcdef" for c in clean_fp):
+            for auth_fp in auth_fps:
+                if not isinstance(auth_fp, str):
+                    continue
+                clean_auth = auth_fp.strip().lower()
+                if (len(clean_auth) == len(clean_fp)
+                        and hmac.compare_digest(clean_fp, clean_auth)):
+                    is_authorized = True
+                    break
+                if clean_peer_pair and (
+                        (len(clean_auth) == len(clean_peer_pair)
+                         and hmac.compare_digest(clean_peer_pair, clean_auth))
+                        or (len(clean_auth) == 64 and len(clean_peer_pair) == 128
+                            and hmac.compare_digest(clean_peer_pair[:64], clean_auth))):
+                    is_authorized = True
+                    break
+            env_fp = os.environ.get("P2P_AUTHORIZED_PEER_FINGERPRINT")
+            if env_fp:
+                clean_env = env_fp.strip().lower()
+                if (len(clean_env) == len(clean_fp)
+                        and hmac.compare_digest(clean_fp, clean_env)):
+                    is_authorized = True
+                if clean_peer_pair and (
+                        (len(clean_env) == len(clean_peer_pair)
+                         and hmac.compare_digest(clean_peer_pair, clean_env))
+                        or (len(clean_env) == 64 and len(clean_peer_pair) == 128
+                            and hmac.compare_digest(clean_peer_pair[:64], clean_env))):
+                    is_authorized = True
+
+        if not is_authorized:
+            ca_logger.critical(
+                f"FAIL-CLOSED: TOFU first-contact certificate for '{peer_host}' "
+                f"rejected: peer is not in pre-authorized whitelist. "
+                "Unverified TOFU is prohibited under military policy."
+            )
+            raise SecurityError(
+                f"Certificate TOFU first-contact rejected for '{peer_host}': "
+                "requires out-of-band whitelist pre-authorization."
+            )
 
     def _calculate_cert_fingerprint(self, cert_pem: bytes) -> str:
         """Calculate sha3_512 fingerprint of a certificate.
@@ -1227,7 +1277,17 @@ class CAExchange:
                 if ready_event:
                     ready_event.set()
 
-                peer_sock, peer_addr = sock.accept()
+                # A4-11 (2026-10-17): bound the pre-handshake accept wait.
+                # Without a timeout an unauthenticated peer could hold the
+                # exchange listener (and its thread) open indefinitely
+                # (slowloris-style resource pin). 30s covers operator-grade
+                # interactive exchange; steady-state reads set their own
+                # timeouts below.
+                sock.settimeout(30.0)
+                try:
+                    peer_sock, peer_addr = sock.accept()
+                finally:
+                    sock.settimeout(None)
                 ca_logger.info(f"Connected from {peer_addr}.")
                 peer_host = peer_addr[0]
             else:
@@ -1432,39 +1492,11 @@ class CAExchange:
                                 )
                                 raise SecurityError(f"Certificate continuity failure for peer {peer_host}: Fingerprint has changed unexpectedly (MITM guard).")
                             elif pin_status == 'new':
-                                # Fail-closed gate: TOFU first-contact requires out-of-band verification or whitelist authorization (Findings 8 & 12)
-                                is_authorized = False
-                                auth_fps = getattr(self, 'authorized_peer_fingerprints', set()) or set()
-                                if len(clean_fp) in (64, 128) and all(c in "0123456789abcdef" for c in clean_fp):
-                                    for auth_fp in auth_fps:
-                                        if isinstance(auth_fp, str):
-                                            clean_auth = auth_fp.strip().lower()
-                                            if (len(clean_auth) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_auth)) or \
-                                               (len(clean_auth) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_auth)):
-                                                is_authorized = True
-                                                break
-                                            if clean_peer_pair and ((len(clean_auth) == len(clean_peer_pair) and hmac.compare_digest(clean_peer_pair, clean_auth)) or \
-                                               (len(clean_auth) == 64 and len(clean_peer_pair) == 128 and hmac.compare_digest(clean_peer_pair[:64], clean_auth))):
-                                                is_authorized = True
-                                                break
-                                    env_fp = os.environ.get("P2P_AUTHORIZED_PEER_FINGERPRINT")
-                                    if env_fp:
-                                        clean_env = env_fp.strip().lower()
-                                        if (len(clean_env) == len(clean_fp) and hmac.compare_digest(clean_fp, clean_env)) or \
-                                           (len(clean_env) == 64 and len(clean_fp) == 128 and hmac.compare_digest(clean_fp[:64], clean_env)):
-                                            is_authorized = True
-                                        if clean_peer_pair and ((len(clean_env) == len(clean_peer_pair) and hmac.compare_digest(clean_peer_pair, clean_env)) or \
-                                           (len(clean_env) == 64 and len(clean_peer_pair) == 128 and hmac.compare_digest(clean_peer_pair[:64], clean_env))):
-                                            is_authorized = True
-
-                                if not is_authorized:
-                                    ca_logger.critical(
-                                        f"FAIL-CLOSED: TOFU first-contact certificate for '{peer_host}' ({actual_fingerprint[:24]}...) "
-                                        f"rejected: peer is not in pre-authorized whitelist. Unverified TOFU is prohibited under military policy."
-                                    )
-                                    raise SecurityError(
-                                        f"Certificate TOFU first-contact rejected for '{peer_host}': requires out-of-band whitelist pre-authorization."
-                                    )
+                                # Fail-closed gate: TOFU first-contact requires
+                                # out-of-band verification or whitelist
+                                # authorization (Findings 8 & 12).
+                                self._authorize_tofu_first_contact(
+                                    peer_host, clean_fp, clean_peer_pair)
                                 self.authorized_peer_fingerprints.add(clean_fp)
                                 if clean_peer_pair:
                                     self.authorized_peer_fingerprints.add(clean_peer_pair)

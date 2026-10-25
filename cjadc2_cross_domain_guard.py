@@ -15,6 +15,7 @@ Implements:
 import argparse
 import datetime
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -31,6 +32,77 @@ REPORTS_DIR = REPO_ROOT / "compliance_reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 logger = logging.getLogger("CJADC2CrossDomainGuard")
+
+
+def _production() -> bool:
+    """Best-effort production gate; failure to detect is treated as lab."""
+    try:
+        from production_gate import is_production
+        return bool(is_production())
+    except Exception:
+        return False
+
+
+def _audit_key_path(out_dir: Path) -> Path:
+    """Provisioned audit signing key location (env override wins)."""
+    env = os.environ.get("P2P_CJADC2_AUDIT_KEY_FILE")
+    if env:
+        return Path(env)
+    return out_dir / "cjadc2_cross_domain_audit.signing.key"
+
+
+def _load_audit_signing_key(path: Path) -> Optional[Tuple[bytes, bytes]]:
+    """Load a persistent ML-DSA-87 audit signing keypair, or None."""
+    try:
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        pk = bytes.fromhex(blob["pk_hex"])
+        sk = bytes.fromhex(blob["sk_hex"])
+        if len(pk) != 2592 or len(sk) != 4896:
+            raise ValueError("invalid ML-DSA-87 key length")
+        return pk, sk
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _store_audit_signing_key(path: Path, pk: bytes, sk: bytes) -> None:
+    """Atomically persist the audit signing key with owner-only permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    fd = os.open(str(tmp), flags, 0o600)
+    try:
+        os.write(fd, json.dumps(
+            {"pk_hex": pk.hex(), "sk_hex": sk.hex(), "algorithm": "ML-DSA-87"}
+        ).encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(str(tmp), str(path))
+
+
+def _audit_signing_key(out_dir: Path) -> Tuple[bytes, bytes]:
+    """Return the provisioned signing key.
+
+    Production never auto-generates a throwaway keypair (a re-generated key
+    makes every forged audit report look authentic).  Labs may bootstrap a
+    persistent per-output-directory key for test/drill workflows.
+    """
+    path = _audit_key_path(out_dir)
+    pair = _load_audit_signing_key(path)
+    if pair is not None:
+        return pair
+    if _production():
+        raise RuntimeError(
+            "CJADC2 audit signing key is not provisioned; refusing to "
+            "generate an ephemeral signing key in production."
+        )
+    signer = LibOQS_MLDSA_87()
+    pk, sk = signer.keygen()
+    _store_audit_signing_key(path, pk, sk)
+    logger.warning(
+        "Bootstrapped CJADC2 audit signing key at %s (lab/drill only).", path
+    )
+    return pk, sk
 
 try:
     from liboqs_wrapper import LibOQS_MLDSA_87
@@ -161,8 +233,8 @@ class CrossDomainGuard:
                                caveat: str = "GLOBAL") -> bytes:
         """
         Cryptographic Compartment Isolation:
-        Derives an isolated 256-bit symmetric sub-key via HKDF-SHA3-512 domain separation:
-        K_compartment = HKDF-Expand(master_secret, salt="CJADC2-COMPARTMENT-{classification}-{caveat}")
+        Derives an isolated 256-bit symmetric sub-key via RFC 5869 / SP 800-56C compliant HKDF-SHA3-512:
+        K_compartment = HKDF-Expand(HKDF-Extract(salt, master_secret), info, 32)
         
         Ensures intermediate relay nodes without compartment clearance mathematically cannot
         decrypt compartment payload ciphertext.
@@ -170,10 +242,18 @@ class CrossDomainGuard:
         salt = f"CJADC2-COMPARTMENT-{classification.name}-{caveat}".encode("utf-8")
         info = b"NIST-CNSA-2.0-COMPARTMENT-ISOLATION-L5"
         
-        # HKDF-Extract & Expand using SHA3-512
-        prk = hashlib.sha3_512(salt + master_secret).digest()
-        key_material = hashlib.sha3_512(prk + info + b"\x01").digest()
-        return key_material[:32]  # 256-bit symmetric key for ChaCha20-Poly1305
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.backends import default_backend
+        
+        hkdf = HKDF(
+            algorithm=hashes.SHA3_512(),
+            length=32,
+            salt=salt,
+            info=info,
+            backend=default_backend()
+        )
+        return hkdf.derive(master_secret)
 
     def encrypt_compartment_payload(self, master_secret: bytes, classification: SecurityClassification,
                                     caveat: str, plaintext_bytes: bytes) -> Dict[str, Any]:
@@ -264,7 +344,7 @@ def sign_and_export_cross_domain_audit(guard: CrossDomainGuard,
     rep_path.write_bytes(canon_bytes)
 
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = _audit_signing_key(out_dir)
     sig = signer.sign(sk, canon_bytes)
 
     sig_path.write_bytes(sig)
@@ -279,6 +359,29 @@ def verify_cross_domain_audit_signature(rep_path: Path, sig_path: Path, pub_path
     data = rep_path.read_bytes()
     sig = sig_path.read_bytes()
     pk = pub_path.read_bytes()
+
+    # Anchor the embedded pubkey to a provisioned/trusted identity.  An
+    # embedded pubkey is never its own trust anchor: otherwise anyone can
+    # generate a keypair and forge a "signed" audit report.
+    trusted = _load_audit_signing_key(_audit_key_path(rep_path.parent))
+    if trusted is not None:
+        if not hmac.compare_digest(trusted[0], pk):
+            logger.warning(
+                "Cross-domain audit verification refused: embedded public key "
+                "does not match the provisioned signing key."
+            )
+            return False
+    elif _production():
+        logger.warning(
+            "Cross-domain audit verification refused: no provisioned trust "
+            "anchor for the audit signing key."
+        )
+        return False
+    else:
+        logger.critical(
+            "Cross-domain audit verification has no provisioned trust anchor; "
+            "accepting embedded key in lab mode only."
+        )
 
     signer = LibOQS_MLDSA_87()
     return signer.verify(pk, data, sig)

@@ -62,16 +62,17 @@ def is_production() -> bool:
 def prod_strict_on() -> bool:
     """Central sticky-prod strict gate (single source of truth).
 
-    True when P2P_PRODUCTION or SECURE_P2P_PRODUCTION is truthy
-    (1/true/yes/on), or P2P_ENV=production. Reused by RBAC strict,
-    alerts-require-sig, and CRL-require-sig so prod auto-enables
-    strict without extra env. Lab default: False.
+    Delegates to :mod:`production_gate`, which is the canonical, sticky
+    detector (it latches once armed and understands the full set of
+    operator spellings).  Keeping a second, divergent implementation here
+    let the two drift apart, so this module no longer re-implements the
+    decision.  ``P2P_ENV=production`` is honoured as well.
     """
-    if _env_true("P2P_PRODUCTION") or _env_true("SECURE_P2P_PRODUCTION"):
-        return True
-    if os.environ.get("P2P_ENV", "").strip().lower() == "production":
-        return True
-    return False
+    from production_gate import is_production as _gate_is_production
+    return (
+        _gate_is_production()
+        or os.environ.get("P2P_ENV", "").strip().lower() == "production"
+    )
 
 
 def is_strict_encrypt() -> bool:

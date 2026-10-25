@@ -198,6 +198,26 @@ class SecureMemoryWiper:
                 error_message="immutable bytes cannot be wiped in place; pass bytearray/memoryview"
             )
 
+        # A path (or any other non-buffer) is NOT a memory buffer.  This used
+        # to fail deep inside the wipe loop with a TypeError that the caller
+        # could silently ignore, so a file was left on disk while the caller
+        # reported a verified purge.  Refuse explicitly and say why.
+        if not isinstance(data, (bytearray, memoryview)):
+            logger.error(
+                "Refusing to 'wipe' a %s: this is a memory-buffer API; use "
+                "secure_shred_file() for files (fail-closed result)",
+                type(data).__name__)
+            return WipeResult(
+                success=False,
+                bytes_wiped=0,
+                passes_completed=0,
+                verification_passed=False,
+                duration_ms=(time.time() - start_time) * 1000,
+                error_message=(
+                    f"{type(data).__name__} is not a wipeable memory buffer; "
+                    "use secure_shred_file() for files")
+            )
+
         # Convert to mutable buffer if needed
         if isinstance(data, memoryview):
             mutable_data = data

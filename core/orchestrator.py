@@ -78,6 +78,14 @@ class SecureP2PChat:
         self._ui_manager = None
         self._utils_manager = None
         self._system_tests = None
+        # Background tasks (accept loop, per-peer handlers) tracked so
+        # shutdown can cancel them instead of leaving them running.
+        self._background_tasks: List[Any] = []
+
+        # Per-peer auth-tag keys are derived during the authenticated handshake
+        # and registered here. They must never be shared across peers.
+        self.session_auth_key: Optional[bytes] = None
+        self._session_auth_keys: Dict[str, bytes] = {}
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -202,36 +210,111 @@ class SecureP2PChat:
         """Initialize all modules."""
         self.logger.info("Initializing SecureP2PChat orchestrator")
         try:
-            # Modules initialize themselves on first access via lazy loading
+            # Modules initialize themselves on first access via lazy loading.
+            # Fail closed: a security component that cannot be loaded must
+            # prevent the orchestrator from claiming readiness.
+            for name in ("security", "crypto", "keys"):
+                mgr = getattr(self, f"_{name}_manager" if name != "crypto" else "_crypto_ops", None)
+                if mgr is None:
+                    continue
+                init = getattr(mgr, "initialize", None)
+                if callable(init):
+                    res = init()
+                    if hasattr(res, "__await__"):
+                        await res
             self.logger.info("SecureP2PChat orchestrator initialized successfully")
         except Exception as e:
             self.logger.error(f"Failed to initialize orchestrator: {e}", exc_info=True)
             raise
     
     async def cleanup(self) -> None:
-        """Cleanup all modules."""
+        """Cleanup all modules, sessions and background tasks."""
         self.logger.info("Cleaning up SecureP2PChat orchestrator")
+        errors = []
+
+        # 1. Stop the accept loop and every per-peer handler task.
+        for task in list(self._background_tasks):
+            try:
+                task.cancel()
+            except Exception as e:
+                errors.append(("task-cancel", e))
+        self._background_tasks.clear()
+
+        # 2. Close peer writers and zeroize live session state.
         try:
-            # Cleanup modules in reverse order
-            if self._utils_manager:
-                await self._utils_manager.cleanup()
-            if self._messaging_manager:
-                await self._messaging_manager.cleanup()
-            if self._ui_manager:
-                await self._ui_manager.cleanup()
-            if self._data_manager:
-                await self._data_manager.cleanup()
-            if self._keys_manager:
-                await self._keys_manager.cleanup()
-            if self._security_manager:
-                await self._security_manager.cleanup()
-            if self._network_manager:
-                await self._network_manager.cleanup()
-            if self._crypto_ops:
-                await self._crypto_ops.cleanup()
-            self.logger.info("SecureP2PChat orchestrator cleaned up successfully")
+            conns = list(active_connections.items())
+        except Exception:
+            conns = []
+        for peer_id, conn_info in conns:
+            try:
+                writer = getattr(conn_info, "writer", None)
+                if writer is not None:
+                    writer.close()
+            except Exception as e:
+                errors.append((f"writer-close:{peer_id}", e))
+            try:
+                session = getattr(conn_info, "session_context", None)
+                if session is not None and hasattr(session, "secure_cleanup"):
+                    session.secure_cleanup()
+            except Exception as e:
+                errors.append((f"session-cleanup:{peer_id}", e))
+        try:
+            active_connections.clear()
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}", exc_info=True)
+            errors.append(("connections-clear", e))
+        self._session_auth_keys.clear()
+        self.session_auth_key = None
+
+        # 3. Clean up the modules.
+        for name, mgr in (
+            ("utils", self._utils_manager),
+            ("messaging", self._messaging_manager),
+            ("ui", self._ui_manager),
+            ("data", self._data_manager),
+            ("keys", self._keys_manager),
+            ("security", self._security_manager),
+            ("network", self._network_manager),
+            ("crypto", self._crypto_ops),
+        ):
+            if mgr is None:
+                continue
+            try:
+                await self._run_manager_cleanup(mgr)
+            except Exception as e:
+                self.logger.error(
+                    f"Cleanup failed for {name}: {e}", exc_info=True)
+                errors.append((name, e))
+        if errors:
+            raise RuntimeError(f"orchestrator cleanup failed: {errors}")
+
+    @staticmethod
+    async def _run_manager_cleanup(mgr: Any) -> None:
+        """Invoke a module's cleanup, tolerating the several manager shapes.
+
+        Managers expose either a plain ``cleanup()`` method (sync or async) or
+        a lazy ``cleanup`` property that yields a sub-module whose own
+        ``cleanup()`` must be awaited.  A previous version called the
+        property object directly, which raised TypeError and skipped every
+        remaining module's cleanup.
+        """
+        fn = getattr(mgr, "cleanup", None)
+        if fn is None:
+            return
+        if callable(fn):
+            res = fn()
+        else:
+            # A lazy-loaded sub-module (e.g. utils/cleanup.Cleanup): prefer an
+            # explicit async entry point when the manager provides one.
+            inner = getattr(mgr, "cleanup_all", None)
+            if callable(inner):
+                res = inner()
+            else:
+                inner = getattr(fn, "cleanup", None)
+                if not callable(inner):
+                    return
+                res = inner()
+        if hasattr(res, "__await__"):
+            await res
     
     async def start(self) -> None:
         """
@@ -416,11 +499,14 @@ class SecureP2PChat:
                                                             except Exception as _ex:
                                                                 self.logger.debug(f"Socket close suppressed: {_ex}")
                                                             continue
+
+                                                        self._register_session_auth_key(peer_id, session_context)
                                                         
                                                         # Start message handler in background
                                                         handler_task = asyncio.create_task(
                                                             handle_incoming_messages(self, peer_id, reader, writer)
                                                         )
+                                                        self._background_tasks.append(handler_task)
                                                         
                                                         # Task 7.1: Display security status after connection
                                                         print(f"\n Peer connected: {peer_id}")
@@ -452,6 +538,7 @@ class SecureP2PChat:
                                 
                                 # Start server task in background
                                 server_task = asyncio.create_task(accept_connections())
+                                self._background_tasks.append(server_task)
                                 
                             except OSError as e:
                                 if e.errno == 98 or e.errno == 10048:  # Address already in use
@@ -651,18 +738,72 @@ class SecureP2PChat:
             self.logger.error(f"[CRYPTO] Hybrid session key generation failed: {e}", exc_info=True)
             raise
     
-    def _generate_military_auth_tag(self, ciphertext: bytes, message_hash: bytes) -> bytes:
-        """Generate military auth tag - delegates to crypto module."""
+    def _register_session_auth_key(self, peer_id: str, session: Any) -> bytes:
+        """Bind a freshly negotiated session's auth-tag key to one peer."""
+        key = getattr(session, "session_auth_key", None)
+        if not isinstance(key, (bytes, bytearray)) or len(key) < 32:
+            raise RuntimeError(
+                f"Session for {peer_id} has no valid auth-tag key (fail-closed)"
+            )
+        key_bytes = bytes(key)
+        self._session_auth_keys[peer_id] = key_bytes
+        if self.session_auth_key is None:
+            self.session_auth_key = key_bytes
+        return key_bytes
+
+    def _forget_session_auth_key(self, peer_id: str) -> None:
+        """Drop and zeroize the per-peer auth-tag key."""
+        key = self._session_auth_keys.pop(peer_id, None)
+        if key:
+            try:
+                from secure_key_manager import secure_erase
+                secure_erase(key)
+            except Exception:
+                pass
+        if self.session_auth_key is not None and not self._session_auth_keys:
+            self.session_auth_key = None
+
+    def _session_auth_key_for(self, peer_id: Optional[str] = None) -> bytes:
+        """Resolve a per-peer auth-tag key without cross-session fallback."""
+        if peer_id is not None:
+            key = self._session_auth_keys.get(peer_id)
+        elif len(self._session_auth_keys) == 1:
+            key = next(iter(self._session_auth_keys.values()))
+        else:
+            raise RuntimeError(
+                "peer_id is required when zero or multiple sessions are active; "
+                "refusing ambiguous auth-tag key selection (fail-closed)"
+            )
+        if not isinstance(key, (bytes, bytearray)) or len(key) < 32:
+            raise RuntimeError(
+                "No authenticated session key is bound to this peer; refusing "
+                "to generate or verify an auth tag (fail-closed)"
+            )
+        return bytes(key)
+
+    def _generate_military_auth_tag(self, ciphertext: bytes, message_hash: bytes,
+                                    auth_key: Optional[bytes] = None,
+                                    peer_id: Optional[str] = None) -> bytes:
+        """Generate military auth tag using the peer's negotiated session key."""
         try:
-            return self.crypto.auth_tags.generate_military_auth_tag(ciphertext, message_hash)
+            key = auth_key or self._session_auth_key_for(peer_id)
+            return self.crypto.auth_tags.generate_military_auth_tag(
+                ciphertext, message_hash, auth_key=key
+            )
         except Exception as e:
             self.logger.error(f"[CRYPTO] Auth tag generation failed: {e}", exc_info=True)
             raise
     
-    def _verify_military_auth_tag(self, ciphertext: bytes, message_hash: bytes, auth_tag: bytes) -> bool:
-        """Verify military auth tag - delegates to crypto module."""
+    def _verify_military_auth_tag(self, ciphertext: bytes, message_hash: bytes,
+                                  auth_tag: bytes,
+                                  auth_key: Optional[bytes] = None,
+                                  peer_id: Optional[str] = None) -> bool:
+        """Verify military auth tag using the peer's negotiated session key."""
         try:
-            return self.crypto.auth_tags.verify_military_auth_tag(ciphertext, message_hash, auth_tag)
+            key = auth_key or self._session_auth_key_for(peer_id)
+            return self.crypto.auth_tags.verify_military_auth_tag(
+                ciphertext, message_hash, auth_tag, auth_key=key
+            )
         except Exception as e:
             self.logger.error(f"[CRYPTO] Auth tag verification failed: {e}", exc_info=True)
             raise

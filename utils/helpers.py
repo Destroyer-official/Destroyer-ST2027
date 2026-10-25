@@ -228,17 +228,12 @@ class Helpers(BaseModule):
         Returns:
             bytes: Cryptographically secure random nonce
         """
-        try:
-            if nonce_size == 12:
-                # Use managed nonce generator for standard size
-                return self._nonce_manager.generate_nonce()
-            else:
-                # Use simple random generation for non-standard sizes
-                return generate_nonce(nonce_size)
-        except Exception as e:
-            self.logger.error(f"Error generating nonce: {e}")
-            # Fallback to CSPRNG random generation
-            return secrets.token_bytes(nonce_size)
+        if nonce_size == 12:
+            # Managed uniqueness path: nonce-space exhaustion must propagate
+            # (a raw CSPRNG fallback here could silently reuse a nonce).
+            return self._nonce_manager.generate_nonce()
+        # Non-standard sizes: direct CSPRNG generation
+        return generate_nonce(nonce_size)
     
     def constant_time_compare(self, a: bytes, b: bytes) -> bool:
         """
@@ -261,7 +256,10 @@ class Helpers(BaseModule):
 
 
 def is_env_true(key: str, default: bool = False) -> bool:
-    """Return True if environment variable is set to a truthy value ('1', 'true', 'yes', 'on')."""
+    """Parse a boolean, delegating production posture to the canonical gate."""
+    if key in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+        from production_gate import is_production
+        return is_production()
     val = os.environ.get(key)
     if val is None:
         return default

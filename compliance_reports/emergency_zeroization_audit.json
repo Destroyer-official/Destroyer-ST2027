@@ -12,10 +12,11 @@
       "ctypes-memset"
     ],
     "operator_id": "WATCH_OFFICER_01",
+    "sanitization_failures": [],
     "standard": "DoD 5220.22-M / NIST SP 800-88 Rev 2 (Sept 2025)",
     "status": "SANITIZATION_COMPLETE",
     "subsystems_purged": 0,
-    "timestamp_utc": "2026-10-14T16:44:00.333885+00:00",
+    "timestamp_utc": "2026-10-23T17:23:52.858059+00:00",
     "trigger_type": "COLD_BOOT_VOLTAGE_DROP"
   }
 }

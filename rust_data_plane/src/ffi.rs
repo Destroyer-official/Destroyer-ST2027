@@ -906,6 +906,80 @@ impl CoreMemoryGuard {
     }
 }
 
+#[pyclass]
+pub struct CoreGroupRatchet {
+    inner: crate::group_ratchet::SovereignGroupRatchet,
+}
+
+#[pymethods]
+impl CoreGroupRatchet {
+    #[new]
+    pub fn new(
+        group_id: String,
+        local_member_id: String,
+        initial_epoch_secret: Vec<u8>,
+    ) -> PyResult<Self> {
+        if initial_epoch_secret.len() != 48 {
+            return Err(PyValueError::new_err("initial_epoch_secret must be 48 bytes"));
+        }
+        let mut secret = [0u8; 48];
+        secret.copy_from_slice(&initial_epoch_secret);
+        let inner = crate::group_ratchet::SovereignGroupRatchet::new(
+            group_id, local_member_id, secret,
+        )
+        .map_err(|e| PyValueError::new_err(format!("GroupRatchet error: {e:?}")))?;
+        Ok(Self { inner })
+    }
+
+    pub fn add_member(&mut self, member_id: String, chain_key: Vec<u8>) -> PyResult<()> {
+        if chain_key.len() != 48 {
+            return Err(PyValueError::new_err("chain_key must be 48 bytes"));
+        }
+        let mut key = [0u8; 48];
+        key.copy_from_slice(&chain_key);
+        self.inner.add_member(member_id, key);
+        Ok(())
+    }
+
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> PyResult<Vec<u8>> {
+        self.inner
+            .encrypt_group_message(plaintext)
+            .map_err(|e| PyValueError::new_err(format!("GroupRatchet encryption failed: {e:?}")))
+    }
+
+    pub fn decrypt(&mut self, sender_id: &str, wire_frame: &[u8]) -> PyResult<Vec<u8>> {
+        self.inner
+            .decrypt_group_message(sender_id, wire_frame)
+            .map_err(|e| PyValueError::new_err(format!("GroupRatchet decryption failed: {e:?}")))
+    }
+
+    pub fn advance_epoch(&mut self, fresh_entropy: Vec<u8>) -> PyResult<u64> {
+        if fresh_entropy.len() != 48 {
+            return Err(PyValueError::new_err("fresh_entropy must be 48 bytes"));
+        }
+        let mut entropy = [0u8; 48];
+        entropy.copy_from_slice(&fresh_entropy);
+        self.inner
+            .advance_epoch(&entropy)
+            .map_err(|e| PyValueError::new_err(format!("GroupRatchet advance_epoch failed: {e:?}")))
+    }
+
+    #[getter]
+    pub fn epoch(&self) -> u64 {
+        self.inner.epoch
+    }
+
+    #[getter]
+    pub fn group_id(&self) -> String {
+        self.inner.group_id.clone()
+    }
+
+    #[getter]
+    pub fn local_member_id(&self) -> String {
+        self.inner.local_member_id.clone()
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreMldsaSigner>()?;
     m.add_class::<CoreKexResponder>()?;
@@ -919,6 +993,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CoreAcdEngine>()?;
     m.add_class::<CoreZeroTrustEngine>()?;
     m.add_class::<CoreMemoryGuard>()?;
+    m.add_class::<CoreGroupRatchet>()?;
     m.add_function(wrap_pyfunction!(transcript_len, m)?)?;
     m.add_function(wrap_pyfunction!(derive_frame_key, m)?)?;
     m.add_function(wrap_pyfunction!(derive_ratchet_root, m)?)?;

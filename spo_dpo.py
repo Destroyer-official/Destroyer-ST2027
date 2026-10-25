@@ -71,6 +71,9 @@ class AuthorizationError(Exception):
 
 
 def _env_true(name: str) -> bool:
+    if name in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+        from production_gate import is_production
+        return is_production()
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -718,8 +721,14 @@ def require_spo_dpo_for_send(
     # but invalid block must never be silently skipped).
     if receipt.get("mode") == MODE_DPO:
         _verify_receipt_approvals(receipt, MODE_DPO)
-    elif _strict_mode() or receipt.get("approvals"):
-        _verify_receipt_approvals(receipt, MODE_SPO)
+    else:
+        # Default posture (non-strict) previously accepted unsigned SPO
+        # receipts. Require signed approvals unless an explicit lab opt-in
+        # is set.
+        if os.environ.get("P2P_LAB_ALLOW_UNSIGNED_SPO") != "1":
+            _verify_receipt_approvals(receipt, MODE_SPO)
+        elif receipt.get("approvals"):
+            _verify_receipt_approvals(receipt, MODE_SPO)
     return receipt
 
 

@@ -243,11 +243,10 @@ class EphemeralIdentity:
     
     # ML-KEM-1024 keys for key encapsulation (CNSA 2.0 approved)
     kem_public_key: bytes
-    kem_private_key: bytes
-    
+    kem_private_key: bytearray
     # ML-DSA-87 keys for digital signatures (CNSA 2.0 approved)
     sig_public_key: bytes
-    sig_private_key: bytes
+    sig_private_key: bytearray
     
     # Metadata
     is_active: bool = True
@@ -335,9 +334,9 @@ class EphemeralIdentityManager:
                 identity_id=identity_id,
                 created_at=datetime.now(),
                 kem_public_key=kem_public,
-                kem_private_key=kem_private,
-                sig_public_key=sig_public,
-                sig_private_key=sig_private,
+            kem_private_key=bytearray(kem_private) if not isinstance(kem_private, bytearray) else kem_private,
+            sig_public_key=sig_public,
+            sig_private_key=bytearray(sig_private) if not isinstance(sig_private, bytearray) else sig_private,
             )
             
             # Store identity
@@ -351,8 +350,8 @@ class EphemeralIdentityManager:
         """Generate ML-KEM-1024 keypair with fail-closed guarantee."""
         if self._kem:
             try:
-                public_key, private_key = self._kem.keygen()
-                return public_key, private_key
+                 public_key, private_key = self._kem.keygen()
+                 return public_key, bytearray(private_key)
             except Exception as e:
                 logger.critical(f"PQC ML-KEM-1024 keygen failed: {e}")
                 raise EphemeralIdentityError(f"ML-KEM-1024 key generation failed: {e}")
@@ -365,8 +364,8 @@ class EphemeralIdentityManager:
         """Generate ML-DSA-87 keypair with fail-closed guarantee."""
         if self._sig:
             try:
-                public_key, private_key = self._sig.keygen()
-                return public_key, private_key
+                 public_key, private_key = self._sig.keygen()
+                 return public_key, bytearray(private_key)
             except Exception as e:
                 logger.critical(f"PQC ML-DSA-87 keygen failed: {e}")
                 raise EphemeralIdentityError(f"ML-DSA-87 signature key generation failed: {e}")
@@ -423,32 +422,38 @@ class EphemeralIdentityManager:
                 if key:
                     key_hashes.append(hashlib.sha3_256(key).digest())
             
-            # Wipe all key material using DoD 5220.22-M
+            # Wipe all key material in place (fields are bytearray).  Public
+            # keys are bytes (immutable) and cannot be overwritten; only the
+            # private key material is wiped, and the identity's fields are
+            # cleared so no reference to the original buffer survives.
             for key in all_keys:
-                if key:
-                    self._dod_wipe(bytearray(key))
-            
+                if isinstance(key, bytearray) and key:
+                    self._dod_wipe(key)
+            identity.kem_private_key = bytearray()
+            identity.sig_private_key = bytearray()
+
             # Mark as disposed
             identity.is_active = False
             identity.is_disposed = True
-            
+
             # Remove from active identities
             del self._identities[identity_id]
-            
+
             # Force garbage collection to release memory
             gc.collect()
-            
-            # Verify disposal via memory scan (within 100ms timeout)
+
+            # Verification is best-effort: a real memory scan is platform
+            # specific.  Fail closed when the operator requires proof.
             if verify_disposal:
-                start_time = time.time()
-                scan_result = self._verify_memory_scan(key_hashes)
-                elapsed_ms = (time.time() - start_time) * 1000
-                
-                if not scan_result:
-                    logger.error(f"Memory scan found key material after disposal for {identity_id[:16]}...")
+                import os as _os
+                if _os.environ.get("P2P_REQUIRE_MEMORY_SCAN") == "1":
                     raise IdentityDisposalError(
-                        f"Memory scan found key material after disposal (elapsed: {elapsed_ms:.1f}ms)"
-                    )
+                        "In-place DoD wipe completed, but platform memory scan "
+                        "is not implemented; refusing to claim verification "
+                        "(fail-closed).")
+                logger.warning(
+                    "Identity disposed with DoD wipe; memory-scan verification "
+                    "is not implemented and is not claimed.")
                 
                 if elapsed_ms > MEMORY_SCAN_TIMEOUT_MS:
                     logger.warning(f"Memory scan exceeded timeout: {elapsed_ms:.1f}ms > {MEMORY_SCAN_TIMEOUT_MS}ms")

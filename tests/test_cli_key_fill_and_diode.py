@@ -81,6 +81,15 @@ def test_cli_key_fill_import_success(ceremony_keys, workdir, monkeypatch):
         assert chat.imported_key_fill["fill_id"] == "KMI-FILL-TEST-001"  # nosec: B101
         assert chat._nc3_war_key == bytes.fromhex("aa" * 32)  # nosec: B101
         assert chat.pre_shared_key == bytes.fromhex("bb" * 32)  # nosec: B101
+        # End-to-end: the NC3 war-key path must USE the imported key
+        # (the import sink was previously dead, so the ceremony key was
+        # ignored in favour of a derived or environment-provided key).
+        monkeypatch.delenv("P2P_NC3_WAR_KEY", raising=False)
+        chat._cached_nc3_war_key = None
+        chat.hybrid_root_key = None
+        chat.ratchet = None
+        used = chat._get_or_derive_nc3_war_key()
+        assert used == bytes.fromhex("aa" * 32)  # nosec: B101
 
     asyncio.run(_run())
 

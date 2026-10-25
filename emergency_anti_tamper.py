@@ -132,25 +132,31 @@ class EmergencyZeroizationEngine:
             now = datetime.datetime.now(datetime.timezone.utc).isoformat()
             shredded_count = len(self.registered_buffers)
             wipe_methods_used = []
+            failures: List[str] = []
 
             # 1. Memory shredding
-            for buf in self.registered_buffers:
+            for idx, buf in enumerate(self.registered_buffers):
                 try:
                     wm = self.shred_bytes(buf)
                     wipe_methods_used.append(wm)
                 except Exception as e:
                     logger.critical(f"Buffer shredding exception: {e}")
+                    failures.append(f"buffer[{idx}]: {e}")
 
             # 2. Subsystem callbacks
             callback_count = 0
-            for cb in self.registered_cleanup_callbacks:
+            for idx, cb in enumerate(self.registered_cleanup_callbacks):
                 try:
                     cb()
                     callback_count += 1
                 except Exception as e:
                     logger.critical(f"Callback execution exception: {e}")
+                    failures.append(f"callback[{idx}]: {e}")
 
-            self.zeroized = True
+            # HIGH (monitoring L...): never certify complete sanitization when
+            # any buffer or callback failed; the affidavit must not mislead.
+            sanitized_ok = not failures
+            self.zeroized = sanitized_ok
 
             # 3. Create incident audit record
             incident = {
@@ -159,9 +165,11 @@ class EmergencyZeroizationEngine:
                     "trigger_type": trigger,
                     "timestamp_utc": now,
                     "operator_id": operator_id,
-                    "status": "SANITIZATION_COMPLETE",
-                    "buffers_shredded": shredded_count,
+                    "status": "SANITIZATION_COMPLETE" if sanitized_ok else "SANITIZATION_FAILED",
+                    "buffers_shredded": shredded_count - len(
+                        [f for f in failures if f.startswith("buffer[")]),
                     "subsystems_purged": callback_count,
+                    "sanitization_failures": failures,
                     "cold_boot_mitigation": "NON_PAGEABLE_LOCKED_MEMORY_PURGED",
                     "memory_sanitization_passes": [
                         "Pass 1: 0x00 (Zero Fill)",

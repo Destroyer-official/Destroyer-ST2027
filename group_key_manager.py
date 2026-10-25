@@ -255,7 +255,8 @@ def _strict_pairwise_required() -> bool:
     in lab only; it is ignored with a CRITICAL log in production.
     """
     import os as _os
-    _prod = is_env_true("SECURE_P2P_PRODUCTION") or is_env_true("P2P_PRODUCTION")
+    from production_gate import is_production
+    _prod = is_production()
     _explicit = _os.environ.get("P2P_GROUP_REQUIRE_PAIRWISE", "")
     if _prod:
         if _explicit == "0":
@@ -274,7 +275,8 @@ def _strict_group_auth_required() -> bool:
     (warn) so unsigned local flows keep working in tests.
     """
     import os as _os
-    _prod = is_env_true("SECURE_P2P_PRODUCTION") or is_env_true("P2P_PRODUCTION")
+    from production_gate import is_production
+    _prod = is_production()
     _explicit = _os.environ.get("P2P_GROUP_REQUIRE_SIGNED_COMMITS", "")
     if _prod:
         if _explicit == "0":
@@ -645,7 +647,9 @@ class GroupKeyManager:
             tree_kem = self.get_pq_treekem(group_id, local_member_id,
                                                 local_secret_key=local_secret_key)
             try:
-                new_epoch_secret = tree_kem.apply_update_path(updater_leaf, update_path)
+                new_epoch_secret = tree_kem.apply_update_path(
+                    updater_leaf, update_path,
+                    commit_pub=committer_pub, verify_cb=verify_cb)
             except PQTreeKEMError as exc:
                 raise GroupKeyError(f"PQ update rejected by tree engine: {exc}") from exc
             if tree_kem.current_epoch != state.epoch + 1:
@@ -673,18 +677,13 @@ class GroupKeyManager:
 
     @staticmethod
     def _pq_commit_canonical(group_id: str, update_path: Any) -> bytes:
-        """Canonical bytes a PQ commit signature covers (deterministic)."""
-        import struct as _struct
-        gid = group_id.encode("utf-8")
-        uid = str(getattr(update_path, "updater_id", "")).encode("utf-8")
-        out = (b"PQ-COMMIT-V1:" + _struct.pack(">I", len(gid)) + gid
-               + _struct.pack(">I", len(uid)) + uid
-               + _struct.pack(">I", int(getattr(update_path, "updater_leaf", 0)))
-               + _struct.pack(">Q", int(getattr(update_path, "epoch_id", 0))))
-        claimed_tx = getattr(update_path, "tree_hash_before", b"")
-        if isinstance(claimed_tx, str):
-            claimed_tx = bytes.fromhex(claimed_tx)
-        return out + bytes(claimed_tx)
+        """Canonical bytes a PQ commit signature covers (deterministic).
+
+        Delegates to the tree engine so the manager path and the library
+        path authenticate exactly the same bytes.
+        """
+        from pq_treekem import pq_commit_canonical
+        return pq_commit_canonical(group_id, update_path)
 
     def _rekey_locked(self, state: _GroupState, proposals: Optional[List[Proposal]] = None) -> int:
         """Chained epoch rotation (T3-K schedule), wipe old, bump epoch, chain transcript.

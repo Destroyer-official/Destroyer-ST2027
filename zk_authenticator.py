@@ -39,6 +39,9 @@ from enum import Enum
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Fiat-Shamir domain separator for identity proofs (challenge binding).
+IDENTITY_PROOF_DOMAIN = b"SecureP2P::ZK::Schnorr::Identity::FS-v2"
+
 
 
 def secure_randbelow(n: int) -> int:
@@ -367,7 +370,7 @@ class ZKAuthenticator:
         
         Implements the Schnorr identification protocol:
         1. Prover chooses random k, computes R = g^k
-        2. Challenge c is provided (or derived from R and context)
+        2. Challenge c = H(domain, R, pk, session challenge) (Fiat-Shamir bound)
         3. Prover computes response s = k + c * secret mod (p-1)
         
         Args:
@@ -384,7 +387,6 @@ class ZKAuthenticator:
         """
         try:
             secret_int = self._bytes_to_int(secret)
-            challenge_int = self._bytes_to_int(challenge) % (self.PRIME - 1)
             
             # Generate random nonce k
             k = secure_randbelow(self.PRIME - 1) + 1
@@ -393,6 +395,14 @@ class ZKAuthenticator:
             R = self._mod_exp(self.g, k, self.PRIME)
             commitment = self._int_to_bytes(R)
             
+            # Fiat-Shamir: bind the effective challenge to (R, pk, session
+            # challenge) so a prover cannot pick R AFTER seeing the challenge.
+            pk_bytes = self._int_to_bytes(self._mod_exp(self.g, secret_int, self.PRIME))
+            fs_digest = hashlib.sha3_256(
+                IDENTITY_PROOF_DOMAIN + commitment + pk_bytes + bytes(challenge)
+            ).digest()
+            challenge_int = int.from_bytes(fs_digest, 'big') % (self.PRIME - 1)
+
             # Compute response s = k + c * secret mod (p-1)
             # Using p-1 as the order of the group
             order = self.PRIME - 1
@@ -428,7 +438,8 @@ class ZKAuthenticator:
         Verify ZK proof of identity.
         
         Verifies the Schnorr proof:
-        - Check that g^s = R * pk^c mod p
+        - Recompute c = H(domain, R, pk, challenge) and check g^s = R * pk^c mod p
+        - Reject if the proof's stored challenge differs from the verifier's
         
         Args:
             public_key: The prover's public key (32 bytes)
@@ -441,11 +452,20 @@ class ZKAuthenticator:
         Requirements: 7.1
         """
         try:
+            if not hmac.compare_digest(bytes(proof.challenge), bytes(challenge)):
+                logger.warning("Identity proof rejected: stored challenge mismatch")
+                return False
             pk_int = self._bytes_to_int(public_key)
-            challenge_int = self._bytes_to_int(challenge) % (self.PRIME - 1)
             R = self._bytes_to_int(proof.commitment)
             s = self._bytes_to_int(proof.response)
             
+            # Recompute the Fiat-Shamir challenge bound to (R, pk, challenge).
+            # A cheating prover cannot re-pick R after the challenge is fixed.
+            fs_digest = hashlib.sha3_256(
+                IDENTITY_PROOF_DOMAIN + self._int_to_bytes(R) + public_key + bytes(challenge)
+            ).digest()
+            challenge_int = int.from_bytes(fs_digest, 'big') % (self.PRIME - 1)
+
             # Verify: g^s = R * pk^c mod p
             # Left side: g^s
             left = self._mod_exp(self.g, s, self.PRIME)

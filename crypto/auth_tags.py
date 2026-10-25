@@ -30,8 +30,10 @@ class AuthTagOperations(BaseModule):
         elif orchestrator and hasattr(orchestrator, 'session_auth_key') and orchestrator.session_auth_key:
             self._default_auth_key = orchestrator.session_auth_key
         else:
-            import secrets
-            self._default_auth_key = secrets.token_bytes(32)
+            # A random per-instance key cannot be reproduced by any peer, so
+            # tags are unverifiable and provide no authentication. Fail closed
+            # at use time instead of manufacturing a throwaway secret.
+            self._default_auth_key = None
 
     def _derive_mac_key(self, message_hash: bytes, auth_key: Optional[bytes] = None) -> bytes:
         """Derive independent HMAC key using secret key material with domain separation per NIST SP 800-56C (Finding 5)."""

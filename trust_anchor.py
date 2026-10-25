@@ -77,6 +77,9 @@ class TrustError(Exception):
 
 
 def _env_true(name: str) -> bool:
+    if name in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"):
+        from production_gate import is_production
+        return is_production()
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 

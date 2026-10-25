@@ -1,0 +1,7 @@
+[package]
+name = "crypto_domain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Zero external crates: pure core-only bare-metal

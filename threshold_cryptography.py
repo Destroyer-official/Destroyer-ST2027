@@ -410,16 +410,22 @@ class ThresholdKeyManager:
         if not shares:
             raise InsufficientSharesError(0, self.threshold)
         
-        # Get threshold from first share
-        k = shares[0].threshold
+        # Never trust a share-declared threshold below the manager's policy:
+        # a forged share claiming threshold=1 must not downgrade reconstruction.
+        k = max(shares[0].threshold, self.threshold)
         
         if len(shares) < k:
             raise InsufficientSharesError(len(shares), k)
         
-        # Verify all shares have the same threshold
+        # Verify consistent thresholds and enforce index validity.
+        # Index 0 is forbidden: l_0(0) = 1, so a share at x=0 IS the secret.
         for share in shares:
-            if share.threshold != k:
+            if share.threshold != shares[0].threshold:
                 raise ReconstructionError("Shares have mismatched thresholds")
+            if not isinstance(share.index, int) or share.index < 1:
+                raise ReconstructionError(
+                    f"Invalid share index {share.index!r}: indices must be integers >= 1"
+                )
         
         # Deduplicate shares by index (keep first occurrence)
         unique_shares: Dict[int, ThresholdShare] = {}

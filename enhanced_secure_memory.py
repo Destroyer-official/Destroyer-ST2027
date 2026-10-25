@@ -1085,10 +1085,18 @@ if __name__ == "__main__":
 def secure_memory_wipe():
     """Emergency wipe of all global memory instances."""
     import gc
+    import logging
+    logger = logging.getLogger(__name__)
     gc.collect()
+    manager = globals().get("_global_memory_manager")
+    if manager is None:
+        logger.error(
+            "secure_memory_wipe: _global_memory_manager is not initialized; "
+            "no wipe performed (fail-closed).")
+        return
     try:
-        if _global_memory_manager:
-            _global_memory_manager.wipe_all()
-    except Exception:
-        import logging; logging.getLogger(__name__).debug("Ignored exception")
+        manager.wipe_all()
+    except Exception as e:
+        logger.error(f"secure_memory_wipe failed: {e}")
+        raise
 

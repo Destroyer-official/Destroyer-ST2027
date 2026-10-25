@@ -35,6 +35,16 @@ RED = "\033[91m"
 MAGENTA = "\033[95m"
 DIM = "\033[2m"
 
+
+def _production() -> bool:
+    """Best-effort production gate; detection failure is treated as lab."""
+    try:
+        from production_gate import is_production
+        return bool(is_production())
+    except Exception:
+        return False
+
+
 def print_banner(node_name: str, role: str, bind: str, peer: str):
     print(f"""{BOLD}{CYAN}
 ================================================================================
@@ -55,7 +65,7 @@ class TacticalP2PNode:
                  kex_port: int, channel_port: int, peer_channel_port: int = None,
                  peer_kex_port: int = None, diode_port: int = None,
                  peer_diode_port: int = None, work_dir: str = None,
-                 psk_file: str = None):
+                 psk_file: str = None, lab_mode: bool = None):
         self.name = name
         self.role = role.lower()  # "initiator" or "responder"
         self.bind_addr = bind_addr
@@ -68,6 +78,14 @@ class TacticalP2PNode:
         self.peer_diode_port = peer_diode_port or (self.peer_channel_port + 20)
         self.work_dir = work_dir or tempfile.mkdtemp(prefix=f"st2027_{self.name.lower()}_")
         self.psk_file = psk_file or os.environ.get("P2P_PSK_FILE")
+        # Lab mode must be an explicit opt-in (flag or env). It is never
+        # enabled implicitly because a PSK was not supplied.
+        if lab_mode is None:
+            lab_mode = (
+                os.environ.get("P2P_LAB_MODE") == "1"
+                or os.environ.get("ST2027_LAB_MODE") == "1"
+            )
+        self.lab_mode = bool(lab_mode)
         self.key_path = os.path.join(self.work_dir, "session.key")
         self.state_path = os.path.join(self.work_dir, "monotonic.state")
         self.channel_proc = None
@@ -92,9 +110,21 @@ class TacticalP2PNode:
 
         kex_env = dict(os.environ)
         extra_args = []
-        if self.psk_file and os.path.exists(self.psk_file):
+        if self.psk_file:
+            if not os.path.exists(self.psk_file):
+                print(f"{RED}[{self.name} ERROR] PSK file not found: "
+                      f"{self.psk_file}. Refusing unauthenticated KEX "
+                      f"(use --lab for an explicit lab-only bypass).{RESET}")
+                return False
             extra_args.extend(["--psk-file", self.psk_file])
         else:
+            if _production() or not self.lab_mode:
+                print(f"{RED}[{self.name} ERROR] No PSK supplied: refusing "
+                      f"unauthenticated key exchange. Provide --psk-file, or "
+                      f"explicitly opt into lab mode with --lab "
+                      f"(P2P_LAB_MODE=1); production never allows the "
+                      f"bypass.{RESET}")
+                return False
             kex_env["P2P_LAB_MODE"] = "1"
 
         if self.role == "responder":
@@ -219,29 +249,53 @@ class TacticalP2PNode:
                             raw_sealed = base64.b64decode(payload[5:])
                             msg_type, plaintext = self.zero_gap_pipeline.open(raw_sealed, self.zero_gap_ratchet)
                             msg_decoded = plaintext.decode("utf-8")
-                            with self._lock:
-                                self.received_messages.append(msg_decoded)
-                                self.recv_msgs_count += 1
                             if msg_type == 0x03:  # PIPELINE_TYPE_NC3
                                 try:
                                     eam_data = json.loads(msg_decoded)
                                     print(f"\n{BOLD}{RED}[{self.name} TOP SECRET NC3/EAM DIRECTIVE RECEIVED]{RESET}")
                                     print(f"  {YELLOW}• Classification : {eam_data.get('classification')}{RESET}")
                                     print(f"  {YELLOW}• Originator     : {eam_data.get('originator')}{RESET}")
+                                    expires_at = eam_data.get("expires_at")
+                                    try:
+                                        expired = float(expires_at) < time.time()
+                                    except (TypeError, ValueError):
+                                        expired = True
+                                    if expired:
+                                        print(f"  {RED}• Expired/unverifiable EAM discarded (no explicit expiry).{RESET}")
+                                        continue
+                                    if eam_data.get("two_person_rule") == "VERIFIED_2_OF_2":
+                                        print(f"  {RED}• Rejected: self-asserted Two-Person Rule is not trusted on the paced path.{RESET}")
+                                        continue
                                     print(f"  {YELLOW}• Two-Person Rule: {eam_data.get('two_person_rule')}{RESET}")
                                     print(f"  {RED}{BOLD}• DIRECTIVE      : {eam_data.get('directive')}{RESET}\n[{self.name}] > ", end="", flush=True)
+                                    with self._lock:
+                                        self.received_messages.append(msg_decoded)
+                                        self.recv_msgs_count += 1
                                     continue
                                 except Exception:
                                     print(f"\n{BOLD}{RED}[{self.name} ZERO-GAP NC3 DIRECTIVE]{RESET} {msg_decoded}\n[{self.name}] > ", end="", flush=True)
                                     continue
                             elif msg_decoded.startswith("COT:"):
                                 cot_json = msg_decoded[4:]
+                                with self._lock:
+                                    self.received_messages.append(msg_decoded)
+                                    self.recv_msgs_count += 1
                                 print(f"\n{BOLD}{YELLOW}[{self.name} ZERO-GAP COT BEACON RECEIVED]{RESET} {cot_json}\n[{self.name}] > ", end="", flush=True)
                             else:
+                                with self._lock:
+                                    self.received_messages.append(msg_decoded)
+                                    self.recv_msgs_count += 1
                                 print(f"\n{BOLD}{GREEN}[{self.name} INCOMING ZERO-GAP TACTICAL MESSAGE]{RESET} {BOLD}{msg_decoded}{RESET}\n[{self.name}] > ", end="", flush=True)
                             continue
                         except Exception as e:
                             print(f"\n{BOLD}{RED}[{self.name} ZERO-GAP INTEGRITY ERROR] Message unseal failed: {e}{RESET}\n[{self.name}] > ", end="", flush=True)
+                            # Discard: never surface an unauthenticated blob as
+                            # received traffic.
+                            continue
+
+                    if payload.startswith("ZGDP:"):
+                        print(f"\n{BOLD}{RED}[{self.name} ZERO-GAP INTEGRITY ERROR] Sealed payload received but the Zero-Gap pipeline is unavailable; discarded.{RESET}\n[{self.name}] > ", end="", flush=True)
+                        continue
 
                     with self._lock:
                         self.received_messages.append(payload)
@@ -295,6 +349,16 @@ class TacticalP2PNode:
         try:
             import hashlib
             from nc3_nuclear_command import EAM_CLASSIFICATION, EAM_PREAMBLE
+            # HIGH (destroyer_modules L25): no dual-custody verification runs on
+            # this paced path, so it must not assert the Two-Person Rule.
+            try:
+                from production_gate import is_production as _is_prod
+                _prod = _is_prod()
+            except Exception:
+                _prod = False
+            if _prod:
+                print(f"{RED}[{self.name} EAM REFUSED] Two-Person Rule cannot be verified on the paced console path in production; use the NC3 critical-release ceremony (fail-closed).{RESET}")
+                return False
             eam_payload = {
                 "preamble": EAM_PREAMBLE,
                 "classification": EAM_CLASSIFICATION,
@@ -302,7 +366,7 @@ class TacticalP2PNode:
                 "expires_at": time.time() + 120.0,
                 "originator": self.name,
                 "directive": directive,
-                "two_person_rule": "VERIFIED_2_OF_2",
+                "two_person_rule": "UNVERIFIED_LAB_PACED_PATH",
                 "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
             }
             raw_json = json.dumps(eam_payload).encode("utf-8")
@@ -364,7 +428,16 @@ class TacticalP2PNode:
 
         def listener_worker():
             while self.running:
-                dest_file = os.path.join(out_dir, f"incoming_{int(time.time()*1000)}.bin")
+                # A4-26 (2026-10-17): unpredictable destination inside a
+                # fresh private temp dir. The old scheme used a predictable
+                # millisecond timestamp filename in a shared dir, which a
+                # local attacker could pre-plant (symlink/clobber) between
+                # iterations.
+                try:
+                    run_dir = tempfile.mkdtemp(prefix="diode_rx_", dir=out_dir)
+                except OSError:
+                    run_dir = out_dir
+                dest_file = os.path.join(run_dir, f"incoming_{secrets.token_hex(8)}.bin")
                 cmd = [
                     str(NATIVE_BIN), "diode-recv",
                     "--key-file", self.key_path,
@@ -479,7 +552,8 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
         peer_channel_port=peer_channel_port,
         diode_port=diode_port,
         peer_diode_port=peer_diode_port,
-        psk_file=psk_file
+        psk_file=psk_file,
+        lab_mode=bool(getattr(args, "lab", False)) or None,
     )
 
     # 1. Perform Post-Quantum Key Exchange
@@ -708,6 +782,7 @@ def main():
     p_node.add_argument("--diode-port", type=int, default=None, help="Local simplex diode port")
     p_node.add_argument("--peer-diode-port", type=int, default=None, help="Peer simplex diode port")
     p_node.add_argument("--psk-file", default=None, help="Pre-shared key file for authenticated KEX")
+    p_node.add_argument("--lab", action="store_true", help="Explicitly allow unauthenticated KEX (lab only; never in production)")
 
     # Automated drill command
     sub.add_parser("demo", help="Run automated two-terminal military drill")

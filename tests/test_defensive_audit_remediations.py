@@ -100,22 +100,15 @@ class TestDefensiveAuditRemediations(unittest.TestCase):
             # Ensure not in authorized fingerprints
             ca.authorized_peer_fingerprints = set()
 
-            # Attempting to accept unverified peer certificate must raise SecurityError fail-closed
+            # Attempting to accept an unverified peer certificate must raise
+            # SecurityError fail-closed.  This calls the PRODUCTION gate
+            # (CAExchange._authorize_tofu_first_contact), not a re-implementation.
             with self.assertRaises(SecurityError):
-                # Simulate the blocking check directly (mirrors prod code:
-                # exact-length constant-time match only, no substring logic)
-                import hmac as _hmac
-                is_authorized = False
-                clean_fp = attacker_fp.lower()
-                auth_fps = getattr(ca, 'authorized_peer_fingerprints', set()) or set()
-                if len(clean_fp) in (64, 128) and all(c in "0123456789abcdef" for c in clean_fp):
-                    for _fp in auth_fps:
-                        if isinstance(_fp, str) and len(_fp.strip().lower()) == len(clean_fp):
-                            if _hmac.compare_digest(clean_fp, _fp.strip().lower()):
-                                is_authorized = True
-                                break
-                if not is_authorized:
-                    raise SecurityError("Certificate TOFU first-contact rejected: requires out-of-band whitelist pre-authorization.")
+                ca._authorize_tofu_first_contact(peer_host, attacker_fp)
+
+            # A pre-authorized (whitelisted) fingerprint is accepted.
+            ca.authorized_peer_fingerprints.add(attacker_fp)
+            ca._authorize_tofu_first_contact(peer_host, attacker_fp)
 
         finally:
             if old_tofu_env is not None:
@@ -126,24 +119,44 @@ class TestDefensiveAuditRemediations(unittest.TestCase):
                 os.unlink(temp_db)
 
     def test_cryptographic_agility_unregistered_admin_fails_closed(self):
-        """Verify CryptographicAgilityManager rejects dynamic updates when no admin keys are registered."""
-        from cryptographic_agility import CryptographicAgilityFramework, SignedConfiguration, UnsignedConfigurationError
+        """Verify CryptographicAgilityManager rejects dynamic updates when no admin keys are registered.
+
+        The configuration is signed with a REAL ML-DSA-87 key (no stubbed
+        verifier) so a regression in signature verification cannot be hidden
+        by the test, and the verifier is asserted to have been invoked.
+        """
+        from cryptographic_agility import (
+            CryptographicAgilityFramework, SignedConfiguration,
+            UnsignedConfigurationError,
+        )
+        from liboqs_wrapper import LibOQS_MLDSA_87
 
         framework = CryptographicAgilityFramework()
         mgr = framework.config_manager
         self.assertEqual(len(mgr._admin_public_keys), 0)
 
-        # Create a dummy signed configuration
+        signer = LibOQS_MLDSA_87()
+        pk, sk = signer.keygen()
         dummy_config = SignedConfiguration(
             config_id="test_update_001",
             timestamp="2026-09-12T00:00:00Z",
             config_type="algorithm_update",
             payload={"action": "disable_aes"},
-            signature=b"dummy_sig",
-            public_key=b"unregistered_admin_public_key_bytes_32"
+            signature=b"",
+            public_key=pk,
         )
-        # Mock signature verification returning True to isolate the admin check
-        mgr.verify_signature = lambda cfg: True
+        # Real signature over the canonical signable data.
+        dummy_config.signature = signer.sign(
+            sk, dummy_config.get_signable_data())
+
+        calls = []
+        real_verify = mgr.verify_signature
+
+        def _counting_verify(cfg):
+            calls.append(cfg.config_id)
+            return real_verify(cfg)
+
+        mgr.verify_signature = _counting_verify
 
         old_allow = os.environ.get("P2P_ALLOW_UNREGISTERED_ADMIN")
         if "P2P_ALLOW_UNREGISTERED_ADMIN" in os.environ:
@@ -152,6 +165,10 @@ class TestDefensiveAuditRemediations(unittest.TestCase):
         try:
             with self.assertRaises(UnsignedConfigurationError):
                 mgr.apply_signed_config(dummy_config)
+            # The real verifier must have run (and accepted the signature);
+            # the rejection must come from the admin-key gate.
+            self.assertEqual(calls, ["test_update_001"])
+            self.assertTrue(real_verify(dummy_config))
         finally:
             if old_allow is not None:
                 os.environ["P2P_ALLOW_UNREGISTERED_ADMIN"] = old_allow

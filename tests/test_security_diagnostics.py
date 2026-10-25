@@ -33,9 +33,13 @@ def test_full_project_security_diagnostics():
     )
 
 
-@pytest.mark.skipif(os.environ.get("P2P_DIAG_STRICT_ENV") != "1",
-                    reason="strict env-override probe only when explicitly requested")
 def test_diagnostics_rejects_live_bypass_overrides():
+    """Live ALLOW_* overrides must be refused (runs by default, not gated).
+
+    This probe exercises the production diagnostics entry point in a
+    subprocess, so a regression that lets P2P_ALLOW_* overrides through
+    is caught in normal CI runs.
+    """
     env = dict(os.environ, P2P_ALLOW_LOOPBACK="1")
     proc = subprocess.run(  # nosec: B603
         [sys.executable, os.path.join(REPO_ROOT, "security_diagnostics.py"),

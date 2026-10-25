@@ -571,6 +571,27 @@ class ProtocolManager:
         recent = [ts for ts in self._handshake_rate_limiter.get(peer_key, []) if now - ts < 60]
         if len(recent) >= 10:
             raise ProtocolViolationError(f"Handshake rate limit exceeded (10 attempts/min) for peer {peer_key}")
+
+        # A4-13 (2026-10-17): peer_key is attacker-supplied, so identity
+        # rotation trivially bypasses the per-peer bucket. Add a global
+        # ingress cap (120 handshakes/min) plus a hard table-size bound so
+        # a flood cannot exhaust memory or handshake CPU regardless of how
+        # the attacker mutates identities.
+        _GLOBAL_KEY = "__GLOBAL_HANDSHAKE_CAP__"
+        global_recent = [ts for ts in self._handshake_rate_limiter.get(_GLOBAL_KEY, []) if now - ts < 60]
+        if len(global_recent) >= 120:
+            raise ProtocolViolationError("Global handshake rate limit exceeded (120 attempts/min)")
+        global_recent.append(now)
+        self._handshake_rate_limiter[_GLOBAL_KEY] = global_recent
+        if len(self._handshake_rate_limiter) > 5000:
+            # Keep the freshest 2500 buckets; drop the rest.
+            ordered = sorted(
+                self._handshake_rate_limiter.items(),
+                key=lambda kv: kv[1][-1] if kv[1] else 0.0,
+                reverse=True,
+            )
+            self._handshake_rate_limiter = dict(ordered[:2500])
+
         recent.append(now)
         self._handshake_rate_limiter[peer_key] = recent
 

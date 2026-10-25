@@ -23,6 +23,7 @@ import json
 import sqlite3
 import threading
 import hashlib
+import hmac
 import os
 import base64
 import secrets
@@ -167,11 +168,16 @@ class HashChainEntry:
     operation: Optional[str] = None  # Operation name per Requirements 9.1
     result: str = "SUCCESS"  # SUCCESS or FAILURE per Requirements 9.1
     
-    def compute_hash(self) -> str:
+    def compute_hash(self, chain_key: Optional[bytes] = None) -> str:
         """
-        Compute SHA3-512 hash of this entry.
-        
+        Compute the entry hash.
+
         Per Requirements 9.3: event_hash = SHA3-512(previous_hash + entry_data)
+
+        When a chain key is configured the value is an HMAC-SHA3-256 with a
+        ``k1:`` domain prefix. An unkeyed hash chain is forgeable by anyone
+        who can write the database (HIGH audit_logging L145), so production
+        requires a key.
         """
         # Concatenate previous_hash with entry data
         entry_data = (
@@ -185,8 +191,12 @@ class HashChainEntry:
             f"{self.message}|"
             f"{json.dumps(self.details, sort_keys=True)}"
         )
-        # SHA3-512(previous_hash + entry_data)
         hash_input = self.previous_hash + entry_data
+        if chain_key:
+            return "k1:" + hmac.new(
+                chain_key, hash_input.encode('utf-8'), hashlib.sha3_256
+            ).hexdigest()
+        # SHA3-512(previous_hash + entry_data)
         return hashlib.sha3_512(hash_input.encode('utf-8')).hexdigest()
     
     def to_dict(self) -> Dict[str, Any]:
@@ -256,6 +266,7 @@ class HashChainAuditLogger:
         self._entries: List[HashChainEntry] = []
         self._signing_keys: Optional[Tuple[dict, dict]] = None
         self._signature_impl = None
+        self._chain_key = self._resolve_chain_key()
         
         # Initialize ML-DSA-87 for signing
         self._init_signature_system()
@@ -263,6 +274,121 @@ class HashChainAuditLogger:
         if db_path:
             self._initialize_database()
             self._load_chain_state()
+
+    @staticmethod
+    def _production() -> bool:
+        try:
+            from production_gate import is_production
+            return bool(is_production())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _resolve_chain_key() -> Optional[bytes]:
+        """Resolve the HMAC key protecting the audit chain.
+
+        HIGH (audit_logging L145): a plain SHA3-512 chain can be recomputed
+        by anyone with write access. Production must supply a secret key.
+        """
+        raw = os.environ.get("P2P_AUDIT_CHAIN_KEY")
+        if raw:
+            key = raw.encode("utf-8")
+            if len(key) < 32:
+                raise ValueError("P2P_AUDIT_CHAIN_KEY must be at least 32 bytes")
+            return key
+        if HashChainAuditLogger._production():
+            raise RuntimeError(
+                "P2P_AUDIT_CHAIN_KEY (at least 32 bytes) is required in "
+                "production for a tamper-evident audit chain"
+            )
+        return None
+
+    def _persisted(self) -> bool:
+        return bool(
+            self.db_path
+            and self.db_path != ":memory:"
+            and self.db_connection is not None
+        )
+
+    def _anchor_path(self) -> str:
+        return str(self.db_path) + ".head.anchor"
+
+    def _anchor_hmac(self, seq: int, head_hash: str) -> Optional[str]:
+        if not self._chain_key:
+            return None
+        body = f"{seq}|{head_hash}".encode("utf-8")
+        return hmac.new(self._chain_key, body, hashlib.sha256).hexdigest()
+
+    def _write_head_anchor(self) -> None:
+        if not self._persisted():
+            return
+        seq = self._sequence_number
+        head = self._last_hash
+        data = {
+            "seq": seq,
+            "head_hash": head,
+            "mac": self._anchor_hmac(seq, head),
+        }
+        path = self._anchor_path()
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+            try:
+                os.chmod(path, 0o600)
+            except Exception:
+                pass
+        except Exception as exc:
+            if self._production():
+                raise RuntimeError(f"Unable to write audit head anchor: {exc}")
+            logger.error(f"Unable to write audit head anchor: {exc}")
+
+    def _verify_head_anchor(self) -> None:
+        """Detect tail truncation and head rewrites against the anchor."""
+        if not self._persisted():
+            return
+        path = self._anchor_path()
+        if not os.path.exists(path):
+            self._write_head_anchor()
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                anchor = json.load(f)
+        except Exception as exc:
+            if self._production():
+                raise RuntimeError(f"Audit head anchor unreadable: {exc}")
+            logger.critical("Audit head anchor unreadable: %r", exc)
+            return
+        anchored_seq = int(anchor.get("seq", 0))
+        anchored_head = anchor.get("head_hash")
+        mac = anchor.get("mac")
+        if self._chain_key and mac:
+            expected = self._anchor_hmac(anchored_seq, anchored_head or "")
+            if not hmac.compare_digest(str(mac), str(expected)):
+                logger.critical("Audit head anchor MAC mismatch (anchor tampered)")
+                if self._production():
+                    raise RuntimeError("Audit head anchor MAC verification failed")
+                return
+        truncated = anchored_seq > self._sequence_number
+        rewritten = bool(
+            anchored_seq == self._sequence_number
+            and anchored_head
+            and anchored_head != self._last_hash
+        )
+        if truncated:
+            logger.critical(
+                "Audit tail truncation suspected: anchor seq %d > ledger seq %d",
+                anchored_seq, self._sequence_number)
+        if rewritten:
+            logger.critical(
+                "Audit head rewrite suspected: anchor head != ledger head")
+        if (truncated or rewritten) and self._production():
+            raise RuntimeError(
+                "Audit chain truncation/rewrite detected against authenticated anchor")
+        self._write_head_anchor()
     
     def _init_signature_system(self):
         """Initialize ML-DSA-87 signature system for log export."""
@@ -327,6 +453,10 @@ class HashChainAuditLogger:
         except Exception as e:
             logger.error(f"Failed to initialize hash chain database: {e}")
             self.db_connection = None
+            if self._production():
+                raise RuntimeError(
+                    f"Audit chain database unavailable in production: {e}"
+                )
     
     def _load_chain_state(self):
         """Load the last entry from database to continue the chain."""
@@ -349,6 +479,7 @@ class HashChainAuditLogger:
                 logger.info(f"Loaded chain state: seq={self._sequence_number}, last_hash={self._last_hash[:16]}...")
             else:
                 logger.info("Starting new hash chain from genesis")
+            self._verify_head_anchor()
     
     def add_entry(
         self,
@@ -401,8 +532,8 @@ class HashChainAuditLogger:
             )
             
             # Compute and set the entry hash per Requirements 9.3
-            # event_hash = SHA3-512(previous_hash + entry_data)
-            entry.entry_hash = entry.compute_hash()
+            # event_hash = SHA3-512(previous_hash + entry_data); keyed in prod.
+            entry.entry_hash = entry.compute_hash(self._chain_key)
             self._last_hash = entry.entry_hash
             
             # Store in memory
@@ -410,11 +541,19 @@ class HashChainAuditLogger:
             
             # Persist to database
             if self.db_connection:
-                self._persist_entry(entry)
+                if self._persist_entry(entry):
+                    self._write_head_anchor()
+                elif self._production():
+                    self._sequence_number -= 1
+                    self._last_hash = entry.previous_hash
+                    self._entries.pop()
+                    raise RuntimeError(
+                        "Audit entry persistence failed in production"
+                    )
             
             return entry
     
-    def _persist_entry(self, entry: HashChainEntry):
+    def _persist_entry(self, entry: HashChainEntry) -> bool:
         """Persist entry to database with all required fields per Requirements 9.1."""
         try:
             cursor = self.db_connection.cursor()
@@ -436,8 +575,10 @@ class HashChainAuditLogger:
                 entry.entry_hash
             ))
             self.db_connection.commit()
+            return True
         except Exception as e:
             logger.error(f"Failed to persist hash chain entry: {e}")
+            return False
     
     def verify_chain(self, start_seq: int = 1, end_seq: Optional[int] = None) -> Tuple[bool, Optional[int]]:
         """
@@ -471,7 +612,7 @@ class HashChainAuditLogger:
                 return False, entry.sequence_number
             
             # Verify entry hash
-            computed_hash = entry.compute_hash()
+            computed_hash = entry.compute_hash(self._chain_key)
             if entry.entry_hash != computed_hash:
                 logger.error(f"Hash chain broken at seq {entry.sequence_number}: entry_hash mismatch")
                 return False, entry.sequence_number
@@ -669,10 +810,28 @@ class HashChainAuditLogger:
             if export_data['signature'].get('slhdsa'):
                 signature['slhdsa'] = base64.b64decode(export_data['signature']['slhdsa'])
             
-            if export_data['public_key'].get('mldsa'):
-                public_keys['mldsa'] = base64.b64decode(export_data['public_key']['mldsa'])
-            if export_data['public_key'].get('slhdsa'):
-                public_keys['slhdsa'] = base64.b64decode(export_data['public_key']['slhdsa'])
+            # TRUST ANCHOR: the embedded public_key is attacker-controlled and
+            # can never authenticate itself. Only the signing keys held by
+            # THIS logger instance are pinned for verification; if they are
+            # unavailable, verification is refused (fail-closed).
+            if not self._signing_keys:
+                logger.error("Export verification refused: no locally pinned export signing keys")
+                return False
+            pinned_public, _pinned_secret = self._signing_keys
+            for alg in ('mldsa', 'slhdsa'):
+                pk = pinned_public.get(alg)
+                if not pk:
+                    continue
+                embedded = export_data['public_key'].get(alg)
+                if not embedded or base64.b64decode(embedded) != pk:
+                    logger.error(
+                        "Export verification refused: embedded public key does not match pinned signer"
+                    )
+                    return False
+                public_keys[alg] = pk
+            if not public_keys:
+                logger.error("Export verification refused: pinned signer holds no usable keys")
+                return False
             
             return self._signature_impl.verify(public_keys, data_to_verify, signature)
             

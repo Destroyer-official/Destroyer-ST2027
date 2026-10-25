@@ -351,10 +351,8 @@ class CNSA2PolicyEngine:
         """Check if 2027+ strict procurement gate mode is active."""
         if os.environ.get('CNSA_2027_STRICT', '').strip().lower() in ('1', 'true', 'yes', 'on'):
             return True
-        if os.environ.get('SECURE_P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on') or \
-           os.environ.get('P2P_PRODUCTION', '').strip().lower() in ('1', 'true', 'yes', 'on'):
-            return True
-        return False
+        from production_gate import is_production
+        return is_production()
     
     def verify_before_operation(
         self,

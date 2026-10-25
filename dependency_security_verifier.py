@@ -512,17 +512,26 @@ class DependencySecurityVerifier:
             hashes_calculated['sha512'] = hashlib.sha512(file_content).hexdigest()
             hashes_calculated['sha3_256'] = hashlib.sha3_256(file_content).hexdigest()
             
-            # Task 3.5: sidecar {path}.hashes files are NEVER read — they are
-            # attacker-writable local state, and comparing against
-            # attacker-supplied "expected" values is not verification
-            # (a matching sidecar would false-pass tampered binaries).
-            # Unpinned names: record computed hashes for future pinning
-            # review and pass (same outcome as the no-sidecar case today).
-            # Pinned CRITICAL binaries take the embedded-constant branch
-            # above and never reach here.
-            logger.info(f"Calculated hashes for {name}: {hashes_calculated}")
+            # Fail closed for any dependency without a pinned expected hash.
+            # Previously this branch returned True unconditionally, which let
+            # tampered binaries pass IMPORTANT-level verification.  Production
+            # refuses; lab warns (PyPI packages cannot be sidecar-pinned).
+            try:
+                from production_gate import is_production as _gate_prod
+                _prod = bool(_gate_prod())
+            except Exception:
+                _prod = False
+            if _prod:
+                logger.error(
+                    f"No pinned hash for {name}: refusing unverified dependency "
+                    "(fail-closed in production).")
+                return False
+            logger.warning(
+                f"No pinned hash for {name}: accepting in lab only "
+                "(pin the digest for production).")
             return True
-            
+
+
         except Exception as e:
             logger.error(f"Integrity verification error for {name}: {e}")
             return False

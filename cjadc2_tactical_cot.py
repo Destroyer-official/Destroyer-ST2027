@@ -17,22 +17,41 @@ import datetime
 import hashlib
 import json
 import logging
+import secrets
 import sys
 import uuid
 import xml.etree.ElementTree as ET  # nosec B405 -- serialize-only (Element/tostring); never parses untrusted XML, so no XXE surface
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 REPO_ROOT = Path(__file__).resolve().parent
 logger = logging.getLogger("CJADC2TacticalCoT")
 
 try:
     from liboqs_wrapper import LibOQS_MLDSA_87
-    from tactical_mesh_ddil import DDILBundle, BundlePriority
+    from tactical_mesh_ddil import (
+        DDILBundle,
+        BundlePriority,
+        _bundle_aad,
+        _derive_bundle_key,
+        _validate_epoch_root,
+        _wipe_key_buffer,
+        get_tactical_keyring,
+    )
 except ImportError:
     sys.path.insert(0, str(REPO_ROOT))
     from liboqs_wrapper import LibOQS_MLDSA_87
-    from tactical_mesh_ddil import DDILBundle, BundlePriority
+    from tactical_mesh_ddil import (
+        DDILBundle,
+        BundlePriority,
+        _bundle_aad,
+        _derive_bundle_key,
+        _validate_epoch_root,
+        _wipe_key_buffer,
+        get_tactical_keyring,
+    )
 
 
 class CoTEventType:
@@ -195,10 +214,51 @@ class TacticalCoTEvent:
         ev.signer_pubkey_hex = data.get("pqc_pk")
         return ev
 
-    def to_ddil_bundle(self, sender_id: str, recipient_id: str, seq: int) -> DDILBundle:
-        """Packages CoT event into an RFC 9171 / 9172 DDIL store-and-forward mesh bundle."""
-        json_bytes = json.dumps(self.to_compact_json()).encode("utf-8")
-        auth_tag = hashlib.sha3_256(json_bytes).digest()[:16]
+    def to_ddil_bundle(
+        self,
+        sender_id: str,
+        recipient_id: str,
+        seq: int,
+        symmetric_key: Optional[bytes] = None,
+        key_epoch: int = 1,
+    ) -> DDILBundle:
+        """Package the event into an RFC 9171/9172 DDIL bundle.
+
+        The payload is encrypted with AES-256-GCM under a per-bundle key
+        derived by HKDF-SHA3-512 from the peer epoch root. The bundle carries
+        the key epoch, encryption-key ID, and real AEAD tag so decryption is
+        bound to the sender, recipient, sequence, and key generation.
+        """
+        if symmetric_key is None:
+            active = get_tactical_keyring().get_active_epoch_key(recipient_id)
+            if active is None:
+                raise ValueError(
+                    f"no pre-pinned DDIL epoch key for recipient {recipient_id!r}; "
+                    "install one with TacticalKeyring.register_epoch_key()"
+                )
+            key_epoch, symmetric_key = active
+        if not isinstance(symmetric_key, (bytes, bytearray)) or len(symmetric_key) != 32:
+            raise ValueError(
+                "DDIL bundle requires a 32-byte AES-256-GCM epoch root key"
+            )
+        if not isinstance(key_epoch, int) or key_epoch < 1:
+            raise ValueError("key_epoch must be an integer >= 1")
+        root_key = _validate_epoch_root(symmetric_key)
+        encryption_key_id = hashlib.sha3_256(root_key).hexdigest()[:32]
+        bundle_key = bytearray(
+            _derive_bundle_key(root_key, sender_id, recipient_id, seq, key_epoch)
+        )
+        try:
+            json_bytes = json.dumps(self.to_compact_json()).encode("utf-8")
+            nonce = secrets.token_bytes(12)
+            aad = _bundle_aad(
+                sender_id, recipient_id, seq, key_epoch, encryption_key_id
+            )
+            sealed = AESGCM(bytes(bundle_key)).encrypt(nonce, json_bytes, aad)
+        finally:
+            _wipe_key_buffer(bundle_key)
+        ciphertext = nonce + sealed[:-16]
+        auth_tag = sealed[-16:]
 
         priority = BundlePriority.EMERGENCY if "a-h" in self.type else BundlePriority.COMMAND
         bundle_id = f"BUNDLE-{sender_id}-{seq}-{uuid.uuid4().hex[:8]}"
@@ -208,10 +268,12 @@ class TacticalCoTEvent:
             sender_id=sender_id,
             recipient_id=recipient_id,
             seq=seq,
-            ciphertext_bytes=json_bytes,
+            ciphertext_bytes=ciphertext,
             auth_tag=auth_tag,
             timestamp_utc=now_ts,
             priority=priority,
+            key_epoch=key_epoch,
+            encryption_key_id=encryption_key_id,
         )
 
 
@@ -270,7 +332,10 @@ if __name__ == "__main__":
         print("[PASS] Test 4: Geospatial tampering rejected fail-closed.")
 
         # 5. DDIL Bundle Conversion
-        bundle = cot.to_ddil_bundle("HQ_ALPHA", "DRONE_SWARM_04", seq=1001)
+        bundle = cot.to_ddil_bundle(
+            "HQ_ALPHA", "DRONE_SWARM_04", seq=1001,
+            symmetric_key=secrets.token_bytes(32),
+        )
         # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
         assert bundle.recipient_id == "DRONE_SWARM_04"  # nosec: B101
         # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)

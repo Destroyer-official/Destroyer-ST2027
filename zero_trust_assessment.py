@@ -152,8 +152,11 @@ class DoDZeroTrustEvaluator:
             else:
                 os.environ["P2P_ALLOW_TPM_NATIVE"] = _tpm_native_snapshot
 
-        ceremony_affidavit = (REPO_ROOT / "certs" / "key_ceremony_affidavit.json").exists()
-        device_trusted = tpm_available or ceremony_affidavit
+        # A planted file is not a hardware root of trust. Only a genuinely
+        # available TPM satisfies D.1/D.2; the ceremony affidavit path is
+        # retained only as a documented artifact (never as evidence).
+        ceremony_affidavit = False
+        device_trusted = tpm_available
 
         capabilities = [
             {"id": "D.1", "name": "Hardware Root of Trust", "implemented": device_trusted, "details": "Win32 TBS TPM 2.0 physical PCR quote or witnessed ceremony"},
@@ -318,8 +321,10 @@ def sign_and_export_zero_trust_assessment(output_dir: Path | None = None) -> Tup
 
     report_path.write_bytes(canonical_json)
 
+    from report_trust import load_or_create_audit_signer
+
     signer = LibOQS_MLDSA_87()
-    pk, sk = signer.keygen()
+    pk, sk = load_or_create_audit_signer()
     sig = signer.sign(sk, canonical_json)
 
     sig_path.write_bytes(sig)
@@ -328,17 +333,21 @@ def sign_and_export_zero_trust_assessment(output_dir: Path | None = None) -> Tup
     return report_path, sig_path, pub_path
 
 
-def verify_zero_trust_assessment_signature(report_path: Path, sig_path: Path, pub_path: Path) -> bool:
-    """Verify ML-DSA-87 digital signature over DoD Zero Trust assessment."""
+def verify_zero_trust_assessment_signature(
+    report_path: Path,
+    sig_path: Path,
+    pub_path: Path,
+    anchor_path: Path | None = None,
+) -> bool:
+    """Verify the report against the pinned audit anchor, not its own ``.pub``."""
     if not (report_path.exists() and sig_path.exists() and pub_path.exists()):
         return False
     try:
-        report_bytes = report_path.read_bytes()
-        sig_bytes = sig_path.read_bytes()
-        pub_bytes = pub_path.read_bytes()
+        from report_trust import verify_with_anchor
 
-        verifier = LibOQS_MLDSA_87()
-        return verifier.verify(pub_bytes, report_bytes, sig_bytes)
+        return verify_with_anchor(
+            report_path, sig_path, pub_path, LibOQS_MLDSA_87(), anchor_path
+        )
     except Exception as e:
         logger.error(f"Zero Trust assessment signature verification failed: {e}")
         return False

@@ -118,19 +118,19 @@ class TestDestroyerCoreProduction(unittest.TestCase):
         self.assertFalse(engine.check_seq(2))
         self.assertEqual(engine.drop_count(), 1)
 
-        # Advance to 100
-        self.assertTrue(engine.check_seq(100))
+        # Advance to 2000
+        self.assertTrue(engine.check_seq(2000))
 
-        # Within 64-packet window: 100 - 63 = 37 should accept
-        self.assertTrue(engine.check_seq(37))
+        # Within 1024-packet window: 2000 - 1023 = 977 should accept
+        self.assertTrue(engine.check_seq(977))
 
-        # Beyond 64-packet window: 100 - 64 = 36 should reject
-        self.assertFalse(engine.check_seq(36))
+        # Beyond 1024-packet window: 2000 - 1024 = 976 should reject
+        self.assertFalse(engine.check_seq(976))
 
-        # Jump ahead to 1000 resyncs window
-        self.assertTrue(engine.check_seq(1000))
-        # Old packet 100 now far behind window -> reject
-        self.assertFalse(engine.check_seq(100))
+        # Jump ahead to 4000 resyncs window
+        self.assertTrue(engine.check_seq(4000))
+        # Old packet 2000 now far behind window -> reject
+        self.assertFalse(engine.check_seq(2000))
 
     def test_05_tamper_resistance_and_silent_drop(self):
         """Verify that tampering any byte in the wire frame causes silent drop (None), never crash."""

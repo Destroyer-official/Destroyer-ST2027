@@ -138,27 +138,27 @@ class TestProductionGradeDestroyer(unittest.TestCase):
         self.assertLess(avg, 500.0, "Average seal+open roundtrip must be under 500 microseconds")
 
     def test_04_wireguard_anti_replay_jitter_and_window_boundaries(self):
-        """Test out-of-order network jitter within the 64-packet window and rejection beyond."""
+        """Test out-of-order network jitter within the 1024-packet window and rejection beyond."""
         engine = SecureEngine()
         engine.establish_session(list(b"W" * 32), 100, True)
 
-        # 1. Sequential feed to advance window to 200
-        for seq in range(100, 201):
+        # 1. Sequential feed to advance window to 1200
+        for seq in range(100, 1201):
             self.assertTrue(engine.check_seq(seq))
 
-        # 2. Window is now [200 - 63, 200] -> [137, 200]
-        # In-window packet (150) was already seen -> duplicate -> drop
-        self.assertFalse(engine.check_seq(150))
+        # 2. Window is now [1200 - 1023, 1200] -> [177, 1200]
+        # In-window packet (500) was already seen -> duplicate -> drop
+        self.assertFalse(engine.check_seq(500))
 
-        # 3. Behind-window packet (136 = 200 - 64) -> drop
-        self.assertFalse(engine.check_seq(136))
+        # 3. Behind-window packet (176 = 1200 - 1024) -> drop
+        self.assertFalse(engine.check_seq(176))
         self.assertFalse(engine.check_seq(100))
 
         # 4. Jump ahead to 10,000 (resets bitmap to 1)
         self.assertTrue(engine.check_seq(10000))
 
-        # 5. Packets [10000 - 63 .. 10000 - 1] arrived out of order (simulate jitter)
-        jitter_seqs = list(range(9937, 10000))
+        # 5. Packets [10000 - 100 .. 10000 - 1] arrived out of order (simulate jitter)
+        jitter_seqs = list(range(9900, 10000))
         # Shuffle jittered packets (B311: deterministic test-only Random(42), never prod CSPRNG)
         import random  # nosec B311 - deterministic test shuffle only
         rnd = random.Random(42)  # nosec B311 - deterministic test seed
@@ -167,12 +167,12 @@ class TestProductionGradeDestroyer(unittest.TestCase):
         for seq in jitter_seqs:
             self.assertTrue(engine.check_seq(seq), f"In-window jittered sequence {seq} must be accepted")
 
-        # Now all in [9937, 10000] are consumed; re-offering any must be rejected as duplicate
+        # Now all in [9900, 10000] are consumed; re-offering any must be rejected as duplicate
         for seq in jitter_seqs[:10]:
             self.assertFalse(engine.check_seq(seq), f"Duplicate sequence {seq} must be rejected")
 
-        # 6. Outside window: 9936 (10000 - 64) must be rejected
-        self.assertFalse(engine.check_seq(9936))
+        # 6. Outside window: 8976 (10000 - 1024) must be rejected
+        self.assertFalse(engine.check_seq(8976))
 
     def test_05_adversarial_tampering_and_domain_separation(self):
         """Simulate malicious adversarial attacks: bit flips, cross-direction replay, truncation."""

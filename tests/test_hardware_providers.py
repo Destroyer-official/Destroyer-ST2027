@@ -383,3 +383,18 @@ def test_deployment_host_posture_gate():
     assert "Host Posture: SecureBoot" in names  # nosec: B101
     assert "Host Posture: TPM" in names  # nosec: B101
 
+
+def test_deployment_host_posture_detection_fails_closed(monkeypatch):
+    import platform_hsm_interface
+    from verify_deployment import DeploymentVerifier, VerificationStatus
+
+    def _unavailable():
+        raise RuntimeError("posture provider unavailable")
+
+    monkeypatch.setenv("P2P_PRODUCTION", "tru")
+    monkeypatch.setattr(platform_hsm_interface, "get_host_security_posture", _unavailable)
+    v = DeploymentVerifier()
+    assert v.verify_host_posture() is False
+    result = next(r for r in v.results if r.check_name == "Host Posture: detection")
+    assert result.status == VerificationStatus.FAIL
+

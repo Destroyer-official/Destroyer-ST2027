@@ -346,4 +346,4 @@ class NetworkIO(BaseModule):
     async def cleanup(self) -> None:
         """Cleanup network I/O resources."""
         self.logger.debug("Network I/O cleaned up")
-        await super().cleanup()
+        super().cleanup()

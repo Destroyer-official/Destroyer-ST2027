@@ -6,9 +6,9 @@ and DoubleRatchet loopback messaging.
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
+
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -22,10 +22,27 @@ def anyio_backend():
     return 'asyncio'
 
 
+def test_ddil_queue_does_not_fabricate_outer_aead_tag():
+    class _Mesh:
+        def __init__(self):
+            self.calls = []
+
+        def enqueue_bundle(self, **kwargs):
+            self.calls.append(kwargs)
+            return kwargs
+
+    mesh = _Mesh()
+    sci._enqueue_ddil_ciphertext(
+        mesh, "peer-1", 123, b"double-ratchet-message", sci.BundlePriority.STANDARD
+    )
+
+    assert mesh.calls[0]["auth_tag"] == b""  # nosec: B101
+    assert mesh.calls[0]["ciphertext_bytes"] == b"double-ratchet-message"  # nosec: B101
+
+
 @pytest.mark.anyio
 async def test_simple_chat_loopback_session():
     # Create an in-memory loopback pipe using asyncio.open_connection
-    server_started = asyncio.Event()
     server_session = None
 
     async def _on_client_connected(reader, writer):

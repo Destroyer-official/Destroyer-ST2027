@@ -362,4 +362,4 @@ class ConnectionMonitoring(BaseModule):
                 self.logger.debug("Monitoring task cancelled cleanly")
         
         self.logger.debug("Connection monitoring cleaned up")
-        await super().cleanup()
+        super().cleanup()

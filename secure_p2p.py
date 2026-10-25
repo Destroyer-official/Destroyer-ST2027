@@ -59,14 +59,8 @@ if 'P2P_FAST_INIT' not in os.environ:
 # production/TS gate, so the legacy surface cannot be brought up in
 # production by habit. When IMPORTED (tests, tooling) this block is skipped.
 if __name__ == "__main__":
-    try:
-        from production_gate import is_production as _gate_is_prod
-        _gate_blocks_legacy = _gate_is_prod()
-    except Exception:
-        _gate_blocks_legacy = (
-            os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-            or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-        )
+    from production_gate import is_production as _gate_is_prod
+    _gate_blocks_legacy = _gate_is_prod()
     if _gate_blocks_legacy:
         import sys as _sys
         _sys.stderr.write(
@@ -137,15 +131,18 @@ DIM = "\033[2m"
 from utils.helpers import is_env_true
 from zero_trust_engine import RBACPolicyEngine
 from data_models import SecurityRole, SecurityPermission
-# Fix Windows console encoding for Unicode characters
+# Configure Windows console encoding without replacing process-global streams.
+# Constructing a new TextIOWrapper around sys.stdout.buffer at import time closes
+# pytest/IDE capture streams when the old wrapper is garbage-collected.
 if sys.platform == 'win32':
-    try:
-        import io
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    except Exception as e:
-        # Fallback to default stream if TextIOWrapper cannot be wrapped
-        sys.stderr.write(f"Console encoding notice: {e}\n")
+    for _stream_name in ("stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        try:
+            if hasattr(_stream, "reconfigure"):
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            # Embedded/non-standard streams may not support reconfiguration.
+            pass
 
 # Pure Military Direct P2P Mode (Zero external cloud servers)
 DATABASE_AVAILABLE = False
@@ -1555,7 +1552,14 @@ class InputValidator:
 # Enhanced P2P Integration Classes
 class MilitaryGradeCrypto:
     """Military-grade cryptographic operations for hashed identifiers."""
-    SYSTEM_SALT: str = "MILITARY_GRADE_P2P_QUANTUM_RESISTANT_SALT_2025_SHA3_512"
+    @staticmethod
+    def _system_salt() -> str:
+        import os as _os
+        salt = _os.environ.get("P2P_USERNAME_LOOKUP_SALT")
+        if not salt:
+            salt = _os.environ.setdefault(
+                "_P2P_USERNAME_LOOKUP_SALT_EPHEMERAL", secrets.token_hex(32))
+        return salt
 
     @staticmethod
     def generate_secure_salt() -> str:
@@ -1577,7 +1581,7 @@ class MilitaryGradeCrypto:
     @staticmethod
     def hash_username_for_lookup(username: str) -> str:
         """Hash username for secure database lookup."""
-        return MilitaryGradeCrypto.quantum_resistant_hash(username, MilitaryGradeCrypto.SYSTEM_SALT)
+        return MilitaryGradeCrypto.quantum_resistant_hash(username, MilitaryGradeCrypto._system_salt())
 
     @staticmethod
     def hash_user_id_for_storage(user_id: str) -> str:
@@ -2195,12 +2199,8 @@ class SecureP2PChat:
         """
         # CNSA 2.0 / TOP SECRET Sovereign Mode Enforcement
         self.ts_mode = os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
-        try:
-            from production_gate import is_production as _gate_prod
-            self.production_mode = _gate_prod()
-        except Exception:
-            self.production_mode = (os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                                    or os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
+        from production_gate import is_production as _gate_prod
+        self.production_mode = _gate_prod()
         if self.ts_mode or self.production_mode:
             log.info("[CNSA 2.0] Strict sovereign military mode active — bare-metal Rust engine and hardware root-of-trust armed.")
 
@@ -2285,12 +2285,8 @@ class SecureP2PChat:
             log.info("[PASS] Zero-Gap Defense Pipeline initialized")
         except ImportError as e:
             import os as _os
-            try:
-                from production_gate import is_production as _gate_prod
-                _prod = _gate_prod()
-            except Exception:
-                _prod = (_os.environ.get("P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on")
-                         or _os.environ.get("SECURE_P2P_PRODUCTION", "0").strip().lower() in ("1", "true", "yes", "on"))
+            from production_gate import is_production as _gate_prod
+            _prod = _gate_prod()
             if _prod:
                 log.critical(f"unified_secure_pipeline missing in production — fail-closed (no legacy path): {e}")
                 raise RuntimeError("unified_secure_pipeline required in production; legacy path refused") from e
@@ -3858,12 +3854,8 @@ class SecureP2PChat:
                     log.warning(f"Failed to create TLSA records from certificate: {e}")
 
             # If we couldn't create TLSA records from a certificate, fail-closed in production
-            try:
-                from production_gate import is_production as _gate_prod
-                _prod_tlsa = _gate_prod()
-            except Exception:
-                _prod_tlsa = (os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on")
-                              or os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"))
+            from production_gate import is_production as _gate_prod
+            _prod_tlsa = _gate_prod()
             if _prod_tlsa:
                 log.error("MILITARY FATAL: Real certificate TLSA records required for DANE. Refusing placeholder in production.")
                 return None
@@ -4882,8 +4874,11 @@ class SecureP2PChat:
                 raise SecurityError("Failed to send handshake message during client key exchange.")
 
             log.info(f"Hybrid X3DH+PQ handshake completed, derived shared secret length: {len(self.hybrid_root_key)} bytes")
-            self._get_or_derive_nc3_war_key()
             self._ensure_nc3_tactical_officers()
+            try:
+                self._get_or_derive_nc3_war_key()  # best-effort warm-up; EAM paths fail closed if absent
+            except Exception as e:
+                log.warning(f"NC3 war key unavailable at session setup: {e}")
 
             # --- BEGIN: Authenticate hybrid_root_key ---
             log.info("Authenticating derived hybrid_root_key with peer...")
@@ -8435,25 +8430,8 @@ class SecureP2PChat:
         Lab default: False (warn + b'' compat sentinel preserved).
         Single source of truth: utils/message_caps.is_strict_encrypt.
         """
-        try:
-            from utils.message_caps import is_strict_encrypt as _caps_strict
-            return bool(_caps_strict())
-        # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-        except Exception:  # nosec: B110
-            pass
-        try:
-            if os.environ.get("P2P_STRICT_ENCRYPT", "").strip().lower() in ("1", "true", "yes", "on"):
-                return True
-            if os.environ.get("P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"):
-                return True
-            if os.environ.get("SECURE_P2P_PRODUCTION", "").strip().lower() in ("1", "true", "yes", "on"):
-                return True
-            if os.environ.get("P2P_ENV", "").strip().lower() == "production":
-                return True
-        # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-        except Exception:  # nosec: B110
-            pass
-        return False
+        from utils.message_caps import is_strict_encrypt as _caps_strict
+        return _caps_strict()
 
     def _require_encrypted(self, data: bytes, ctx: str = "encrypt") -> bytes:
         """Fail-closed guard: raise on empty/b'' ciphertext sentinel.
@@ -8834,7 +8812,10 @@ class SecureP2PChat:
             print(f"{GREEN}Chat session started.{RESET}")
             print(f"{YELLOW}Type 'exit' to quit or '/help' for commands.{RESET}\n")
             self._ensure_nc3_tactical_officers()
-            self._get_or_derive_nc3_war_key()
+            try:
+                self._get_or_derive_nc3_war_key()  # best-effort warm-up; EAM paths fail closed if absent
+            except Exception as e:
+                log.warning(f"NC3 war key unavailable at session setup: {e}")
 
         # Process any queued messages (for reconnect)
         if is_reconnect and not self.message_queue.empty():
@@ -10002,15 +9983,15 @@ class SecureP2PChat:
                 if time.time() - self.last_key_rotation > self.KEY_ROTATION_INTERVAL:
                     await self._rotate_keys()
 
-            # Continuous Epoch Ratchet (CER) healing: advance epoch every 128 messages
+            # Continuous Epoch Ratchet (CER): trigger synchronized session rotation every 128 messages
             pipeline = getattr(self, '_zero_gap_pipeline', None)
             if pipeline is not None and getattr(pipeline, '_epoch_root_key', None) is not None:
-                if pipeline._seal_count > 0 and pipeline._seal_count % 128 == 0:
-                    try:
-                        pipeline.rotate_epoch()
-                        log.info(f"[CER] Continuous Epoch Ratchet healed: active epoch #{pipeline.current_epoch}")
-                    except Exception as e_cer:
-                        log.debug(f"[CER] Continuous Epoch Ratchet notice: {e_cer}")
+                current_seal_count = getattr(pipeline, '_seal_count', 0)
+                last_rotated_count = getattr(self, '_last_cer_rotated_count', 0)
+                if current_seal_count >= last_rotated_count + 128 and self.is_connected:
+                    self._last_cer_rotated_count = current_seal_count
+                    log.info(f"[CER] 128-message milestone reached ({current_seal_count} sealed), initiating synchronized key rotation")
+                    await self._rotate_keys()
 
             # Check if ephemeral identity needs rotation
             if self.use_ephemeral_identity and hasattr(self, 'hybrid_kex'):
@@ -10593,7 +10574,7 @@ class SecureP2PChat:
                 if len(_war_key2) != 32:
                     print(f"\n{RED}[NC3 VERIFICATION FAILED] EMERGENCY REJECTION: war-order key required.{RESET}")
                     return
-                peer_state = getattr(self, 'peer_verification_status', 'VERIFIED_MATCH')
+                peer_state = getattr(self, 'peer_verification_status', None) or 'PENDING_OOB_VERIFICATION'
                 unsealed_pal = nc3_controller.verify_and_decrypt_nuclear_eam(
                     eam_data=eam_data,
                     recipient_officer_1=recip_officer_1,
@@ -11974,32 +11955,91 @@ class SecureP2PChat:
             pass
         return self._get_or_derive_nc3_war_key()
 
-    def _ensure_nc3_tactical_officers(self):
-        """Ensures station possesses certified Dual-Custodian Officer identities with NIST Level 5 ML-DSA-87 keypairs."""
+    def _ensure_nc3_tactical_officers(self, required: bool = False):
+        """Load provisioned Dual-Custodian identities; never mint them in production.
+
+        The old path generated both "custodians" inside one process, which
+        satisfies no two-person rule at all. Production must load two
+        separately provisioned, sealed credentials; missing identities fail
+        closed when an EAM is actually requested.
+        """
         if getattr(self, 'custodian_officer_1', None) and getattr(self, 'custodian_officer_2', None):
             return
         from nc3_nuclear_command import nc3_controller
+        try:
+            from production_gate import is_production as _is_prod
+            _prod = bool(_is_prod())
+        except Exception:
+            _prod = False
+
         uname = getattr(self, 'local_username', None) or "STATION"
+        officer_ids = (
+            f"{uname}_CUSTODIAN_ALPHA",
+            f"{uname}_CUSTODIAN_BRAVO",
+        )
+        if _prod:
+            if not required:
+                log.critical(
+                    "NC3 custodian identities are not loaded; production EAM "
+                    "creation will fail closed until both are provisioned."
+                )
+                return
+            from nc3_nuclear_command import get_or_create_tactical_officer
+            try:
+                self.custodian_officer_1 = get_or_create_tactical_officer(
+                    officer_ids[0], "GEN", "Strategic Nuclear Controller",
+                    allow_create=False,
+                )
+                self.custodian_officer_2 = get_or_create_tactical_officer(
+                    officer_ids[1], "ADM", "Executive Nuclear Custodian",
+                    allow_create=False,
+                )
+            except Exception as e:
+                self.custodian_officer_1 = None
+                self.custodian_officer_2 = None
+                raise RuntimeError(
+                    "NC3 production requires two separately provisioned "
+                    "custodian credentials; refusing to mint them in-process "
+                    "(fail-closed)."
+                ) from e
+            return
+
+        # Lab/drill only: ephemeral in-memory identities, loudly flagged.
+        log.warning(
+            "NC3 custodians generated in-process for lab/drill use only; "
+            "this does NOT satisfy a real two-person rule."
+        )
         self.custodian_officer_1 = nc3_controller.generate_officer_credentials(
-            f"{uname}_CUSTODIAN_ALPHA", "GEN", "Strategic Nuclear Controller"
+            officer_ids[0], "GEN", "Strategic Nuclear Controller"
         )
         self.custodian_officer_2 = nc3_controller.generate_officer_credentials(
-            f"{uname}_CUSTODIAN_BRAVO", "ADM", "Executive Nuclear Custodian"
+            officer_ids[1], "ADM", "Executive Nuclear Custodian"
         )
 
     def _get_or_derive_nc3_war_key(self) -> bytes:
         """Derives a deterministic 32-byte NC3 nuclear-grade war key from the authenticated hybrid root key."""
+        imported = getattr(self, '_nc3_war_key', None)
+        if imported:
+            return bytes(imported)
         if getattr(self, '_cached_nc3_war_key', None):
             return self._cached_nc3_war_key
 
         env_key = os.environ.get("P2P_NC3_WAR_KEY", "").strip()
         if env_key:
             try:
-                self._cached_nc3_war_key = bytes.fromhex(env_key)
-                return self._cached_nc3_war_key
-            # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-            except Exception:  # nosec: B110
-                pass
+                key = bytes.fromhex(env_key)
+            except ValueError as e:
+                raise RuntimeError(
+                    "NC3 war key provisioning invalid: P2P_NC3_WAR_KEY is not "
+                    "valid hex (fail-closed)."
+                ) from e
+            if len(key) != 32:
+                raise RuntimeError(
+                    "NC3 war key provisioning invalid: P2P_NC3_WAR_KEY must be "
+                    "64 hex chars (32 bytes) (fail-closed)."
+                )
+            self._cached_nc3_war_key = key
+            return self._cached_nc3_war_key
 
         root = getattr(self, 'hybrid_root_key', None)
         if not root and getattr(self, 'ratchet', None):
@@ -12016,16 +12056,13 @@ class SecureP2PChat:
             self._cached_nc3_war_key = hkdf.derive(bytes(root))
             return self._cached_nc3_war_key
 
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-        from cryptography.hazmat.primitives import hashes as crypto_hashes
-        hkdf = HKDF(
-            algorithm=crypto_hashes.SHA512(),
-            length=32,
-            salt=b"SecureP2P::NC3::NuclearMessage::WarKey::v1::CNSA2-Level5",
-            info=b"NC3/EAM-DEFAULT-WAR-KEY-FALLBACK-V1"
+        # FAIL CLOSED: no authenticated root key and no provisioned war key.
+        # A deterministic public-constant fallback would be a war key known to
+        # every peer on earth -- forbidden for nuclear traffic.
+        raise RuntimeError(
+            "NC3 war key unavailable: an authenticated hybrid root key or "
+            "P2P_NC3_WAR_KEY provisioning is required (fail-closed)."
         )
-        self._cached_nc3_war_key = hkdf.derive(b"SecureP2P::NC3::TacticalOperationalWarKey::Shared")
-        return self._cached_nc3_war_key
 
     def _create_nc3_chat_eam(self, text: str) -> str:
         """
@@ -12037,7 +12074,7 @@ class SecureP2PChat:
         - Zeroization of temporary buffers with DoD 5220.22-M 3-pass wiping.
         """
         from nc3_nuclear_command import nc3_controller
-        self._ensure_nc3_tactical_officers()
+        self._ensure_nc3_tactical_officers(required=True)
         war_key = self._get_or_derive_nc3_war_key()
         eam = nc3_controller.create_nuclear_eam(
             directive_code="NC3-TACTICAL-CHAT",
@@ -12117,6 +12154,30 @@ class SecureP2PChat:
         pub1 = bytes.fromhex(custodians[0]["public_key"])
         pub2 = bytes.fromhex(custodians[1]["public_key"])
 
+        # HIGH (nc3_consoles L...): bind self-asserted custodian keys to the
+        # provisioned officer registry. Production refuses unknown officers.
+        try:
+            from production_gate import is_production as _is_prod
+            _prod = bool(_is_prod())
+        except Exception:
+            _prod = False
+        from nc3_nuclear_command import load_officer_public_key
+        for label, record, declared in (
+            ("Officer 1", custodians[0], pub1),
+            ("Officer 2", custodians[1], pub2),
+        ):
+            cid = str(record.get("officer_id", ""))
+            expected = load_officer_public_key(cid)
+            if expected is not None:
+                if not secrets.compare_digest(expected, declared):
+                    raise NC3SecurityError(
+                        f"{label} ({cid}) public key does not match the "
+                        f"provisioned officer identity.")
+            elif _prod:
+                raise DualCustodyViolation(
+                    f"{label} ({cid or 'unknown'}) is not a provisioned officer; "
+                    f"refusing self-asserted custodian keys in production.")
+
         if not nc3_controller.dsa.verify(pub1, expected_digest, cust1_sig):
             raise NC3SecurityError("Officer 1 signature verification FAILED.")
         if not nc3_controller.dsa.verify(pub2, expected_digest, cust2_sig):
@@ -12142,6 +12203,34 @@ class SecureP2PChat:
         nc3_controller._record_processed_eam(eam_id)
         return decrypted_pal
 
+    def enroll_critical_operator(self) -> bool:
+        """Pre-enroll ONE custodian operator for this session's two-person rule.
+
+        Must be invoked separately for each of the two distinct officers
+        BEFORE any critical send. Enrollment and authorization are never
+        combined in a single interaction (that would collapse the rule to
+        one person typing two names).
+        """
+        import getpass as _getpass
+
+        from critical_release import CriticalReleaseAuthority, ReleaseAuthError
+
+        auth = getattr(self, '_critical_release_authority', None)
+        if auth is None:
+            auth = CriticalReleaseAuthority()
+            self._critical_release_authority = auth
+        try:
+            op = input("Enrolling officer ID: ").strip()
+            pw = _getpass.getpass("Enrolling officer passphrase: ")
+            auth.enroll(op, pw)
+            del pw
+        except ReleaseAuthError as e:
+            print(f"{RED}Operator enrollment failed: {e}{RESET}")
+            log.error(f"Critical operator enrollment failed: {e}")
+            return False
+        print(f"{GREEN}Operator enrolled: {op} ({auth.enrolled}/2 for this session).{RESET}")
+        return True
+
     async def send_critical(self, text: str) -> bool:
         """Transmit a CRITICAL-class message under two-person rule.
 
@@ -12151,8 +12240,9 @@ class SecureP2PChat:
            (TOFU-new peers can NEVER receive critical traffic).
         3. Rust outer envelope active (P2P_DATA_PLANE=rust session bound).
         4. Hardware gate (only when P2P_REQUIRE_HSM=true).
-        5. Joint authorization: two DISTINCT enrolled operators enter
-           passphrases (getpass, no echo) in one ceremony.
+        5. Joint authorization: two DISTINCT operators PRE-ENROLLED earlier
+           in this session (see enroll_critical_operator) enter passphrases
+           (getpass, no echo); enrollment and authorization are separated.
         Payload travels as MSG with a CRITICAL: marker; receivers display
         it RAM-only (never history, never content-logged). Failures are
         NEVER queued for later -- the operators retry deliberately.
@@ -12196,18 +12286,26 @@ class SecureP2PChat:
                       f"-- critical refused.{RESET}")
                 log.error("Critical send refused: HSM gate")
                 return False
-        # 5. Two-person ceremony.
-        try:
+        # 5. Two-person ceremony against PRE-ENROLLED operators. Enrollment
+        # and authorization MUST NOT happen in the same interaction: a single
+        # person typing two names would otherwise satisfy "two-person" rule.
+        auth = getattr(self, '_critical_release_authority', None)
+        if auth is None:
             auth = CriticalReleaseAuthority()
-            print(f"{YELLOW}CRITICAL RELEASE CEREMONY -- two distinct operators required.{RESET}")
+            self._critical_release_authority = auth
+        if auth.enrolled != 2:
+            print(f"{RED}Critical refused: two operators must be pre-enrolled "
+                  f"for this session (call 'enroll_critical_operator' separately "
+                  f"for each officer BEFORE any critical send). "
+                  f"Currently enrolled: {auth.enrolled}/2.{RESET}")
+            log.error("Critical send refused: operators not pre-enrolled")
+            return False
+        try:
+            print(f"{YELLOW}CRITICAL RELEASE CEREMONY -- two distinct enrolled operators required.{RESET}")
             op1 = input("Operator 1 ID: ").strip()
             pw1 = _getpass.getpass("Operator 1 passphrase: ")
             op2 = input("Operator 2 ID: ").strip()
             pw2 = _getpass.getpass("Operator 2 passphrase: ")
-            # NOTE: enrollment binds this session's verifiers; in production
-            # these are pre-enrolled at session start by both officers.
-            auth.enroll(op1, pw1)
-            auth.enroll(op2, pw2)
             auth.authorize(op1, pw1, op2, pw2)
             del pw1, pw2
         except ReleaseAuthError as e:
@@ -13887,6 +13985,12 @@ class SecureP2PChat:
         try:
             import hashlib
             from nc3_nuclear_command import EAM_CLASSIFICATION, EAM_PREAMBLE
+            # HIGH (secure_p2p_part3 L45): this paced-console path performs no
+            # dual-custody verification, so it must never assert the Two-Person
+            # Rule. Production refuses; lab transmits explicitly labeled.
+            if _gate_is_prod():
+                print(f"{RED}[EAM REFUSED] Two-Person Rule cannot be verified on the paced console path in production; use the NC3 critical-release ceremony (fail-closed).{RESET}")
+                return False
             eam_payload = {
                 "preamble": EAM_PREAMBLE,
                 "classification": EAM_CLASSIFICATION,
@@ -13894,7 +13998,7 @@ class SecureP2PChat:
                 "expires_at": time.time() + 120.0,
                 "originator": self.local_username or "COMMAND_NODE",
                 "directive": directive,
-                "two_person_rule": "VERIFIED_2_OF_2",
+                "two_person_rule": "UNVERIFIED_LAB_PACED_PATH",
                 "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
             }
             raw_json = json.dumps(eam_payload).encode("utf-8")
@@ -14261,6 +14365,12 @@ class TacticalP2PNode:
         try:
             import hashlib
             from nc3_nuclear_command import EAM_CLASSIFICATION, EAM_PREAMBLE
+            # HIGH (secure_p2p_part3 L45): this paced-console path performs no
+            # dual-custody verification, so it must never assert the Two-Person
+            # Rule. Production refuses; lab transmits explicitly labeled.
+            if _gate_is_prod():
+                print(f"{RED}[{self.name} EAM REFUSED] Two-Person Rule cannot be verified on the paced console path in production; use the NC3 critical-release ceremony (fail-closed).{RESET}")
+                return False
             eam_payload = {
                 "preamble": EAM_PREAMBLE,
                 "classification": EAM_CLASSIFICATION,
@@ -14268,7 +14378,7 @@ class TacticalP2PNode:
                 "expires_at": time.time() + 120.0,
                 "originator": self.name,
                 "directive": directive,
-                "two_person_rule": "VERIFIED_2_OF_2",
+                "two_person_rule": "UNVERIFIED_LAB_PACED_PATH",
                 "authenticator_hash": hashlib.sha3_512(directive.encode("utf-8")).hexdigest()
             }
             raw_json = json.dumps(eam_payload).encode("utf-8")

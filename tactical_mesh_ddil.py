@@ -16,10 +16,12 @@ Features:
 import argparse
 import collections
 import hashlib
+import hmac
 import json
 import logging
 import os
 import secrets
+import struct
 import sys
 import threading
 import time
@@ -36,9 +38,13 @@ except ImportError:
     from liboqs_wrapper import LibOQS_MLDSA_87
 
 try:
+    from cryptography.hazmat.primitives import hashes as crypto_hashes
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 except ImportError:
     AESGCM = None
+    crypto_hashes = None
+    HKDF = None
 
 
 class BundlePriority:
@@ -47,13 +53,29 @@ class BundlePriority:
     STANDARD = 2   # Routine telemetry & chat payload
 
 
+def _wipe_key_buffer(buffer: bytearray) -> None:
+    try:
+        from secure_key_manager import secure_erase
+
+        secure_erase(buffer)
+        return
+    except Exception as exc:
+        logger.debug("secure_erase unavailable (%s); using local zeroization", exc)
+    for index in range(len(buffer)):
+        buffer[index] = 0
+
+
 class TacticalKeyring:
     """Pre-pinned Post-Quantum Keyring for Tactical DDIL Nodes (TETA Architecture)."""
 
+    EPOCH_RETENTION = 4
+
     def __init__(self):
-        self.lock = threading.Lock()
-        self._by_node: Dict[str, Tuple[bytes, str]] = {}  # node_id -> (pubkey_bytes, key_id)
-        self._by_id: Dict[str, bytes] = {}  # key_id -> pubkey_bytes
+        self.lock = threading.RLock()
+        self._by_node: Dict[str, Tuple[bytes, str]] = {}
+        self._by_id: Dict[str, bytes] = {}
+        self._epoch_by_node: Dict[str, Dict[int, Tuple[bytearray, str]]] = {}
+        self._epoch_by_id: Dict[str, Tuple[str, int]] = {}
 
     def register_peer_key(self, node_id: str, pubkey_bytes: bytes) -> str:
         """Register a tactical node's public key and return its 32-byte Key ID."""
@@ -72,12 +94,161 @@ class TacticalKeyring:
             val = self._by_node.get(node_id)
             return val[0] if val else None
 
+    def register_epoch_key(
+        self, node_id: str, key: bytes, epoch: int = 1
+    ) -> str:
+        """Install a 32-byte epoch root key for one peer and return its key ID."""
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("epoch key node_id must be a non-empty string")
+        if not isinstance(epoch, int) or epoch < 1:
+            raise ValueError("epoch must be an integer >= 1")
+        if not isinstance(key, (bytes, bytearray)) or len(key) != 32:
+            raise ValueError("epoch root key must be exactly 32 bytes")
+        with self.lock:
+            key_id = hashlib.sha3_256(key).hexdigest()[:32]
+            epochs = self._epoch_by_node.setdefault(node_id, {})
+            previous = epochs.get(epoch)
+            if previous is not None:
+                _wipe_key_buffer(previous[0])
+                self._epoch_by_id.pop(previous[1], None)
+            epochs[epoch] = (bytearray(key), key_id)
+            self._epoch_by_id[key_id] = (node_id, epoch)
+            cutoff = max(epochs) - (self.EPOCH_RETENTION - 1)
+            for old_epoch in sorted(epochs):
+                if old_epoch < cutoff:
+                    old_key, old_id = epochs.pop(old_epoch)
+                    _wipe_key_buffer(old_key)
+                    self._epoch_by_id.pop(old_id, None)
+            return key_id
+
+    def get_epoch_key(self, node_id: str, epoch: int) -> Optional[bytes]:
+        with self.lock:
+            entry = self._epoch_by_node.get(node_id, {}).get(epoch)
+            return bytes(entry[0]) if entry else None
+
+    def get_epoch_key_by_id(self, key_id: str) -> Optional[bytes]:
+        with self.lock:
+            target = self._epoch_by_id.get(key_id)
+            if not target:
+                return None
+            entry = self._epoch_by_node.get(target[0], {}).get(target[1])
+            return bytes(entry[0]) if entry else None
+
+    def active_epoch(self, node_id: str) -> Optional[int]:
+        with self.lock:
+            epochs = self._epoch_by_node.get(node_id)
+            return max(epochs) if epochs else None
+
+    def get_active_epoch_key(self, node_id: str) -> Optional[Tuple[int, bytes]]:
+        with self.lock:
+            epoch = self.active_epoch(node_id)
+            if epoch is None:
+                return None
+            return epoch, self.get_epoch_key(node_id, epoch)
+
+    def rotate_epoch_key(
+        self, node_id: str, key: Optional[bytes] = None
+    ) -> Tuple[int, str]:
+        with self.lock:
+            current = self.active_epoch(node_id) or 0
+            next_epoch = current + 1
+            root = key if key is not None else secrets.token_bytes(32)
+            return next_epoch, self.register_epoch_key(node_id, root, next_epoch)
+
+    def remove_epoch_key(self, node_id: str, epoch: int) -> bool:
+        """Remove and zeroize a specific epoch key buffer."""
+        with self.lock:
+            epochs = self._epoch_by_node.get(node_id)
+            if not epochs or epoch not in epochs:
+                return False
+            key, key_id = epochs.pop(epoch)
+            _wipe_key_buffer(key)
+            self._epoch_by_id.pop(key_id, None)
+            if not epochs:
+                self._epoch_by_node.pop(node_id, None)
+            return True
+
+    def remove_epoch_keys(self, node_id: str) -> None:
+        with self.lock:
+            for epoch, (key, key_id) in list(
+                self._epoch_by_node.pop(node_id, {}).items()
+            ):
+                _wipe_key_buffer(key)
+                self._epoch_by_id.pop(key_id, None)
+
+    def wipe_epoch_keys(self) -> None:
+        with self.lock:
+            for node_id in list(self._epoch_by_node):
+                self.remove_epoch_keys(node_id)
+
 
 _GLOBAL_TACTICAL_KEYRING = TacticalKeyring()
 
 
 def get_tactical_keyring() -> TacticalKeyring:
     return _GLOBAL_TACTICAL_KEYRING
+
+
+_DDIL_KDF_SALT = b"SecureP2P::DDIL::BPsec::Salt::v2"
+_DDIL_KDF_INFO = b"SecureP2P::DDIL::BPsec::BundleKey::v2"
+
+
+def _validate_epoch_root(key: bytes) -> bytes:
+    if not isinstance(key, (bytes, bytearray)) or len(key) != 32:
+        raise ValueError("DDIL epoch root key must be exactly 32 bytes")
+    return bytes(key)
+
+
+def _derive_bundle_key(
+    root_key: bytes,
+    sender_id: str,
+    recipient_id: str,
+    seq: int,
+    epoch: int,
+) -> bytes:
+    if AESGCM is None or HKDF is None or crypto_hashes is None:
+        raise RuntimeError(
+            "MILITARY FATAL: HKDF-SHA3-512/AES-256-GCM unavailable; "
+            "refusing tactical bundle key derivation."
+        )
+    info = bytearray(_DDIL_KDF_INFO)
+    for value in (
+        sender_id.encode("utf-8"),
+        recipient_id.encode("utf-8"),
+        int(seq).to_bytes(8, "big"),
+        int(epoch).to_bytes(4, "big"),
+    ):
+        info += struct.pack(">I", len(value))
+        info += value
+    try:
+        return HKDF(
+            algorithm=crypto_hashes.SHA3_512(),
+            length=32,
+            salt=_DDIL_KDF_SALT,
+            info=bytes(info),
+        ).derive(_validate_epoch_root(root_key))
+    finally:
+        for index in range(len(info)):
+            info[index] = 0
+
+
+def _bundle_aad(
+    sender_id: str,
+    recipient_id: str,
+    seq: int,
+    epoch: int,
+    encryption_key_id: Optional[str],
+) -> bytes:
+    base = sender_id.encode("utf-8") + recipient_id.encode("utf-8")
+    if epoch <= 0:
+        return base
+    return (
+        base
+        + b"\x00DDILv2\x00"
+        + int(seq).to_bytes(8, "big")
+        + int(epoch).to_bytes(4, "big")
+        + (encryption_key_id or "").encode("utf-8")
+    )
 
 
 class TacticalAuthorityLevel:
@@ -271,6 +442,8 @@ class DDILBundle:
         sender_pubkey: Optional[bytes] = None,
         sender_key_id: Optional[str] = None,
         priority: int = BundlePriority.STANDARD,
+        key_epoch: int = 0,
+        encryption_key_id: Optional[str] = None,
     ):
         self.bundle_id = bundle_id
         self.sender_id = sender_id
@@ -286,6 +459,8 @@ class DDILBundle:
             hashlib.sha3_256(sender_pubkey).hexdigest()[:32] if sender_pubkey else None
         )
         self.priority = priority
+        self.key_epoch = int(key_epoch)
+        self.encryption_key_id = encryption_key_id
 
     def is_expired(self) -> bool:
         return time.time() > (self.timestamp_utc + self.ttl_sec)
@@ -302,6 +477,10 @@ class DDILBundle:
         h.update(self.auth_tag)
         if self.sender_key_id:
             h.update(self.sender_key_id.encode("utf-8"))
+        if self.key_epoch > 0:
+            h.update(b"DDILv2")
+            h.update(self.key_epoch.to_bytes(4, "big"))
+            h.update((self.encryption_key_id or "").encode("utf-8"))
         return h.digest()
 
     def compute_bundle_hash(self) -> str:
@@ -322,6 +501,8 @@ class DDILBundle:
                 "block_type": "BLOCK_CONFIDENTIALITY_BLOCK",
                 "target_block": "PAYLOAD_BLOCK",
                 "security_suite": "AES-256-GCM-RFC-8439",
+                "key_epoch": self.key_epoch,
+                "encryption_key_id": self.encryption_key_id,
                 "auth_tag_len": len(self.auth_tag),
                 "ciphertext_len": len(self.ciphertext_bytes),
             },
@@ -366,34 +547,52 @@ def create_bpsec_bundle(
     ttl_sec: float = 86400.0,
     priority: int = BundlePriority.STANDARD,
     compress_key: bool = False,
+    key_epoch: int = 1,
 ) -> DDILBundle:
     """
     Encapsulate payload into a quantum-resistant BPsec bundle:
-    1. Authenticated encryption of payload using AES-256-GCM (BCB).
-    2. Digital signature over bundle headers and ciphertext using ML-DSA-87 (BIB).
-    3. Optional key compression: transmit 32-byte key_id instead of 2592-byte public key.
+    1. Per-bundle key derived with HKDF-SHA3-512 from the peer epoch root.
+    2. Authenticated encryption of payload using AES-256-GCM (BCB).
+    3. Digital signature over bundle headers and ciphertext using ML-DSA-87 (BIB).
+    4. Optional key compression: transmit 32-byte key_id instead of 2592-byte public key.
     """
-    key = symmetric_key or secrets.token_bytes(32)
-    nonce = secrets.token_bytes(12)
-
-    # No-demo rule: AES-256-GCM is MANDATORY (cryptography==50.0.1 is a
-    # hard requirement). A previous revision fell back to an XOR
-    # "cipher" here when the library was missing -- emitting tactical
-    # bundles that downstream code believed were AES-GCM. That branch
-    # is deleted outright: without real AEAD we refuse, never degrade.
-    if AESGCM is None:
+    if AESGCM is None or HKDF is None or crypto_hashes is None:
         raise RuntimeError(
-            "MILITARY FATAL: AES-256-GCM unavailable (cryptography "
-            "package missing); refusing to emit tactical bundles.")
-    aesgcm = AESGCM(key)
-    # AESGCM encrypt appends 16-byte tag to ciphertext
-    ct_with_tag = aesgcm.encrypt(nonce, payload_plaintext, sender_id.encode("utf-8") + recipient_id.encode("utf-8"))
+            "MILITARY FATAL: AES-256-GCM/HKDF-SHA3-512 unavailable "
+            "(cryptography package missing); refusing to emit tactical bundles.")
+    if not isinstance(key_epoch, int) or key_epoch < 1:
+        raise ValueError("key_epoch must be an integer >= 1")
+
+    keyring = get_tactical_keyring()
+    if symmetric_key is None:
+        active = keyring.get_active_epoch_key(recipient_id)
+        if active is None:
+            raise ValueError(
+                f"no pre-pinned DDIL epoch key for recipient {recipient_id!r}; "
+                "install one with TacticalKeyring.register_epoch_key()"
+            )
+        key_epoch, symmetric_key = active
+    root_key = _validate_epoch_root(symmetric_key)
+    encryption_key_id = hashlib.sha3_256(root_key).hexdigest()[:32]
+    bundle_key = bytearray(
+        _derive_bundle_key(root_key, sender_id, recipient_id, seq, key_epoch)
+    )
+    try:
+        nonce = secrets.token_bytes(12)
+        aad = _bundle_aad(
+            sender_id, recipient_id, seq, key_epoch, encryption_key_id
+        )
+        ct_with_tag = AESGCM(bytes(bundle_key)).encrypt(
+            nonce, payload_plaintext, aad
+        )
+    finally:
+        _wipe_key_buffer(bundle_key)
     ct = nonce + ct_with_tag[:-16]
     tag = ct_with_tag[-16:]
 
     bundle_id = f"{sender_id}:{recipient_id}:{seq}:{time.time_ns()}"
-    key_id = hashlib.sha3_256(sender_pk).hexdigest()[:32]
-    get_tactical_keyring().register_peer_key(sender_id, sender_pk)
+    signing_key_id = hashlib.sha3_256(sender_pk).hexdigest()[:32]
+    keyring.register_peer_key(sender_id, sender_pk)
 
     bundle = DDILBundle(
         bundle_id=bundle_id,
@@ -405,24 +604,31 @@ def create_bpsec_bundle(
         timestamp_utc=time.time(),
         ttl_sec=ttl_sec,
         sender_pubkey=None if compress_key else sender_pk,
-        sender_key_id=key_id,
+        sender_key_id=signing_key_id,
         priority=priority,
+        key_epoch=key_epoch,
+        encryption_key_id=encryption_key_id,
     )
 
     signer = LibOQS_MLDSA_87()
     bundle.sign_bundle(signer, sender_sk, sender_pk)
     if compress_key:
-        bundle.sender_pubkey = None  # Strip wire pubkey for low-bandwidth DTN links
+        bundle.sender_pubkey = None
     return bundle
 
 
 def decrypt_bpsec_bundle(
     bundle: DDILBundle,
-    symmetric_key: bytes,
+    symmetric_key: Optional[bytes] = None,
     expected_sender_pk: Optional[bytes] = None,
+    keyring: Optional[TacticalKeyring] = None,
 ) -> bytes:
     """
     Verify BPsec bundle signature and decrypt authenticated payload.
+
+    The epoch root may be supplied explicitly or resolved from the tactical
+    keyring by encryption-key ID. Epoch 0 is legacy (raw root key) and is
+    accepted only for already-issued bundles.
     """
     pub = expected_sender_pk or bundle.sender_pubkey
     if not pub and bundle.sender_key_id:
@@ -431,16 +637,62 @@ def decrypt_bpsec_bundle(
     if not bundle.verify_signature(pk=pub):
         raise ValueError(f"Invalid ML-DSA-87 signature on BPsec bundle {bundle.bundle_id}")
 
-    nonce = bundle.ciphertext_bytes[:12]
-    ct = bundle.ciphertext_bytes[12:]
-
     if AESGCM is None:
         raise RuntimeError(
             "MILITARY FATAL: AES-256-GCM unavailable (cryptography "
             "package missing); refusing to open tactical bundles.")
-    aesgcm = AESGCM(symmetric_key)
+
+    ring = keyring or get_tactical_keyring()
+    root_key = symmetric_key
+    if root_key is None and bundle.encryption_key_id:
+        root_key = ring.get_epoch_key_by_id(bundle.encryption_key_id)
+    if root_key is None and bundle.key_epoch > 0:
+        root_key = ring.get_epoch_key(bundle.sender_id, bundle.key_epoch)
+    if root_key is None:
+        raise ValueError(
+            f"no DDIL epoch key available for bundle {bundle.bundle_id} "
+            f"(key_id={bundle.encryption_key_id}, epoch={bundle.key_epoch})"
+        )
+    root_key = _validate_epoch_root(root_key)
+
+    if bundle.encryption_key_id:
+        actual_key_id = hashlib.sha3_256(root_key).hexdigest()[:32]
+        if not hmac.compare_digest(actual_key_id, bundle.encryption_key_id):
+            raise ValueError(
+                f"DDIL encryption key ID mismatch for bundle {bundle.bundle_id}"
+            )
+
+    nonce = bundle.ciphertext_bytes[:12]
+    ct = bundle.ciphertext_bytes[12:]
     ct_with_tag = ct + bundle.auth_tag
-    return aesgcm.decrypt(nonce, ct_with_tag, bundle.sender_id.encode("utf-8") + bundle.recipient_id.encode("utf-8"))
+
+    if bundle.key_epoch <= 0:
+        return AESGCM(root_key).decrypt(
+            nonce,
+            ct_with_tag,
+            bundle.sender_id.encode("utf-8") + bundle.recipient_id.encode("utf-8"),
+        )
+
+    bundle_key = bytearray(
+        _derive_bundle_key(
+            root_key,
+            bundle.sender_id,
+            bundle.recipient_id,
+            bundle.seq,
+            bundle.key_epoch,
+        )
+    )
+    try:
+        aad = _bundle_aad(
+            bundle.sender_id,
+            bundle.recipient_id,
+            bundle.seq,
+            bundle.key_epoch,
+            bundle.encryption_key_id,
+        )
+        return AESGCM(bytes(bundle_key)).decrypt(nonce, ct_with_tag, aad)
+    finally:
+        _wipe_key_buffer(bundle_key)
 
 
 class DDILNodeMesh:

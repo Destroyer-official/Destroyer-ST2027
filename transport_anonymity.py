@@ -64,7 +64,7 @@ import socket
 import struct
 import threading
 import time
-from dataclasses import dataclass, field
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 log = logging.getLogger("transport_anonymity")
@@ -79,7 +79,8 @@ def _env_true(name: str) -> bool:
 
 
 def _strict_mode() -> bool:
-    return _env_true("P2P_PRODUCTION") or _env_true("P2P_TS_MODE")
+    from production_gate import is_ts_mode
+    return is_ts_mode()
 
 
 # Strict traffic-shape constants. Fixed interval and fixed size carry no
@@ -390,8 +391,8 @@ def open_overlay_socket(host: str, port: int,
 
 def derive_obfs_key(session_key: bytes, transcript: bytes) -> bytes:
     """Derive the 32 byte cell-whitening key. Real HKDF-SHA384."""
-    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
     if len(bytes(session_key)) != 32 or not transcript:
         raise OverlayError("overlay rejected")
@@ -482,6 +483,9 @@ class ShaperTx:
         self._pending = bytearray()
         self._lock = threading.Lock()
         self._queued_frames = 0
+        # Remaining wire bytes per queued frame (length prefix + payload),
+        # consumed in order as next_cell() drains _pending.
+        self._frame_remaining: deque = deque()
         self.sent_real = 0
         self.sent_cover = 0
 
@@ -495,6 +499,7 @@ class ShaperTx:
                 raise OverlayError("overlay rejected")
             self._pending += FRAME_LEN_STRUCT.pack(len(bytes(frame)))
             self._pending += bytes(frame)
+            self._frame_remaining.append(4 + len(frame))
             self._queued_frames += 1
 
     def next_cell(self) -> bytes:
@@ -503,10 +508,16 @@ class ShaperTx:
             is_cover = not chunk
             if chunk:
                 del self._pending[:len(chunk)]
-                if self._queued_frames > 0 and len(chunk) >= 4:
-                    # Frame accounting is approximate under fragmentation;
-                    # the receiver owns exact delivery. Keep bound only.
-                    pass
+                remaining = len(chunk)
+                while remaining > 0 and self._frame_remaining:
+                    head = self._frame_remaining[0]
+                    if remaining >= head:
+                        remaining -= head
+                        self._frame_remaining.popleft()
+                        self._queued_frames -= 1
+                    else:
+                        self._frame_remaining[0] = head - remaining
+                        remaining = 0
             seq = self._seq
             self._seq = (self._seq + 1) % (1 << 64)
         plain = build_plain_cell(seq, is_cover, chunk)
@@ -654,6 +665,115 @@ class ConstantRateSession:
         return out
 
 
+def _anon_epoch_key(old_key: bytes, ss_x: bytes, ss_kem: bytes,
+                    salt: bytes) -> bytes:
+    """Derive the next epoch key from a fresh ephemeral hybrid exchange.
+
+    The X25519 half is visible on the wire (both ephemerals are public), but
+    the ML-KEM-1024 half is not: only the holder of the sender's ephemeral
+    ML-KEM secret can decapsulate it.  An adversary that compromises epoch N
+    therefore cannot derive epoch N+1 (post-compromise security), unlike the
+    removed static-salt KDF chain.
+    """
+    from cryptography.hazmat.primitives import hashes as crypto_hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    hkdf = HKDF(
+        algorithm=crypto_hashes.SHA384(),
+        length=32,
+        salt=bytes(old_key) + bytes(salt),
+        info=b"DESTROYER-ANON-EPOCH-RATCHET-v2",
+    )
+    return hkdf.derive(bytes(ss_x) + bytes(ss_kem))
+
+
+def _anon_rekey_exchange(session: Any, ch: Any, st: Any,
+                          peer_id: str) -> None:
+    """Sender side of a fresh-ephemeral epoch rekey (hybrid ML-KEM + X25519).
+
+    Sends REKEY1 (our ML-KEM/X25519 ephemerals, sealed under the current
+    epoch key), waits for REKEY2 (their X25519 ephemeral plus their ML-KEM
+    encapsulation), then installs the new epoch key.  The pending data is
+    sealed under the NEW key afterwards, so no frame is ever emitted under a
+    rotated-away key.
+    """
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from liboqs_wrapper import LibOQS_MLKEM_1024
+
+    kem = LibOQS_MLKEM_1024()
+    ek_s, es_s = kem.keygen()
+    x_priv = x25519.X25519PrivateKey.generate()
+    xep_s = x_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    salt = secrets.token_bytes(32)
+    payload = b"ANONREKEY1" + bytes(ek_s) + xep_s + salt
+    session.send_frame(ch.seal(payload, st.FRAME_TYPE_REKEY))
+
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        for frame in session.recv_available(timeout=0.5):
+            try:
+                ftype, body = ch.open(frame)
+            except Exception:
+                continue
+            if ftype != st.FRAME_TYPE_REKEY or not body.startswith(b"ANONREKEY2"):
+                continue
+            if len(body) < 9 + 32 + 1568:
+                continue
+            xep_r = body[9:9 + 32]
+            ct_r = body[9 + 32:9 + 32 + 1568]
+            try:
+                ss_kem = kem.decaps(es_s, ct_r)
+                ss_x = x_priv.exchange(
+                    x25519.X25519PublicKey.from_public_bytes(xep_r))
+            except Exception as exc:
+                log.debug("anonymous epoch rekey refused: %r", exc)
+                raise OverlayError("overlay rejected")
+            new_key = _anon_epoch_key(ch.state.key(), ss_x, ss_kem, salt)
+            ch.state._secure = st.SecureBytes(new_key)
+            ch.state.msgs_under_key = 0
+            ch.state.bytes_under_key = 0
+            ch.state.created = st._now()
+            return
+    raise OverlayError("overlay rejected")
+
+
+def _anon_rekey_answer(session: Any, ch: Any, st: Any, body: bytes) -> None:
+    """Receiver side of the fresh-ephemeral epoch rekey (REKEY1 -> REKEY2)."""
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from liboqs_wrapper import LibOQS_MLKEM_1024
+
+    if len(body) < 9 + 1568 + 32 + 32:
+        raise OverlayError("overlay rejected")
+    kem = LibOQS_MLKEM_1024()
+    ek_s = body[9:9 + 1568]
+    xep_s = body[9 + 1568:9 + 1568 + 32]
+    salt = body[9 + 1568 + 32:9 + 1568 + 64]
+    try:
+        ct_r, ss_kem = kem.encaps(ek_s)
+    except Exception as exc:
+        log.debug("anonymous epoch rekey refused: %r", exc)
+        raise OverlayError("overlay rejected")
+    x_priv = x25519.X25519PrivateKey.generate()
+    xep_r = x_priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    session.send_frame(
+        ch.seal(b"ANONREKEY2" + xep_r + bytes(ct_r), st.FRAME_TYPE_REKEY))
+    try:
+        ss_x = x_priv.exchange(
+            x25519.X25519PublicKey.from_public_bytes(xep_s))
+    except Exception as exc:
+        log.debug("anonymous epoch rekey refused: %r", exc)
+        raise OverlayError("overlay rejected")
+    new_key = _anon_epoch_key(ch.state.key(), ss_x, ss_kem, salt)
+    ch.state._secure = st.SecureBytes(new_key)
+    ch.state.msgs_under_key = 0
+    ch.state.bytes_under_key = 0
+    ch.state.created = st._now()
+
+
 def _recv_exact(sock: socket.socket, count: int, timeout: float) -> bytes:
     sock.settimeout(timeout)
     out = bytearray()
@@ -713,7 +833,6 @@ def anonymous_send(
         host, port)
     st_state = None
     try:
-        import ssl as _ssl
 
         with tls_ctx.wrap_socket(raw, server_hostname=server_hostname) as tls:
             st.assert_outer_is_pinned(tls)
@@ -765,21 +884,13 @@ def anonymous_send(
                     payload = _st.pack(">Q", seq_no) + bytes(
                         [1 if last else 0]) + chunk
                     seq_no += 1
-                    wire = ch.seal_data(payload)
+                    # Fresh-ephemeral epoch rotation (hybrid ML-KEM-1024 +
+                    # X25519) BEFORE sealing: no frame is ever emitted under a
+                    # rotated-away key, and the new epoch key cannot be
+                    # derived by an adversary holding the old one.
                     if ch.needs_rekey():
-                        session.send_frame(ch.seal(b"", st.FRAME_TYPE_REKEY))
-                        from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF
-                        from cryptography.hazmat.primitives import hashes as _hashes
-                        new_key = _HKDF(
-                            algorithm=_hashes.SHA384(),
-                            length=32,
-                            salt=b"DESTROYER-ANON-REKEY-SALT-v1",
-                            info=b"DESTROYER-ANON-EPOCH-RATCHET-v1"
-                        ).derive(bytes(ch.state.key()))
-                        ch.state._secure = st.SecureBytes(new_key)
-                        ch.state.msgs_under_key = 0
-                        ch.state.bytes_under_key = 0
-                        ch.state.created = st._now()
+                        _anon_rekey_exchange(session, ch, st, peer_id)
+                    wire = ch.seal_data(payload)
                     session.send_frame(wire)
                 digest = _hl.sha384(bytes(data)).digest()
                 session.send_frame(ch.seal_data(
@@ -939,19 +1050,9 @@ def anonymous_recv(
                         if ftype == st.FRAME_TYPE_CHAFF:
                             continue
                         if ftype == st.FRAME_TYPE_REKEY:
-                            from cryptography.hazmat.primitives.kdf.hkdf import HKDF as _HKDF
-                            from cryptography.hazmat.primitives import hashes as _hashes
-                            new_key = _HKDF(
-                                algorithm=_hashes.SHA384(),
-                                length=32,
-                                salt=b"DESTROYER-ANON-REKEY-SALT-v1",
-                                info=b"DESTROYER-ANON-EPOCH-RATCHET-v1"
-                            ).derive(bytes(ch.state.key()))
-                            ch.state._secure = st.SecureBytes(new_key)
-                            ch.state.msgs_under_key = 0
-                            ch.state.bytes_under_key = 0
-                            ch.state.created = st._now()
-                            _idle_deadline = time.monotonic() + IDLE_REFRESH_S
+                            # Fresh-ephemeral epoch rotation: answer REKEY1 and
+                            # install the new epoch key (hybrid ML-KEM + X25519).
+                            _anon_rekey_answer(session, ch, st, payload)
                             continue
                         if ftype != st.FRAME_TYPE_DATA:
                             raise OverlayError("overlay rejected")
@@ -982,8 +1083,7 @@ def anonymous_recv(
                                     digest, _hl.sha384(blob).digest()):
                                 raise OverlayError("overlay rejected")
                             try:
-                                from spo_dpo import (
-                                    require_spo_dpo_for_send as _dpo)
+                                from spo_dpo import require_spo_dpo_for_send as _dpo
 
                                 _dpo(norm, blob, receipt or {})
                             except Exception as exc:

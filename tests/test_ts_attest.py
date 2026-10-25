@@ -159,7 +159,7 @@ def test_unanchored_evidence_rejected_by_default(monkeypatch):
         # Calling without trusted_keys MUST fail closed by default
         with pytest.raises(ta.AttestError) as excinfo:
             ta.appraise_evidence(env, nonce)
-        assert "trusted_keys enrollment required by default" in str(excinfo.value)
+        assert "trusted_keys enrollment required" in str(excinfo.value)
     finally:
         try:
             h = cng.open_platform_provider()
@@ -222,17 +222,17 @@ def test_enrollment_binding_refuses_substituted_key(monkeypatch):
             pass
 
 
-def test_lab_mode_explicit_opt_in_allows_tofu(monkeypatch):
-    """Audit Finding 1: Lab mode allows TOFU ONLY when explicitly opted in."""
+def test_lab_mode_explicit_opt_in_still_refuses_tofu(monkeypatch):
+    """TOFU is never permitted: lab mode downgrades posture, not identity trust."""
     cng = _cng_or_skip()
     monkeypatch.setenv("P2P_LAB_MODE", "1")
     key_name = _unique_key()
     nonce = os.urandom(32)
     try:
         env = ta.produce_evidence(nonce, key_name)
-        # In explicit lab mode, unanchored appraisal succeeds for local diagnostics
-        ok = ta.appraise_evidence(env, nonce)
-        assert ok.kid == key_name
+        # Even in explicit lab mode, unanchored appraisal must fail closed.
+        with pytest.raises(ta.AttestError):
+            ta.appraise_evidence(env, nonce)
     finally:
         try:
             h = cng.open_platform_provider()

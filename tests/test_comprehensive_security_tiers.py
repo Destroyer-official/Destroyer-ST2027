@@ -193,16 +193,29 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(len(violations), 0)
 
-        # MEDIUM tier requires PQC (ML-KEM-1024 + ML-DSA-87)
+        # MEDIUM tier requires PQC (hybrid KEM + ML-DSA-87)
         ok_med, violations_med = SecurityTierEngine.validate_cipher_suite(
+            SecurityTier.MEDIUM,
+            cipher_name="AES-256-GCM",
+            hash_or_kdf_name="HKDF-SHA384",
+            kem_name="P384+ML-KEM-1024",
+            sig_name="ML-DSA-87",
+            has_hybrid_kem=True,
+        )
+        self.assertTrue(ok_med)
+        self.assertEqual(len(violations_med), 0)
+
+        # MEDIUM tier refuses a PQ-only (non-hybrid) KEM
+        bad_hybrid, v_hybrid = SecurityTierEngine.validate_cipher_suite(
             SecurityTier.MEDIUM,
             cipher_name="AES-256-GCM",
             hash_or_kdf_name="HKDF-SHA384",
             kem_name="ML-KEM-1024",
             sig_name="ML-DSA-87",
+            has_hybrid_kem=False,
         )
-        self.assertTrue(ok_med)
-        self.assertEqual(len(violations_med), 0)
+        self.assertFalse(bad_hybrid)
+        self.assertTrue(any("hybrid KEM" in v for v in v_hybrid))
 
         # MEDIUM tier fails if PQC KEM is missing
         bad_med, v_bad = SecurityTierEngine.validate_cipher_suite(
@@ -391,6 +404,7 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
         crit_caps = {
             "has_pqc_kem": True,
             "has_pqc_sig": True,
+            "has_hybrid_kem": True,
             "has_vas": True,
             "has_locked_memory": True,
             "has_ram_encryption": True,

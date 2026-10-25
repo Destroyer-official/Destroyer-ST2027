@@ -42,7 +42,19 @@ except ImportError:
 class MilitaryGradeCrypto:
     """secure cryptographic operations for hashed identifiers."""
     
-    SYSTEM_SALT: str = "MILITARY_GRADE_P2P_QUANTUM_RESISTANT_SALT_2025_SHA3_512"
+    @staticmethod
+    def _system_salt() -> str:
+        # Deployment-specific salt (no compile-time constant). Operators
+        # override via P2P_USERNAME_LOOKUP_SALT; a fresh per-process salt is
+        # used otherwise so username lookups are not cross-deployment rainbow
+        # tableable. Note: lookups must use the same salt across restarts of
+        # a deployment, so operators should pin P2P_USERNAME_LOOKUP_SALT.
+        import os as _os
+        salt = _os.environ.get("P2P_USERNAME_LOOKUP_SALT")
+        if not salt:
+            salt = _os.environ.setdefault(
+                "_P2P_USERNAME_LOOKUP_SALT_EPHEMERAL", secrets.token_hex(32))
+        return salt
 
     @staticmethod
     def generate_secure_salt() -> str:
@@ -61,8 +73,7 @@ class MilitaryGradeCrypto:
     def hash_username_for_lookup(username: str) -> str:
         """Hash username for secure database lookup."""
         return MilitaryGradeCrypto.quantum_resistant_hash(
-            username, 
-            MilitaryGradeCrypto.SYSTEM_SALT
+            username, MilitaryGradeCrypto._system_salt()
         )
 
     @staticmethod

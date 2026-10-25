@@ -2,11 +2,11 @@
   "active_cyber_defense_assessment": {
     "active_quarantines": [
       {
-        "expires_in_sec": 9.998422861099243,
+        "expires_in_sec": 9.997342586517334,
         "peer_id": "peer_alpha"
       },
       {
-        "expires_in_sec": 19.999104261398315,
+        "expires_in_sec": 19.998229026794434,
         "peer_id": "peer_beta"
       }
     ],
@@ -36,7 +36,7 @@
         "reason": "Replay burst (3 within 5.0s)",
         "status": "ENFORCED",
         "target": "peer_alpha",
-        "timestamp_utc": "2026-09-19T15:00:46.045387+00:00"
+        "timestamp_utc": "2026-10-21T16:13:25.454821+00:00"
       },
       {
         "action": "Immediate socket teardown, ephemeral key zeroization & peer isolation",
@@ -45,7 +45,7 @@
         "reason": "Tamper detected: corrupt_frame_mac_invalid",
         "session_id": "sess_xyz123",
         "status": "ENFORCED",
-        "timestamp_utc": "2026-09-19T15:00:46.046012+00:00"
+        "timestamp_utc": "2026-10-21T16:13:25.456370+00:00"
       },
       {
         "action": "Persistent source ingress block, ratchet master seed forward advance",
@@ -53,10 +53,10 @@
         "reason": "Auth failure flood (3 within 5.0s)",
         "source": "198.51.100.42",
         "status": "ENFORCED",
-        "timestamp_utc": "2026-09-19T15:00:46.046178+00:00"
+        "timestamp_utc": "2026-10-21T16:13:25.456540+00:00"
       }
     ],
     "status": "OPERATIONAL",
-    "timestamp_utc": "2026-09-19T15:00:46.046435+00:00"
+    "timestamp_utc": "2026-10-21T16:13:25.456819+00:00"
   }
 }
