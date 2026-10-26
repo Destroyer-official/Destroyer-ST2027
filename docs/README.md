@@ -120,3 +120,7 @@ All documentation in this repository complies with strict defense documentation 
 1. **No Marketing Buzzwords:** Terms such as "military-grade" or "quantum-proof" must be accompanied by exact cryptographic specifications (e.g. NIST Level 5, 256-bit post-Grover security margin, FIPS 203 ML-KEM-1024).
 2. **Honest Evaluation Boundary:** Target evaluation levels (such as FIPS 140-3 Level 4 or Common Criteria EAL4+) must explicitly disclose whether they are *design targets* or *lab-certified ratings*.
 3. **Traceability:** Technical descriptions must cite exact source code files and functions.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

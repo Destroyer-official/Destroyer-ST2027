@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 Property-Based Test for No Marketing Buzzwords
 
@@ -44,12 +46,12 @@ class TestNoMarketingBuzzwordsProperty:
     def get_production_python_files(self) -> List[Path]:
         """Get all Python files in the production codebase (excluding notupload folder)."""
         python_files = []
-        exclude_dirs = {'__pycache__', '.git', '.pytest_cache', 'notupload', '.hypothesis', '.venv', '.audit-venv', '.audit-lock-venv', '.audit-deps', 'archive', 'rust_data_plane', 'docs'}
+        exclude_dirs = {'__pycache__', '.git', '.pytest_cache', 'notupload', '.hypothesis', '.venv', 'archive', 'rust_data_plane', 'docs'}
         exclude_files = {'test_no_marketing_buzzwords_property.py', 'production_cleanup_utils.py'}
         
         for root, dirs, files in os.walk(PROJECT_ROOT):
             # Remove excluded directories from dirs list
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith('.audit-') and not d.startswith('.venv')]
             
             for file in files:
                 if file.endswith('.py') and file not in exclude_files:

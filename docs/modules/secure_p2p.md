@@ -71,3 +71,7 @@ memory/canary/integrity/intrusion loops (`:8342-8905`), connection health
 
 Two-terminal 100% in BOTH modes (default byte-identical; flag-on double
 envelope with sessions both ends). Suites 10+5 green.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

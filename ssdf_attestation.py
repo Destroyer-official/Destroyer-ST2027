@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """SSDF self-attestation evidence (NIST SP 800-218 v1.1 / EO 14028).
 
 What this IS: a producer self-assertion, structured by SSDF practice

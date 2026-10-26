@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Standalone Rust binary (Task-1): secure-transmit builds and transfers.
 
 Proves the zero-Python data-plane executor end to end:

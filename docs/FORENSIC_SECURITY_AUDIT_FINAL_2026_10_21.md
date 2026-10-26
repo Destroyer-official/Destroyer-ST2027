@@ -335,3 +335,7 @@ suitable for controlled pilot evaluation, not for unrestricted military
 production or an ATO claim. The remaining work is primarily external
 validation, key-custody operations, HSM adoption, and completion of the
 residual risk items in Section I.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 test_phase5_csrmc_ddil_operations.py
 Comprehensive Phase 5 Test Suite:

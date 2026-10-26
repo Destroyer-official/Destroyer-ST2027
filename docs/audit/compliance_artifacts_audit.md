@@ -89,3 +89,7 @@ Every signed compliance submittal verifies against its corresponding ML-DSA-87 s
    - The 8 desynchronized compliance reports must be re-signed using the current offline ML-DSA-87 release key to restore full repository attestation integrity.
 2. **Standardized Signature Extension:**
    - Signatures are stored with `.mldsa87.sig` extensions. Automated ingestion tools should enforce consistent extension mapping across root and sub-directories.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

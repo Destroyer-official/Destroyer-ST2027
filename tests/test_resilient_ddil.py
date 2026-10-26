@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """DDIL resilient-communication gates (Tier-1 tactical credibility).
 
 resilient_communication.py (738 lines: store-and-forward queues, dedup,

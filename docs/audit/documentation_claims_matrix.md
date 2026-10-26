@@ -45,3 +45,7 @@ The following matrix cross-examines the primary claims made across the documenta
    - Several documentation files refer exclusively to `core/orchestrator.py` as the active communications engine, omitting mention of the coexisting 14,886-line monolithic prototype `secure_p2p.py`.
 3. **Hardware Requirement Specifics:**
    - Documentation often assumes hardware TPM 2.0 and PKCS#11 HSM availability as universal baselines, whereas the software architecture includes explicit software-emulation fallbacks for development and testing environments.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

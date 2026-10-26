@@ -98,3 +98,7 @@ Payload → DPO 2-Person Approval → Fragment into 1205B Chunks
 - **Continuous Epoch Ratchet (CER) with hybrid ML-KEM-1024 / P-384 interleaving:** the primary tactical channel (`secure_transmit_2027.py: Channel`) rotates epochs via a fresh ephemeral Noise_XXhfs exchange interleaved into the session key chain (old epoch key zeroized) every **128 sealed records / 1 MiB / 15 min idle, whichever first** (`CER_EPOCH_MESSAGES`, `SESSION_REKEY_BYTES`, `SESSION_REKEY_SECONDS`). Per-record AES-GCM with monotonic nonces gives per-record forward secrecy; the symmetric chain alone has no PCS (deterministic KDF — Signal Double Ratchet decomposition), so the epoch ratchet is the healing mechanism: transient compromise heals within one epoch. PQ ratchet material is ~71x bulkier than classical DH (NIST PQC-Signal analysis), hence message-counted epochs rather than per-message PQ operations — stated cost/healing tradeoff.
 - **Traffic Analysis Resistance:** 50ms tick constant-rate emission with 1232-byte uniform noise cells conceals packet lengths, message boundaries, and idle/burst patterns from backbone SIGINT taps.
 - **Fail-Closed Execution:** Any deviation in hardware posture, missing FIPS provider, unaccredited facility record, memory corruption, or signature failure immediately triggers emergency zeroization and aborts.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

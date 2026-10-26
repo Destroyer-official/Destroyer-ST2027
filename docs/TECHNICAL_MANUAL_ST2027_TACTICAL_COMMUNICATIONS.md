@@ -349,3 +349,7 @@ The master evaluation receipt is cryptographically notarized:
 - **Receipt Location:** [`compliance_reports/defense_master_audit_receipt.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json)
 - **Signature Algorithm:** FIPS 204 ML-DSA-87 (4,627 bytes)
 - **Signer Public Key Fingerprint:** `f3c0ae0d5b6c20299791d3ca6d9cfd5d8fa2f5f54e406a7cefd7bcd9e24268f4`
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

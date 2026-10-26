@@ -12365,3 +12365,6 @@ to the security officer; never work around them with flags.
 - `test_verify_after_sign.py`
 - `test_wave8_regressions.py`
 
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

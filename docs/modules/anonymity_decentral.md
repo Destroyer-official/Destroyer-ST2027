@@ -32,3 +32,7 @@ For cross-country links under nation-state observation, enable ONE of:
 private APN (preferred), Tor carriage, or constant-rate cover — direct mode
 alone leaks IP/timing metadata by design (no code can hide the peer address
 from the peer).
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

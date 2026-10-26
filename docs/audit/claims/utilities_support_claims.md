@@ -20,3 +20,7 @@ Claims verification register for utility and support components (`utilities_supp
    - `pytest tests/test_cp1252_encoding_safety.py`: 5 passed in 0.82s.
 2. **Signature Files:**
    - `config.json.sig` and `config_production.json.sig` contain cryptographic signatures for verifying configuration files prior to process startup.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -14,3 +14,7 @@ ConfigManager` centralizes flags incl. all-`False` fallbacks).
   `KeyStorage` — rotation/expiry/sealed persistence semantics match root.
 - `secure_p2p_core/` mirrors the same layout for the packaged distribution;
   behavior parity is enforced by the shared suites (any drift fails tests).
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

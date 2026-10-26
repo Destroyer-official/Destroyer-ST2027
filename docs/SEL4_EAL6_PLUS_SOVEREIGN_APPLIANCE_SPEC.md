@@ -220,3 +220,7 @@ To operationalize this design immediately on development and testing hosts while
    - Proves zero RED-to-BLACK direct data leakage.
    - Proves dual-rail fault-injection defense blocks compromised signatures.
    - Proves triple-hybrid combiner integrity and chaff cell entropy invariance.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

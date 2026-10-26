@@ -73,3 +73,7 @@ $env:P2P_DATA_PLANE='python'     # set 'rust' only after wheel installed + gates
 3. Rotate identities: reprovision via `tactical_key_provisioner.py`,
    redistribute fingerprints OOB, delete old pins.
 4. Root-cause from audit chain before reconnecting anything.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

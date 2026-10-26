@@ -396,3 +396,7 @@ e 2592$, raises `TrustError("trust rejected")` (`:165`).
    - Are the placeholder vendor root hashes in `tpm_quote.py:87-103` scheduled to be populated with authentic AMD, Intel, and Infineon CA certificates, or is remote attestation planned to transition entirely to native platform tools (e.g., Windows TBS or Linux `tpm2-tools`)?
 3. **Status of Windows CNG ML-KEM Backend:**
    - Does `cng_crypto.py:503-644` target an internal custom CNG provider, given that standard Windows 11 `bcrypt.dll` does not export `"MLKEMPUBLICBLOB"` in general release builds?
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

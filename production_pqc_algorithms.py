@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 ST2027 PRODUCTION POST-QUANTUM CRYPTOGRAPHY ENGINE
 CNSA Suite 2.0 / NIST FIPS 203, 204, 205 High-Assurance Primitives

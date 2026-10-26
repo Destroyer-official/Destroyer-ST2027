@@ -83,3 +83,7 @@ The 138 test files (`tests/`) encompass 36,853 lines. The test distribution maps
    - In standard execution environments lacking physical PKCS#11 hardware tokens, test suites utilize software-emulated HSM fallbacks (`platform_hsm_interface.py`). Full physical token validation requires target hardware attached to the host.
 3. **Sticky Production State Contamination:**
    - Tests asserting `SECURE_P2P_PRODUCTION=1` latch production mode permanently in the running Python process (`production_gate.py`). Running suites that modify this variable in the same process requires dedicated process isolation to avoid false-positive failures in downstream non-production tests.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

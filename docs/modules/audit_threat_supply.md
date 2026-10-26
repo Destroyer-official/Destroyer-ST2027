@@ -23,3 +23,7 @@ hashing. Runtime truth (executed): `oqs.dll` CRITICAL sidecar-Ed25519
 verified; pip dists tiered to hash+floor (sidecars impossible from PyPI —
 documented control split, not a bypass); `verify_all_dependencies()` passes.
 Requirements pinned `==` + hashes (8 lines). Next: Sigstore/transparency.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

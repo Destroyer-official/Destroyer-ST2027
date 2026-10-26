@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 Generate Official Software Bill of Materials (SBOM) for 2027+ Defense Authorization
 Formats: CycloneDX v1.5 JSON and SPDX v2.3 JSON

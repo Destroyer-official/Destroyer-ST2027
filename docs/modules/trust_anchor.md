@@ -57,3 +57,7 @@ This module implements **Pillar 5: Trust Infrastructure & Post-Quantum PKI** for
 - **Suite:** `test_trust_anchor.py`]
 - **Pass Rate:** **19 of 19 tests passing (100%)**
 - **Tested Behaviors:** 3-of-5 threshold signature quorum validation, rejection of insufficient signatures (1-of-5, 2-of-5), 48h expiration rejection, clock skew enforcement, strict mode unauthenticated peer rejection, threshold CRL revocation broadcasting, replay prevention, and amnesia memory handling.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -281,3 +281,7 @@ open evaluation: benchmark Adaptive Tamaraw (NDSS 2026) parameters against this 
 FIPS 207 IPD-watch (seed-only direction, wire-change risk); FIPS 206 IPD publication; RFC 1721
 crt-static mechanism + cdylib dual-CRT constraint; in-repo VirtualLock precedent (`ts_rt/src/lib.rs`);
 HQC-256 size consistency check; overhead arithmetic above. Prior wave: Appendix A/B provenance.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

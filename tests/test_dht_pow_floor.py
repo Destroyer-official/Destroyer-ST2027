@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """DHT PoW production floor (A-13, 2026-10-16 audit).
 
 Pre-fix: production could run the S/Kademlia admission proof-of-work at

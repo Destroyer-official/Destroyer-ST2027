@@ -35,3 +35,7 @@ The remediation order is based on exploitability and blast radius: authenticatio
 ## 4. Release boundaries
 
 A green focused suite can support continued development only. It cannot establish resistance to a capable adversary, correct implementation of a standardized group protocol, secure hardware integration, reproducible provenance, or operational suitability for military/classified use. Those require independent cryptographic review, protocol and interoperability vectors, supported-hardware tests, external dependency/provenance verification, threat-model-driven penetration testing, and controlled operational validation. Until then, the unrestricted military/classified deployment decision remains **NO-GO**.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

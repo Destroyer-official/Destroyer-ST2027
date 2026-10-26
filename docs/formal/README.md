@@ -71,3 +71,7 @@ replay_window_monotonic_and_drops
 in `nostd_microcore`, re-exported into the 30-test harness binary — not
 a Kani proof. The harness binary total includes 23 re-exported module unit tests
 alongside the 7 doubles.)
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

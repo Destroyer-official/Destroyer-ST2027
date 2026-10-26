@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """CNSA 2.0 January-2027 gate + 2026-27 research posture (E1/E2/E3).
 
 2026-27 basis: FIPS 206 still draft (final late 2026/early 2027, wire

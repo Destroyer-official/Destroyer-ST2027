@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 test_phase3_acceptance_gates_e1_e6.py
 Comprehensive Phase 3 Acceptance Gates (E1 through E6) per OPEN_INTERNET_HARDENING_PLAN.md:

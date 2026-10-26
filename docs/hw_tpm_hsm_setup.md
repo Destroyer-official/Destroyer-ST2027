@@ -97,3 +97,7 @@ Provider labels never claim hardware on fallback paths
 - `tpm2_pcrread` empty output: bank name wrong — code now uses `sha256`.
 - Slow first key ops on Windows: McEliece-8192128f keygen is seconds;
   deferred to first use by design.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

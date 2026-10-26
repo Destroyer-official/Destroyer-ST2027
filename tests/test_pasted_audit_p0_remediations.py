@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Regression battery for pasted-audit P0 fixes (verified-true items only).
 
 Covers, with fresh runtime evidence (not log scraping):

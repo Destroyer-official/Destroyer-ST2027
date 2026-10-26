@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Heartbeat ACK flood throttle (audit 4.5 / roadmap must-pass).
 
 The handler answers at most 1 HEARTBEAT_ACK per 5s window and reflects a

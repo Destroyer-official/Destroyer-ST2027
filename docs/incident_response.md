@@ -80,3 +80,7 @@ Also call `rotate_keys()` / `rotate_key(...)` on `hybrid_kex`, `protocol_manager
 1. Freeze: copy `logs/`, `secure_p2p_audit.db*`, WORM export (`P2P_WORM_STORAGE_PATH`), `tuf_update_state.json`, CRL bundle + hashes, ceremony receipts. Do not delete.
 2. WORM DB has `prevent_audit_update` / `prevent_audit_delete` triggers: updates abort with `WORM Policy Violation: Audit events are immutable ...`. Verify chain (`verify_chain_integrity()` / WORM export verify, genesis `GENESIS_WORM_BLOCK_...`).
 3. Lock perms: audit DB + WORM path operator-read-only (Windows: `icacls secure_p2p_audit.db /inheritance:r /grant:r Administrators:F`; Linux: `chmod 600 secure_p2p_audit.db`). Stream to remote SIEM over mutual-TLS; never edit the DB to "clean" alerts.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

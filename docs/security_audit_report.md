@@ -449,3 +449,7 @@ vulnerability, dead-code dependencies, and silent telemetry failures. All fixed 
   - Tested: 4 tests in `test_runbooks_ps.py` green.
 
 **Unified Audit Gate:** **163 Python tests passed in 55.83s** (`pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py test_noise_pq_purity.py test_proverif_st2027.py test_spo_dpo.py test_transport_anonymity.py test_trust_anchor.py test_ts_attest.py test_hw_readiness.py test_runbooks_ps.py test_rust_standalone_binary.py test_no_marketing_buzzwords_property.py test_no_emoji_property.py -v`) + **64 Rust data-plane tests passed in 22.57s** (`cargo test --manifest-path rust_data_plane/Cargo.toml`). Total: **227 automated tests passing (100% green)**. Zero fatal errors, zero regressions.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

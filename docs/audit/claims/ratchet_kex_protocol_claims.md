@@ -14,3 +14,7 @@ This register records technical claims made in existing documentation regarding 
 | RAT-08 | Group messaging implements MLS-aligned sender-key ratcheting (`[ISOLATED]GroupRatchet`) requiring two-person integrity for epoch advancement. | `[ISOLATED]_group_ratchet.py:1-40` | `[ISOLATED]_group_ratchet.py:38-120` | Code Inspection & Test Execution | Verified | Each sender maintains an independent ratcheted chain; epoch advancement requires dual officer signatures. Tested in `tests/test_[ISOLATED]_group_ratchet.py` (3 passed). |
 | RAT-09 | `PQTreeKEM` implements tree-based key encapsulation with ML-KEM-1024, co-path resolution, and tree hash agreement. | `pq_treekem.py:1-40` | `pq_treekem.py:45-120, 210-380` | Code Inspection & Test Execution | Verified | Implements binary ratchet tree where nodes hold ML-KEM-1024 keypairs. Verified in `tests/test_treekem.py` (9 passed) and `tests/test_tier4_pq_treekem_and_tfc.py` (10 passed). |
 | RAT-10 | `mls_framing.py` structures KeyPackages, Proposals, and Commits with lifetime caps and transcript chaining. | `mls_framing.py:1-35` | `mls_framing.py:40-250` | Code Inspection & Test Execution | Verified | `KeyPackage`, `Proposal`, and `Commit` structures are parsed and serialized with cryptographic transcript binding. Verified in `tests/test_mls_framing.py` (11 passed). |
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

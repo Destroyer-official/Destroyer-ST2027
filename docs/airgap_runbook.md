@@ -124,3 +124,7 @@ writes `docs/dll_ca_ceremony_receipt.json`). DLL re-signing also requires
 refreshing the EMBEDDED pins in `dependency_security_verifier.py`
 (`EMBEDDED_OQS_*`) + `critical_modules.hashes` — see
 `docs/liboqs_pin.md` "Rotation plumbing".
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

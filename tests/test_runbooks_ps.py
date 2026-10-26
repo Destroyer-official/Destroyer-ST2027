@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """PowerShell runbooks mirror the .sh gates — static lock-in (cross-platform).
 
 Runs on any OS: asserts scripts/setup_tor_overlay.ps1 and

@@ -610,3 +610,7 @@ Total in-scope files tracked by git: 606.
 | `zero_trust_assessment.py` | Python | 377 | Assesses node posture against zero-trust compliance benchmarks. | `audit_threat_monitoring` |
 | `zero_trust_engine.py` | Python | 850 | Evaluates contextual risk scores and enforces zero-trust policy decisions. | `audit_threat_monitoring` |
 | `zk_authenticator.py` | Python | 1303 | Implements zero-knowledge proof verification for peer authentication without revealing identities. | `transport_anonymity` |
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Phase-3 security-bounds regression tests (fast, classical/lab only).
 
 Locks in the micro-to-major hardening sweep without heavy PQ deps:

@@ -33,3 +33,7 @@ default (`DEFAULT_STUN_SERVER=""`, `:215-216`; `config.json: stun_servers: []`).
 
 No plaintext negotiation except TLS itself; framing limits bound memory-DoS;
 STUN metadata leak removed by default; Rust path strictly opt-in.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

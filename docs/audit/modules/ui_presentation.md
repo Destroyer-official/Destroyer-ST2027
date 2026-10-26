@@ -137,3 +137,7 @@ The presentation layer interacts with user inputs and cryptographic state throug
    - `ui/safety_numbers.py:24` defaults `PIN_STORE` to `~/.secure_p2p/pins.json`. In multi-user or service container environments without persistent user home directories, pins must be explicitly redirected via configuration or environment variables.
 2. **HMAC Key Requirement for Offline Tamper Resistance:**
    - If `P2P_PIN_KEK` or `P2P_STORAGE_PASSPHRASE` is not set, pins in `pins.json` are stored with `"mac": null`, relying strictly on OS filesystem permissions (`0600`) for integrity.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

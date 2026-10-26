@@ -32,3 +32,7 @@ Owns NO cryptography itself; it translates app bytes ↔ fixed-quantum frames.
 Bidirectional 30-msg both-directions traffic, 100KB file (85 frames) exact
 reassembly, tampered-chunk loud abort, wrong-key silence, quanta 256/512/1232
 all observed on wire.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

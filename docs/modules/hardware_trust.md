@@ -18,3 +18,7 @@ raise (verified disabled paths), never accepted.
 `tactical_key_provisioner.py` mints `mldsa87` node credentials + mutual
 whitelists + stealth-knock token OFFLINE (air-gapped ceremony). No network
 calls in the provisioning path.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -267,3 +267,7 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 
 ---
 **Audit Verification:** Signed master receipt available at [compliance_reports/defense_master_audit_receipt.json](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json) (ML-DSA-87 signature verified).
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

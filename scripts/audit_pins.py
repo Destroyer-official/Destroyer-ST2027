@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Pin-scoped OSV audit for 2028 hardening (no isolated-env hash issues).
 
 Queries https://api.osv.dev/v1/query for each pinned package in

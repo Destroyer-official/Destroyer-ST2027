@@ -135,3 +135,7 @@ The `crypto_pqc` module implements post-quantum and hybrid cryptographic operati
 ## 12. Open Questions for the Author
 1. Is `production_pqc_algorithms.py` intended to be deprecated in favor of `pqc_algorithms.py` and `liboqs_wrapper.py`, given that it currently has zero test coverage?
 2. Should `EnhancedFALCON_1024` in `pqc_algorithms.py` be renamed or formally separated to avoid ambiguity between the native Falcon-1024 wrapper and the hybrid ML-DSA+SLH-DSA fallback?
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

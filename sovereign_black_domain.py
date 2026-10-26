@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 sovereign_black_domain.py — High-Assurance Reference Implementation of the
 seL4 BLACK Protection Domain for Sovereign Transmit 2027 (ST2027).

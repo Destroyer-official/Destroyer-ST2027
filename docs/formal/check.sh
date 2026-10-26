@@ -1,4 +1,6 @@
 #!/bin/sh
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 # docs/formal/check.sh — ProVerif formal verification gate for ST2027.
 #
 # Runs ProVerif 2.05 on the machine-checked models:

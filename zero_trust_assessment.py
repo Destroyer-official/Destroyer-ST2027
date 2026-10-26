@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 zero_trust_assessment.py
 Department of Defense (DoD) Zero Trust Architecture (ZTA 2.0) - 2027 Target Level Assessment.

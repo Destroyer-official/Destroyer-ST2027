@@ -33,3 +33,7 @@ nmap -6 -sU -p $PORT <target>   # expect: open|filtered, no reply
 Any RST, ICMP unreachable, or error payload = FAIL, fix before live traffic.
 Re-apply rules after every ISP prefix renumber; track peer /64 dynamically
 (see Python control plane: prefix-tracking task, Phase 0 work item D0.5).
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -857,18 +857,6 @@ In compliance with defense engineering ethics, the following boundaries are expl
 - **License:** MIT License — Authorized for defense, national security research, and governmental evaluation.
 - **Attribution:** Developed for high-assurance communications under the Sovereign Transmit 2027 research program.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

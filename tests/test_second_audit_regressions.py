@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Second-audit regression battery (F-01..F-06).
 
 F-03: destroyer_node.establish_from_noise annotates ``sess: Any`` — the

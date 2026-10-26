@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """destroyer_core — Rust secure core & data plane (PyO3 native extension)."""
 from ._native import (
     SecureEngine,

@@ -140,3 +140,7 @@ Audit verification executed the following test suites covering the memory securi
    - `enhanced_secure_memory.py:196`: `raise MemoryLockError("[PROMOTIONAL-UPPERCASE-PREFIX] FATAL: Failed to VirtualLock memory for cryptographic material. Swapping possible.")`
    - `enhanced_secure_memory.py:412`: `raise MemoryWipeError("[PROMOTIONAL-UPPERCASE-PREFIX] FATAL: Real C-extension memory wipe required. RtlSecureZeroMemory failed.")`
    - These strings violate repository naming standards by embedding promotional uppercase prefixes in runtime exceptions. Cataloged for `docs/audit/discrepancies.md`.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,3 +1,5 @@
+// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! Cryptographic media sanitization & emergency zeroization (NIST SP 800-88 Rev 1 / DoD 5220.22-M).
 //!
 //! Provides multi-pass cryptographic erasure:

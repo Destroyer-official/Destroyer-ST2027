@@ -1,3 +1,5 @@
+// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! Bare-Metal seL4 Microkit RED Protection Domain (User / Plaintext)
 //! =================================================================
 //! Executes with `#![no_std]` and `#![no_main]`.

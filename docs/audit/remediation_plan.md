@@ -106,3 +106,7 @@ Operational deployment in defense environments involves statutory boundaries tha
    - The legacy messaging engine (`secure_p2p.py`, `double_ratchet.py`) operates as a Signal-style hybrid-transition layer and is explicitly quarantined as non-pure in `cnsa_purity.py`.
 4. **Decentralized Tactical Discovery (Category 6):**
    - Production configuration (`config_production.json`) binds to `"::"` in air-gapped mode with zero hardcoded bootstrap IPs, ensuring ad-hoc peer discovery functions autonomously over tactical mesh networks.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -112,3 +112,7 @@ To address long-term assurance items raised in the audit:
 2. **Kani Bounded Model Checking:** Execute `rust_data_plane/tests/kani_harness.rs` continuously in the Linux CI pipeline (`.github/workflows/kani-proofs.yml`) under CBMC.
 3. **Automated Fuzzing:** Integrate `cargo-fuzz` harnesses for packet deserialization, frame peeling, and FEC reassembly.
 4. **Third-Party Review:** Submit the frozen `ST2027` reference release for independent third-party laboratory verification.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

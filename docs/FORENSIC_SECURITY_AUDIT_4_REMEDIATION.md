@@ -138,3 +138,7 @@ python -m pytest tests/test_audit4_remediations_2026_10_17.py tests/test_secure_
 python scripts/run_defense_audit.py
 python scripts/verify_reproducible_build.py
 ```
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 # setup_tor_overlay.ps1 — provision the local Tor overlay (Windows).
 # Mirrors scripts/setup_tor_overlay.sh gate-for-gate. Fail-closed: any
 # missing daemon, binary, bridge config, or SOCKS5 greeting aborts with

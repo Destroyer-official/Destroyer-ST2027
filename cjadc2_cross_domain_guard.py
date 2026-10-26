@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 cjadc2_cross_domain_guard.py
 Combined Joint All-Domain Command and Control (CJADC2) & NSA NCDSMO "Raise the Bar" (RTB)

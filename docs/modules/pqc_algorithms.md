@@ -35,3 +35,7 @@ finalizes (late 2026/early 2027).
 
 Fail-closed imports, size-validated keygen (1568/3168/1568/32), KATs,
 tamper-rejection, sealed manifests, entropy verification.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

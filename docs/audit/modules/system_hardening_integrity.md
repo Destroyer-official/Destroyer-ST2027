@@ -138,3 +138,7 @@ Audit verification executed the following test suites directly verifying system 
    - `critical_modules.hashes` records exact file sizes and SHA-512/SHA3-512 digests for 4 files (`secure_transmit_2027.py`, `rust_data_plane/src/main.rs`, `ts_runtime.py`, `dependency_security_verifier.py`). Any maintenance commit touching these files requires manual regeneration of `critical_modules.hashes`, otherwise `dependency_security_verifier.py` raises `SecurityVerificationError` on startup.
 3. **Stateful LMS OTS State Management:**
    - `stateful_artifact_signing.py` requires persistent non-volatile monotonic storage for LMS one-time signature counters. If the local state file is restored from a backup or snapshot, private key reuse could compromise hash-based signature security.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -173,3 +173,7 @@ To resist traffic analysis by global passive adversaries:
 | **Memory Sanitization** | `rust_data_plane/src/memlock.rs`, `nostd_microcore.rs` | Gate 1.1 / Gate 2.1 zeroize-on-drop verified |
 | **Anti-Replay Resistance** | `rust_data_plane/src/replay.rs` | Gate 5.1 RFC 6479 decoupled window tests |
 | **Symbolic Proofs** | `docs/formal/proverif_handshake.pv` | Gate 4.1 ProVerif 2.05 secrecy & inj-event TRUE |
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

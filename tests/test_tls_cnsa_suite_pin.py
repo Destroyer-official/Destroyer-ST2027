@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """TLS 1.3 CNSA suite pin + SecurityError definition (audit 2026-10-15).
 
 Pre-fix: tls_channel_manager raised SecurityError at 7+ fail-closed sites

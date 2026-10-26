@@ -1,3 +1,5 @@
+// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! Silent-drop UDP transport (dual-stack IPv6/IPv4).
 //!
 //! Black-hole discipline: parse/AEAD/rate failures increment local counters

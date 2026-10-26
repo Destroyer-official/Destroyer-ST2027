@@ -11,3 +11,7 @@ This register records technical claims made in existing documentation regarding 
 | MESH-05 | `resilient_communication.py` implements store-and-forward message delivery with exponential backoff and message deduplication. | `resilient_communication.py:1-25` | `resilient_communication.py:40-210` | Code Inspection & Test Execution | Verified | `MessageQueue` persists queued messages; `ExponentialBackoff` calculates jittered retry intervals; `MessageDeduplicator` discards replayed message IDs. Tested in `tests/test_resilient_ddil.py` (5 passed). |
 | MESH-06 | `network/session_manager.py` binds peer sessions to derived session authentication keys and enforces TPM quote verification when enabled. | `network/session_manager.py:1-20` | `network/session_manager.py:45-180` | Code Inspection & Test Execution | Verified | `SessionContext` manages session states and binds keys via `_derive_session_auth_key`; checks `P2P_TPM_QUOTE`. Tested in `tests/test_critical_audit_remediations.py`. |
 | MESH-07 | The `network/` modular package (`connection.py`, `handshake.py`, `io.py`, `manager.py`, `monitoring.py`) coordinates connection lifecycles for the orchestrator. | `network/*.py` | `network/*.py`, `core/orchestrator.py:824-944` | Code Inspection | Verified | `network/connection.py`, `handshake.py`, `io.py`, and `monitoring.py` are imported by `core/orchestrator.py` to manage multi-peer sessions. |
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

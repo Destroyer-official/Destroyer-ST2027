@@ -20,3 +20,7 @@ Claims verification register for operational scripts and deployment automation (
    - `python scripts/cavp_algorithm_validator.py`: 18 tests executed, 18 passed in 1.42s. Report: `compliance_reports/cavp_validation_report.json`.
    - `python scripts/audit_pins.py`: 14 pinned packages audited against OSV; 0 vulnerabilities found in 2.10s.
    - `python scripts/verify_hardware_security.py`: Diagnostic check passed (CFG, ACG, CET, MPX verified active) in 0.95s.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

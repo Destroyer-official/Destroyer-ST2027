@@ -14,3 +14,7 @@
 | Power-up self-tests verify AES-GCM, HKDF-SHA384, X25519 (RFC 7748), P-384 ECDH, and ML-KEM/ML-DSA pair consistency before sessions start | README.md:163 | Test execution (`python -c "import crypto_selftest; print(crypto_selftest.run_powerup_selftests())"`) | VERIFIED |
 | pqc_algorithms.py contains approximately 6500 lines | docs/modules/pqc_algorithms.md:1 | Line count command (`wc -l pqc_algorithms.py`: 8321 lines) | CONTRADICTED |
 | Platform-specific PQC implementations in production_pqc_algorithms.py (Windows CNG, Linux OpenSSL, macOS Security) provide active acceleration | production_pqc_algorithms.py:6-20 | Code inspection (`production_pqc_algorithms.py:106, 119, 132` return False "Not implemented yet") | CONTRADICTED |
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

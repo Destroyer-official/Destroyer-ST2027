@@ -20,3 +20,7 @@ Claims verification register for the user interface presentation layer (`ui_pres
    - `pytest tests/test_audit_confirmed_regressions.py -k "safety or pin"`: 2 passed in 1.45s.
 2. **Phase 0 Status of Trust-On-First-Use Pin Store:**
    - `ui/safety_numbers.py:10-13` notes that the pin store computes and stores TOFU pins; full automatic connection refusal across all transport layers is enforced through `security_tiers.py` and `tls_channel_manager.py`.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,3 +1,5 @@
+# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
+# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 Continuous Threat Detection and Automated Incident Containment Engine
 Zero-Trust Anomaly Analysis and Active Defense Subsystem

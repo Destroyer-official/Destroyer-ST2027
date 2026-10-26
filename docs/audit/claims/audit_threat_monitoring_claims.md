@@ -17,3 +17,7 @@ Claims verification register for audit_threat_monitoring.
 
 1. **Test Verification:** All claims cross-referenced against executed test suites.
 2. **Defect Tracking:** Any implementation anomalies or gotchas cataloged in docs/audit/discrepancies.md.
+
+---
+<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
+<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->
