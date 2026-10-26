@@ -68,9 +68,9 @@ class Initialization(BaseModule):
                 
                 # Directory settings
                 'secure_dir': os.environ.get('P2P_SECURE_DIR', None),
-                'cert_dir': os.environ.get('P2P_CERT_DIR', os.path.join(os.path.dirname(__file__), '..', '..', 'certs')),
-                'keys_dir': os.environ.get('P2P_KEYS_DIR', os.path.join(os.path.dirname(__file__), '..', '..', 'keys')),
-                'base_dir': os.environ.get('P2P_BASE_DIR', os.path.dirname(__file__)),
+                'cert_dir': os.environ.get('P2P_CERT_DIR', os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'certs'))),
+                'keys_dir': os.environ.get('P2P_KEYS_DIR', os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'keys'))),
+                'base_dir': os.environ.get('P2P_BASE_DIR', os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))),
                 
                 # Authentication settings (Enforced by default)
                 'require_authentication': os.environ.get('P2P_REQUIRE_AUTH', 'true').lower() == 'true',

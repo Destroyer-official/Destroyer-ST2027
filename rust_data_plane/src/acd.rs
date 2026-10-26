@@ -123,12 +123,20 @@ impl ActiveCyberDefenseEngine {
 
     /// Check if tactical cloaking / chaff increase is active.
     pub fn is_tactical_cloak_active(&self) -> bool {
-        *self.inner.tactical_cloak_active.read().unwrap_or_else(|e| e.into_inner())
+        *self
+            .inner
+            .tactical_cloak_active
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Check if emergency isolation was triggered.
     pub fn is_emergency_isolated(&self) -> bool {
-        *self.inner.emergency_isolation_active.read().unwrap_or_else(|e| e.into_inner())
+        *self
+            .inner
+            .emergency_isolation_active
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Quarantine a source immediately.
@@ -149,14 +157,20 @@ impl ActiveCyberDefenseEngine {
     }
 
     /// Record a security event and trigger defensive playbooks if thresholds are exceeded.
-    pub fn record_event(&self, trigger: ThreatTrigger, source_id: &str) -> Option<DefensivePlaybook> {
+    pub fn record_event(
+        &self,
+        trigger: ThreatTrigger,
+        source_id: &str,
+    ) -> Option<DefensivePlaybook> {
         let now = Instant::now();
         let mut playbook_triggered = None;
 
         match trigger {
             ThreatTrigger::ReplayBurst => {
                 if let Ok(mut map) = self.inner.replay_events.write() {
-                    let queue = map.entry(source_id.to_string()).or_insert_with(VecDeque::new);
+                    let queue = map
+                        .entry(source_id.to_string())
+                        .or_insert_with(VecDeque::new);
                     queue.push_back(now);
                     let cutoff = now.checked_sub(self.inner.replay_window).unwrap_or(now);
                     while let Some(&t) = queue.front() {
@@ -174,7 +188,9 @@ impl ActiveCyberDefenseEngine {
             }
             ThreatTrigger::AuthFailureFlood => {
                 if let Ok(mut map) = self.inner.auth_fail_events.write() {
-                    let queue = map.entry(source_id.to_string()).or_insert_with(VecDeque::new);
+                    let queue = map
+                        .entry(source_id.to_string())
+                        .or_insert_with(VecDeque::new);
                     queue.push_back(now);
                     let cutoff = now.checked_sub(self.inner.auth_fail_window).unwrap_or(now);
                     while let Some(&t) = queue.front() {
@@ -219,7 +235,12 @@ impl ActiveCyberDefenseEngine {
         playbook_triggered
     }
 
-    fn record_incident(&self, trigger: ThreatTrigger, source_id: &str, playbook: DefensivePlaybook) {
+    fn record_incident(
+        &self,
+        trigger: ThreatTrigger,
+        source_id: &str,
+        playbook: DefensivePlaybook,
+    ) {
         let epoch_now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -228,7 +249,9 @@ impl ActiveCyberDefenseEngine {
         let sig = self.inner.signer.as_ref().map(|s| {
             let mut payload = Vec::new();
             payload.extend_from_slice(b"ACD-INCIDENT-v1\0");
-            payload.extend_from_slice(format!("{trigger:?}|{source_id}|{playbook:?}|{epoch_now}").as_bytes());
+            payload.extend_from_slice(
+                format!("{trigger:?}|{source_id}|{playbook:?}|{epoch_now}").as_bytes(),
+            );
             s.sign(b"ST2027-ACD-AUDIT-v1\0", &payload)
         });
 

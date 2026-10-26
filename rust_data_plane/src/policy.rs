@@ -82,7 +82,9 @@ impl fmt::Display for CoreError {
             CoreError::OsRandom => write!(f, "OS randomness unavailable"),
             CoreError::FilePermissions => write!(f, "key file permission hardening failed"),
             CoreError::Oversize => write!(f, "payload exceeds largest quantum"),
-            CoreError::ZeroTrustViolation => write!(f, "zero-trust continuous verification failure"),
+            CoreError::ZeroTrustViolation => {
+                write!(f, "zero-trust continuous verification failure")
+            }
         }
     }
 }

@@ -111,6 +111,14 @@ keys/*
 certs/*
 !certs/ek_roots/
 !certs/ek_roots/*.md
+!certs/*.pub
+!certs/key_ceremony_affidavit.json
+!certs/pki_manifest.json
+!certs/sovereign_root_ca.json
+!certs/sovereign_sub_ca.json
+!certs/crl.json
+!certs/node_alpha.json
+!certs/node_bravo.json
 .env.local
 .env.production
 config.json
@@ -201,4 +209,9 @@ diode_station.state
 .audit-deps/
 .audit-lock-venv/
 .audit-venv/
+.audit-download/
+.audit-tools-venv/
 docs/review_tmp/
+audit_*.json
+audit_request.txt
+out/

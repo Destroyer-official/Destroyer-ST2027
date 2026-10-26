@@ -26,7 +26,8 @@ from native_secure_buffer import NativeSecureBuffer, wipe_native
 
 logger = logging.getLogger(__name__)
 
-PBKDF2_ITERATIONS = 210_000  # OWASP 2023 floor for PBKDF2-SHA512
+PBKDF2_ITERATIONS = 220_000  # OWASP standard floor for PBKDF2-HMAC-SHA512
+PBKDF2_LEGACY_ITERATIONS = 210_000
 MAX_OPERATORS = 2
 MAX_FAILURES = 5
 
@@ -39,7 +40,7 @@ class CriticalReleaseAuthority:
     """RAM-only two-operator authorization for critical releases."""
 
     def __init__(self):
-        # operator_id -> (salt: bytes, verifier: bytes)
+        # operator_id -> (salt: bytes, verifier: bytes, iters: int)
         self._verifiers = {}
         self._failures = 0
         self._locked = False
@@ -66,15 +67,19 @@ class CriticalReleaseAuthority:
         verifier = hashlib.pbkdf2_hmac(
             "sha512", passphrase.encode("utf-8"), salt, PBKDF2_ITERATIONS
         )
-        self._verifiers[operator_id] = (salt, verifier)
+        self._verifiers[operator_id] = (salt, verifier, PBKDF2_ITERATIONS)
 
     def _check(self, operator_id: str, passphrase: str) -> bool:
         entry = self._verifiers.get(operator_id)
         if entry is None:
             return False
-        salt, expected = entry
+        if len(entry) == 3:
+            salt, expected, iters = entry
+        else:
+            salt, expected = entry
+            iters = PBKDF2_LEGACY_ITERATIONS
         candidate = hashlib.pbkdf2_hmac(
-            "sha512", passphrase.encode("utf-8"), salt, PBKDF2_ITERATIONS
+            "sha512", passphrase.encode("utf-8"), salt, iters
         )
         ok = hmac.compare_digest(candidate, expected)
         del candidate

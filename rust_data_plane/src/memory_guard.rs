@@ -30,7 +30,9 @@ impl Drop for GuardedBuffer {
         self.secure_wipe();
         if !intact {
             // Panic or abort on memory corruption detection to prevent exploit
-            eprintln!("CRITICAL SECURITY ALERT: GuardedBuffer canary corruption detected! Memory wiped.");
+            eprintln!(
+                "CRITICAL SECURITY ALERT: GuardedBuffer canary corruption detected! Memory wiped."
+            );
         }
     }
 }

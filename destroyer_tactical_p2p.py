@@ -37,12 +37,12 @@ DIM = "\033[2m"
 
 
 def _production() -> bool:
-    """Best-effort production gate; detection failure is treated as lab."""
+    """Canonical fail-closed production gate."""
     try:
         from production_gate import is_production
         return bool(is_production())
     except Exception:
-        return False
+        return True
 
 
 def print_banner(node_name: str, role: str, bind: str, peer: str):

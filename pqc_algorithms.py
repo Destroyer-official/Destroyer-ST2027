@@ -6784,14 +6784,20 @@ class EnhancedMLDSA_87:
         """Generate ML-DSA-87 key pair"""
         self._timing_jitter()
         return self.base_sig.keygen()
-    def sign(self, private_key: bytes, message: bytes) -> bytes:
-        """Sign message"""
+    def sign(self, private_key: bytes, message: bytes, ctx: bytes = b"") -> bytes:
+        """Sign message with optional FIPS 204 Section 5.2 domain context string."""
         self._timing_jitter()
-        return self.base_sig.sign(private_key, message)
-    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        """Verify message"""
+        return self.base_sig.sign(private_key, message, ctx=ctx)
+
+    def sign_verified(self, private_key: bytes, message: bytes, public_key: bytes, ctx: bytes = b"") -> bytes:
+        """Mandatory Verify-After-Sign (VAS) with optional FIPS 204 context string."""
         self._timing_jitter()
-        return self.base_sig.verify(public_key, message, signature)
+        return self.base_sig.sign_verified(private_key, message, public_key, ctx=ctx)
+
+    def verify(self, public_key: bytes, message: bytes, signature: bytes, ctx: bytes = b"") -> bool:
+        """Verify message with optional FIPS 204 Section 5.2 domain context string."""
+        self._timing_jitter()
+        return self.base_sig.verify(public_key, message, signature, ctx=ctx)
     def _protect_private_key(self, private_key: bytes) -> bytes:
         """
         Apply authenticated AES-256-GCM encryption to the private key at rest.

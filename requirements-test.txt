@@ -2,8 +2,8 @@
 # Install: pip install -r requirements-test.txt
 # (Production crypto deps in requirements.txt use --require-hashes; test
 # runners carry their own transitive pins and are intentionally hash-free.)
-# Python 3.11+ required (matches requirements.txt). Verified working set:
-# pytest 9.1.1 / pytest-timeout 2.4.0 / hypothesis 6.165.5 on 2026-10-12.
+# Python 3.11+ required (matches requirements.txt). Focused and sharded suites
+# verified this dependency set on 2026-10-25; no monolithic full-suite run is implied.
 pytest==9.1.1
 pytest-timeout==2.4.0
 hypothesis==6.165.5

@@ -1518,7 +1518,8 @@ def get_or_create_tactical_officer(
         raw = json.dumps(officer.to_dict(include_secret=True)).encode("utf-8")
         salt = secrets.token_bytes(32)
         nonce = secrets.token_bytes(12)
-        file_key = hashlib.pbkdf2_hmac("sha512", seal_key, salt, 210_000, dklen=32)
+        iters = 220_000
+        file_key = hashlib.pbkdf2_hmac("sha512", seal_key, salt, iters, dklen=32)
         ct = AESGCM(file_key).encrypt(
             nonce, raw, f"NC3-OFFICER-CREDS-V2:{officer_id}".encode("utf-8")
         )
@@ -1528,6 +1529,7 @@ def get_or_create_tactical_officer(
             json.dump(
                 {
                     "v": 2,
+                    "iters": iters,
                     "salt": base64.b64encode(salt).decode("ascii"),
                     "nonce": base64.b64encode(nonce).decode("ascii"),
                     "ct": base64.b64encode(ct).decode("ascii"),
@@ -1552,8 +1554,9 @@ def get_or_create_tactical_officer(
         salt = base64.b64decode(data["salt"])
         nonce = base64.b64decode(data["nonce"])
         ct = base64.b64decode(data["ct"])
+        iters = data.get("iters", 210_000)
         seal_key = _officer_file_seal_key()
-        file_key = hashlib.pbkdf2_hmac("sha512", seal_key, salt, 210_000, dklen=32)
+        file_key = hashlib.pbkdf2_hmac("sha512", seal_key, salt, iters, dklen=32)
         try:
             raw = AESGCM(file_key).decrypt(
                 nonce, ct, f"NC3-OFFICER-CREDS-V2:{officer_id}".encode("utf-8")

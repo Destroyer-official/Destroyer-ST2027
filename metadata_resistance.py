@@ -163,15 +163,16 @@ class MessagePaddingEngine:
         # Generate cryptographically random padding
         padding = secrets.token_bytes(padding_size)
         
-        # Compute HMAC over original message for integrity
+        length_bytes = struct.pack('>I', original_length)
+
+        # Compute HMAC over length header and original message for integrity
         hmac_tag = hmac.new(
             self._hmac_key,
-            message,
+            length_bytes + message,
             hashlib.sha256
         ).digest()
         
         # Build padded message: [length][hmac][message][padding]
-        length_bytes = struct.pack('>I', original_length)
         padded = length_bytes + hmac_tag + message + padding
         
         return padded
@@ -212,10 +213,10 @@ class MessagePaddingEngine:
         # Extract original message
         message = padded_message[self.HEADER_SIZE:self.HEADER_SIZE + original_length]
         
-        # Verify HMAC
+        # Verify HMAC over length header and message
         computed_hmac = hmac.new(
             self._hmac_key,
-            message,
+            length_bytes + message,
             hashlib.sha256
         ).digest()
         

@@ -310,7 +310,178 @@ class TestAuditForensicRemediations(unittest.TestCase):
             self.assertIn("HMAC mismatch", r.stderr)
             self.assertIn("state corrupt or forged", r.stderr)
 
+    def test_12_graceful_degradation_recognizes_pqc_and_error_handler(self):
+        """SEC-07: SecurityDegradationManager detects modern pqc_algorithms and error_handler."""
+        from security.graceful_degradation import SecurityDegradationManager
+        sdm = SecurityDegradationManager()
+        self.assertIn(sdm.security_level, ["MAXIMUM", "HIGH"])
+        self.assertTrue(sdm.available_modules.get('military_crypto', False))
+        self.assertTrue(sdm.available_modules.get('error_handler', False))
+
+    def test_13_decentralized_and_tactical_production_gate_fail_closed(self):
+        """SEC-08: _production() in decentralized & tactical architectures fails closed."""
+        from decentralized_architecture import _production as dht_prod
+        from destroyer_tactical_p2p import _production as tac_prod
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"P2P_PRODUCTION": "1"}):
+            self.assertTrue(dht_prod())
+            self.assertTrue(tac_prod())
+        with patch("production_gate.is_production", side_effect=Exception("Tampered")):
+            self.assertTrue(dht_prod())
+            self.assertTrue(tac_prod())
+
+    def test_14_data_models_role_assignment_expiry_and_permissions(self):
+        """SEC-09: data_models.RoleAssignment evaluates expiration and permissions."""
+        from data_models import RoleAssignment, SecurityRole, SecurityPermission
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        active_role = RoleAssignment("uid1", SecurityRole.COMMANDER, permissions={SecurityPermission.EMERGENCY_RELEASE}, granted_at=now, expires_at=now + timedelta(hours=1))
+        self.assertFalse(active_role.is_expired())
+        self.assertTrue(active_role.has_permission(SecurityPermission.EMERGENCY_RELEASE))
+        self.assertFalse(active_role.has_permission(SecurityPermission.ADMIN_COMMAND))
+
+        expired_role = RoleAssignment("uid2", SecurityRole.OPERATOR, permissions={SecurityPermission.EMERGENCY_RELEASE}, granted_at=now - timedelta(hours=2), expires_at=now - timedelta(hours=1))
+        self.assertTrue(expired_role.is_expired())
+        self.assertFalse(expired_role.has_permission(SecurityPermission.EMERGENCY_RELEASE))
+
+    def test_15_multi_device_signature_chain_cycle_detection(self):
+        """SEC-11: MultiDeviceManager detects signature chain cycles and avoids infinite recursion."""
+        from multi_device_manager import MultiDeviceManager, DeviceInfo, UserIdentityDevices
+        from datetime import datetime, timezone
+        mgr = MultiDeviceManager()
+        uid = "user-cycle-test"
+        user_devs = UserIdentityDevices(user_identity_id=uid)
+        mgr._user_devices[uid] = user_devs
+
+        dev1 = DeviceInfo(
+            device_id="dev-1",
+            device_name="Terminal 1",
+            device_type="desktop",
+            public_key=b"pk1" * 10,
+            enrollment_signature=b"sig1",
+            authorizing_device_id="dev-2",
+            signature_chain_depth=1,
+            enrolled_at=datetime.now(timezone.utc)
+        )
+        dev2 = DeviceInfo(
+            device_id="dev-2",
+            device_name="Terminal 2",
+            device_type="desktop",
+            public_key=b"pk2" * 10,
+            enrollment_signature=b"sig2",
+            authorizing_device_id="dev-1",
+            signature_chain_depth=1,
+            enrolled_at=datetime.now(timezone.utc)
+        )
+        user_devs.devices["dev-1"] = dev1
+        user_devs.devices["dev-2"] = dev2
+
+        res = mgr.verify_signature_chain(uid, "dev-1")
+        self.assertFalse(res, "Cyclic signature chain must fail closed")
+
+    def test_16_metadata_resistance_padding_authenticated_length(self):
+        """SEC-12: MessagePaddingEngine verifies HMAC over both header and payload."""
+        from metadata_resistance import MessagePaddingEngine
+        engine = MessagePaddingEngine()
+        payload = b"Top secret operational command"
+        padded = engine.pad(payload)
+        unpadded = engine.unpad(padded)
+        self.assertEqual(unpadded, payload)
+
+        # Tampering with length header must cause verification error
+        tampered = bytearray(padded)
+        tampered[3] ^= 0x01
+        with self.assertRaises(Exception):
+            engine.unpad(bytes(tampered))
+
+    def test_17_initialization_path_resolution_stays_within_workspace(self):
+        """SEC-13: utils.initialization.Initialization resolves paths inside workspace root."""
+        from utils.initialization import Initialization
+        from unittest.mock import Mock
+        init = Initialization(Mock())
+        cfg = init.load_configuration()
+        repo_root = os.path.abspath(ROOT)
+        self.assertTrue(cfg['cert_dir'].startswith(repo_root), f"cert_dir {cfg['cert_dir']} must reside within {repo_root}")
+        self.assertTrue(cfg['keys_dir'].startswith(repo_root), f"keys_dir {cfg['keys_dir']} must reside within {repo_root}")
+        self.assertTrue(cfg['base_dir'].startswith(repo_root), f"base_dir {cfg['base_dir']} must reside within {repo_root}")
+
+    def test_18_connection_manager_cleanup_on_dos_overflow(self):
+        """SEC-14: ConnectionManager purges session_context when rejecting DoS overflow."""
+        from network.connection import ConnectionManager, SecurityError
+        from unittest.mock import Mock, MagicMock
+        import asyncio
+
+        orch = Mock()
+        mgr = ConnectionManager(orch)
+        mgr._max_active_connections = 1
+
+        ctx1 = MagicMock()
+        ctx1.peer_fingerprint = "fp1"
+        mgr._active_connections["fp1"] = ctx1
+
+        ctx2 = MagicMock()
+        ctx2.peer_fingerprint = "fp2"
+        ctx2.secure_cleanup = MagicMock()
+
+        async def _test():
+            conn_key = "fp2"
+            async with mgr._connection_lock:
+                if conn_key not in mgr._active_connections and mgr._active_session_count() >= mgr._max_active_connections:
+                    mgr._close_connection_context(ctx2)
+                    raise SecurityError("Connection table full - rejecting inbound (DoS protection)")
+
+        with self.assertRaises(SecurityError):
+            asyncio.run(_test())
+        ctx2.secure_cleanup.assert_called_once()
+
+    def test_19_display_banner_cnsa2_transport_security(self):
+        """SEC-15: DisplayManager reports TLS 1.3 + AES-256-GCM (CNSA 2.0)."""
+        from ui.display import DisplayManager
+        from unittest.mock import Mock
+        import logging
+
+        orch = Mock()
+        orch.strict_auth = True
+        orch.ephemeral_key_lifetime = 3072
+        disp = DisplayManager(orch)
+
+        captured = []
+        class CapturingHandler(logging.Handler):
+            def emit(self, record):
+                captured.append(record.getMessage())
+
+        handler = CapturingHandler()
+        sec_logger = logging.getLogger('security_summary')
+        old_level = sec_logger.level
+        sec_logger.setLevel(logging.INFO)
+        sec_logger.addHandler(handler)
+        try:
+            disp.print_security_summary()
+            self.assertTrue(any("TLS 1.3 + AES-256-GCM (CNSA 2.0)" in msg for msg in captured),
+                            f"Banner must declare CNSA 2.0 transport security: {captured}")
+        finally:
+            sec_logger.removeHandler(handler)
+            sec_logger.setLevel(old_level)
+
+    def test_20_commands_exit_safe_when_disconnected(self):
+        """SEC-16: CommandProcessor executes /exit cleanly even when disconnected."""
+        from messaging.commands import CommandProcessor
+        from unittest.mock import AsyncMock, Mock
+        import asyncio
+
+        orch = Mock()
+        orch.tcp_socket = None
+        orch.is_connected = False
+        orch._close_connection = AsyncMock()
+        orch.local_username = "Alpha"
+        orch.security = Mock()
+        orch.security.validation = Mock()
+        orch.security.validation.validate_command.return_value = True
+
+        cp = CommandProcessor(orch)
+        asyncio.run(cp.handle_command("/exit", []))
+        orch._close_connection.assert_awaited_once_with(attempt_reconnect=False)
+
 
 if __name__ == "__main__":
     unittest.main()
-

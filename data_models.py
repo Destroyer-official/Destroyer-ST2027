@@ -170,6 +170,19 @@ class RoleAssignment:
             signature=sig,
         )
 
+    def is_expired(self, at: Optional[datetime] = None) -> bool:
+        """Check if role assignment has expired."""
+        if self.expires_at is None:
+            return False
+        check_time = _aware(at) if at is not None else _utcnow()
+        return check_time >= self.expires_at
+
+    def has_permission(self, permission: SecurityPermission) -> bool:
+        """Check if role assignment grants a specific permission and is not expired."""
+        if self.is_expired():
+            return False
+        return permission in self.permissions
+
 
 @dataclass
 class UserProfile:

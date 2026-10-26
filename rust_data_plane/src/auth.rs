@@ -1,8 +1,9 @@
 //! Native ML-DSA-87 authentication (FIPS 204, CNSA 2.0).
 //!
 //! This is the Rust-core replacement for the Python `liboqs` ML-DSA path.
-//! Pure-Rust `ml-dsa` crate (FIPS 204 final); no `oqs.dll`, no ctypes, no
-//! interpreter copies. Reference behavior mirrors `noise_pq.py` (role-
+//! Pure-Rust `ml-dsa` crate (FIPS 204 final); native signing does not load
+//! `oqs.dll` or use ctypes. FFI callers must separately account for CPython
+//! copies of exported material. Reference behavior mirrors `noise_pq.py` (role-
 //! separated signature domains, verify-before-derive) and `ts_attest.py`
 //! (enrollment-bound verification), but secrets live in Rust types with
 //! verified wiping (`SigningKey` implements wiping `Drop` upstream) and

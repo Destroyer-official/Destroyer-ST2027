@@ -544,6 +544,12 @@ class DeploymentVerifier:
                 "default ClientHello offers NO RFC 10024 hybrid group")
             ok = ok and not prod
         openssl_conf = os.environ.get("OPENSSL_CONF", "").strip()
+        if not openssl_conf:
+            repo_root = os.path.dirname(os.path.abspath(__file__))
+            candidate_cnf = os.path.join(repo_root, "deploy", "openssl_cnsa.cnf")
+            if os.path.exists(candidate_cnf):
+                openssl_conf = candidate_cnf
+                os.environ["OPENSSL_CONF"] = candidate_cnf
         if openssl_conf:
             self._add_result("TLS13: OPENSSL_CONF policy", VerificationStatus.PASS,
                              f"explicit OpenSSL config in force: {openssl_conf}")

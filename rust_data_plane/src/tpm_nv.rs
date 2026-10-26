@@ -53,8 +53,8 @@
 //!   layer is exercised against an in-memory fake transport and the tool
 //!   layer against argv/classification unit tests.
 
-use hmac::{Hmac, KeyInit, Mac};
 use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -106,8 +106,7 @@ pub struct ToolPaths {
 impl ToolPaths {
     pub fn from_env() -> Self {
         Self {
-            nvread: std::env::var("P2P_TPM2_NVREAD")
-                .unwrap_or_else(|_| "tpm2_nvread".to_string()),
+            nvread: std::env::var("P2P_TPM2_NVREAD").unwrap_or_else(|_| "tpm2_nvread".to_string()),
             nvincrement: std::env::var("P2P_TPM2_NVINCREMENT")
                 .unwrap_or_else(|_| "tpm2_nvincrement".to_string()),
             nvdefine: std::env::var("P2P_TPM2_NVDEFINE")
@@ -235,8 +234,7 @@ pub fn classify_failure(blob: &str) -> NvError {
 
 fn already_defined(msg: &str) -> bool {
     let l = msg.to_lowercase();
-    (l.contains("already") && (l.contains("defined") || l.contains("exist")))
-        || l.contains("0x14c")
+    (l.contains("already") && (l.contains("defined") || l.contains("exist"))) || l.contains("0x14c")
 }
 
 /// Parse `tpm2_nvread` hex stdout (plain, `0x`-prefixed, or space-separated
@@ -269,9 +267,7 @@ pub fn parse_index(s: &str) -> Result<u64, String> {
     } else {
         s.parse::<u64>()
     };
-    r.map_err(|_| {
-        format!("invalid P2P_TPM_NV_INDEX {s:?} (expected 0x<hex> or decimal u64)")
-    })
+    r.map_err(|_| format!("invalid P2P_TPM_NV_INDEX {s:?} (expected 0x<hex> or decimal u64)"))
 }
 
 /// `None` when the guard is disabled (env unset/empty), `Some` otherwise.
@@ -282,8 +278,7 @@ pub fn transport_from_index_str(index: Option<&str>) -> Result<Option<ToolsTrans
         return Ok(None);
     }
     let idx = parse_index(raw)?;
-    let owner =
-        std::env::var("P2P_TPM_NV_OWNER").unwrap_or_else(|_| "o".to_string());
+    let owner = std::env::var("P2P_TPM_NV_OWNER").unwrap_or_else(|_| "o".to_string());
     Ok(Some(ToolsTransport::new(
         idx,
         &owner,
@@ -477,8 +472,9 @@ fn reanchor(
     let v = match nv {
         Some(v) => v,
         None => {
-            t.define()
-                .map_err(|e| format!("TPM NV define failed during re-provision: {}", e.describe()))?;
+            t.define().map_err(|e| {
+                format!("TPM NV define failed during re-provision: {}", e.describe())
+            })?;
             t.increment().map_err(|e| {
                 format!(
                     "TPM NV increment failed during re-provision: {}",
@@ -748,7 +744,13 @@ mod tests {
         assert_eq!(
             a,
             vec![
-                "0x1500016", "-C", "o", "-s", "8", "-a", "ownerread|ownerwrite|nt=counter"
+                "0x1500016",
+                "-C",
+                "o",
+                "-s",
+                "8",
+                "-a",
+                "ownerread|ownerwrite|nt=counter"
             ]
         );
     }
@@ -853,7 +855,7 @@ mod tests {
         let path = tmp_path("crashwin");
         let t = FakeNv::new();
         checkpoint_with(&t, &KEY, &path, 100).unwrap(); // gen 1
-        // Simulate crash after sidecar append, before nvincrement.
+                                                        // Simulate crash after sidecar append, before nvincrement.
         sidecar_append(&KEY, &path, 2, 150).unwrap();
         assert_eq!(t.value.get(), Some(1));
         guard_with(&t, &KEY, &path, 150, false, false).unwrap();
@@ -884,7 +886,10 @@ mod tests {
         writeln!(f, "1 50 {}", "00".repeat(32)).unwrap();
         drop(f);
         let e = guard_with(&t, &KEY, &path, 100, false, false).unwrap_err();
-        assert!(e.contains("unusable") && e.contains("authentication"), "{e}");
+        assert!(
+            e.contains("unusable") && e.contains("authentication"),
+            "{e}"
+        );
         cleanup(&path);
     }
 

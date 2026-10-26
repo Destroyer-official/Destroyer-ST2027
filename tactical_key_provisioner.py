@@ -65,7 +65,7 @@ def save_encrypted_credential(file_path: str, data: bytes, passphrase: Optional[
         algorithm=hashes.SHA512(),
         length=32,
         salt=salt,
-        iterations=210_000,
+        iterations=220_000,
         backend=default_backend()
     )
     key = kdf.derive(pw.encode('utf-8'))
@@ -73,7 +73,7 @@ def save_encrypted_credential(file_path: str, data: bytes, passphrase: Optional[
     nonce = secrets.token_bytes(12)
     aad = os.path.basename(file_path).encode('utf-8')
     ciphertext = aesgcm.encrypt(nonce, data, aad)
-    payload = b"ENC_KEY_V1" + salt + nonce + ciphertext
+    payload = b"ENC_KEY_V2" + salt + nonce + ciphertext
 
     with open(file_path, "wb") as f:
         f.write(payload)
@@ -86,11 +86,14 @@ def load_encrypted_credential(file_path: str, passphrase: Optional[str] = None) 
     with open(file_path, "rb") as f:
         raw = f.read()
 
-    if raw.startswith(b"ENC_KEY_V1"):
+    if raw.startswith(b"ENC_KEY_V2") or raw.startswith(b"ENC_KEY_V1"):
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.backends import default_backend
+
+        is_v2 = raw.startswith(b"ENC_KEY_V2")
+        iterations = 220_000 if is_v2 else 210_000
 
         salt = raw[10:42]
         nonce = raw[42:54]
@@ -105,7 +108,7 @@ def load_encrypted_credential(file_path: str, passphrase: Optional[str] = None) 
             algorithm=hashes.SHA512(),
             length=32,
             salt=salt,
-            iterations=210_000,
+            iterations=iterations,
             backend=default_backend()
         )
         key = kdf.derive(pw.encode('utf-8'))
@@ -116,7 +119,7 @@ def load_encrypted_credential(file_path: str, passphrase: Optional[str] = None) 
         except Exception as e:
             raise SecurityError(
                 f"Decryption failed for {file_path}: invalid passphrase, corrupted data, "
-                f"or non-compliant legacy PBKDF2 iterations (CNSA 2.0 requires 210,000 PBKDF2-SHA512 iterations)."
+                f"or authentication tag mismatch (PBKDF2-SHA512 iterations={iterations})."
             ) from e
 
     # Public certificates are permissible in PEM format; secret keys and tokens must be encrypted

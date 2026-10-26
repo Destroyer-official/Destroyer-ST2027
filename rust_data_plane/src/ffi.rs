@@ -703,8 +703,13 @@ impl CoreCookieGate {
         m1_prefix: Vec<u8>,
         difficulty_bits: u8,
     ) -> bool {
-        self.inner
-            .verify_response(&response, client_ip, client_port, &m1_prefix, difficulty_bits)
+        self.inner.verify_response(
+            &response,
+            client_ip,
+            client_port,
+            &m1_prefix,
+            difficulty_bits,
+        )
     }
 
     #[staticmethod]
@@ -713,7 +718,10 @@ impl CoreCookieGate {
         challenge_payload: Vec<u8>,
         max_iterations: Option<u64>,
     ) -> Option<Vec<u8>> {
-        StatelessCookieGate::solve_challenge(&challenge_payload, max_iterations.unwrap_or(2_000_000))
+        StatelessCookieGate::solve_challenge(
+            &challenge_payload,
+            max_iterations.unwrap_or(2_000_000),
+        )
     }
 
     #[pyo3(signature = (wire, client_ip, client_port, require_cookie=false, difficulty_bits=0))]
@@ -791,13 +799,23 @@ impl CoreAcdEngine {
             "fault" | "TRIGGER_KEY_EXPOSURE_RISK" => ThreatTrigger::FaultDetected,
             _ => return None,
         };
-        self.inner.record_event(trigger, source_id).map(|pb| match pb {
-            DefensivePlaybook::QuarantinePeer => "PLAYBOOK_QUARANTINE_PEER".to_string(),
-            DefensivePlaybook::SeverSessionAndIsolate => "PLAYBOOK_SEVER_SESSION_AND_ISOLATE".to_string(),
-            DefensivePlaybook::BlockSourceAndRekey => "PLAYBOOK_BLOCK_SOURCE_AND_REKEY".to_string(),
-            DefensivePlaybook::ForceTacticalCloak => "PLAYBOOK_FORCE_TACTICAL_CLOAK".to_string(),
-            DefensivePlaybook::PurgeEphemeralState => "PLAYBOOK_PURGE_EPHEMERAL_STATE".to_string(),
-        })
+        self.inner
+            .record_event(trigger, source_id)
+            .map(|pb| match pb {
+                DefensivePlaybook::QuarantinePeer => "PLAYBOOK_QUARANTINE_PEER".to_string(),
+                DefensivePlaybook::SeverSessionAndIsolate => {
+                    "PLAYBOOK_SEVER_SESSION_AND_ISOLATE".to_string()
+                }
+                DefensivePlaybook::BlockSourceAndRekey => {
+                    "PLAYBOOK_BLOCK_SOURCE_AND_REKEY".to_string()
+                }
+                DefensivePlaybook::ForceTacticalCloak => {
+                    "PLAYBOOK_FORCE_TACTICAL_CLOAK".to_string()
+                }
+                DefensivePlaybook::PurgeEphemeralState => {
+                    "PLAYBOOK_PURGE_EPHEMERAL_STATE".to_string()
+                }
+            })
     }
 }
 
@@ -821,7 +839,11 @@ impl CoreZeroTrustEngine {
             "admin" => SecurityRole::Admin,
             "operator" => SecurityRole::Operator,
             "viewer" => SecurityRole::Viewer,
-            _ => return Err(PyValueError::new_err("invalid role: expected admin, operator, or viewer")),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "invalid role: expected admin, operator, or viewer",
+                ))
+            }
         };
         self.inner.register_peer(peer_id, role);
         Ok(())
@@ -862,11 +884,7 @@ impl CoreZeroTrustEngine {
             .is_ok())
     }
 
-    pub fn verify_write(
-        &self,
-        subject_clearance: u8,
-        target_classification: u8,
-    ) -> PyResult<bool> {
+    pub fn verify_write(&self, subject_clearance: u8, target_classification: u8) -> PyResult<bool> {
         let sc = ClearanceLevel::from_u8(subject_clearance).map_err(err)?;
         let tc = ClearanceLevel::from_u8(target_classification).map_err(err)?;
         Ok(self.inner.verify_write(sc, tc).is_ok())
@@ -920,14 +938,15 @@ impl CoreGroupRatchet {
         initial_epoch_secret: Vec<u8>,
     ) -> PyResult<Self> {
         if initial_epoch_secret.len() != 48 {
-            return Err(PyValueError::new_err("initial_epoch_secret must be 48 bytes"));
+            return Err(PyValueError::new_err(
+                "initial_epoch_secret must be 48 bytes",
+            ));
         }
         let mut secret = [0u8; 48];
         secret.copy_from_slice(&initial_epoch_secret);
-        let inner = crate::group_ratchet::SovereignGroupRatchet::new(
-            group_id, local_member_id, secret,
-        )
-        .map_err(|e| PyValueError::new_err(format!("GroupRatchet error: {e:?}")))?;
+        let inner =
+            crate::group_ratchet::SovereignGroupRatchet::new(group_id, local_member_id, secret)
+                .map_err(|e| PyValueError::new_err(format!("GroupRatchet error: {e:?}")))?;
         Ok(Self { inner })
     }
 
@@ -951,6 +970,128 @@ impl CoreGroupRatchet {
         self.inner
             .decrypt_group_message(sender_id, wire_frame)
             .map_err(|e| PyValueError::new_err(format!("GroupRatchet decryption failed: {e:?}")))
+    }
+
+    pub fn remove_member(&mut self, member_id: &str) -> PyResult<()> {
+        self.inner.remove_member(member_id);
+        Ok(())
+    }
+
+    pub fn compute_roster_hash(&self) -> PyResult<Vec<u8>> {
+        Ok(self.inner.compute_roster_hash().to_vec())
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub fn generate_epoch_auth_token(
+        &self,
+        officer1_id: &str,
+        officer1_key: Vec<u8>,
+        officer2_id: &str,
+        officer2_key: Vec<u8>,
+        group_id: &str,
+        target_epoch: u64,
+        roster_hash: Vec<u8>,
+        fresh_entropy: Vec<u8>,
+    ) -> PyResult<(
+        String,
+        String,
+        String,
+        u64,
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+        Vec<u8>,
+    )> {
+        if roster_hash.len() != 32 {
+            return Err(PyValueError::new_err("roster_hash must be 32 bytes"));
+        }
+        if fresh_entropy.len() != 48 {
+            return Err(PyValueError::new_err("fresh_entropy must be 48 bytes"));
+        }
+        let mut rh = [0u8; 32];
+        rh.copy_from_slice(&roster_hash);
+        let mut fe = [0u8; 48];
+        fe.copy_from_slice(&fresh_entropy);
+        let token = crate::group_ratchet::EpochAuthToken::generate(
+            officer1_id,
+            &officer1_key,
+            officer2_id,
+            &officer2_key,
+            group_id,
+            target_epoch,
+            rh,
+            &fe,
+        )
+        .map_err(|e| PyValueError::new_err(format!("EpochAuthToken generation failed: {e:?}")))?;
+
+        Ok((
+            token.officer1_id,
+            token.officer2_id,
+            token.group_id,
+            token.target_epoch,
+            token.roster_hash.to_vec(),
+            token.entropy_commitment.to_vec(),
+            token.officer1_auth_tag.to_vec(),
+            token.officer2_auth_tag.to_vec(),
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn advance_epoch_authorized(
+        &mut self,
+        fresh_entropy: Vec<u8>,
+        officer1_id: &str,
+        officer2_id: &str,
+        group_id: &str,
+        target_epoch: u64,
+        roster_hash: Vec<u8>,
+        entropy_commitment: Vec<u8>,
+        officer1_auth_tag: Vec<u8>,
+        officer2_auth_tag: Vec<u8>,
+        officer1_key: Vec<u8>,
+        officer2_key: Vec<u8>,
+    ) -> PyResult<u64> {
+        if fresh_entropy.len() != 48 {
+            return Err(PyValueError::new_err("fresh_entropy must be 48 bytes"));
+        }
+        if roster_hash.len() != 32
+            || entropy_commitment.len() != 32
+            || officer1_auth_tag.len() != 32
+            || officer2_auth_tag.len() != 32
+        {
+            return Err(PyValueError::new_err(
+                "roster_hash, entropy_commitment, and auth tags must each be 32 bytes",
+            ));
+        }
+        let mut fe = [0u8; 48];
+        fe.copy_from_slice(&fresh_entropy);
+        let mut rh = [0u8; 32];
+        rh.copy_from_slice(&roster_hash);
+        let mut ec = [0u8; 32];
+        ec.copy_from_slice(&entropy_commitment);
+        let mut ot1 = [0u8; 32];
+        ot1.copy_from_slice(&officer1_auth_tag);
+        let mut ot2 = [0u8; 32];
+        ot2.copy_from_slice(&officer2_auth_tag);
+
+        let token = crate::group_ratchet::EpochAuthToken {
+            officer1_id: officer1_id.to_string(),
+            officer2_id: officer2_id.to_string(),
+            group_id: group_id.to_string(),
+            target_epoch,
+            roster_hash: rh,
+            entropy_commitment: ec,
+            officer1_auth_tag: ot1,
+            officer2_auth_tag: ot2,
+        };
+
+        self.inner
+            .advance_epoch_authorized(&fe, &token, &officer1_key, &officer2_key)
+            .map_err(|e| {
+                PyValueError::new_err(format!(
+                    "GroupRatchet advance_epoch_authorized failed: {e:?}"
+                ))
+            })
     }
 
     pub fn advance_epoch(&mut self, fresh_entropy: Vec<u8>) -> PyResult<u64> {

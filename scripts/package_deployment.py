@@ -33,7 +33,10 @@ REQUIRED = [
     "transport_anonymity.py",
     "cnsa_purity.py",
     "liboqs_wrapper.py",
+    "dependency_security_verifier.py",
+    "hw_readiness.py",
     "oqs.dll",
+    "oqs.dll.sig",
     "libsodium.dll",
 ]
 

@@ -335,13 +335,14 @@ class SecurityErrorHandler:
             
             queue_key = os.environ.get('P2P_QUEUE_KEY')
             if queue_key:
-                # NIST SP 800-132 / CNSA 2.0: PBKDF2-HMAC-SHA512 with 210,000 iterations (Item 52 / Finding 7.2)
+                # NIST SP 800-132 / CNSA 2.0 / OWASP: PBKDF2-HMAC-SHA512 with 220,000 iterations (O-12)
                 salt = hashlib.sha3_256(b"SecureP2P::UnsentQueue::PBKDF2::Salt::v1").digest()
+                iters = int(os.environ.get('P2P_QUEUE_PBKDF2_ITERATIONS', '220000'))
                 key_bytes = hashlib.pbkdf2_hmac(
                     'sha512',
                     queue_key.encode('utf-8'),
                     salt,
-                    210000,
+                    iters,
                     dklen=32
                 )
             else:
