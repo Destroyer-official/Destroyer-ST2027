@@ -1407,9 +1407,14 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
     #   authenticated ciphertext payload, so stored keys are re-encrypted
     #   under the backup passphrase (never plaintext, never raw master).
     # - Fail-closed: bad passphrase/version/tamper raises, never partial.
-    BACKUP_MAGIC = b"BACKUP_V1"
-    BACKUP_AAD = b"SecureP2P::Backup::v1"
-    BACKUP_KDF_ITERATIONS = 210_000
+    BACKUP_MAGIC_V2 = b"BACKUP_V2"
+    BACKUP_AAD_V2 = b"SecureP2P::Backup::v2"
+    BACKUP_MAGIC_V1 = b"BACKUP_V1"
+    BACKUP_AAD_V1 = b"SecureP2P::Backup::v1"
+    BACKUP_MAGIC = BACKUP_MAGIC_V2
+    BACKUP_AAD = BACKUP_AAD_V2
+    BACKUP_KDF_ITERATIONS = 220_000
+    BACKUP_KDF_LEGACY_ITERATIONS = 210_000
     BACKUP_SALT_SIZE = 32
     BACKUP_NONCE_SIZE = 12
     BACKUP_MAX_PLAINTEXT_BYTES = 32 * 1024 * 1024
@@ -1417,14 +1422,14 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
     BACKUP_MAX_KEY_BYTES = 65536
 
     @staticmethod
-    def _derive_backup_key(passphrase: bytes, salt: bytes) -> bytes:
-        """Derive 32B backup key via PBKDF2-210k-SHA512."""
+    def _derive_backup_key(passphrase: bytes, salt: bytes, iterations: int = 220_000) -> bytes:
+        """Derive 32B backup key via PBKDF2-SHA512 (default 220k iterations, OWASP recommended)."""
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA512(),
             length=32,
             salt=salt,
-            iterations=210_000,
+            iterations=iterations,
             backend=default_backend()
         )
         return kdf.derive(passphrase)
@@ -1510,20 +1515,21 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
             plaintext = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode('utf-8')
             if len(plaintext) > self.BACKUP_MAX_PLAINTEXT_BYTES:
                 raise EnclaveSecurityError("backup payload too large (fail-closed)")
-            # PBKDF2-210k-SHA512 with 32B salt.
+            # PBKDF2-220k-SHA512 with 32B salt (OWASP recommended baseline).
             salt = secrets.token_bytes(32)
-            backup_key = self._derive_backup_key(pp, salt)
+            backup_key = self._derive_backup_key(pp, salt, iterations=self.BACKUP_KDF_ITERATIONS)
             try:
-                # AES-256-GCM with 12B nonce, AAD SecureP2P::Backup::v1.
+                # AES-256-GCM with 12B nonce, AAD SecureP2P::Backup::v2.
                 nonce = secrets.token_bytes(12)
-                ct = AESGCM(backup_key).encrypt(nonce, plaintext, b"SecureP2P::Backup::v1")
+                ct = AESGCM(backup_key).encrypt(nonce, plaintext, self.BACKUP_AAD_V2)
             finally:
                 del backup_key
-            return b"BACKUP_V1" + salt + nonce + ct
+            return self.BACKUP_MAGIC_V2 + salt + nonce + ct
 
     def import_backup(self, blob: bytes, passphrase: bytes) -> int:
         """Import backup blob, re-encrypting keys at rest (fail-closed).
 
+        Supports BACKUP_V2 (220,000 iterations) and legacy BACKUP_V1 (210,000 iterations).
         Returns number of keys restored. Raises EnclaveSecurityError on
         bad passphrase/version/tamper; never restores partial state
         silently (validated fully before any store).
@@ -1532,12 +1538,22 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
         if not isinstance(blob, (bytes, bytearray)):
             raise EnclaveSecurityError("backup blob must be bytes (fail-closed)")
         blob = bytes(blob)
-        magic = b"BACKUP_V1"
+
+        if blob.startswith(self.BACKUP_MAGIC_V2):
+            magic = self.BACKUP_MAGIC_V2
+            aad = self.BACKUP_AAD_V2
+            iterations = self.BACKUP_KDF_ITERATIONS
+        elif blob.startswith(self.BACKUP_MAGIC_V1):
+            magic = self.BACKUP_MAGIC_V1
+            aad = self.BACKUP_AAD_V1
+            iterations = self.BACKUP_KDF_LEGACY_ITERATIONS
+        else:
+            raise EnclaveSecurityError("unsupported backup version (fail-closed)")
+
         min_len = len(magic) + 32 + 12 + 16 + 2
         if len(blob) < min_len:
             raise EnclaveSecurityError("backup blob too short (fail-closed)")
-        if blob[:len(magic)] != magic:
-            raise EnclaveSecurityError("unsupported backup version (fail-closed)")
+
         salt = blob[len(magic):len(magic) + 32]
         nonce = blob[len(magic) + 32:len(magic) + 32 + 12]
         ct = blob[len(magic) + 32 + 12:]
@@ -1545,9 +1561,9 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
             raise EnclaveSecurityError("malformed backup header (fail-closed)")
         if len(ct) > self.BACKUP_MAX_PLAINTEXT_BYTES + 16 + 1024:
             raise EnclaveSecurityError("backup blob too large (fail-closed)")
-        backup_key = self._derive_backup_key(pp, salt)
+        backup_key = self._derive_backup_key(pp, salt, iterations=iterations)
         try:
-            plaintext = AESGCM(backup_key).decrypt(nonce, ct, b"SecureP2P::Backup::v1")
+            plaintext = AESGCM(backup_key).decrypt(nonce, ct, aad)
         except Exception as e:
             raise EnclaveSecurityError(
                 "backup authentication failed: bad passphrase or tampered blob (fail-closed)") from e

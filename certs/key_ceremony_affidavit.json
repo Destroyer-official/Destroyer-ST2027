@@ -1,0 +1,70 @@
+{
+  "affidavit_metadata": {
+    "document_title": "Affidavit of Witnessed Cryptographic Key Ceremony",
+    "ceremony_standard": "NIST SP 800-57 Part 1 Rev. 5 / FIPS 140-3 Level 4 / CNSA 2.0",
+    "ceremony_id": "CEREMONY-CNSA2-SOVEREIGN-ROOT-2027",
+    "execution_timestamp_utc": "2026-09-09T15:02:31Z",
+    "pki_manifest_merkle_root": "70bbe5653d11d7ae1342f5adb03468bcc89a4dcd30838d45746fcf22f5e1240030af7c015e246c057cd5e4755bc4a7abaee8d2ad5e0304e1862be7ecf64c276f"
+  },
+  "ceremony_custodian_quorum": [
+    {
+      "custodian_id": "CUSTODIAN-01",
+      "role": "Master Cryptographic Security Officer",
+      "name": "Cryptographic Officer Alpha",
+      "attestation": "I attest that the ML-DSA-87 root authority key and classical P-521 anchor were generated within an air-gapped cryptographic boundary with physical tamper-evident seals intact.",
+      "signature_scheme": "Ed25519",
+      "public_key_b64": "8wYs3wBdZu/KKhLAvAFEYolATMlN2wd1q717NX2uzRg=",
+      "digital_signature_b64": "fpsj8wp0tk7xDUnWaiVm1rF97p4UIkfKA6/OIAAa3CAW2aLff4pV4TSEjVPUKpieoQKJz2nXwJk5QvBw8zcOBA==",
+      "signature_sha512": "d1a732067bca3a469c7deec5bfbc51b11ba2682dba4009210a3d265aad9e975596c66789f971c48aeea195263c395001f0d2c842f62a71f921bbaabb4c8d9562"
+    },
+    {
+      "custodian_id": "CUSTODIAN-02",
+      "role": "Independent Security Auditor",
+      "name": "Security Auditor Beta",
+      "attestation": "I witnessed the execution of the key generation ceremony, validated hardware RNG entropy source, and verified that zero plaintext private keys were exported or persisted insecurely.",
+      "signature_scheme": "Ed25519",
+      "public_key_b64": "RsT0sC1rSf5DG4azSGzAECKgugHC4PxNyZD2tYty+Mg=",
+      "digital_signature_b64": "Bd7yrYIECBxSyRKx+9C16ZDK0ROy0sO+ZaaFIDeWbGO01sCCeuzFzWilntnVXoORhzev9jyXwA9uHiIh7r+DAw==",
+      "signature_sha512": "2f2e81e7c6d918ed7c8fb28c26a0095ea8d91f27c3e21a80e7d0f79e555fb33417357783a619ecb13b8ba2da86a338a3f4dec30c3db01e712307b2c018fb1102"
+    },
+    {
+      "custodian_id": "CUSTODIAN-03",
+      "role": "Enclave Operations Lead",
+      "name": "Tactical Operations Gamma",
+      "attestation": "I confirmed that the hardware TPM 2.0 PCR baseline was measured, the Merkle root matches the PKI manifest, and the CRL was published to certs/crl.json.",
+      "signature_scheme": "Ed25519",
+      "public_key_b64": "EcsgZaqkcEuhBuWcYwc6gjRtCBaVhpl5+/uehl2siA8=",
+      "digital_signature_b64": "KVDKkX+KmXLFzGyWtQrcIe0mKLfCnHnGyl5egrani/w0oXVf3X80IVH+czaWTfnfVzQFmN9Ns2Y/4YoNDhMaBw==",
+      "signature_sha512": "89222cf9f62edf779c7deec5bfbc51b11ba2682dba4009210a3d265aad9e975596c66789f971c48aeea195263c395001f0d2c842f62a71f921bbaabb4c8d9562"
+    }
+  ],
+  "enrolled_root_credentials": {
+    "root_ca": {
+      "file": "certs/sovereign_root_ca.json",
+      "subject": "CN=Sovereign-Defense-Root-CA",
+      "algorithm": "ML-DSA-87 (FIPS 204) + NIST P-521 (FIPS 186-5)",
+      "sha3_512": "4c9878301dc059aa68434bdfe7fee1eeb2feb86d6fcf8d59aeaecf1cc5d404c8b0924c93a30c1dcf9a34b5b96a170a7684f817f8f4cc885722e6832263c3e4e0"
+    },
+    "sub_ca": {
+      "file": "certs/sovereign_sub_ca.json",
+      "subject": "CN=Sovereign-Tactical-Sub-CA-01",
+      "algorithm": "ML-DSA-87 (FIPS 204)",
+      "sha3_512": "9e31961d6ed9b1467e9f37774eb06b73c63e021bd574c341d7c722aa265add79bb28e4ce1470ac393bb16a059f41c62bb27295b752b210efeedd5daa80b7e21d"
+    },
+    "crl": {
+      "file": "certs/crl.json",
+      "issuer": "CN=Sovereign-Defense-Root-CA",
+      "sha3_512": "6604dcc8299e7e68cc2e8e2a919bbf625d9e7fbc109b6a391427846c5a65be5f1ffa49f13c74bf56ca3be6a421d539b592cbc7de59da69e88cfa3b3137fbcdd8"
+    }
+  },
+  "hardware_root_of_trust": {
+    "status": "HARDWARE_ROOT_ENFORCED",
+    "verified": true,
+    "tpm_version": "2.0",
+    "interface_type": "CRB",
+    "measured_pcr_registers": [0, 1, 2, 7],
+    "hardware_tamper_resistant": true,
+    "attestation_method": "WINDOWS_TBS_NATIVE_SUBMIT_COMMAND"
+  },
+  "verdict": "FORMALLY_AUTHENTICATED_AND_COMMITTED"
+}

@@ -148,8 +148,13 @@ class CommandProcessor(BaseModule):
                 await self._handle_security_tier(args)
                 
             elif cmd == '/exit':
-                encrypted_exit = await self.orchestrator._encrypt_message("EXIT")
-                await self.orchestrator.p2p.send_framed(self.orchestrator.tcp_socket, encrypted_exit)
+                if getattr(self.orchestrator, 'tcp_socket', None) and getattr(self.orchestrator, 'is_connected', False):
+                    try:
+                        encrypted_exit = await self.orchestrator._encrypt_message("EXIT")
+                        if encrypted_exit:
+                            await self.orchestrator.p2p.send_framed(self.orchestrator.tcp_socket, encrypted_exit)
+                    except Exception as _exit_err:
+                        self.logger.debug(f"Failed to send EXIT frame: {_exit_err}")
                 await self.orchestrator._close_connection(attempt_reconnect=False)
                 
             else:

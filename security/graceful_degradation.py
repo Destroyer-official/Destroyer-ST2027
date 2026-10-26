@@ -61,9 +61,10 @@ class SecurityDegradationManager:
         except ImportError:
             modules['hybrid_kex'] = False
         
-        # Check MilitaryGradeCrypto
+        # Check PQC / Military Security Enforcement
         try:
-            import military_grade_crypto
+            import pqc_algorithms
+            import military_security_enforcement
             modules['military_crypto'] = True
         except ImportError:
             modules['military_crypto'] = False
@@ -77,10 +78,14 @@ class SecurityDegradationManager:
         
         # Check SecurityErrorHandler
         try:
-            from secure_p2p_core.utils.error_handler import SecurityErrorHandler
+            from utils.error_handler import SecurityErrorHandler
             modules['error_handler'] = True
         except ImportError:
-            modules['error_handler'] = False
+            try:
+                from secure_p2p_core.utils.error_handler import SecurityErrorHandler
+                modules['error_handler'] = True
+            except ImportError:
+                modules['error_handler'] = False
         
         return modules
     

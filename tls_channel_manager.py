@@ -40,6 +40,9 @@ import ssl
 import socket
 import os
 import logging
+
+# FORBIDDEN_ALGORITHMS: legacy certificate validation and rejection guards only (CNSA 2.0 pure mode enforced)
+FORBIDDEN_ALGORITHMS = ["RSA", "ECDSA", "ECDH", "P-256", "P-384", "AES-128", "SHA-1", "MD5", "DES", "RC4"]
 import time
 import datetime
 import select

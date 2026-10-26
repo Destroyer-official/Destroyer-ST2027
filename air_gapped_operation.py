@@ -309,17 +309,18 @@ def win_dpapi_unprotect(data: bytes) -> bytes:
     return res
 
 def _derive_storage_key(salt: bytes) -> bytes:
-    """Derive 256-bit AES-GCM storage encryption key using PBKDF2-210k / DPAPI (Finding 3)."""
+    """Derive 256-bit AES-GCM storage encryption key using PBKDF2-220k / DPAPI (Finding 3, O-12)."""
     passphrase = os.environ.get("P2P_STORAGE_PASSPHRASE")
     if passphrase:
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.backends import default_backend
+        iters = int(os.environ.get("P2P_AIRGAP_PBKDF2_ITERATIONS", "220000"))
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA512(),
             length=32,
             salt=salt,
-            iterations=210000,
+            iterations=iters,
             backend=default_backend()
         )
         return kdf.derive(passphrase.encode('utf-8'))

@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-25T14:36:55.937012+00:00",
+  "timestamp_utc": "2026-10-26T06:11:45.634921+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -27,32 +27,32 @@
   },
   "core_modules": {
     "platform_hsm_interface.py": {
-      "size_bytes": 526864,
-      "sha3_512": "1249076424eeb46f52a520714c02712345484f70e3de9c8b6082cfbd24fa3e00ae5a5477460d1e5453e09a163ba9d9675fafa5f86cd76a8d0f240ec9fc01044f"
+      "size_bytes": 527041,
+      "sha3_512": "f1152a5bc0aafe5171b6a88eb902fbd26f02696fb9d55f347b5ac12d6661a3008f9e9e63a1878b4c520870006bd62e6b53f51fdd2e7a5da0e314d0b45c9c4838"
     },
     "cnsa2_policy_engine.py": {
       "size_bytes": 30811,
       "sha3_512": "51035aba5adbcaf47aa4925855281f1687a66a26a5798d01365bfc6b0c49c144f72c1135993ebdfaeef095191ec27f96a21f0b668b965163b7dd5e62cfeda276"
     },
     "audit_logging_system.py": {
-      "size_bytes": 55163,
-      "sha3_512": "481c17cee8e2b03bbc498785a8a52eed44da97895a545c2a259a9ff1e4b4d7a29b7e4c738aea1273c3c2d708185c8e2ac1759c23a93e73f085eba29c2bbd72f5"
+      "size_bytes": 55246,
+      "sha3_512": "582cdd7b41ed04db862aad76f610f135e28c6812c7742c22ec2816f18ed5c62f355065e078e50cbb0463642294a7224420789d855c45756598d41d7c8164ad01"
     },
     "pqc_algorithms.py": {
-      "size_bytes": 349904,
-      "sha3_512": "4c2093b15a37267f25ab5e2756fc98c180b0fef4a0b5d107fa58ff808a682e946a0ee8997dbf997fcca1f6d91833f19ba9ca5e421649b03b6b8989687841d675"
+      "size_bytes": 350396,
+      "sha3_512": "39ba66734e8b2867fb1612e1c2510d20860352288d0e715bb0471c2f00ca0624ab7f452a0373ddfab176bb72d9de6a1223fb59d35701376a2e077c5ac1b49324"
     },
     "metadata_resistance.py": {
-      "size_bytes": 35134,
-      "sha3_512": "b7b3792444e5d168800399606047755cf822b393b5d64a8edfd22eab04ac31c28ac728442d6486842427b708acd8fa0288395bb57bef8e9afb70aa3bda61ef51"
+      "size_bytes": 35215,
+      "sha3_512": "043058c179058d93b845951420b2d30c8ab09e7b5ce0aa07ad9c518305615d195214f1c406ff86f81f8baa30dc7f5fb583a999d9560020851b087d8d8035c198"
     },
     "network_adversary_resistance.py": {
       "size_bytes": 60868,
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 791735,
-      "sha3_512": "2e5dc2bc0648c685f88f38e75265160b8adca40fa221f612ae85e7fddb8ea798f7de55eb9bf82eba6e336dd1e77dfc6ada0eaab14f35acc25850d978a737fdd8"
+      "size_bytes": 792152,
+      "sha3_512": "b14e3d45a20ef2a33d4abcf8648b4f3c4d82ee9b800b4629f773ea5d38a0aca7534abad39bec0011a078bd9b3bdc3fb186e2a0f083a373d96538fe15d1366326"
     }
   },
   "sbom_status": {
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "e7b3afc298305d34faa945bc0a084eb47ad74de0fba16c0a68ed35dafbadbfabb541e10e1e989faf5743f1cdbd45375414617bbbbaba1be275b3e8c7b66a4804",
+  "source_tree_merkle_root": "997cb196152bd440a9e33dfaf68d9d4abdc8a4b96957416df558bbb80058e6481636691dfc3f50e6befd4c94bd378c0bfd412d676edf056a577abfc62258928e",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "e0d7d984839b7c9495e6031fb1cf1127df183a6cc8950589bd05ffedddc8eb7755e236978fef7cb8de5222c1e01ec0c36c57134488d49c68493c3c3b9bd4f96a",
@@ -73,8 +73,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "cd2b5785d6fd4792d9a7c18d11ce730480be49a67f0b3e70a216987810e8d2ab0750caffb137725e4fab0084f7ce9ba09220ac94924f14e5c5f3255e0af4211f",
-      "actual_sha3_512": "cd2b5785d6fd4792d9a7c18d11ce730480be49a67f0b3e70a216987810e8d2ab0750caffb137725e4fab0084f7ce9ba09220ac94924f14e5c5f3255e0af4211f",
+      "expected_sha3_512": "84ce8a7f6023be6772abb3ba80121decfa3a5298cdfa7c3f1a8ea792baf410d99141e739cf6b6de61b2db5a4c0c9faa0a5bae21eb49aafd480722cae7ae8a7ea",
+      "actual_sha3_512": "84ce8a7f6023be6772abb3ba80121decfa3a5298cdfa7c3f1a8ea792baf410d99141e739cf6b6de61b2db5a4c0c9faa0a5bae21eb49aafd480722cae7ae8a7ea",
       "matched": true
     },
     "ts_runtime.py": {

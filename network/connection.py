@@ -191,6 +191,7 @@ class ConnectionManager(BaseModule):
                 conn_key = getattr(session_context, 'peer_fingerprint', None) or f"[{client_ip}]:{client_port}"
                 async with self._connection_lock:
                     if conn_key not in self._active_connections and self._active_session_count() >= self._max_active_connections:
+                        self._close_connection_context(session_context)
                         raise SecurityError(
                             "Connection table full - rejecting inbound (DoS protection)",
                             module="network.connection",
@@ -434,6 +435,7 @@ class ConnectionManager(BaseModule):
                             conn_key = getattr(session_context, 'peer_fingerprint', None) or f"[{peer_ip}]:{peer_port}"
                             async with self._connection_lock:
                                 if conn_key not in self._active_connections and self._active_session_count() >= self._max_active_connections:
+                                    self._close_connection_context(session_context)
                                     raise SecurityError(
                                         "Connection table full - rejecting outbound (DoS protection)",
                                         module="network.connection",
@@ -467,6 +469,8 @@ class ConnectionManager(BaseModule):
                             
                         except Exception as e:
                             self.logger.error(f"[CONNECTION] Session initialization failed: {e}", exc_info=True)
+                            if 'session_context' in locals() and session_context:
+                                self._close_connection_context(session_context)
                             try:
                                 client_socket.close()
                             except Exception as _sock_err:

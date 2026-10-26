@@ -157,10 +157,7 @@ impl PcsRatchet {
     }
 
     /// Calculate the next root+chain without mutating the current state.
-    fn evolved(
-        &self,
-        hybrid: &[u8; HYBRID_SS],
-    ) -> Result<([u8; 32], [u8; 32]), CoreError> {
+    fn evolved(&self, hybrid: &[u8; HYBRID_SS]) -> Result<([u8; 32], [u8; 32]), CoreError> {
         let epoch_b = self.epoch.to_be_bytes();
         let mut root_info = Vec::with_capacity(DOMAIN_RATCHET_ROOT.len() + 8);
         root_info.extend_from_slice(DOMAIN_RATCHET_ROOT);

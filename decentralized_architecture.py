@@ -48,12 +48,13 @@ logger = logging.getLogger(__name__)
 
 
 def _production() -> bool:
-    """Best-effort production gate; detection failure is treated as lab."""
+    """Canonical fail-closed production gate."""
     try:
         from production_gate import is_production
         return bool(is_production())
-    except Exception:
-        return False
+    except Exception as e:
+        logger.critical("production_gate import/evaluation failed (%s); enforcing fail-closed production posture", e)
+        return True
 
 
 # ============================================================================

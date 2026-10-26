@@ -1152,11 +1152,12 @@ class SecureKeyStorage:
 
         if passphrase:
             from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+            iters = int(os.environ.get("P2P_KEY_PBKDF2_ITERATIONS", "220000"))
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA512(),
                 length=32,
                 salt=salt,
-                iterations=210000,
+                iterations=iters,
                 backend=default_backend()
             )
             self._master_kek = kdf.derive(passphrase.encode('utf-8'))

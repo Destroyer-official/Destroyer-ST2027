@@ -75,10 +75,7 @@ pub fn can_read(
 }
 
 /// Bell-LaPadula Star-Property (No Write Down): Prevents classified spillage.
-pub fn can_write(
-    subject_clearance: ClearanceLevel,
-    target_classification: ClearanceLevel,
-) -> bool {
+pub fn can_write(subject_clearance: ClearanceLevel, target_classification: ClearanceLevel) -> bool {
     // No Write Down: cannot egress from a higher classification to a lower one
     subject_clearance <= target_classification
 }
@@ -86,12 +83,7 @@ pub fn can_write(
 /// NSA NCDSMO 'Raise the Bar' (RTB) Dirty-Word / Classified Indicator Filter.
 /// Scans outbound data for unauthorized classified markers in constant-time slice traversal.
 pub fn inspect_content_rtb(payload: &[u8]) -> Result<(), &'static str> {
-    const DIRTY_WORDS: [&[u8]; 4] = [
-        b"top secret",
-        b"si-tk-g",
-        b"noforn",
-        b"orcon",
-    ];
+    const DIRTY_WORDS: [&[u8]; 4] = [b"top secret", b"si-tk-g", b"noforn", b"orcon"];
 
     let len = payload.len();
     for &marker in &DIRTY_WORDS {
@@ -200,7 +192,10 @@ impl ZeroTrustEngine {
 
     /// Evaluate authorization for an operation against the peer's assigned RBAC role.
     pub fn authorize(&self, peer_id: &str, required_perm: u32) -> Result<(), CoreError> {
-        let guard = self.profiles.read().map_err(|_| CoreError::ZeroTrustViolation)?;
+        let guard = self
+            .profiles
+            .read()
+            .map_err(|_| CoreError::ZeroTrustViolation)?;
         let prof = guard.get(peer_id).ok_or(CoreError::ZeroTrustViolation)?;
 
         if prof.revoked || prof.trust_score < self.min_trust_threshold {
@@ -216,8 +211,13 @@ impl ZeroTrustEngine {
 
     /// Record successful authentic packet arrival (rewards trust score up to MAX_TRUST_SCORE).
     pub fn record_success(&self, peer_id: &str) -> Result<u32, CoreError> {
-        let mut guard = self.profiles.write().map_err(|_| CoreError::ZeroTrustViolation)?;
-        let prof = guard.get_mut(peer_id).ok_or(CoreError::ZeroTrustViolation)?;
+        let mut guard = self
+            .profiles
+            .write()
+            .map_err(|_| CoreError::ZeroTrustViolation)?;
+        let prof = guard
+            .get_mut(peer_id)
+            .ok_or(CoreError::ZeroTrustViolation)?;
 
         if prof.revoked {
             return Err(CoreError::ZeroTrustViolation);
@@ -233,8 +233,13 @@ impl ZeroTrustEngine {
 
     /// Record an anomaly or failed authentication check (penalizes trust score; revokes if below threshold).
     pub fn record_penalty(&self, peer_id: &str, penalty: u32) -> Result<u32, CoreError> {
-        let mut guard = self.profiles.write().map_err(|_| CoreError::ZeroTrustViolation)?;
-        let prof = guard.get_mut(peer_id).ok_or(CoreError::ZeroTrustViolation)?;
+        let mut guard = self
+            .profiles
+            .write()
+            .map_err(|_| CoreError::ZeroTrustViolation)?;
+        let prof = guard
+            .get_mut(peer_id)
+            .ok_or(CoreError::ZeroTrustViolation)?;
 
         prof.anomaly_count += 1;
         prof.trust_score = prof.trust_score.saturating_sub(penalty);
@@ -259,7 +264,11 @@ impl ZeroTrustEngine {
 
     /// Query current trust score.
     pub fn trust_score(&self, peer_id: &str) -> Option<u32> {
-        self.profiles.read().ok()?.get(peer_id).map(|p| p.trust_score)
+        self.profiles
+            .read()
+            .ok()?
+            .get(peer_id)
+            .map(|p| p.trust_score)
     }
 
     /// Query if peer is active and trusted.

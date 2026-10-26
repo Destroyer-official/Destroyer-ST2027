@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from defusedxml.ElementTree import parse as secure_xml_parse
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -223,7 +224,7 @@ class SeL4MicrokitManifest:
     @classmethod
     def from_xml_file(cls, path: Path) -> "SeL4MicrokitManifest":
         """Parse and strictly validate an existing seL4 Microkit XML file."""
-        tree = ET.parse(path)
+        tree = secure_xml_parse(path)
         root = tree.getroot()
         if root.tag != "system":
             raise SeL4PolicyViolation(f"Root tag must be <system>, got <{root.tag}>")

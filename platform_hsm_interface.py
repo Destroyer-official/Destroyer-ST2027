@@ -60,6 +60,11 @@ class NISTLevel5PolicyEngine:
         'hash': ['SHA3-512', 'BLAKE2b-512', 'SHA-512'],
         'kdf': ['HKDF-SHA512', 'Argon2id']
     }
+    FORBIDDEN_ALGORITHMS = [
+        'RSA', 'ECDSA', 'ECDH', 'P-256', 'P-384',
+        'AES-128', 'AES-192', 'SHA-1', 'MD5',
+        'DES', '3DES', 'RC4', 'Blowfish'
+    ]
 
     @classmethod
     def validate_algorithm(cls, algorithm: str, category: str) -> bool:

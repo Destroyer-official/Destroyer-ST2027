@@ -214,7 +214,10 @@ mod tests {
         let mut w = AntiReplayWindow::new();
         assert!(w.check_and_update(6));
         assert!(w.check_and_update(1029));
-        assert!(!w.check(6), "S-01 failure: packet 6 was replayed and accepted");
+        assert!(
+            !w.check(6),
+            "S-01 failure: packet 6 was replayed and accepted"
+        );
         assert!(!w.check_and_update(6));
     }
 
@@ -231,7 +234,10 @@ mod tests {
         let (last, full_map) = w.parts();
         let w2 = AntiReplayWindow::from_parts(last, full_map);
         for s in base..base + 300 {
-            assert!(!w2.check(s), "S-02 failure: packet {s} accepted after restart");
+            assert!(
+                !w2.check(s),
+                "S-02 failure: packet {s} accepted after restart"
+            );
             assert!(!w2.clone().check_and_update(s));
         }
     }
@@ -334,7 +340,8 @@ mod tests {
             let w_check = w.check(seq);
             let r_check = r.check(seq);
             assert_eq!(
-                w_check, r_check,
+                w_check,
+                r_check,
                 "Check mismatch at seq {seq} (last_seq={}): w={}, ref={}",
                 w.parts().0,
                 w_check,

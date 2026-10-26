@@ -242,6 +242,14 @@ def _pct_mldsa() -> str:
     bad[0] ^= 0x01
     if sig.verify(pk, msg, bytes(bad)):
         raise SelfTestError("ML-DSA-87 accepted forged signature")
+    # FIPS 204 Section 5.2 domain context string test
+    ctx = b"ST2027-FIPS204-DOMAIN-CTX"
+    s_ctx = sig.sign(sk, msg, ctx=ctx)
+    if not sig.verify(pk, msg, s_ctx, ctx=ctx):
+        raise SelfTestError("ML-DSA-87 FIPS 204 context-string verification failure")
+    # Context mismatch must fail closed
+    if sig.verify(pk, msg, s_ctx, ctx=b"WRONG-CTX"):
+        raise SelfTestError("ML-DSA-87 accepted mismatched FIPS 204 context string")
     return "mldsa87-pct-ok"
 
 

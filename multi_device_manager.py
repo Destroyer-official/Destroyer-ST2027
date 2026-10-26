@@ -589,8 +589,14 @@ class MultiDeviceManager:
             
             current_device = user_devices.devices[device_id]
             
-            # Walk the chain back to root
+            # Walk the chain back to root with cycle and depth guards
+            seen_device_ids: Set[str] = set()
             while current_device.authorizing_device_id is not None:
+                if current_device.device_id in seen_device_ids or len(seen_device_ids) >= user_devices.MAX_DEVICES:
+                    logger.error(f"Cycle or depth exceeded in signature chain for device {device_id[:16]}...")
+                    return False
+                seen_device_ids.add(current_device.device_id)
+
                 # Get authorizing device
                 auth_device_id = current_device.authorizing_device_id
                 if auth_device_id not in user_devices.devices:

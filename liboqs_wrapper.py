@@ -89,6 +89,18 @@ def _check_native_sig(signature: bytes, sig_size: int, alg: str) -> bytes:
     return bytes(signature)
 
 
+def _format_fips204_context(message: bytes, ctx: bytes = b"") -> bytes:
+    """Format message with optional FIPS 204 Section 5.2 context string (max 255 bytes)."""
+    if not ctx:
+        return message
+    if not isinstance(ctx, (bytes, bytearray)):
+        raise TypeError("Context string must be bytes-like")
+    if len(ctx) > 255:
+        raise ValueError(f"FIPS 204 context string length {len(ctx)} exceeds 255 bytes max")
+    # FIPS 204 Section 5.2 domain prefix: 0x00 || len(ctx) || ctx || message
+    return bytes([0, len(ctx)]) + bytes(ctx) + bytes(message)
+
+
 # --- Decaps DFR / native FFI error counters (non-breaking, observability only) ---
 # Tracks native liboqs KEM decapsulation outcomes for native error detection.
 # NOTE ON ML-KEM IMPLICIT REJECTION (NIST FIPS 203):
@@ -558,38 +570,40 @@ class LibOQS_MLDSA_87:
             raise RuntimeError(f"{self.alg_name.decode()} keypair failed")
         return bytes(pk), bytes(sk)
 
-    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None) -> bytes:
+    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None, ctx: bytes = b"") -> bytes:
         if len(secret_key) != self.sk_size:
             raise ValueError("Invalid SK size")
         signature = (ctypes.c_uint8 * self.sig_size)(); sig_len = ctypes.c_size_t(0)
         sk_c = (ctypes.c_uint8 * self.sk_size).from_buffer_copy(secret_key)
-        message = _check_native_message(message, "sign/verify")
-        msg_c = (ctypes.c_uint8 * len(message)).from_buffer_copy(message)
-        result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(message), sk_c)
+        effective_message = _format_fips204_context(message, ctx)
+        effective_message = _check_native_message(effective_message, "sign/verify")
+        msg_c = (ctypes.c_uint8 * len(effective_message)).from_buffer_copy(effective_message)
+        result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(effective_message), sk_c)
         if result != 0:
             raise RuntimeError(f"{self.alg_name.decode()} signing failed")
         sig_bytes = bytes(signature[:sig_len.value])
         if public_key is not None:
-            if not self.verify(public_key, message, sig_bytes):
+            if not self.verify(public_key, message, sig_bytes, ctx=ctx):
                 raise RuntimeError(
                     f"FAIL-CLOSED: Verify-After-Sign (VAS) failed for {self.alg_name.decode()}; "
                     "potential fault-injection attack (CHES 2024 / eprint 2025/2009)"
                 )
         return sig_bytes
 
-    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes) -> bytes:
+    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes, ctx: bytes = b"") -> bytes:
         """Mandatory Verify-After-Sign (VAS) against fault injection."""
-        return self.sign(secret_key, message, public_key=public_key)
+        return self.sign(secret_key, message, public_key=public_key, ctx=ctx)
 
-    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
+    def verify(self, public_key: bytes, message: bytes, signature: bytes, ctx: bytes = b"") -> bool:
         if len(public_key) != self.pk_size:
             raise ValueError("Invalid PK size")
         pk_c = (ctypes.c_uint8 * self.pk_size).from_buffer_copy(public_key)
-        message = _check_native_message(message, "sign/verify")
-        msg_c = (ctypes.c_uint8 * len(message)).from_buffer_copy(message)
+        effective_message = _format_fips204_context(message, ctx)
+        effective_message = _check_native_message(effective_message, "sign/verify")
+        msg_c = (ctypes.c_uint8 * len(effective_message)).from_buffer_copy(effective_message)
         signature = _check_native_sig(signature, self.sig_size, self.alg_name.decode())
         sig_c = (ctypes.c_uint8 * len(signature)).from_buffer_copy(signature)
-        result = liboqs.OQS_SIG_verify(self.sig, msg_c, len(message), sig_c, len(signature), pk_c)
+        result = liboqs.OQS_SIG_verify(self.sig, msg_c, len(effective_message), sig_c, len(signature), pk_c)
         return result == 0
 
     def __del__(self):
@@ -615,38 +629,40 @@ class LibOQS_SLH_DSA_256f:
             raise RuntimeError(f"{self.alg_name.decode()} keypair failed")
         return bytes(pk), bytes(sk)
 
-    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None) -> bytes:
+    def sign(self, secret_key: bytes, message: bytes, public_key: Optional[bytes] = None, ctx: bytes = b"") -> bytes:
         if len(secret_key) != self.sk_size:
             raise ValueError("Invalid SK size")
         signature = (ctypes.c_uint8 * self.sig_size)(); sig_len = ctypes.c_size_t(0)
         sk_c = (ctypes.c_uint8 * self.sk_size).from_buffer_copy(secret_key)
-        message = _check_native_message(message, "sign/verify")
-        msg_c = (ctypes.c_uint8 * len(message)).from_buffer_copy(message)
-        result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(message), sk_c)
+        effective_message = _format_fips204_context(message, ctx)
+        effective_message = _check_native_message(effective_message, "sign/verify")
+        msg_c = (ctypes.c_uint8 * len(effective_message)).from_buffer_copy(effective_message)
+        result = liboqs.OQS_SIG_sign(self.sig, signature, ctypes.byref(sig_len), msg_c, len(effective_message), sk_c)
         if result != 0:
             raise RuntimeError(f"{self.alg_name.decode()} signing failed")
         sig_bytes = bytes(signature[:sig_len.value])
         if public_key is not None:
-            if not self.verify(public_key, message, sig_bytes):
+            if not self.verify(public_key, message, sig_bytes, ctx=ctx):
                 raise RuntimeError(
                     f"FAIL-CLOSED: Verify-After-Sign (VAS) failed for {self.alg_name.decode()}; "
                     "potential fault-injection attack (CHES 2024 / eprint 2025/2009)"
                 )
         return sig_bytes
 
-    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes) -> bytes:
+    def sign_verified(self, secret_key: bytes, message: bytes, public_key: bytes, ctx: bytes = b"") -> bytes:
         """Mandatory Verify-After-Sign (VAS) against fault injection."""
-        return self.sign(secret_key, message, public_key=public_key)
+        return self.sign(secret_key, message, public_key=public_key, ctx=ctx)
 
-    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
+    def verify(self, public_key: bytes, message: bytes, signature: bytes, ctx: bytes = b"") -> bool:
         if len(public_key) != self.pk_size:
             raise ValueError("Invalid PK size")
         pk_c = (ctypes.c_uint8 * self.pk_size).from_buffer_copy(public_key)
-        message = _check_native_message(message, "sign/verify")
-        msg_c = (ctypes.c_uint8 * len(message)).from_buffer_copy(message)
+        effective_message = _format_fips204_context(message, ctx)
+        effective_message = _check_native_message(effective_message, "sign/verify")
+        msg_c = (ctypes.c_uint8 * len(effective_message)).from_buffer_copy(effective_message)
         signature = _check_native_sig(signature, self.sig_size, self.alg_name.decode())
         sig_c = (ctypes.c_uint8 * len(signature)).from_buffer_copy(signature)
-        result = liboqs.OQS_SIG_verify(self.sig, msg_c, len(message), sig_c, len(signature), pk_c)
+        result = liboqs.OQS_SIG_verify(self.sig, msg_c, len(effective_message), sig_c, len(signature), pk_c)
         return result == 0
 
     def __del__(self):

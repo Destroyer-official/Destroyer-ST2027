@@ -89,17 +89,18 @@ def _get_audit_salt() -> bytes:
 
 
 def _get_audit_encryption_key() -> bytes:
-    """Derive 256-bit AES-GCM audit encryption key with PBKDF2-210k or sealed DPAPI (Finding 3)."""
+    """Derive 256-bit AES-GCM audit encryption key with PBKDF2-220k or sealed DPAPI (Finding 3, O-12)."""
     passphrase = os.environ.get("P2P_AUDIT_PASSPHRASE") or os.environ.get("P2P_STORAGE_PASSPHRASE")
     if passphrase:
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         from cryptography.hazmat.primitives import hashes
         salt = _get_audit_salt()
+        iters = int(os.environ.get("P2P_AUDIT_PBKDF2_ITERATIONS", "220000"))
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA512(),
             length=32,
             salt=salt,
-            iterations=210000
+            iterations=iters
         )
         return kdf.derive(passphrase.encode('utf-8'))
 

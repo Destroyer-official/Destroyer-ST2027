@@ -40,7 +40,6 @@ pub fn unpack_cookie_m1(wire: &[u8]) -> (Option<&[u8]>, &[u8]) {
     (None, wire)
 }
 
-
 type HmacSha384 = Hmac<Sha384>;
 
 fn leading_zeros_256(hash: &[u8; 32]) -> u32 {
@@ -95,7 +94,11 @@ impl StatelessCookieGate {
     }
 
     /// Initialize with an explicit 32-byte secret for deterministic / persistent verification.
-    pub fn with_secret(mut secret: [u8; 32], rotation_interval: u64, max_cached_solutions: usize) -> Self {
+    pub fn with_secret(
+        mut secret: [u8; 32],
+        rotation_interval: u64,
+        max_cached_solutions: usize,
+    ) -> Self {
         let interval = rotation_interval.max(10);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

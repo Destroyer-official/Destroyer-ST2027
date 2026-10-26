@@ -19,9 +19,10 @@
 //!   * Silent-drop stealth UDP networking (`destroyer_core::net`).
 //! - Reference & Interop:
 //!   * The Python control plane (`noise_pq.py`, `double_ratchet.py`, `trust_anchor.py`)
-//!     is kept intact as the audited reference implementation and backup path.
-//!   * Secrets NEVER appear in command line arguments (`ps` / argv).
-//!   * All cryptographic secrets zeroize on drop and are memory-protected.
+//!     is a reference and lab/backup path, not an independently audited artifact.
+//!   * Secret values are not accepted through command-line arguments (`ps` / argv).
+//!   * Native secret-holding types use zeroization and memory protection; this
+//!     does not prove that every compiler, allocator, or FFI copy is erased.
 
 use destroyer_core::acd::{ActiveCyberDefenseEngine, DefensivePlaybook, ThreatTrigger};
 use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
@@ -32,8 +33,8 @@ use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
 use destroyer_core::handshake::Handshake;
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
 use destroyer_core::keystore;
-use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::memlock::LockedKey32;
+use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler};
 use destroyer_core::pki::{self, CertSig, Custodian};
@@ -269,7 +270,8 @@ fn seq_journal_append(jpath: &str, end: u64) {
         }
     }
     writeln!(f, "{end}").unwrap_or_else(|_| fail("seq journal write failed"));
-    f.sync_all().unwrap_or_else(|_| fail("seq journal sync failed"));
+    f.sync_all()
+        .unwrap_or_else(|_| fail("seq journal sync failed"));
 }
 
 /// In-memory session state mirror (persisted as 328-byte authenticated record).
@@ -417,7 +419,9 @@ fn read_state_locked(f: &mut File, key: &[u8; 32], key_id: &[u8; 16]) -> Session
         return st;
     }
     if buf.len() != STATE_LEN {
-        fail("state file corrupt (bad length / missing authentication) — rekey with fresh key+state");
+        fail(
+            "state file corrupt (bad length / missing authentication) — rekey with fresh key+state",
+        );
     }
     let mut arr = [0u8; STATE_LEN];
     arr.copy_from_slice(&buf);
@@ -898,7 +902,10 @@ fn cmd_selftest() {
     let chaff = pacing::build_chaff_frame(&key, 99, 1232).expect("chaff build");
     assert_eq!(chaff.len(), 1232);
     let entropy = pacing::calculate_shannon_entropy(&chaff);
-    assert!(entropy > 7.70, "chaff sanity: frame entropy below uniform-look floor ({entropy:.4} <= 7.70)");
+    assert!(
+        entropy > 7.70,
+        "chaff sanity: frame entropy below uniform-look floor ({entropy:.4} <= 7.70)"
+    );
     let (c_seq, c_type, _) = aead::open_indexed(&key, DIR_SEND, &chaff).expect("chaff open");
     assert_eq!(c_seq, 99);
     assert_eq!(c_type, frame::FTYPE_CHAFF);
@@ -1037,7 +1044,10 @@ fn cmd_selftest() {
     let chal = cookie_gate.create_challenge("127.0.0.1", 51820, b"selftest-m1", 2);
     let sol = StatelessCookieGate::solve_challenge(&chal, 100_000).expect("solve challenge");
     assert!(cookie_gate.verify_response(&sol, "127.0.0.1", 51820, b"selftest-m1", 2));
-    assert!(!cookie_gate.verify_response(&sol, "127.0.0.1", 51820, b"selftest-m1", 2), "replay solution rejected");
+    assert!(
+        !cookie_gate.verify_response(&sol, "127.0.0.1", 51820, b"selftest-m1", 2),
+        "replay solution rejected"
+    );
 
     // Active Cyber Defense (ACD) self-check
     let acd = ActiveCyberDefenseEngine::new(2, 5.0, 3, 10.0, 30.0, None);
@@ -1051,7 +1061,9 @@ fn cmd_selftest() {
     let zt = ZeroTrustEngine::new(50);
     zt.register_peer("operator-node", SecurityRole::Operator);
     assert!(zt.authorize("operator-node", PERM_MESSAGE_SEND).is_ok());
-    assert!(zt.authorize("operator-node", PERM_CRITICAL_RELEASE).is_err());
+    assert!(zt
+        .authorize("operator-node", PERM_CRITICAL_RELEASE)
+        .is_err());
     assert!(zt.is_trusted("operator-node"));
     let penalty_res = zt.record_penalty("operator-node", 30);
     assert!(penalty_res.is_err(), "trust drop below 50 must revoke");
@@ -1117,7 +1129,8 @@ fn cmd_send_file(args: &[String]) {
                 }
                 padded.extend_from_slice(&pad_bytes);
             }
-            let chunk_len = u16::try_from(chunk.len()).unwrap_or_else(|_| fail("chunk length exceeds u16"));
+            let chunk_len =
+                u16::try_from(chunk.len()).unwrap_or_else(|_| fail("chunk length exceeds u16"));
             let frame = aead::seal_with_len(
                 &key,
                 seq0.wrapping_add(i as u64),
@@ -2288,8 +2301,8 @@ fn cmd_cookie_challenge(args: &[String]) {
 
 fn cmd_cookie_solve(args: &[String]) {
     reject_forbidden_cli(args);
-    let chal_hex = get_flag(args, "--challenge")
-        .unwrap_or_else(|| fail("--challenge HEX is required"));
+    let chal_hex =
+        get_flag(args, "--challenge").unwrap_or_else(|| fail("--challenge HEX is required"));
     let chal_bytes = decode_hex(&chal_hex).unwrap_or_else(|e| fail(e));
     let max_iters: u64 = get_flag(args, "--max-iters")
         .and_then(|s| s.parse().ok())
@@ -2311,8 +2324,8 @@ fn cmd_cookie_solve(args: &[String]) {
 
 fn cmd_cookie_verify(args: &[String]) {
     reject_forbidden_cli(args);
-    let sol_hex = get_flag(args, "--solution")
-        .unwrap_or_else(|| fail("--solution HEX is required"));
+    let sol_hex =
+        get_flag(args, "--solution").unwrap_or_else(|| fail("--solution HEX is required"));
     let sol_bytes = decode_hex(&sol_hex).unwrap_or_else(|e| fail(e));
     let ip = get_flag(args, "--ip").unwrap_or_else(|| "127.0.0.1".to_string());
     let port: u16 = get_flag(args, "--port")
@@ -2365,14 +2378,7 @@ fn cmd_threat_eval(args: &[String]) {
         _ => fail("unknown --trigger (use: replay, tamper, auth_fail, traffic, fault)"),
     };
 
-    let acd = ActiveCyberDefenseEngine::new(
-        threshold,
-        10.0,
-        threshold,
-        30.0,
-        quarantine_sec,
-        None,
-    );
+    let acd = ActiveCyberDefenseEngine::new(threshold, 10.0, threshold, 30.0, quarantine_sec, None);
 
     let mut last_pb = None;
     for _ in 0..count {
@@ -2507,9 +2513,15 @@ fn cmd_tactical_msg(args: &[String]) {
         "FORMATTER NOTICE (stderr): tactical-msg formats an MMHS precedence telegram; \
 this is a demo/lab formatter, not an operational message-center transmit."
     );
-    let precedence = get_flag(args, "--precedence").unwrap_or_else(|| "Z".to_string()).to_uppercase();
-    let clearance_str = get_flag(args, "--clearance").unwrap_or_else(|| "TOP_SECRET".to_string()).to_uppercase();
-    let caveats = get_flag(args, "--caveats").unwrap_or_else(|| "NOFORN".to_string()).to_uppercase();
+    let precedence = get_flag(args, "--precedence")
+        .unwrap_or_else(|| "Z".to_string())
+        .to_uppercase();
+    let clearance_str = get_flag(args, "--clearance")
+        .unwrap_or_else(|| "TOP_SECRET".to_string())
+        .to_uppercase();
+    let caveats = get_flag(args, "--caveats")
+        .unwrap_or_else(|| "NOFORN".to_string())
+        .to_uppercase();
     let msg = get_flag(args, "--msg").unwrap_or_else(|| fail("missing --msg TEXT"));
     // F-15: RTB classified-spillage scan is ON BY DEFAULT. --scan-rtb is
     // retained as an accepted no-op for CLI compatibility (older scripts
@@ -2540,8 +2552,11 @@ this is a demo/lab formatter, not an operational message-center transmit."
         }
     }
 
-    let wire_telegram = format!("[MMHS PRECEDENCE={prec_label} // {clearance_str} // {caveats}] {msg}");
-    println!("tactical-msg SUCCESS: clearance={clearance_str} precedence={prec_label} caveats={caveats}");
+    let wire_telegram =
+        format!("[MMHS PRECEDENCE={prec_label} // {clearance_str} // {caveats}] {msg}");
+    println!(
+        "tactical-msg SUCCESS: clearance={clearance_str} precedence={prec_label} caveats={caveats}"
+    );
     println!("telegram: {wire_telegram}");
 }
 
@@ -2563,14 +2578,21 @@ over a directive; it does not query a personnel system or hardware token store."
 verification runs without a roster cross-check of officer identity."
         );
     }
-    let directive = get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
-    let of1_pk = get_flag(args, "--officer1-pk").unwrap_or_else(|| fail("missing --officer1-pk PATH"));
-    let of1_sig = get_flag(args, "--officer1-sig").unwrap_or_else(|| fail("missing --officer1-sig PATH"));
-    let of2_pk = get_flag(args, "--officer2-pk").unwrap_or_else(|| fail("missing --officer2-pk PATH"));
-    let of2_sig = get_flag(args, "--officer2-sig").unwrap_or_else(|| fail("missing --officer2-sig PATH"));
+    let directive =
+        get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
+    let of1_pk =
+        get_flag(args, "--officer1-pk").unwrap_or_else(|| fail("missing --officer1-pk PATH"));
+    let of1_sig =
+        get_flag(args, "--officer1-sig").unwrap_or_else(|| fail("missing --officer1-sig PATH"));
+    let of2_pk =
+        get_flag(args, "--officer2-pk").unwrap_or_else(|| fail("missing --officer2-pk PATH"));
+    let of2_sig =
+        get_flag(args, "--officer2-sig").unwrap_or_else(|| fail("missing --officer2-sig PATH"));
 
-    let pk1_hex = std::fs::read_to_string(&of1_pk).unwrap_or_else(|_| fail("officer1-pk unreadable"));
-    let pk2_hex = std::fs::read_to_string(&of2_pk).unwrap_or_else(|_| fail("officer2-pk unreadable"));
+    let pk1_hex =
+        std::fs::read_to_string(&of1_pk).unwrap_or_else(|_| fail("officer1-pk unreadable"));
+    let pk2_hex =
+        std::fs::read_to_string(&of2_pk).unwrap_or_else(|_| fail("officer2-pk unreadable"));
     let pk1_bytes = decode_hex(pk1_hex.trim()).unwrap_or_else(|e| fail(e));
     let pk2_bytes = decode_hex(pk2_hex.trim()).unwrap_or_else(|e| fail(e));
 
@@ -2578,19 +2600,29 @@ verification runs without a roster cross-check of officer identity."
         fail("NC3 TWO-PERSON RULE VIOLATION: Officer 1 and Officer 2 keys are identical (single-custody attempt)");
     }
 
-    let vk1 = Mldsa87VerifyingKey::from_bytes(&pk1_bytes).unwrap_or_else(|_| fail("invalid officer 1 ML-DSA-87 public key"));
-    let vk2 = Mldsa87VerifyingKey::from_bytes(&pk2_bytes).unwrap_or_else(|_| fail("invalid officer 2 ML-DSA-87 public key"));
+    let vk1 = Mldsa87VerifyingKey::from_bytes(&pk1_bytes)
+        .unwrap_or_else(|_| fail("invalid officer 1 ML-DSA-87 public key"));
+    let vk2 = Mldsa87VerifyingKey::from_bytes(&pk2_bytes)
+        .unwrap_or_else(|_| fail("invalid officer 2 ML-DSA-87 public key"));
 
-    let sig1_hex = std::fs::read_to_string(&of1_sig).unwrap_or_else(|_| fail("officer1-sig unreadable"));
-    let sig2_hex = std::fs::read_to_string(&of2_sig).unwrap_or_else(|_| fail("officer2-sig unreadable"));
+    let sig1_hex =
+        std::fs::read_to_string(&of1_sig).unwrap_or_else(|_| fail("officer1-sig unreadable"));
+    let sig2_hex =
+        std::fs::read_to_string(&of2_sig).unwrap_or_else(|_| fail("officer2-sig unreadable"));
     let sig1_bytes = decode_hex(sig1_hex.trim()).unwrap_or_else(|e| fail(e));
     let sig2_bytes = decode_hex(sig2_hex.trim()).unwrap_or_else(|e| fail(e));
 
     let domain = b"DESTROYER-ST2027-NC3-EAM";
-    if vk1.verify(domain, directive.as_bytes(), &sig1_bytes).is_err() {
+    if vk1
+        .verify(domain, directive.as_bytes(), &sig1_bytes)
+        .is_err()
+    {
         fail("Officer 1 signature verification FAILED");
     }
-    if vk2.verify(domain, directive.as_bytes(), &sig2_bytes).is_err() {
+    if vk2
+        .verify(domain, directive.as_bytes(), &sig2_bytes)
+        .is_err()
+    {
         fail("Officer 2 signature verification FAILED");
     }
 

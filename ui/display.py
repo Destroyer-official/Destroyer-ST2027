@@ -50,7 +50,7 @@ class DisplayManager(BaseModule):
             auth_mode = "[OK] Strict Sovereign PKI (ML-DSA-87)" if getattr(self.orchestrator, 'strict_auth', True) else "[--] Anonymous Mode (Lab Only)"
             features = {
                 "Post-Quantum Crypto": "[OK] ML-KEM-1024 + ML-DSA-87 + SLH-DSA-256f",
-                "Transport Security": "[OK] TLS 1.3 + ChaCha20-Poly1305",
+                "Transport Security": "[OK] TLS 1.3 + AES-256-GCM (CNSA 2.0)",
                 "Forward Secrecy": "[OK] Double Ratchet (Pinned Buffers)",
                 "Hardware Security": self.get_hw_security_status(),
                 "Memory Protection": self.get_memory_protection_status(),

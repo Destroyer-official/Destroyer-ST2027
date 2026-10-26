@@ -34,10 +34,10 @@ mod replay;
 // so this exercises the real `make_nonce`/seal logic, not a copy.
 #[path = "../src/aead.rs"]
 mod aead;
-#[path = "../src/ct.rs"]
-mod ct;
 #[path = "../src/cookie.rs"]
 pub mod cookie;
+#[path = "../src/ct.rs"]
+mod ct;
 #[path = "../src/nostd_microcore.rs"]
 pub mod nostd_microcore;
 

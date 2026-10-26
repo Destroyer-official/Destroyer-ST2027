@@ -2,13 +2,13 @@
 //!
 //! ## Rust-first architecture (Python kept as reference/backup)
 //!
-//! The Rust core is the PRODUCTION path: always fail-closed, no
-//! environment-variable downgrades, no TOFU, no legacy ratchet, no argv
+//! The Rust core is the active development target: designed fail-closed,
+//! without environment-variable downgrades, TOFU, a legacy ratchet, or argv
 //! secrets. The Python tree (`noise_pq.py`, `double_ratchet.py`,
-//! `secure_transmit_2027.py`, `trust_anchor.py`, `ts_attest.py`) is kept
-//! INTACT as the audited reference and lab/backup path — see
-//! `docs/RUST_CORE.md` for the module mapping. Python logic was not
-//! rewritten; new production guarantees live here.
+//! `secure_transmit_2027.py`, `trust_anchor.py`, `ts_attest.py`) is a
+//! reference and lab/backup path, not an independently audited or frozen
+//! artifact; both trees have received audit remediations. These design
+//! properties are not a release authorization — see `docs/RUST_CORE.md`.
 //!
 //! Secure-core modules (NEW, strict-only):
 //! - `policy`: single fail-closed truth (no opt-outs exist in Rust).
@@ -25,11 +25,11 @@
 //! - `pki`: 3-of-5 threshold ML-DSA-87 verification, byte-identical TBS
 //!   to `trust_anchor.py`.
 //! - `keystore`: sealed key-file custody (0600 / exclusive / no argv).
-//! - `ffi`: thin PyO3 control-plane bindings (orchestration only; secrets
-//!   stay in Rust holders).
+//! - `ffi`: thin PyO3 control-plane bindings; key-bearing return values are
+//!   explicitly documented below rather than assumed to remain Rust-only.
 //!
-//! Data-plane modules (existing, audited path): framing, AEAD, replay,
-//! padding, chaff, silent-drop networking, FEC, pacing, purge.
+//! Data-plane modules: framing, AEAD, replay, padding, chaff, silent-drop
+//! networking, FEC, pacing, purge. No independent audit claim is made.
 //!
 //! FFI discipline: bytes and counters cross the boundary. KEX session keys,
 //! ratchet message keys, and frame-key derivation results are explicitly
@@ -53,8 +53,8 @@ pub mod handshake;
 pub mod kem;
 pub mod kex_auth;
 pub mod keystore;
-pub mod memory_guard;
 pub mod memlock;
+pub mod memory_guard;
 pub mod net;
 pub mod nostd_microcore;
 pub mod pacing;
@@ -473,16 +473,23 @@ mod secure_engine_tests {
     #[test]
     fn send_sequence_exhaustion_fails_without_nonce_reuse() {
         let mut engine = SecureEngine::new();
-        engine.establish_session(vec![0x42; 32], u64::MAX, true).unwrap();
+        engine
+            .establish_session(vec![0x42; 32], u64::MAX, true)
+            .unwrap();
         let error = engine.seal_msg(FTYPE_MSG, b"last sequence".to_vec());
-        assert!(error.is_err(), "an exhausted sequence must not wrap to zero");
+        assert!(
+            error.is_err(),
+            "an exhausted sequence must not wrap to zero"
+        );
         assert_eq!(engine.send_seq, u64::MAX);
     }
 
     #[test]
     fn penultimate_send_sequence_advances_exactly_once() {
         let mut engine = SecureEngine::new();
-        engine.establish_session(vec![0x42; 32], u64::MAX - 1, true).unwrap();
+        engine
+            .establish_session(vec![0x42; 32], u64::MAX - 1, true)
+            .unwrap();
         assert!(engine.seal_msg(FTYPE_MSG, b"penultimate".to_vec()).is_ok());
         assert_eq!(engine.send_seq, u64::MAX);
         assert!(engine.seal_msg(FTYPE_MSG, b"exhausted".to_vec()).is_err());
