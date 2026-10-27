@@ -3385,7 +3385,7 @@ Log a security violation with enhanced details.
 
 ### class `AuditLogger` (L318)
 
-State-of-the-art audit logger with database persistence and real-time monitoring.
+High-assurance audit logger with database persistence and real-time monitoring.
 
 
 #### `AuditLogger.__init__` (L321)
@@ -9452,6 +9452,7 @@ Usage Guidelines:
    ```python
    event = SecurityEvent(
     [... truncated at 80 lines ...]
+   ```
 
 
 ### class `SecurityLevel` (L134)
@@ -20678,7 +20679,7 @@ Raises:
     FileNotFoundError: SBOM, .sig, or .pub file missing (fail-closed).
     RuntimeError: signature INVALID (fail-closed).
 
-TODO(rekor): optionally anchor each `.mldsa87.sig` in a Rekor transparency
+Future Roadmap (Rekor): optionally anchor each `.mldsa87.sig` in a Rekor transparency
     log and verify inclusion via the signed checkpoint (offline: compare a
     previously fetched checkpoint; online only when policy allows).
     Spec: https://www.sigstore.dev/docs/about/rekor/ and

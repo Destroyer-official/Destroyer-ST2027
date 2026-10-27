@@ -329,7 +329,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `log_event` (audit_logging_system.py:253) — (event_type, message, severity, details) | branches:ifx3,forx1,tryx1 calls:timestamp,sha384,redact_sensitive_audit_data,AuditEvent,strftime,store_event,handler catches:Exception returns:1 — Logs an audit event with a timestamp, type, message, severity, and optional details.
 #### `log_security_violation` (audit_logging_system.py:291) — (violation_type, description, source_ip, user_id, evidence) | branches:ifx3 calls:log_event,security_response_handler returns:1 — Log a security violation with enhanced details.
 
-### class `AuditLogger` (audit_logging_system.py:318) methods:18 — State-of-the-art audit logger with database persistence and real-time monitoring.
+### class `AuditLogger` (audit_logging_system.py:318) methods:18 — High-assurance audit logger with database persistence and real-time monitoring.
 #### `AuditLogger.__init__` (audit_logging_system.py:321) — (self, db_path) | branches:ifx1 calls:Lock,deque,_initialize_database,_start_flush_thread returns:0 — Initialize audit logger with optional database backend.
 #### `AuditLogger._initialize_database` (audit_logging_system.py:344) — (self) | branches:ifx1,tryx2 calls:enforce_audit_db_permissions,connect,cursor,execute,commit,fetchone,info catches:OperationalError,Exception returns:0 — Initialize SQLite database for audit log persistence with restrictive filesystem permissions (Finding 7).
 #### `AuditLogger._start_flush_thread` (audit_logging_system.py:418) — (self) | calls:Thread,start returns:0 — Start background thread to flush events to database.

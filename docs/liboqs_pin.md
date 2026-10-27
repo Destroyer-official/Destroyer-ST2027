@@ -159,7 +159,7 @@ documented anchor rotation ceremony
 HQC/XMSS remain refused by conservative policy (opt-in gate), not by
 CVE entitlement. See also
 `dependency_security_verifier.py` header comment and
-`generate_production_sbom.py verify_sbom_offline TODO(rekor)` for the
+`generate_production_sbom.py verify_sbom_offline` (Rekor transparency entrypoint) for the
 Cosign/Rekor anchoring plan.
 
 ## Runtime enforcement (2026-10-11 hardening — floor is now REAL)

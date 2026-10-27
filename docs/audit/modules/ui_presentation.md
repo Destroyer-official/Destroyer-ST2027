@@ -106,7 +106,7 @@ The presentation layer interacts with user inputs and cryptographic state throug
 ## 4. Encoding & Safety Invariants
 
 1. **CP1252 / ASCII Purity:**
-   No unicode emoji characters (e.g., emojis in range `😀-🙏` or misc symbols `☀-⛿`) are permitted in console output strings. All operational statuses use ASCII brackets `[PASS]`, `[FAIL]`, `[INFO]`, `[WARN]`.
+   No unicode emoji characters (e.g., emojis in range `U+1F600-U+1F64F` or misc symbols `U+2600-U+26FF`) are permitted in console output strings. All operational statuses use ASCII brackets `[PASS]`, `[FAIL]`, `[INFO]`, `[WARN]`.
 2. **Symmetric Out-of-Band Agreement:**
    `safety_numbers()` canonically sorts peer keys prior to hashing, ensuring both initiating and receiving parties compute identical 48-digit strings regardless of handshake order.
 3. **Loopback Pinning Prevention:**

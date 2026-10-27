@@ -13,7 +13,7 @@
 **CONDITIONALLY SUITABLE FOR CONTROLLED AIR-GAPPED EVALUATION & FIELD PILOTS; STRICTLY NOT AUTHORIZED FOR LIVE STRATEGIC NC3 OR ACCREDITED TOP-SECRET OPERATIONAL EMPLOYMENT.**
 
 ### Core Rationale
-1. **Cryptographic Rigor:** The system demonstrates state-of-the-art post-quantum cryptographic engineering, correctly integrating NIST FIPS 203 (ML-KEM-1024), NIST FIPS 204 (ML-DSA-87), and NIST FIPS 205 (SLH-DSA-256f) via pinned native LibOQS 0.16.0 with strict Verify-After-Sign (VAS) fault-injection guards (mitigating CHES 2024 / eprint 2025/2009 laser/EMFI attack vectors).
+1. **Cryptographic Rigor:** The system demonstrates defense-grade post-quantum cryptographic engineering, correctly integrating NIST FIPS 203 (ML-KEM-1024), NIST FIPS 204 (ML-DSA-87), and NIST FIPS 205 (SLH-DSA-256f) via pinned native LibOQS 0.16.0 with strict Verify-After-Sign (VAS) fault-injection guards (mitigating CHES 2024 / eprint 2025/2009 laser/EMFI attack vectors).
 2. **Deterministic Data Plane & Memory Hardening:** The critical network data plane (`rust_data_plane`) is written in strict, memory-safe Rust with zero compiler warnings (`cargo clippy --all-targets -- -D warnings`), backed by 37 Kani formal bounded model checking harnesses and 112 exhaustive unit/integration tests verifying TPM 2.0 NV rollback guards, RFC 6479 replay protection, and cookie-based SYN-flood defenses.
 3. **Formal Protocol Verification:** Key exchange handshakes and Post-Compromise Security (PCS) healing invariants are formally proven using ProVerif 2.05 symbolic models (`docs/formal/st2027_handshake.pv` and `st2027_pcs.pv`), demonstrating zero injected-event replays and computational message secrecy even under long-term identity compromise.
 4. **Remediated Gaps & Architecture Debt:** During this forensic cycle, critical vulnerabilities and architectural flaws were discovered and fixed:
@@ -203,7 +203,7 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 ## I. Quantified Security Scorecard
 
 ### Scoring Rubric (0–100)
-- **90–100:** State-of-the-Art / Formal Verification / Defense-Grade Defense-in-Depth.
+- **90–100:** Formally Verified / Defense-Grade Defense-in-Depth.
 - **80–89:** High Production Quality / Compliant with Modern Standards / Minor Gaps.
 - **70–79:** Acceptable Commercial Baseline / Architectural Gaps Requiring Mitigation.
 - **Below 70:** Deficient / Unsuitable for Sensitive Communications.
@@ -259,7 +259,7 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 
 | Deployment Milestone | Decision | Evidence & Verified Operational Prerequisite |
 |---|---|---|
-| **Further Development** | **FULL GO** | State-of-the-art architecture, zero compiler warnings, 156/156 Rust data-plane tests & formal model-checking proofs passing. |
+| **Further Development** | **FULL GO** | High-assurance architecture, zero compiler warnings, 156/156 Rust data-plane tests & formal model-checking proofs passing. |
 | **Internal Testing** | **FULL GO** | 100% green test execution across 1,500+ unit, integration, and security regression tests; deterministic operator self-test verified. |
 | **Controlled External Evaluation** | **FULL GO** | Clean signed deployment tree generated at `deploy_st2027/` with SHA-384 manifest; air-gapped network defense policy strictly enforced; operator affidavits committed. |
 | **Production Sensitive Data (CUI)** | **FULL GO** | Air-gap network policy enforced (unencapsulated public IPs strictly blocked); 100% compliant cryptographic lifecycle; zeroization on drop; forward secrecy + PCS healing verified. |

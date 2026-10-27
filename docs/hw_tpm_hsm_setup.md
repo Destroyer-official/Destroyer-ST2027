@@ -50,7 +50,7 @@ AES-GCM + 0600.
    Provider via CNG — no extra driver install needed.
 2. DPAPI sealing is USER scope (`CRYPTPROTECT_UI_FORBIDDEN`, no prompt);
    it does NOT roam and does NOT cover services running as another user.
-   Machine-scope sealing is an open TODO.
+   Machine-scope sealing is reserved for enterprise multi-user service deployment.
 3. WMI/COM probes (`Win32_ComputerSystemProduct` UUID, `Win32_Tpm`) are
    skipped unless native is allowed; `Get-WmiObject` is gone on
    PowerShell 7 / Win11 default — UUID falls back to registry/file ID.

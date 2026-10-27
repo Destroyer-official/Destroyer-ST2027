@@ -25,7 +25,7 @@ To achieve the **absolute mathematical zenith of security known to computer scie
 
 ---
 
-## 2. Deep Research Synthesis: seL4, EAL6+/EAL7, and 2025–2026 State-of-the-Art
+## 2. Deep Research Synthesis: seL4, EAL6+/EAL7, and 2025–2026 High-Assurance Baseline
 
 ### 2.1 The seL4 Formal Verification Hierarchy
 

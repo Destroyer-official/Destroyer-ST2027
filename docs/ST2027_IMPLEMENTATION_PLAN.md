@@ -1,7 +1,7 @@
 # ST2027 Zero-Gap Implementation Plan — Maximum Cost-to-Break Doctrine
 
 **Document:** Full implementation plan, Rev. 1.0 (2026-09-29)
-**Doctrine (binding):** *"Making an unhackable system is impossible; therefore, every single transmission
+**Doctrine (binding):** *"Absolute invulnerability in any system is mathematically and physically impossible; therefore, every single transmission
 is made so computationally and physically expensive to break that even millions of coordinated AI agents
 armed with exascale quantum supercomputers cannot justify the cost. Every normal message is sealed with
 the exact same rigor as a nuclear command directive."*

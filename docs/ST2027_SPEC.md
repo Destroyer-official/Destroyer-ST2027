@@ -1,6 +1,6 @@
 # Sovereign Transmit 2027 (ST2027) — Military High-Assurance Specification & Implementation Plan
 
-## Next-Generation Sovereign Information Exchange Architecture for Classified & Tactical Operations
+## High-Assurance Sovereign Information Exchange Architecture for Classified & Tactical Operations
 
 **Author:** Sovereign Defense Communications Group
 **Target Standard:** NSA CNSA Suite 2.0 (January 1, 2027 NSS Procurement Gate)
