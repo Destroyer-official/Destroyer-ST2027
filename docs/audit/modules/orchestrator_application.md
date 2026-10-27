@@ -180,7 +180,3 @@ The orchestrator and application layer operates across three operational pattern
    - `secure_p2p.py` (14,886 lines) and `core/orchestrator.py` (1,714 lines) maintain overlapping orchestration logic. Changes made to one must be synchronized or the monolithic prototype deprecated.
 3. **Rust Data Plane Requirement:**
    - In production environments (`SECURE_P2P_PRODUCTION=1`), `unified_secure_pipeline.py:240` requires compiled Rust binaries (`destroyer_core`). If unavailable, execution raises `PipelineSecurityError` (fail-closed).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

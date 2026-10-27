@@ -45,7 +45,3 @@ The Target of Evaluation (TOE) is being prepared toward the following augmented 
    - Draft functional specification of security functions, interfaces, and state transitions within the cryptographic boundary.
 4. **`ATE_FUN.1` (Functional Testing)**:
    - In-repo gate suites maintained green (see deployment verification reports for current counts, not a fixed percentage).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

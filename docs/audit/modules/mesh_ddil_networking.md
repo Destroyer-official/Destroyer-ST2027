@@ -234,7 +234,3 @@
    - The codebase contains both `p2p_core.py` (direct TCP) and `network/` (`connection.py`, `io.py`, `handshake.py`). Does `network/` represent an architectural migration away from `p2p_core.py`?
 2. **Data Diode Dynamic MTU:**
    - Does `tactical_data_diode.py` adapt shard sizes dynamically when operating over link layers with smaller MTU constraints than standard Ethernet (e.g., VHF/UHF tactical radios)?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

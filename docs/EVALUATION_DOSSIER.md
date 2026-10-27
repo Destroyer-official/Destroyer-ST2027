@@ -122,7 +122,3 @@ GATE     ASSURANCE CATEGORY                               STATUS   LATENCY
 ## 6. Conclusion & Verification Attestation
 
 Every architectural and implementation flaw identified in earlier reviews has been addressed with mathematically sound, reproducible code. Sovereign Transmit 2027 stands fully verified as a rigorous, honest, post-quantum tactical transport appliance.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

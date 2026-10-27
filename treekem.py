@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """treekem.py — ratchet-tree STRUCTURE skeleton (TreeKEM foundation, T3-J).
 
 Research basis: RFC 9420 §4 (ratchet-tree concepts), §7.6-§7.8

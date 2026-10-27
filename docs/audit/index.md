@@ -75,7 +75,3 @@ Detailed technical breakdowns and verification registers for each of the 18 prod
 4. **Platform Hardening & Memory Security:**
    - Fail-closed Data Execution Prevention (DEP), Arbitrary Code Guard (ACG), Control Flow Guard (CFG), and High-Entropy ASLR enforced via operating system APIs.
    - Multi-pass physical RAM zeroization complying with DoD 5220.22-M sanitization patterns.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

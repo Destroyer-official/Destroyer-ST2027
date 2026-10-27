@@ -167,7 +167,3 @@ python test_nc3_two_terminal_live_transfer.py
 ```
 
 **Gate criterion**: All test suites must return zero errors. (A green sweep is evidence of correct function, not a readiness certification -- see Handling note at the top.)
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

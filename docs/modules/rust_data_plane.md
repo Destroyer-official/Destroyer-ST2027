@@ -48,7 +48,3 @@ rejects late-loading the self-built `.pyd` (fixed by startup pre-import;
 production MUST Authenticode-sign). Both recorded so they are never
 regressed; `test_native_data_plane_loads_and_separates_directions` guards
 the first in CI.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

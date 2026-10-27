@@ -102,7 +102,3 @@ Synchronous power-up Known Answer Tests (KATs) run automatically prior to crypto
 - **Storage:** Private keys are sealed in non-volatile memory bound to TPM 2.0 PCR registers (0, 1, 2, 7).
 - **In-Transit RAM Hygiene:** Session keys in Rust are wrapped in `ZeroizeOnDrop` structures. Python mutable bytearrays are zeroed (`0x00`) immediately upon session termination.
 - **Zeroization Protocol:** Invocation of `sodium_memzero` or emergency zeroization signal permanently wipes all ephemeral and persistent key material across all address spaces.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

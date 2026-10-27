@@ -110,7 +110,3 @@ Phases 1–3 complete with 12 months of green CI history.
 - Gate health: 9/9 local + CI green rate; Kani execution proof; ProVerif re-run on model change.
 - Idle burn vs. cover ratio; loopback latency; audit duration (~60 s baseline).
 - Time-to-quarantine for newly broken primitives (HAWK precedent: <30 days from disclosure to gate).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

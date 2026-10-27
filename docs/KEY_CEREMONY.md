@@ -61,7 +61,3 @@ custodian credentials in the room (Tier-4 equivalent).
   revocation.
 - Lost custodian key → re-ceremony with a fresh 5-set; old set's
   certificates age out within 48h and revocations persist.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

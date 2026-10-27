@@ -27,7 +27,3 @@ inside the handshake hot path.
 
 Numbers MUST be compared over an independent channel on first contact.
 A later `CHANGED` is treated as active MITM until re-verified OOB.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 spo_dpo.py — Single-Person vs Dual-Person Operation enforcement for TOP SECRET
 transmission over the public internet (2027 target posture).

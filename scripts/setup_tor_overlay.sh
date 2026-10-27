@@ -1,6 +1,4 @@
 #!/bin/sh
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 # setup_tor_overlay.sh — provision the local Tor overlay for TOP SECRET transport.
 # Fail-closed: every check aborts before any session starts.
 # Requirements: tor daemon, lyrebird PT bundle (obfs4/snowflake/webtunnel),

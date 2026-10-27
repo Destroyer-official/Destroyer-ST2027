@@ -1,5 +1,3 @@
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """SBOM signer custody resolution (F-04/A-01) — fail-closed anchor protection.
 
 resolve_sbom_signing_material() must never signal a bootstrap (fresh lab

@@ -212,7 +212,3 @@
    - When will `DirectX25519KeyExchange` and `Ed25519Signer` be permanently removed from `tls_channel_manager.py`?
 2. **Standardization of OpenSSL Configuration Files:**
    - Does `openssl_cnsa2_posture.cnf` supersede `deploy/openssl_cnsa.cnf`, or do they serve distinct production deployment architectures?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

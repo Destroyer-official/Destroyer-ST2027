@@ -65,7 +65,3 @@ This module implements **Pillar 1: Hardware & Physical Security** for the 2027 T
 - **Suite:** `test_ts_hw_layer.py`]
 - **Pass Rate:** **33 of 33 tests passing (100%)**
 - **Tested Behaviors:** FIPS provider load/fail logic, CNG TPM 2.0 key operations, RED/BLACK interface validation, TEMPEST registry parser, optical diode simplex frame flow, and zeroization mesh triggers.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

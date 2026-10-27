@@ -30,7 +30,3 @@ Menus never handle key material except usernames.
 `ConfigManager` (all fallbacks `False`), `SecurityErrorHandler` (memory-only
 unsent queue default + sealed opt-in — verified), `NonceManager/Helpers`,
 `Initialization` (auth default true), `UtilsManager`, `KeyEraser/MemoryManager`.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

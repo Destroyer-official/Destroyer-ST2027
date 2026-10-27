@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Tests for tpm_quote.py skeleton (additive only, runtime <30s)."""
 
 from __future__ import annotations

@@ -238,7 +238,3 @@ a package would hold one file; no `*_test` outside `tests/`; no binaries
 beside sources without `.sig/.hashes/.pub`; no `utils.py` grab-bags
 (split into named helpers); ENVIRONMENT flags documented in one table
 (`docs/SOP.md` §2 + `config/` schema).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

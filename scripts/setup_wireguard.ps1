@@ -1,5 +1,3 @@
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 # setup_wireguard.ps1 — provision the sovereign WireGuard / private-APN path.
 # Mirrors scripts/setup_wireguard.sh gate-for-gate. Fail-closed: refuses to
 # mark the overlay active unless the interface, peer prefix, and handshake

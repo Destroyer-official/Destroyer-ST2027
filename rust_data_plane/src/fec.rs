@@ -1,5 +1,3 @@
-// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! fec.rs — Cauchy-Reed-Solomon Forward Error Correction (FEC) over GF(2^8).
 //!
 //! Designed specifically for Unidirectional Simplex Optical Data Diodes:

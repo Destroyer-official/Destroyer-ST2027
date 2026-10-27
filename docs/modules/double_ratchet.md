@@ -35,7 +35,3 @@
 Per-message keys, DH+PQ combined steps, strict skip policy, timestamp/nonce
 anti-replay, constant-time compares, secure cleanup. Rust twin (bitmap
 window) covers wire replay at O(1).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

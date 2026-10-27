@@ -71,7 +71,3 @@ The audit confirmed several blocks of dormant, quarantined, or disabled code wit
 3. **Continuous Forward Secrecy:**
    - *Claim:* Documentation claims "healing after physical memory capture."
    - *Reality:* Confirmed via Continuous Epoch Ratchet (CER) in `unified_secure_pipeline.py:57` and `secure_transmit_2027.py:14`. Every 128 messages, a fresh ephemeral key exchange is injected into the ratchet chain, achieving post-compromise security (PCS) healing.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

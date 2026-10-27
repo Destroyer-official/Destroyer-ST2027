@@ -15,7 +15,3 @@ This register records technical claims made in existing documentation regarding 
 | ANO-09 | SOCKS5 Tor v3 transport enforces remote hostname resolution (`ATYP = 0x03`) to eliminate local DNS leaks. | `docs/modules/transport_anonymity.md:20` | `transport_anonymity.py:9-10, 480-520` | Code Inspection | Verified | SOCKS5 client passes destination hostnames directly in connect requests without invoking OS getaddrinfo for `.onion` or remote hosts. |
 | ANO-10 | Zero-Knowledge authentication implements Schnorr identity proofs and range proofs over custom prime field $p = 2^{256} - 189$. | `zk_authenticator.py:3-25` | `zk_authenticator.py:242-307` | Code Inspection | Verified (Gated) | Custom arithmetic is implemented but `ZKAuthenticator.__init__` raises `PermissionError` by default in production unless `P2P_ENABLE_EXPERIMENTAL=1` or `P2P_ENABLE_CUSTOM_ZK=1` is set. |
 | ANO-11 | Several anonymity and decentralization modules (`covert_channel_defense.py`, `metadata_resistance.py`) are opt-in and unwired from default hot paths. | `docs/modules/anonymity_decentral.md:1-5` | `covert_channel_defense.py`, `metadata_resistance.py` | Code Inspection | Verified | The default transmission path in `p2p_core.py` and `secure_p2p.py` does not invoke `covert_channel_defense.py` or `metadata_resistance.py`; neither file has dedicated test suites in `tests/`. |
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

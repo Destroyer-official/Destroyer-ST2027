@@ -213,7 +213,3 @@
    - Is `destroyer_core` planned to completely supersede Python socket I/O in future releases, relegating Python strictly to orchestration?
 2. **Cross-Compilation Infrastructure:**
    - What automated CI pipelines exist to cross-compile and sign `destroyer_core` binaries for diverse target architectures (x86_64, aarch64, Windows, Linux)?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

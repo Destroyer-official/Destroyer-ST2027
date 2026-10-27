@@ -1,5 +1,3 @@
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """TUF-lite post-quantum dual signatures (Fix B / audit 7.2, CNSA 2.0).
 
 Both update paths dual-sign with ML-DSA-87 over the identical canonical

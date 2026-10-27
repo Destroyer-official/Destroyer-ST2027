@@ -227,7 +227,3 @@ Following the open-internet hardening phases above, the system was formalized in
 5. **Pillar 5 (Trust Anchor & Post-Quantum PKI):** `trust_anchor.py` — Offline 3-of-5 threshold ML-DSA-87 Hardware Root CA (RFC 9881); strict mode eliminates TOFU completely; threshold CRL revocation in uniform cells; zero-plaintext-disk amnesia profile.
 
 **Verification Status:** Validated by 120 Python tests + 64 Rust data plane tests (184 total tests green) with machine-checked ProVerif 2.05 formal proofs passing in CI. Detailed specifications: [System Architecture](ARCHITECTURE.md), [FIPS 140-3 Security Policy](FIPS_140_3_SECURITY_POLICY.md), [Military NC3 Deployment Guide](MILITARY_NC3_DEPLOYMENT_GUIDE.md), and [Documentation Index](README.md).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

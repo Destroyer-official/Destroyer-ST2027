@@ -49,7 +49,3 @@ We welcome coordinated vulnerability disclosures, cryptographic cryptanalysis, a
   - SHA-384 / SHA-512 (FIPS 180-4)
 - **Classical Hybrid Leg:** NIST P-384 ECDH strictly as an auxiliary defense-in-depth hedge per IETF RFC 10024.
 - **Memory Safety:** Key custody and framing logic are transitioning to native Rust (`rust_data_plane`) with `zeroize`, `mlock`, and constant-time execution.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -216,7 +216,3 @@ The plan synthesizes research spanning 1975–2026; it does not represent an aut
 - PDF web-fetch rendering was unsupported. Five public PDFs were downloaded to temporary research storage, and the sections declared above were read via PDF/text extraction. No repository secrets or operational messages were supplied to any website.
 - **Not performed:** independent theorem checking, reproduction of paper benchmarks, vulnerability exploitation, full-code audit, provider certification lookup for a purchased module, physical diode testing, or validation of a production host.
 - Before profile freeze, recheck errata, current draft revisions, assigned registries, library advisories, national rules, and product approvals. Preserve source/version identifiers in the engineering evidence package. Any source changes trigger impact review, not automatic production dependency upgrades.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

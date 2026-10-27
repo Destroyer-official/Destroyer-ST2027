@@ -57,7 +57,3 @@ This plan provides production-grade, mathematically verified remediations for al
    - **Finding 06 / ANON-01 (Continuous Epoch Ratchet Rekeying)**: Implemented mid-stream continuous epoch ratcheting via `FRAME_TYPE_REKEY` and synchronized HKDF-SHA384 epoch transitions in `transport_anonymity.py`.
    - **Finding 01 (CI LibOQS Version Floor)**: Updated `.github/workflows/defense_ci.yml` to clone official `--branch 0.16.0`.
    - **Comprehensive Automated Regression**: Implemented `tests/test_audit_forensic_remediations.py` covering all findings (8/8 tests passed).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

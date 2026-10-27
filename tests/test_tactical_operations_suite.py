@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 Unit and Integration Test Suite for Real Military Tactical C4ISR Operations.
 Verifies both the Native Rust Data Plane commands and Python Tactical Console:

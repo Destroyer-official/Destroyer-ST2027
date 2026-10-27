@@ -53,7 +53,3 @@ Consolidated register of technical ambiguities, architectural crossroads, and un
 - **Questions for Core Engineering:**
   1. What automated build target compiles the native Rust source code against verified seL4 toolchains in the continuous integration environment?
   2. Does the native microkit build enforce identical ring buffer framing to the Python reference twins?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

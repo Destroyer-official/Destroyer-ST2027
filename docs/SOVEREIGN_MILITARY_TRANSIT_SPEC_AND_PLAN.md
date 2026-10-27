@@ -181,7 +181,3 @@ To achieve absolute sovereign security and eliminate any possible audit critique
 Consumer chat applications are fundamentally optimized for ease of use, app store distribution, and smartphone battery efficiency. 
 
 **ST2027 is engineered for a completely different mission:** protecting extra-confidential national security communications across hostile, contested, and signals-intelligence-dense battlefields. By executing this plan, ST2027 establishes a mathematically verifiable, hardware-anchored, zero-metadata transmission standard that no commercial consumer messenger can match.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

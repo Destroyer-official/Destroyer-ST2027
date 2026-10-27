@@ -226,7 +226,3 @@
    - What specific hardware boards (e.g., Sabre Lite i.MX6, Raspberry Pi 4, Odroid-C4) are targeted for baremetal deployment of `sel4_baremetal/`?
 2. **Native Runtime Binary Distribution:**
    - How are `ts_rt.dll` and `libts_rt.so` compiled and distributed across deployment images that lack Cargo/Rust toolchains?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 Witnessed Key Ceremony Harness - NIST SP 800-57 / FIPS 140-3 Level 4 Compliant
 ================================================================================

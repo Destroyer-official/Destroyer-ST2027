@@ -132,7 +132,3 @@ Audit verification executed the following test suites directly verifying securit
      - `maximum_security_hardening.py` (677 lines): Static profile enforcer.
      - `security_hardening_manager.py` (1,466 lines): Direct Win32 API process mitigation manager.
    - These files duplicate mitigation definitions (DEP/ASLR/CFG flags) without unified configuration inheritance.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

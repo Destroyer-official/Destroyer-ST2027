@@ -28,7 +28,3 @@
 `ALLOWED_KEY_TYPES={mldsa87,ec384}` (identity `mldsa87`-only in practice),
 fail-closed CA-load, mutual authentication, temp-file cleanup, stealth-knock
 (HMAC-SHA512) gating.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

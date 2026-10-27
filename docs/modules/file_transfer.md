@@ -27,7 +27,3 @@ key needed; chunk HMACs + whole-file hash provide integrity).
 - `encryption.py` — ratchet encrypt/decrypt with optional binding prefix;
   "fallback" labels mean ratchet-without-binding, still L5, never plaintext.
 - `commands.py`, `manager.py` — CLI dispatch, session glue.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

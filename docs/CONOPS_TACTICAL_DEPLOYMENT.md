@@ -374,7 +374,3 @@ The ST2027 sovereign military baseline is empirically benchmarked against consum
 | **Media Sanitization & Anti-Forensics** | Standard filesystem deletion leaving secret keys and plaintext in flash wear-leveling blocks | NIST SP 800-88 Rev 1 & DoD 5220.22-M 3-pass hardware overwrite (CSPRNG -> 0xFF -> 0x00), cache sync, and unlink | **Absolute Anti-Forensic Assurance** |
 
 Automated empirical evaluation script: `scripts/verify_50x_sovereign_superiority.py`.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

@@ -21,7 +21,3 @@ backends + `destroyer_core`.
 `SecureMessage` header (version/type/flags/len/seq/timestamp/sender binding)
 + HMAC, `SecureMessageSerializer`. Used by file-chunk path; chat path uses
 ratchet framing. MAC-then-parse ordering enforced.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

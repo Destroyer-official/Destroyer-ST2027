@@ -1,5 +1,3 @@
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Regression tests for the audit nonce-management finding (2026-10-14).
 
 Pre-fix behavior (all under a LIVE key, RFC 8439 Sec 2.8 violations):

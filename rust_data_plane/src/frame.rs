@@ -1,5 +1,3 @@
-// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! Authenticated frame layout (all multi-byte fields big-endian):
 //! `[seq: u64 | len: u16 | ftype: u8 | ciphertext: len bytes | tag: 16 bytes]`
 //! The GHASH tag covers header + ciphertext. Anything failing the tag,

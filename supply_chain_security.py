@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """
 Software Supply Chain Integrity and Provenance Verification Engine
 SLSA Level 3+ Compliant Deterministic Build and SBOM Verification Architecture

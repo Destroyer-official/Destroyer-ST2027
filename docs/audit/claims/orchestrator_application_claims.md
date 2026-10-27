@@ -25,7 +25,3 @@ Claims verification register for the orchestrator and application layer (`orches
 2. **Implementation Boundaries:**
    - `core/orchestrator.py` (1,714 lines) represents a refactored architectural decomposition of `secure_p2p.py` (14,886 lines).
    - In production deployments, `unified_secure_pipeline.py` enforces Layer 2 Rust acceleration when `P2P_REQUIRE_RUST=1` or `SECURE_P2P_PRODUCTION=1` is asserted; missing native binaries raise `PipelineSecurityError` (fail-closed).
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

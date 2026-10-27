@@ -298,7 +298,3 @@
    - Is the SPQR 50-message / 7-day interval aligned with an external interoperability specification, or is it an empirical threshold derived from the Apple PQ3 / Signal research papers?
 3. **Group Ratchet Convergence:**
    - Will future releases deprecate the flat sender-key approach (`[ISOLATED]_group_ratchet.py`) in favor of TreeKEM (`pq_treekem.py`) as the singular group key distribution protocol?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

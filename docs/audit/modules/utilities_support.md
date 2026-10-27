@@ -141,7 +141,3 @@ The utilities layer supports all operational modules across initialization, runt
    - `utils/memory.py:46-55` attempts `VirtualLock` or `mlock`. On non-administrative Windows accounts or unprivileged Linux containers, the call emits a warning and continues without physical RAM locking unless `P2P_REQUIRE_MLOCK=1` is asserted.
 2. **Configuration Signature Enforcement:**
    - In laboratory or test mode, unsigned JSON configurations can be loaded; in production mode (`SECURE_P2P_PRODUCTION=1`), unsigned configurations are rejected.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

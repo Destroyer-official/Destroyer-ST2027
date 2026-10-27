@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Truth-in-claims gates (Phase 4): documentation is audited like code.
 
 4.1: README carries zero false accreditation claims (badges, counts,

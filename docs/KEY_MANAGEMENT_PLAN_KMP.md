@@ -71,7 +71,3 @@ Per NSA CNSA 2.0 requirements for National Security Systems (NSS) operating past
 In the event that an ephemeral ratchet key is intercepted:
 - The system guarantees **Post-Compromise Security (PCS)**.
 - In the next Diffie-Hellman ratchet exchange with fresh post-quantum KEM encapsulation, full cryptographic secrecy is restored automatically without administrative intervention.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

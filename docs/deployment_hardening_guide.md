@@ -79,7 +79,3 @@ Use `air_gapped_operation.secure_time_now(peer_times)`; `skew_warn=True` when `a
 ## 7. USB malware scan note
 
 Scan every USB on an isolated scanner host before it touches a prod/air-gap host: clean FAT32, single `bundle.json` (+ `.sig`/`.dsse`), no executables/autorun. Hash on scanner, re-hash on destination; mismatch = quarantine media, do not import.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

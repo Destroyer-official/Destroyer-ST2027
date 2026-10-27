@@ -133,7 +133,3 @@ tracked separately.
   were not all independently reproduced with exploits.
 - Test runs were executed on Windows; POSIX-only tests (symlink refusal)
   skip locally and are expected to execute in POSIX CI.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

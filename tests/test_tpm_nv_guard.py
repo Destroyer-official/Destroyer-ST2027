@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """TPM NV monotonic-counter guard — end-to-end proof of the F-01 residual.
 
 The Rust data plane can bind send-seq reservations to a TPM 2.0 NV counter

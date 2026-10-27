@@ -1,5 +1,3 @@
-# Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-# NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 """Ratchet DSS migration: ML-DSA-87 session identity (CNSA 2.0 / FIPS 204).
 
 Falcon-1024 is NOT in CNSA 2.0 (NSA will not add FN-DSA). New

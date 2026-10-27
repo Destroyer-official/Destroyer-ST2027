@@ -243,7 +243,3 @@ Until Rekor inclusion is proven for a release commit, the in-repo
 ML-DSA-87 `.mldsa87.sig` sidecars remain LAB-GRADE self-attestation
 (they prove nothing to an outsider holding only the repo) — say so
 wherever they are cited.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

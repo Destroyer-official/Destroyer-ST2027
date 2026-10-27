@@ -80,7 +80,3 @@ Formal models in `docs/formal/` are executed directly by ProVerif under the Dole
   - `test_secure_transmit_2027.py`] (24 tests)
 - **Pass Rate:** **30 of 30 tests passing (100%)**
 - **Tested Behaviors:** Handshake key exchange, CNSA 2.0 token purity enforcement, KAT execution and failure tripping, ProVerif Dolev-Yao model execution, and full transmission lifecycle.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

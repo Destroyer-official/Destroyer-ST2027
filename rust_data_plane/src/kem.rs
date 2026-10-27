@@ -1,5 +1,3 @@
-// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! Hybrid key exchange: X25519 + ML-KEM-1024 (FIPS 203).
 //!
 //! Construction follows RFC 10024 (PQ/T hybrids for TLS 1.3, Aug 2026):

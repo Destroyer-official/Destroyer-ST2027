@@ -155,7 +155,3 @@ Audit verification executed the following test suites directly verifying messagi
      - `secure_file_transfer.py` (541 lines): 64KB chunking with HMAC-SHA384 and SHA3-512.
      - `secure_file_sharing.py` (2,003 lines): Double Ratchet file extensions and AES-256-GCM chunking.
    - These modules duplicate chunking calculations and transfer state tracking without a unified data plane.
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->

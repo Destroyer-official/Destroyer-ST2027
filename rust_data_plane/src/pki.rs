@@ -1,5 +1,3 @@
-// Destroyer-ST2027 Military Production Hardening Release (2026-10-26)
-// NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204
 //! 3-of-5 threshold ML-DSA-87 PKI verification (Rust secure core).
 //!
 //! Byte-identical canonical encodings to the Python reference

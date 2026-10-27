@@ -269,7 +269,3 @@
    - Are `covert_channel_defense.py` and `metadata_resistance.py` deprecated prototypes that were superseded by `transport_anonymity.py` and `tactical_cloaking_router.py`, or are they slated for future integration?
 2. **Dynamic Pacing Configuration:**
    - Is there a planned adaptive pacing mode to dynamically adjust cell sizes and intervals based on link capacity and operational threat postures?
-
----
-<!-- Destroyer-ST2027 Military Production Hardening Release (2026-10-26) -->
-<!-- NSA Commercial National Security Algorithm (CNSA) Suite 2.0 / FIPS 203 / FIPS 204 -->
