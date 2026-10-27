@@ -124,6 +124,22 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
+    def end_headers(self):
+        """Inject DISA ASD STIG and OWASP compliant defense security headers."""
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+            "base-uri 'self'; form-action 'self'",
+        )
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, private")
+        super().end_headers()
+
     def do_GET(self):
         if self.path == "/" or self.path == "":
             self.path = "/index.html"

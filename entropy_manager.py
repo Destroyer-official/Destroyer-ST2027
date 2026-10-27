@@ -278,6 +278,7 @@ class HardwareRNGSource(EntropySource):
     def __init__(self):
         self._native_fn = self._init_native_rdrand()
         self._available = (self._native_fn is not None) or self._check_availability()
+        self._health_screen = NoiseHealthScreen()
     
     @staticmethod
     def _init_native_rdrand():
@@ -344,11 +345,21 @@ class HardwareRNGSource(EntropySource):
                     else:
                         break
                 if len(buf) >= num_bytes:
-                    return bytes(buf[:num_bytes])
+                    raw_sample = bytes(buf[:num_bytes])
+                    # Continuous NIST SP 800-90B health screening (RCT + APT)
+                    self._health_screen.screen(raw_sample)
+                    self._health_screen.note_success()
+                    return raw_sample
+            except EntropyHealthError:
+                # Fail-closed on continuous noise health test failure
+                raise
             except Exception:
                 pass
         
-        return secrets.token_bytes(num_bytes)
+        fallback = secrets.token_bytes(num_bytes)
+        self._health_screen.screen(fallback)
+        self._health_screen.note_success()
+        return fallback
     
     def is_available(self) -> bool:
         return self._available

@@ -141,6 +141,22 @@ class TestTacticalWebConsole(unittest.TestCase):
         self.assertEqual(data.get("status"), "COT_EMITTED")
         self.assertEqual(data.get("callsign"), "RAPTOR_01")
 
+    def test_disa_stig_security_headers(self):
+        """Verify that DISA ASD STIG compliant security headers are emitted on responses."""
+        handler, wfile = self._create_handler("GET", "/api/status")
+        handler._handle_api_status()
+        raw = wfile.getvalue().decode("utf-8")
+        headers_raw = raw.split("\r\n\r\n", 1)[0]
+        
+        self.assertIn("Content-Security-Policy: default-src 'self'", headers_raw)
+        self.assertIn("frame-ancestors 'none'", headers_raw)
+        self.assertIn("X-Frame-Options: DENY", headers_raw)
+        self.assertIn("X-Content-Type-Options: nosniff", headers_raw)
+        self.assertIn("Strict-Transport-Security: max-age=63072000; includeSubDomains; preload", headers_raw)
+        self.assertIn("Referrer-Policy: strict-origin-when-cross-origin", headers_raw)
+        self.assertIn("Cache-Control: no-store, no-cache, must-revalidate, private", headers_raw)
+
 
 if __name__ == "__main__":
     unittest.main()
+
