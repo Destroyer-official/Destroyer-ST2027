@@ -1,4 +1,4 @@
-# VOLUME A — System Security Documentation (Military Grade)
+# VOLUME A — System Security Documentation (Technical Baseline)
 
 ## 0. Front Matter
 
@@ -1023,7 +1023,7 @@ Library entry point for test suites and security audits.
 
 air_gapped_operation.py
 
-Air-Gapped Operation Support for Military-Grade P2P Messaging.
+Air-Gapped Operation Support for High-Assurance P2P Messaging.
 
 This module implements comprehensive air-gapped operation features including:
 - Local peer discovery via UDP broadcast on port 45678
@@ -2542,7 +2542,7 @@ Create and return an AnonymousIdentityManager instance.
 
 ## `anti_forensics.py`
 
-Anti-Forensics Module - Military-Grade Plausible Deniability
+Anti-Forensics Module - Cryptographic Plausible Deniability
 
 This module implements anti-forensics features for the secure P2P messaging system:
 - Deniable encryption with hidden volumes (Requirement 12.1)
@@ -4607,7 +4607,7 @@ Raises:
 def add_authorized_fingerprint(self, fingerprint: str)
 ```
 
-Add an authorized peer SHA3-512 fingerprint to the zero-trust whitelist.
+Add an authorized peer SHA3-512 fingerprint to the certificate pin whitelist.
 
 
 #### `CAExchange.load_authorized_peers` (L594)
@@ -4810,13 +4810,13 @@ Raises:
 def exchange_certs(self, role: str, host: str, port: int, ready_event: Optional[threading.Event] = None)
 ```
 
-Perform quantum-resistant certificate exchange with military-grade security.
+Perform quantum-resistant certificate exchange with strict profile security.
 
-Implements a military-grade multi-layer security protocol:
+Implements a strict multi-layer security protocol:
 1. Advanced parameter validation with entropy verification
 2. Quantum-resistant socket setup with perfect forward secrecy
 3. Post-quantum key agreement using ML-KEM-1024 (NIST Level 5)
-4. Military-grade authenticated encryption (XChaCha20-Poly1305)
+4. Authenticated encryption (XChaCha20-Poly1305)
 5. Multi-layer certificate validation with quantum resistance
 6. Hardware-backed secure memory management
 7. Anti-tampering protection
@@ -4974,7 +4974,7 @@ Securely wipe a buffer using multiple patterns following NIST SP 800-88.
 def secure_cleanup(self)
 ```
 
-Military-grade secure erasure of all cryptographic material from memory following DoD 5220.22-M / NIST SP 800-88.
+Multi-pass secure erasure of all cryptographic material from memory following DoD 5220.22-M / NIST SP 800-88.
 
 This method performs forensic-grade memory cleanup:
 - Wipes all cryptographic keys and certificates
@@ -6225,7 +6225,7 @@ _No docstring._
 
 Continuous Security Monitor Module
 
-This module implements continuous security monitoring for the military-grade
+This module implements continuous security monitoring for the high-assurance
 secure P2P messaging system, providing real-time behavioral analysis, timing
 monitoring for side-channel indicators, honeypot key detection, and SIEM integration.
 
@@ -10197,7 +10197,7 @@ Create from dictionary.
 
 decentralized_architecture.py
 
-Production-ready decentralized architecture for military-grade P2P messaging.
+Production-ready decentralized architecture for high-assurance P2P messaging.
 
 This module implements comprehensive decentralized features including:
 - DHT-based peer discovery (no central server dependency)
@@ -11851,7 +11851,7 @@ Security Notes:
       the original object may persist in memory until garbage collection
     - Python's memory management and heap fragmentation may leave traces
       in allocator metadata
-    - For maximum security, allocate sensitive data using SecureMemory allocator
+    - For strict profile, allocate sensitive data using SecureMemory allocator
       from secure_key_manager module
     - This function cannot guarantee erasure of copies if data was duplicated elsewhere
 
@@ -12004,7 +12004,7 @@ Initialize an EnhancedDEP object for improved memory protection.
 
 This class provides enhanced Data Execution Prevention (DEP) capabilities
 that go beyond standard platform implementations by combining hardware
-and software approaches for maximum security.
+and software approaches for strict profile.
 
 
 #### `EnhancedDEP.is_dep_enabled` (L803)
@@ -12947,7 +12947,7 @@ Usage example:
 
 ## `dependency_security_verifier.py`
 
-Dependency Security Verification System - Military-Grade Implementation
+Dependency Security Verification System - High-Assurance Implementation
 
 This module implements comprehensive cryptographic verification of all dependencies
 and libraries to ensure supply chain security and prevent tampering. All critical
@@ -14452,7 +14452,7 @@ Args:
 Security notes:
 - For immutable types (bytes, str), the original object may persist in memory
 - Python's garbage collector may leave traces in memory
-- For maximum security, use bytearray for sensitive data storage
+- For strict profile, use bytearray for sensitive data storage
 
 
 ### class `KeyShare` (L1605)
@@ -15519,7 +15519,7 @@ The original implementation allowed decryption of extremely out-of-order message
 beyond the MAX_SKIP_MESSAGE_KEYS limit, which could weaken forward secrecy.
 
 Raises:
-    SecurityError: Always raises this error to maintain maximum security
+    SecurityError: Always raises this error to maintain strict profile
 
 
 ### class `DoubleRatchetDefaults` (L4687)
@@ -17671,13 +17671,13 @@ Emergency wipe of all global memory instances.
 
 ## `enhanced_security_features.py`
 
-Security Enhancements - Military-Grade
+Security Enhancements - High-Assurance
 Military-grade security features for the secure P2P system
 
 
 ### class `MilitarySecurityLevel` (L45)
 
-Military security levels military-grade
+Military security levels high-assurance
 
 
 ### class `MilitarySecurityMetrics` (L54)
@@ -17689,7 +17689,7 @@ Military security metrics and measurements
 
 Quantum Resistant Protection - Military quantum resistance
 
-This class implements the military-grade quantum-resistant protections
+This class implements the post-quantum protections
 available, going beyond standard post-quantum cryptography.
 
 
@@ -17752,7 +17752,7 @@ Generate quantum-resistant private key
 Military Side-Channel Immunity System
 
 Provides complete immunity against all known side-channel attacks
-including military-grade microarchitectural attacks.
+including microarchitectural attacks.
 
 
 #### `MilitarySideChannelImmunity.__init__` (L167)
@@ -17945,7 +17945,7 @@ Perform strict majority voting on results.
 
 Military Zero-Knowledge Proof System
 
-Implements military-grade zero-knowledge proofs for military privacy
+Implements cryptographic zero-knowledge proofs for military privacy
 and authentication without revealing sensitive information.
 
 
@@ -18150,7 +18150,7 @@ Get global military security orchestrator instance
 Quantum Random Number Generation and Entropy Management
 
 Implements secure entropy pool management with quantum RNG integration for
-military-grade secure P2P messaging. Provides cryptographically secure random
+high-assurance secure P2P messaging. Provides cryptographically secure random
 number generation with hardware entropy sources and health monitoring.
 
 Security Features:
@@ -20456,7 +20456,7 @@ Returns:
 generate_oscal_sar.py
 Generates official NIST OSCAL (Open Security Controls Assessment Language) v1.1.0
 Security Assessment Results (SAR) and Plan of Action and Milestones (POA&M)
-for the Sovereign Military Communications Platform under DoD Continuous ATO (cATO).
+for the High-Assurance Operator-Controlled Communications Platform under DoD Continuous ATO (cATO).
 
 Cryptographically signed with Post-Quantum ML-DSA-87 (FIPS 204).
 
@@ -20493,7 +20493,7 @@ Verify ML-DSA-87 signature over generated OSCAL SAR JSON.
 generate_oscal_ssp.py
 Generates official NIST OSCAL (Open Security Controls Assessment Language) v1.1.0
 System Security Plan (SSP) and Security Controls Traceability Matrix (SCTM)
-mapped to NIST SP 800-53 Rev 5 and CNSSI 1253 for the Sovereign Military Defense Platform.
+mapped to NIST SP 800-53 Rev 5 and CNSSI 1253 for the High-Assurance Operator-Controlled Defense Platform.
 
 Cryptographically signed with Post-Quantum ML-DSA-87 (FIPS 204).
 
@@ -22728,7 +22728,7 @@ with no fallbacks or downgrades to weaker security levels:
 4. Enforces complete verification or immediate failure
 5. Comprehensive logging of all verification attempts for audit
 
-This function is designed for maximum security with FALCON-1024 signatures
+This function is designed for strict profile with FALCON-1024 signatures
 and strictly rejects any signature that doesn't fully validate.
 
 Args:
@@ -22749,7 +22749,7 @@ Raises:
 Security note:
     This function follows the principle of failing closed - any verification
     error results in an exception rather than a boolean False return.
-    No fallbacks or downgrades are permitted for maximum security.
+    No fallbacks or downgrades are permitted for strict profile.
 
 
 ## `key_fill_import.py`
@@ -22925,7 +22925,7 @@ LibOQS Python Wrapper - Hybrid Post-Quantum Cryptography Implementation
 Uses the compiled liboqs library for PQC operations with hybrid algorithms,
 and the 'cryptography' library for AES-256-GCM and HKDF.
 
-Hybrid Strategy for Maximum Security:
+Hybrid Strategy for Strict Profile:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 KEM (Hybrid ML-KEM-1024 + McEliece-8192128f):
@@ -23397,7 +23397,7 @@ MILITARY SECURITY ENFORCEMENT ACTIVE
 • NO FALLBACKS PERMITTED
 • FAIL CLOSED SECURITY MODEL
 
-This implementation provides maximum security by combining two fundamentally different
+This implementation provides strict profile by combining two fundamentally different
 cryptographic approaches:
 - ML-KEM-1024: Fast lattice-based KEM (NIST FIPS 203)
 - McEliece-8192128f: Conservative code-based KEM (unbroken since 1978)
@@ -23504,7 +23504,7 @@ Public interface for combining shared secrets.
 
 Hybrid Digital Signature combining ML-DSA-87 and SLH-DSA-256f.
 
-This implementation provides maximum security and flexibility:
+This implementation provides strict profile and flexibility:
 - ML-DSA-87: Fast lattice-based signatures (NIST FIPS 204) for real-time operations
 - SLH-DSA-256f: Conservative hash-based signatures (NIST FIPS 205) for long-term security
 
@@ -24308,7 +24308,7 @@ _No docstring._
 
 ## `maximum_security_hardening.py`
 
-Maximum Security Hardening Module
+Strict Profile Hardening Module
 
 This module implements the highest level of security hardening with no fallbacks.
 It ensures all security features are enabled at maximum strength or the system
@@ -24326,13 +24326,13 @@ Key Features:
 
 ### class `MaximumSecurityError` (L54)
 
-Exception raised when maximum security requirements cannot be met.
+Exception raised when strict profile requirements cannot be met.
 
 
 #### `MaximumSecurityError.__init__` (L56)
 
 ```python
-def __init__(self, message: str = "Maximum security requirements failed", details: Optional[Dict[str, Any]] = None)
+def __init__(self, message: str = "Strict profile requirements failed", details: Optional[Dict[str, Any]] = None)
 ```
 
 _No docstring._
@@ -24359,7 +24359,7 @@ Security requirement definition.
 
 ### class `MaximumSecurityHardening` (L81)
 
-Maximum Security Hardening implementation with no fallbacks.
+Strict Profile Hardening implementation with no fallbacks.
 
 This class enforces the highest security standards and fails securely
 if any requirement cannot be met. No degraded modes are allowed.
@@ -24371,7 +24371,7 @@ if any requirement cannot be met. No degraded modes are allowed.
 def __init__(self)
 ```
 
-Initialize maximum security hardening.
+Initialize strict profile hardening.
 
 
 #### `MaximumSecurityHardening._register_security_requirements` (L117)
@@ -24533,7 +24533,7 @@ Enable anti-debugging protection.
 def enforce_maximum_security(self)
 ```
 
-Enforce maximum security requirements with no fallbacks.
+Enforce strict profile requirements with no fallbacks.
 
 Returns:
     bool: True if all requirements are met, False otherwise
@@ -24554,7 +24554,7 @@ Get comprehensive security status.
 def enforce_maximum_security_or_fail()
 ```
 
-Enforce maximum security or fail the application.
+Enforce strict profile or fail the application.
 
 This function ensures that all security requirements are met
 or terminates the application securely.
@@ -24566,7 +24566,7 @@ or terminates the application securely.
 def main()
 ```
 
-Main function for testing maximum security hardening.
+Main function for testing strict profile hardening.
 
 
 ## `memory_manager.py`
@@ -24666,7 +24666,7 @@ DoD 5220.22-M or other compliance violations
 Provides hardware-enforced memory isolation using platform-specific features.
 
 Utilizes hardware security features like Intel CET, ARM Pointer Authentication,
-and memory protection extensions for maximum security isolation.
+and memory protection extensions for strict process isolation.
 
 
 #### `HardwareMemoryIsolator.__init__` (L194)
@@ -25378,7 +25378,7 @@ Get global timing attack resistance instance.
 Advanced Security Enhancements for achieving 100% security compliance.
 
 This class provides additional security features and enhancements
-to ensure perfect military-grade security compliance.
+to ensure perfect strict profile security compliance.
 
 
 #### `AdvancedSecurityEnhancements.__init__` (L1455)
@@ -25405,7 +25405,7 @@ Initialize all advanced security features.
 def _enable_maximum_hardening(self)
 ```
 
-Enable maximum security hardening.
+Enable strict profile hardening.
 
 
 #### `AdvancedSecurityEnhancements._initialize_quantum_protections` (L1505)
@@ -25479,7 +25479,7 @@ Get global advanced security enhancements instance.
 
 ## `memory_protection_engine.py`
 
-Memory Protection Engine - Military-Grade Memory Corruption Defense
+Memory Protection Engine - High-Assurance Memory Corruption Defense
 
 This module implements comprehensive memory protection with:
 - Stack canary implementation around crypto buffers (Requirement 6.1)
@@ -26101,7 +26101,7 @@ Reset the global engine (for testing).
 
 metadata_resistance.py
 
-Production-ready metadata resistance features for military-grade P2P messaging.
+Production-ready metadata resistance features for high-assurance P2P messaging.
 
 This module implements comprehensive metadata resistance including:
 - Cover traffic generation (indistinguishable from real messages)
@@ -26810,7 +26810,7 @@ _No docstring._
 
 Military Security Enforcement Module
 
-This module enforces strict military-grade security requirements with no fallbacks.
+This module enforces strict strict profile security requirements with no fallbacks.
 Only approved algorithms are permitted:
 
 • Hybrid KEM: ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384
@@ -26826,7 +26826,7 @@ Exception raised when military security requirements are violated.
 
 ### class `MilitarySecurityEnforcement` (L25)
 
-Enforces military-grade security requirements with no fallbacks.
+Enforces strict profile security requirements with no fallbacks.
 
 SECURITY POLICY:
 - Only approved algorithms are permitted
@@ -28039,7 +28039,7 @@ _No docstring._
 
 NC3 (Nuclear Command, Control, and Communications) Subsystem
 ============================================================
-Military-Grade Emergency Action Message (EAM) & Permissive Action Link (PAL)
+High-Assurance Emergency Action Message (EAM) & Permissive Action Link (PAL)
 Dual-Custody Protocol conforming to:
 - DoD Directive S-5210.41M (Two-Person Rule / Multi-Custody Security)
 - USSTRATCOM Emergency Action Procedures (EAP-STRAT)
@@ -28310,7 +28310,7 @@ _No docstring._
 def generate_officer_credentials(officer_id: str, rank: str, duty_title: str)
 ```
 
-Generate sovereign ML-DSA-87 keypair for an authorized strategic officer.
+Generate operator-controlled ML-DSA-87 keypair for an authorized strategic officer.
 
 
 #### `NC3CommandController._compute_canonical_digest` (L488)
@@ -28596,7 +28596,7 @@ def get_or_create_tactical_officer( officer_id: str, rank: str = "O-6", duty_tit
 ```
 
 Retrieves an officer's post-quantum credentials from sealed storage,
-or generates and provisions sovereign credentials if not present.
+or generates and provisions operator-controlled credentials if not present.
 
 Storage security: private keys are NEVER written in plaintext. Files hold
 AES-256-GCM sealed packages; the file-seal key comes from a custodian
@@ -28661,7 +28661,7 @@ stripping 1024-byte uniform block padding.
 
 network_adversary_resistance.py
 
-Production-ready network adversary resistance for military-grade P2P messaging.
+Production-ready network adversary resistance for high-assurance P2P messaging.
 
 This module implements comprehensive network adversary resistance including:
 - Constant-rate traffic (fixed rate regardless of actual messages)
@@ -29721,7 +29721,7 @@ Get current security validation status
 
 ## `operational_security.py`
 
-Operational Security Features for Military-Grade P2P Messaging
+Operational Security Features for High-Assurance P2P Messaging
 
 This module implements operational security features including:
 - Traffic analysis resistance padding (1024-byte boundaries)
@@ -31364,7 +31364,7 @@ Compliance Mandates:
     - FIPS 140-3 Level 3/4 Physical & Hardware Security
     - NIST SP 800-155 (BIOS Integrity Measurement Guidelines)
     - CNSA 2.0 Hardware Root of Trust Enforcement
-    - DoD Zero Trust Architecture (ZTA) Pillar 2: Device Trust
+    - DoD Mutual Authentication Architecture (ZTA) Pillar 2: Device Trust
 
 
 #### `HardwareSecurityRequirementError.__init__` (L173)
@@ -31560,7 +31560,7 @@ Returns:
 Provides hardware-enforced memory isolation using platform-specific features.
 
 Utilizes hardware security features like Intel CET, ARM Pointer Authentication,
-and memory protection extensions for maximum security isolation.
+and memory protection extensions for strict process isolation.
 
 
 #### `HardwareMemoryIsolator.__init__` (L595)
@@ -32133,7 +32133,7 @@ Args:
     force_software (bool, optional): Force software implementation even if hardware is available. Defaults to False.
     side_channel_protection (bool, optional): Enable side-channel attack protection. Defaults to True.
     enable_fault_detection (bool, optional): Enable fault detection and resilience. Defaults to True.
-    enhanced_security (bool, optional): Enable maximum security features including memory protection, integrity verification,
+    enhanced_security (bool, optional): Enable strict profile features including memory protection, integrity verification,
                                       and runtime attestation. Defaults to True.
 
 Returns:
@@ -34596,7 +34596,7 @@ def disable_all_fallbacks()
 
 MILITARY SECURITY: Disable all fallback mechanisms and weak algorithms.
 
-This function ensures that only approved military-grade algorithms are used:
+This function ensures that only approved high-assurance algorithms are used:
 • Hybrid KEM: ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384
 • Hybrid Signatures: ML-DSA-87 (fast) + SLH-DSA-256f (secure)
 
@@ -35601,7 +35601,7 @@ MILITARY SECURITY ENFORCEMENT ACTIVE
 • NO FALLBACKS PERMITTED
 • FAIL CLOSED SECURITY MODEL
 
-SECURITY UPGRADE: This class implements military-grade hybrid KEM
+SECURITY UPGRADE: This class implements high-assurance hybrid KEM
 combining ML-KEM-1024 (lattice-based) and McEliece-8192128f (code-based).
 An attacker must break BOTH to compromise the session key.
 
@@ -38420,7 +38420,7 @@ Main function for testing ProcessMonitorManager
 ## `production_pqc_algorithms.py`
 
 Production-Ready Post-Quantum Cryptography Implementation Suite
-NIST FIPS 203/204/205 Compliant - Military-Grade Security
+NIST FIPS 203/204/205 Compliant - Strict Profile Security
 
 This module provides production-ready implementations of NIST-standardized
 post-quantum cryptographic algorithms with no fallbacks, no compromises,
@@ -39818,7 +39818,7 @@ Returns:
 ## `red_team_adversarial_drill.py`
 
 red_team_adversarial_drill.py
-Automated Red-Team Adversarial Penetration Drill for Sovereign Military Defense Communications.
+Automated Red-Team Adversarial Penetration Drill for High-Assurance Operator-Controlled Defense Communications.
 
 Executes five active threat assault vectors simulating nation-state SIGINT and adversarial probing:
 1. Side-Channel & Timing Attack Simulation (Constant-Time Verification)
@@ -40029,7 +40029,7 @@ Thread-safe API to emit a cryptographically chained SIEM event.
 
 Resilient Communication Module
 
-Implements reliable message delivery for military-grade P2P communications:
+Implements reliable message delivery for high-assurance P2P communications:
 - Message queuing for offline peers (max 1000 messages per peer)
 - Exponential backoff retry: 1s, 2s, 4s, 8s, 16s, 32s, 60s max
 - Message deduplication using SHA3-256(session_id + sequence_number)
@@ -40563,7 +40563,7 @@ Returns:
 
 ## `run_full_potential_military_test.py`
 
-MASTER ORCHESTRATOR: FULL POTENTIAL MILITARY-GRADE BATTLE TEST FOR SECURE_P2.PY
+MASTER ORCHESTRATOR: PRE-DEPLOYMENT INTEGRATION SUITE FOR SECURE_P2.PY
 Validates 100% of secure_p2.py capabilities between 2 isolated terminals without mocks or shortcuts:
 1. True Post-Quantum Crypto subsystem (ML-KEM-1024, Classic-McEliece-8192128f, ML-DSA-87, SLH-DSA-256f, Windows TPM).
 2. Mutual TLS 1.3 session channel (TLS_AES_256_GCM_SHA384).
@@ -42805,7 +42805,7 @@ Simple test without heavy dependencies.
 
 ## `secure_file_transfer.py`
 
-Secure File Transfer - Military-Grade File Transfer with HMAC-SHA384 Chunk Verification
+Secure File Transfer - High-Assurance File Transfer with HMAC-SHA384 Chunk Verification
 
 This module implements secure file transfer with per-chunk HMAC-SHA384 verification
 as specified in Requirements 11.2, 11.3, 11.4, 11.5.
@@ -44362,7 +44362,7 @@ def _create_sphincs_fallback(self)
 ```
 
 Create a fallback implementation for SPHINCS+ using other quantum-resistant algorithms
-(DISABLED for Military-Grade Security - Fail Closed)
+(DISABLED for Strict Profile Security - Fail Closed)
 
 
 #### `QuantumResistanceFutureProfing._init_algorithm_instances` (L4198)
@@ -45714,7 +45714,7 @@ Returns:
 
 Military-grade input validation class with strict validation and mandatory rejection.
 
-This class implements zero-compromise input validation according to military-grade
+This class implements zero-compromise input validation according to high-assurance
 security requirements. All validation is strict with mandatory rejection of invalid
 inputs. No sanitization attempts are made as they could mask attacks.
 
@@ -46009,7 +46009,7 @@ Perform automatic login for returning users.
 def save(self, username: str, display_name: str, user_id: str, ipv6: str, port: int, pubkey: str = None, private_key: str = None, passphrase: str = None)
 ```
 
-Save and encrypt user profile with military-grade hashing.
+Save and encrypt user profile with high-assurance hashing.
 
 
 #### `EnhancedUserManager.update_endpoint` (L1830)
@@ -46062,7 +46062,7 @@ Ensure P2P Discovery Service is properly initialized.
 Compatibility wrapper for the new enhanced peer manager.
 
 This class provides backward compatibility while using the new enhanced
-peer management system with military-grade features.
+peer management system with high-assurance features.
 
 
 #### `EnhancedPeerManager.__init__` (L1955)
@@ -46224,7 +46224,7 @@ MILITARY ENFORCEMENT: Fallback security components are strictly forbidden.
 def _enforce_maximum_security(self)
 ```
 
-Enforce maximum security requirements with no fallbacks.
+Enforce strict profile requirements with no fallbacks.
 
 
 #### `SecureP2PChat._enable_anti_debugging` (L2720)
@@ -47664,7 +47664,7 @@ def display_security_recommendations(self)
 Display security recommendations for addressing security warnings.
 
 This function provides users with actionable information about how to address
-security warnings and ensure maximum security for their application.
+security warnings and ensure strict profile for their application.
 
 
 #### `SecureP2PChat._verify_canary_values` (L12375)
@@ -48193,7 +48193,7 @@ Returns:
 
 Military-grade input validation class with strict validation and mandatory rejection.
 
-This class implements zero-compromise input validation according to military-grade
+This class implements zero-compromise input validation according to high-assurance
 security requirements. All validation is strict with mandatory rejection of invalid
 inputs. No sanitization attempts are made as they could mask attacks.
 
@@ -48488,7 +48488,7 @@ Perform automatic login for returning users.
 def save(self, username: str, display_name: str, user_id: str, ipv6: str, port: int, pubkey: str = None, private_key: str = None, passphrase: str = None)
 ```
 
-Save and encrypt user profile with military-grade hashing.
+Save and encrypt user profile with high-assurance hashing.
 
 
 #### `EnhancedUserManager.update_endpoint` (L1830)
@@ -48541,7 +48541,7 @@ Ensure P2P Discovery Service is properly initialized.
 Compatibility wrapper for the new enhanced peer manager.
 
 This class provides backward compatibility while using the new enhanced
-peer management system with military-grade features.
+peer management system with high-assurance features.
 
 
 #### `EnhancedPeerManager.__init__` (L1955)
@@ -48703,7 +48703,7 @@ MILITARY ENFORCEMENT: Fallback security components are strictly forbidden.
 def _enforce_maximum_security(self)
 ```
 
-Enforce maximum security requirements with no fallbacks.
+Enforce strict profile requirements with no fallbacks.
 
 
 #### `SecureP2PChat._enable_anti_debugging` (L2720)
@@ -50143,7 +50143,7 @@ def display_security_recommendations(self)
 Display security recommendations for addressing security warnings.
 
 This function provides users with actionable information about how to address
-security warnings and ensure maximum security for their application.
+security warnings and ensure strict profile for their application.
 
 
 #### `SecureP2PChat._verify_canary_values` (L12375)
@@ -50772,7 +50772,7 @@ Factory function to create SecurityDependencyManager
 
 ## `security_diagnostics.py`
 
-Military-Grade Full-Project Security Diagnostics
+High-Assurance Full-Project Security Diagnostics
 ================================================
 Runs a detailed, evidence-based security sweep of the entire P2P project:
 every check executes a LIVE probe (roundtrip, tamper-rejection, config
@@ -52544,7 +52544,7 @@ Get current validation status
 
 Military Security Validator
 
-Pre-deployment security validation script for the military-grade P2P messaging system.
+Pre-deployment security validation script for the high-assurance P2P messaging system.
 Validates cryptographic algorithms, security configurations, and compliance requirements.
 
 Usage:
@@ -52648,8 +52648,8 @@ _No docstring._
 
 ## `side_channel_resistance.py`
 
-Military-Grade Side-Channel Resistance Module
-Military-Grade Constant-Time Operations with Timing Verification
+High-Assurance Side-Channel Resistance Module
+High-Assurance Constant-Time Operations with Timing Verification
 
 This module implements comprehensive side-channel attack resistance including:
 - Constant-time operation wrappers for all cryptographic operations
@@ -53848,7 +53848,7 @@ Verify that secure key storage is working properly. Returns: bool: True if secur
 
 ## `supply_chain_security.py`
 
-Supply Chain Security System - Military-Grade Implementation
+Supply Chain Security System - High-Assurance Implementation
 
 This module implements comprehensive supply chain security features including:
 - Reproducible build system with deterministic outputs
@@ -55471,7 +55471,7 @@ Returns reconstructed payload or None on timeout.
   TACTICAL AIR-GAPPED KEY & PEER PROVISIONER (CNSA 2.0 / FIPS 140-3)
 ================================================================================
 Generates offline cryptographic credentials, certificates, and pre-shared
-fingerprint whitelists for sovereign, zero-trust military P2P nodes.
+fingerprint whitelists for operator-controlled, mutual authentication military P2P nodes.
 Eliminates reliance on opportunistic public-internet certificate exchanges.
 
 
@@ -55594,7 +55594,7 @@ TETA Authority Decay levels for continuous verification during prolonged DIL int
 ### class `TacticalIdentityCache` (L91)
 
 Tactical Identity Cache (TIC) per Tactical Edge Triad Architecture (TETA 2025/2026).
-Caches identities, roles, and pre-attested credentials for zero-trust authorization offline.
+Caches identities, roles, and pre-attested credentials for mutual authentication authorization offline.
 
 
 #### `TacticalIdentityCache.__init__` (L97)
@@ -55689,7 +55689,7 @@ Verify whether an action is permitted under the current decayed authority level.
 
 Pre-Mission Consensus Packaging per TETA Architecture (Campbell 2025/2026).
 Contains pre-authorized, multi-signed operational playbooks enabling autonomous
-mission execution during complete radio blackout without violating Zero Trust.
+mission execution during complete radio blackout without violating Mutual Authentication.
 
 
 #### `GovernanceEnvelope.__init__` (L192)
@@ -56953,7 +56953,7 @@ Test suite for 2027+ Defense-Grade hardening enforcements.
 
 ### class `TestZeroTrustRBAC` (L55)
 
-Test 1: Zero-Trust Role-Based Access Control and Granular Authorization.
+Test 1: Mutual Authentication Role-Based Access Control and Granular Authorization.
 
 - `setUp` (L58)
 
@@ -58401,7 +58401,7 @@ DoD cATO Pillar 2: Active Cyber Defense (ACD) Autonomous Response Suite.
 
 ### class `TestDoDZeroTrustSuite` (L333)
 
-DoD Zero Trust Architecture (ZTA 2.0) 2027 Target Level Evaluation Suite.
+DoD Mutual Authentication Architecture (ZTA 2.0) 2027 Target Level Evaluation Suite.
 
 - `test_zero_trust_7_pillar_scoring` (L336)
 
@@ -59791,7 +59791,7 @@ Returns:
 
 ## `threat_detection_response_system.py`
 
-Military-Grade Threat Detection and Response System for Secure P2P
+High-Assurance Threat Detection and Response System for Secure P2P
 Implements real-time threat detection algorithms, automatic security incident response,
 data exfiltration prevention, and comprehensive security monitoring.
 
@@ -64059,7 +64059,7 @@ problem with conservative parameters. It provides NIST Level 5 security.
 Key characteristics:
 - Algorithm family: Lattice-based (LWE)
 - Security level: NIST Level 5 (256-bit post-quantum security)
-- Conservative parameters for maximum security margin
+- Conservative parameters for strict profile margin
 - Larger key sizes but proven security foundations
 
 
@@ -64597,7 +64597,7 @@ Verify DoD cATO Pillar 2: Active Cyber Defense (ACD) automated response engine.
 def evaluate_gate_9_zero_trust_architecture(self)
 ```
 
-Verify DoD Zero Trust Strategy 2027 Target Level Capabilities (7 Pillars).
+Verify DoD Mutual Authentication Strategy 2027 Target Level Capabilities (7 Pillars).
 
 
 #### `AODecisionEngine.evaluate_gate_10_oscal_sar_poam` (L365)
@@ -64628,11 +64628,11 @@ Only a delegated Authorizing Official can grant/deny authorization.
 
 PROJECT SENTINEL - Production Deployment Verification Script
 
-This script verifies all requirements for military-grade secure P2P communication
+This script verifies all requirements for high-assurance secure P2P communication
 system production deployment. It performs comprehensive checks on:
 - Core module integrity and import verification
 - Cryptographic compliance (CNSA 2.0, NIST Level 5)
-- Zero Trust architecture verification
+- Mutual Authentication architecture verification
 - Supply chain security (DLL signatures)
 - Memory security verification
 - Audit logging verification
@@ -64660,7 +64660,7 @@ Complete verification report
 
 ### class `DeploymentVerifier` (L105)
 
-Production deployment verification for military-grade secure P2P system.
+Production deployment verification for high-assurance secure P2P system.
 
 This class performs comprehensive verification of all security requirements
 without making any modifications to the codebase.
@@ -64918,10 +64918,10 @@ _No docstring._
 ## `zero_trust_assessment.py`
 
 zero_trust_assessment.py
-Department of Defense (DoD) Zero Trust Architecture (ZTA 2.0) - 2027 Target Level Assessment.
+Department of Defense (DoD) Mutual Authentication Architecture (ZTA 2.0) - 2027 Target Level Assessment.
 
-Evaluates the Sovereign Military Communications Platform against the 7 Pillars of the
-official DoD Zero Trust Strategy:
+Evaluates the High-Assurance Operator-Controlled Communications Platform against the 7 Pillars of the
+official DoD Mutual Authentication Strategy:
 1. User: Continuous adaptive authentication, ML-DSA-87 credentials, zero unauthenticated bypass
 2. Device: Hardware TPM 2.0 physical PCR attestation (PCR 0/1/2/7), device health verification
 3. Applications & Workloads: Fail-closed boundaries, memory isolation, zero shell=True execution
@@ -64935,7 +64935,7 @@ Cryptographically signed with Post-Quantum ML-DSA-87 (FIPS 204).
 
 ### class `DoDZeroTrustEvaluator` (L110)
 
-Evaluates DoD Zero Trust Strategy 2027 Target Level Capabilities.
+Evaluates DoD Mutual Authentication Strategy 2027 Target Level Capabilities.
 
 
 #### `DoDZeroTrustEvaluator.__init__` (L113)
@@ -65016,7 +65016,7 @@ Pillar 7: Visibility & Analytics.
 def perform_full_assessment(self)
 ```
 
-Execute assessment across all 7 Zero Trust pillars.
+Execute assessment across all 7 Mutual Authentication pillars.
 
 
 ### `sign_and_export_zero_trust_assessment` (L306)
@@ -65025,7 +65025,7 @@ Execute assessment across all 7 Zero Trust pillars.
 def sign_and_export_zero_trust_assessment(output_dir: Path | None = None)
 ```
 
-Generate, export, and sign DoD Zero Trust assessment with ML-DSA-87.
+Generate, export, and sign DoD Mutual Authentication assessment with ML-DSA-87.
 
 
 ### `verify_zero_trust_assessment_signature` (L331)
@@ -65034,14 +65034,14 @@ Generate, export, and sign DoD Zero Trust assessment with ML-DSA-87.
 def verify_zero_trust_assessment_signature(report_path: Path, sig_path: Path, pub_path: Path)
 ```
 
-Verify ML-DSA-87 digital signature over DoD Zero Trust assessment.
+Verify ML-DSA-87 digital signature over DoD Mutual Authentication assessment.
 
 
 ## `zero_trust_engine.py`
 
-Zero-Trust Authentication Engine - Strict Verification
+Mutual Authentication Authentication Engine - Strict Verification
 
-This module implements zero-trust authentication with session termination
+This module implements mutual authentication authentication with session termination
 on ANY verification failure. No fallbacks permitted.
 
 Security Model:
@@ -65147,7 +65147,7 @@ Normalize str/Role/SecurityRole-ish input to minimal Role (default VIEWER).
 
 ### class `RBACPolicyEngine` (L167)
 
-Zero-Trust Role-Based Access Control (RBAC) Engine.
+Mutual Authentication Role-Based Access Control (RBAC) Engine.
 Enforces strict least-privilege permissions across all P2P operations.
 Default-deny policy.
 
@@ -65199,7 +65199,7 @@ Enforce permission or raise AuthorizationFailure (fail-closed).
 
 ### class `SessionState` (L265)
 
-Session states for zero-trust authentication
+Session states for mutual authentication authentication
 
 
 ### class `PeerIdentity` (L276)
@@ -65223,7 +65223,7 @@ Authentication event for audit logging
 
 ### class `ZeroTrustEngine` (L304)
 
-Zero-Trust Authentication Engine with Strict Verification
+Mutual Authentication Authentication Engine with Strict Verification
 
 SECURITY MODEL: FAIL-CLOSED
 - Mutual ML-DSA-87 signature verification required
@@ -65241,7 +65241,7 @@ Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
 def __init__(self, identity_key: bytes, signing_key: bytes)
 ```
 
-Initialize Zero-Trust Engine.
+Initialize Mutual Authentication Engine.
 
 Args:
     identity_key: Our ML-DSA-87 public key
@@ -66715,7 +66715,7 @@ Initialize security hardening - delegates to security module.
 def _enforce_maximum_security(self)
 ```
 
-Enforce maximum security - delegates to security module.
+Enforce strict profile - delegates to security module.
 
 
 #### `SecureP2PChat._enable_anti_debugging` (L818)
@@ -70820,16 +70820,16 @@ def main(argv=None)
 _No docstring._
 
 
-## `scripts\generate_sovereign_pki.py`
+## `scripts\generate_operator-controlled_pki.py`
 
-scripts/generate_sovereign_pki.py
+scripts/generate_operator-controlled_pki.py
 
-Generates the complete 2027+ Sovereign Post-Quantum PKI hierarchy for the
+Generates the complete 2027+ Operator-Controlled Post-Quantum PKI hierarchy for the
 DoD / Defense Agency ATO Pilot.
 
 Hierarchy:
-  1. Sovereign Root CA (Self-signed ML-DSA-87 + NIST P-521 anchor)
-  2. Sovereign Tactical Issuing CA (Sub CA signed by Root CA)
+  1. Operator-Controlled Root CA (Self-signed ML-DSA-87 + NIST P-521 anchor)
+  2. Operator-Controlled Tactical Issuing CA (Sub CA signed by Root CA)
   3. Tactical Node Alpha Identity Certificate (Signed by Sub CA)
   4. Tactical Node Bravo Identity Certificate (Signed by Sub CA)
   5. Hash-Chained Certificate Revocation List (CRL)
@@ -70875,8 +70875,8 @@ scripts/verify_host_hardening.py
 ================================
 Military & Defense Host Posture Defense Verifier.
 Conforming to:
-- DoD Zero Trust Strategy (Endpoint Pillar - Workstation Integrity & Posture)
-- NIST SP 800-207 (Zero Trust Architecture: Continuous Diagnostics and Mitigation)
+- DoD Mutual Authentication Strategy (Endpoint Pillar - Workstation Integrity & Posture)
+- NIST SP 800-207 (Mutual Authentication Architecture: Continuous Diagnostics and Mitigation)
 - NSA/CISA Technical Report: Defending Against Software Supply Chain & Physical Bus Interposition
 - DISA STIG (Security Technical Implementation Guide for Windows / Linux Endpoints)
 
@@ -71006,7 +71006,7 @@ _No docstring._
 Witnessed Key Ceremony Harness - NIST SP 800-57 / FIPS 140-3 Level 4 Compliant
 ================================================================================
 This script automates the formal cryptographic key generation ceremony for the
-Secure P2P Platform, establishing CNSA 2.0 sovereign root authority.
+Secure P2P Platform, establishing CNSA 2.0 operator-controlled root authority.
 
 Features:
 - M-of-N Multi-Party Custodian Quorum (default: 2-of-3 key custodians)
@@ -71452,11 +71452,11 @@ Requirements: 7.3
 Security hardening module for secure protection.
 
 This module implements security hardening operations including anti-debugging,
-maximum security enforcement, and security manager initialization.
+strict profile enforcement, and security manager initialization.
 
 Security features:
 - Anti-debugging protection with ptrace detection
-- Maximum security enforcement with no fallbacks
+- Strict profile enforcement with no fallbacks
 - Security hardening manager initialization
 - Process monitoring and exception handling
 - Self-healing and monitoring capabilities
@@ -71491,7 +71491,7 @@ Security hardening operations for secure protection.
 
 This class implements security hardening features including:
 - Anti-debugging protection
-- Maximum security enforcement
+- Strict profile enforcement
 - Security manager initialization
 - Process monitoring
 
@@ -71529,7 +71529,7 @@ Initialize fallback security components when enhanced components are not availab
 def enforce_maximum_security(self)
 ```
 
-Enforce maximum security requirements with no fallbacks.
+Enforce strict profile requirements with no fallbacks.
 
 
 #### `SecurityHardening.enable_anti_debugging` (L252)
@@ -72467,7 +72467,7 @@ def display_security_recommendations(self)
 Display security recommendations for addressing security warnings.
 
 This function provides users with actionable information about how to address
-security warnings and ensure maximum security for their application.
+security warnings and ensure strict profile for their application.
 
 
 #### `DisplayManager.display_message` (L364)
