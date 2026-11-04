@@ -288,7 +288,7 @@ class SessionManager:
     - Concurrent session support
     """
     
-    def __init__(self, audit_logger: Optional[Any] = None, session_timeout_seconds: int = 1800):
+    def __init__(self, audit_logger: Optional[Any] = None, session_timeout_seconds: int = 1800, authorized_peer_fingerprints: Optional[Any] = None):
         """
         Initialize the session manager.
         
@@ -298,6 +298,7 @@ class SessionManager:
         """
         self.sessions: Dict[str, SessionContext] = {}
         self.audit_logger = audit_logger
+        self.authorized_peer_fingerprints = authorized_peer_fingerprints
         self._lock = asyncio.Lock()
         # 2028 hardening: bound session table (DoS). Fail-closed beyond cap.
         self._max_sessions = 16
@@ -442,7 +443,8 @@ class SessionManager:
             hybrid_kex = HybridKeyExchange(
                 identity=f"session_{peer_id}",
                 ephemeral=True,
-                in_memory_only=True
+                in_memory_only=True,
+                authorized_peer_fingerprints=self.authorized_peer_fingerprints
             )
             logger.debug(f"Initialized HybridKeyExchange for {peer_id}")
             
