@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-transport_anonymity.py — Network transport and anonymity for TOP SECRET
+transport_anonymity.py — Network transport and traffic shaping for strict profile
 transmission over the public internet (2027 target posture, item #4).
 
 What this IS (all real, fail-closed, no simulations):
 
   OVERLAY: endpoints never connect directly over public IP in production
-    or TOP SECRET mode. Allowed paths are Tor v3 onion routing via a live
+    or strict profile mode. Allowed paths are Tor v3 onion routing via a live
     local SOCKS5 proxy (real RFC 1928 CONNECT, hostname passed to the
-    proxy so no local DNS leak), or a sovereign path (private APN /
+    proxy so no local DNS leak), or a private overlay path (private APN /
     WireGuard / air-gapped overlay) proven by interface-pinned peer prefix
     plus an explicit overlay-active flag. Direct public sockets are refused
-    by policy engine plus tactical cloak plus peer-prefix gates composed here.
+    by policy engine plus stealth knock filter plus peer-prefix gates composed here.
 
   SHAPING: constant-rate constant-size cells inside the overlay tunnel.
     Every 50 ms one 1232 byte cell is emitted whether the user is typing,
@@ -28,7 +28,7 @@ What this IS (all real, fail-closed, no simulations):
     fixed rate, or Tor pluggable-transport bytes when a PT is configured.
 
 What this IS NOT:
-  Software cannot conjure sovereign dark fiber, certified mixnet
+  Software cannot conjure physical isolated dark fiber, certified mixnet
   infrastructure, or a pluggable-transport binary. Those are deployment
   properties: dark fiber is proven by the peer-prefix plus overlay-active
   attestation; Tor must be a live local daemon (proxy check dials it);
@@ -219,12 +219,12 @@ def check_tor_proxy_live(timeout: float = 3.0) -> bool:
 def require_overlay(host: str, port: int) -> Dict[str, Any]:
     """Fail-closed overlay gate. Returns the accepted path description.
 
-    Strict (production or TOP SECRET) policy:
+    Strict (production or strict profile) policy:
       onion destination always accepted (Tor onion routing);
       otherwise the configured transport mode must be one of tor,
       private_apn, wireguard, air_gapped, AND:
         tor mode additionally requires a live local SOCKS5 proxy;
-        sovereign modes additionally require overlay-active flag plus a
+        isolated overlay modes additionally require overlay-active flag plus a
         pinned peer prefix covering a literal peer IP.
     Lab allows loopback and private hosts for testing.
     """
@@ -239,7 +239,7 @@ def require_overlay(host: str, port: int) -> Dict[str, Any]:
         if is_loopback_or_private(peer):
             return {"path": "lab-direct", "host": peer, "port": port}
         raise OverlayError("overlay rejected")
-    # Strict: compose the deployed policy engine with the tactical cloak
+    # Strict: compose the deployed policy engine with the stealth knock filter
     # and the peer-prefix pin. Any single refusal aborts.
     try:
         from cnsa2_policy_engine import get_policy_engine
@@ -380,7 +380,7 @@ def open_overlay_socket(host: str, port: int,
             return socket.create_connection((host.strip().strip("[]"), port),
                                             timeout=timeout)
         except Exception as exc:
-            log.debug("sovereign dial refused: %r", exc)
+            log.debug("overlay dial refused: %r", exc)
             raise OverlayError("overlay rejected")
     if path in ("tor", "tor-onion"):
         proxy_host, proxy_port = tor_proxy_endpoint()
@@ -533,7 +533,7 @@ class ShaperRx:
     """Reassembles length-prefixed frames from a uniform cell stream.
 
     Counters stay synchronized because the overlay socket is reliable and
-    ordered (TCP via Tor or sovereign path): every emitted cell, real or
+    ordered (TCP via Tor or isolated overlay path): every emitted cell, real or
     cover, advances the sequence by one. Both ends exchange their random
     start values inside the encrypted handshake before shaping starts, so
     the receiver knows the expected value without any cleartext marker.
@@ -805,7 +805,7 @@ def anonymous_send(
     """End-to-end anonymous send: overlay plus constant-rate uniform cells.
 
     The ST2027 handshake runs inside outer TLS 1.3 carried by the accepted
-    overlay (Tor onion/proxy or attested sovereign path), so deep packet
+    overlay (Tor onion/proxy or attested isolated overlay path), so deep packet
     inspection observes only pluggable-transport or tunnel bytes. The data
     phase then flows as fixed 1232 byte uniform cells every 50 ms in both
     directions, with cover whenever idle. Dual control is enforced before
