@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-DESTROYER ST2027 — SOVEREIGN DEFENSE COMMAND CENTER
+ST2027 PROTOCOL SUITE COMMAND CENTER
 ====================================================
 Master Operational Launcher & Zero-Gap Defense Orchestrator
-NSA CNSA Suite 2.0 // FIPS 203 / 204 / 205 // DoD S-5210.41M NC3
+NSA CNSA Suite 2.0 // FIPS 203 / 204 / 205 // Two-Person Rule
 
 Unified single-command interface integrating:
   1. Tactical Web Console (DEFCON-1 Mission Control GUI)
-  2. Sovereign Tactical P2P Node (Hardware-Paced Wire Camouflage)
+  2. P2P Terminal Node (Hardware-Paced Wire Camouflage)
   3. Interactive Operations Suite (Comprehensive 5-Year Monolith + Zero-Gap Pipeline)
   4. Simplex Optical Data Diode (Air-Gapped Unidirectional Transmission)
   5. Master Defense Audit Harness (10/10 Cryptographic Assurance Gates)
-  6. 50X Sovereign Defense Superiority Benchmark Drill
+  6. Protocol Performance Benchmark Drill
   7. Emergency Volatile & Media Zeroization (NIST SP 800-88 / DoD 5220.22-M)
 """
 
@@ -41,17 +41,17 @@ CYAN = "\033[96m"
 WHITE = "\033[97m"
 
 def print_master_banner():
-    """Print the sovereign DEFCON-1 tactical banner."""
+    """Print the protocol command banner."""
     print(f"""{BOLD}{CYAN}
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║              DESTROYER ST2027 // SOVEREIGN MILITARY COMMAND CENTER                   ║
+║              ST2027 PROTOCOL SUITE // COMMAND CENTER                   ║
 ║         [TOP SECRET // NSA CNSA SUITE 2.0 // NOFORN // ZERO SINGLE-POINT-TRUST]       ║
 ╚══════════════════════════════════════════════════════════════════════════════════════╝{RESET}
 {DIM}  • Quantum Cryptography : FIPS 203 ML-KEM-1024 + Classic McEliece + FIPS 204 ML-DSA-87
   • Wire Camouflage      : Hardware-Paced Continuous CSPRNG Chaff (H ≥ 7.95 bits/byte)
   • Air-Gap Transit      : Cauchy Reed-Solomon Simplex Optical Data Diode (K=8, M=4)
   • Defense-in-Depth     : Python Inner Ratchet ↔ Rust Native AEAD ↔ Noise_XXhfs CER
-  • Nuclear Command NC3  : Two-Person Rule Universal EAM (120-Second Temporal Lifetime)
+  • Dual Authorization     : Two-Person Rule Cryptographic Directive (120-Second Lifetime)
   • Anti-Forensic Defense: DoD 5220.22-M 3-Pass Media Shredding & Volatile Zeroization{RESET}
 """)
 
@@ -116,8 +116,8 @@ def launch_web_console():
 
 
 def launch_tactical_node(role: str = "interactive"):
-    """Launch the Sovereign Tactical P2P Node."""
-    print(f"\n{BOLD}{CYAN}[COMMAND] Launching Sovereign Tactical P2P Node ({role})...{RESET}")
+    """Launch the P2P Terminal Node."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Launching P2P Terminal Node ({role})...{RESET}")
     cmd = [sys.executable, str(ROOT / "secure_p2p.py")]
     if role and role != "interactive":
         cmd.append(role)
@@ -267,8 +267,8 @@ def run_master_defense_audit():
 
 
 def run_50x_superiority_benchmark():
-    """Run the 50X Sovereign Defense Superiority empirical benchmark."""
-    print(f"\n{BOLD}{CYAN}[COMMAND] Running 50X Sovereign Superiority Empirical Benchmark...{RESET}")
+    """Run the protocol performance empirical benchmark."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Running Protocol Performance Empirical Benchmark...{RESET}")
     cmd = [sys.executable, str(ROOT / "scripts" / "verify_50x_sovereign_superiority.py")]
     subprocess.run(cmd)
 
@@ -288,9 +288,9 @@ def run_cjadc2_data_fabric_drill():
 
 
 def run_sovereign_sel4_appliance_drill():
-    """Execute live simulation drill of the seL4 Sovereign Appliance MILS Architecture."""
+    """Execute live simulation drill of the seL4 Appliance Architecture."""
     print(f"\n{BOLD}{CYAN}================================================================================{RESET}")
-    print(f"{BOLD}{CYAN}  DESTROYER ST2027 // EAL6+ seL4 SOVEREIGN HARDWARE APPLIANCE DRILL             {RESET}")
+    print(f"{BOLD}{CYAN}  ST2027 // seL4 DOMAIN SEPARATION APPLIANCE SIMULATION DRILL             {RESET}")
     print(f"{BOLD}{CYAN}  [MILS 3-DOMAIN ISOLATION: RED (Plaintext) <-> CRYPTO (Native) <-> BLACK (Network)]{RESET}")
     print(f"{BOLD}{CYAN}================================================================================{RESET}")
     from sovereign_sel4_appliance import SovereignApplianceNode
@@ -302,7 +302,7 @@ def run_sovereign_sel4_appliance_drill():
     print(f"{GREEN}          * Zero non-bypassable RED-BLACK channels confirmed.{RESET}")
     print(f"{GREEN}          * Hardware Key Isolation verified (crypto_locked_keys quarantined to CRYPTO).{RESET}")
 
-    print(f"\n{GREEN}[STAGE 2] Instantiating Dual Sovereign Nodes (NORAD_ALPHA & PENTAGON_BRAVO)...{RESET}")
+    print(f"\n{GREEN}[STAGE 2] Instantiating Dual Nodes (NODE_ALPHA & NODE_BRAVO)...{RESET}")
     psk = secrets.token_bytes(32)
     node_alpha = SovereignApplianceNode("NORAD_ALPHA", psk=psk)
     node_bravo = SovereignApplianceNode("PENTAGON_BRAVO", psk=psk)
@@ -336,7 +336,7 @@ def run_sovereign_sel4_appliance_drill():
     assert len(chaff_cell) == 1232
     print(f"{GREEN}          * Idle cycle emitted synthetic cover traffic: {len(chaff_cell)} bytes (0xFF Chaff).{RESET}")
     print(f"{BOLD}{GREEN}================================================================================")
-    print(f"  [DRILL SUCCESSFUL] EAL6+ seL4 SOVEREIGN APPLIANCE 100% OPERATIONAL")
+    print(f"  [DRILL SUCCESSFUL] seL4 DOMAIN SEPARATION APPLIANCE SIMULATION OPERATIONAL")
     print(f"================================================================================{RESET}")
 
 
@@ -412,18 +412,18 @@ def interactive_menu_loop():
     probe_hardware_and_environment()
 
     while True:
-        print(f"\n{BOLD}{CYAN}SOVEREIGN COMMAND CENTER — SELECT MISSION MODULE:{RESET}")
+        print(f"\n{BOLD}{CYAN}COMMAND CENTER — SELECT MODULE:{RESET}")
         print(f"  {GREEN}[1] Tactical Web Console (DEFCON-1 Mission Control GUI on localhost:8080){RESET}")
-        print(f"  {GREEN}[2] Sovereign Tactical P2P Node (Hardware-Paced Military Enclave){RESET}")
+        print(f"  {GREEN}[2] P2P Terminal Node (Hardware-Paced Enclave){RESET}")
         print(f"  {GREEN}[3] Full Interactive Operations Suite (5-Year Monolith + Zero-Gap Pipeline){RESET}")
         print(f"  {GREEN}[4] Simplex Optical Data Diode Air-Gap Transfer Station{RESET}")
         print(f"  {GREEN}[5] Spawn Dual Tactical Military Terminals Side-by-Side (NORAD vs Pentagon){RESET}")
         print(f"  {CYAN}[6] Execute DoD CJADC2 Phase 6 Tactical Data Fabric & MLS Cross-Domain Drill{RESET}")
         print(f"  {CYAN}[7] Execute Automated Defense Master Audit (10/10 Cryptographic Gates){RESET}")
-        print(f"  {CYAN}[8] Run 50X Sovereign Defense Superiority Empirical Benchmark{RESET}")
+        print(f"  {CYAN}[8] Run Protocol Performance Empirical Benchmark{RESET}")
         print(f"  {CYAN}[9] Run Two-Terminal Automated Tactical Drill (In-Process Demo){RESET}")
         print(f"  {MAGENTA}[10] Inspect Platform Hardware TPM 2.0 PCR Attestation Quote{RESET}")
-        print(f"  {MAGENTA}[11] Run Sovereign seL4 Hardware Appliance MILS Drill (RED/CRYPTO/BLACK){RESET}")
+        print(f"  {MAGENTA}[11] Run seL4 Hardware Appliance Simulation Drill (RED/CRYPTO/BLACK){RESET}")
         print(f"  {RED}[12] Emergency Post-Session Zeroization (NIST SP 800-88 / DoD 5220.22-M){RESET}")
         print(f"  {WHITE}[13] Exit Command Center{RESET}")
         print("=" * 86)
@@ -466,7 +466,7 @@ def interactive_menu_loop():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Destroyer ST2027 Sovereign Military Command Center")
+    parser = argparse.ArgumentParser(description="ST2027 Protocol Suite Command Center")
     parser.add_argument("mode", nargs="?", default="interactive",
                         choices=["interactive", "web", "tactical", "alpha", "bravo", "chat",
                                  "audit", "benchmark", "drill", "cjadc2", "terminals", "tpm", "zeroize", "sel4"],
