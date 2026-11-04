@@ -13856,25 +13856,42 @@ class SecureP2PChat:
 
         if interactive:
             cmd.append("--stdin")
+        if _production() and not self.zero_gap_enabled:
+            raise RuntimeError(f"[{name}] Defense-in-depth: zero_gap inner pipeline mandatory in production")
+
         if auto_reply:
-            if self.zero_gap_enabled and self._zero_gap_pipeline and self.zero_gap_ratchet:
+            if self.zero_gap_enabled:
+                if not (self._zero_gap_pipeline and self.zero_gap_ratchet):
+                    raise RuntimeError(f"[{name}] Zero-gap inner pipeline required but uninitialized")
                 try:
                     sealed = self._zero_gap_pipeline.seal(auto_reply.encode("utf-8"), self.zero_gap_ratchet)
                     auto_reply = "ZGDP:" + base64.b64encode(sealed).decode("ascii")
+                    cmd.extend(["--reply", auto_reply])
                 except Exception as e:
-                    print(f"{YELLOW}[{name} ZERO-GAP] auto_reply seal notice: {e}{RESET}")
-            cmd.extend(["--reply", auto_reply])
+                    if _production():
+                        raise RuntimeError(f"[{name}] Zero-gap seal failure (downgrade refused): {e}") from e
+                    print(f"{RED}[{name} ZERO-GAP] auto_reply seal failure (dropped): {e}{RESET}")
+            else:
+                cmd.extend(["--reply", auto_reply])
+
         if recv_count > 0:
             cmd.extend(["--recv-count", str(recv_count)])
+
         if initial_msgs:
             for m in initial_msgs:
-                if self.zero_gap_enabled and self._zero_gap_pipeline and self.zero_gap_ratchet:
+                if self.zero_gap_enabled:
+                    if not (self._zero_gap_pipeline and self.zero_gap_ratchet):
+                        raise RuntimeError(f"[{name}] Zero-gap inner pipeline required but uninitialized")
                     try:
                         sealed = self._zero_gap_pipeline.seal(m.encode("utf-8"), self.zero_gap_ratchet)
                         m = "ZGDP:" + base64.b64encode(sealed).decode("ascii")
+                        cmd.extend(["--msg", m])
                     except Exception as e:
-                        print(f"{YELLOW}[{name} ZERO-GAP] initial_msg seal notice: {e}{RESET}")
-                cmd.extend(["--msg", m])
+                        if _production():
+                            raise RuntimeError(f"[{name}] Zero-gap initial_msg seal failure (downgrade refused): {e}") from e
+                        print(f"{RED}[{name} ZERO-GAP] initial_msg seal failure (dropped): {e}{RESET}")
+                else:
+                    cmd.extend(["--msg", m])
 
         self.channel_proc = subprocess.Popen(
             cmd,
@@ -13903,14 +13920,27 @@ class SecureP2PChat:
                             if msg_type == 0x03:  # PIPELINE_TYPE_NC3
                                 try:
                                     eam_data = json.loads(msg_decoded)
+                                    if not isinstance(eam_data, dict):
+                                        raise ValueError("NC3 directive payload must be a JSON dictionary")
+                                    # Enforce Two-Person Rule authentication (F-08 remediation)
+                                    two_person = eam_data.get("two_person_rule")
+                                    if _production():
+                                        if two_person != "VERIFIED_2_OF_2":
+                                            print(f"\n{BOLD}{RED}[{name} NC3 SECURITY VIOLATION] Directive dropped: Two-Person Rule unverified ({two_person}){RESET}\n[{name}] > ", end="", flush=True)
+                                            continue
+                                        expires_at = eam_data.get("expires_at", 0)
+                                        if expires_at and expires_at < time.time():
+                                            print(f"\n{BOLD}{RED}[{name} NC3 SECURITY VIOLATION] Directive dropped: Temporal expiration guard (expired){RESET}\n[{name}] > ", end="", flush=True)
+                                            continue
                                     print(f"\n{BOLD}{RED}[{name} TOP SECRET NC3/EAM DIRECTIVE RECEIVED]{RESET}")
                                     print(f"  {YELLOW}• Classification : {eam_data.get('classification')}{RESET}")
                                     print(f"  {YELLOW}• Originator     : {eam_data.get('originator')}{RESET}")
-                                    print(f"  {YELLOW}• Two-Person Rule: {eam_data.get('two_person_rule')}{RESET}")
+                                    print(f"  {YELLOW}• Two-Person Rule: {two_person}{RESET}")
                                     print(f"  {RED}{BOLD}• DIRECTIVE      : {eam_data.get('directive')}{RESET}\n[{name}] > ", end="", flush=True)
                                     continue
-                                except Exception:
-                                    print(f"\n{BOLD}{RED}[{name} ZERO-GAP NC3 DIRECTIVE]{RESET} {msg_decoded}\n[{name}] > ", end="", flush=True)
+                                except Exception as exc:
+                                    # Never display unverified raw content as a directive
+                                    print(f"\n{BOLD}{RED}[{name} NC3 SECURITY FAULT] Malformed NC3 directive rejected: {exc}{RESET}\n[{name}] > ", end="", flush=True)
                                     continue
                             elif msg_decoded.startswith("COT:"):
                                 cot_json = msg_decoded[4:]
@@ -14617,8 +14647,14 @@ class TacticalP2PNode:
                                 try:
                                     eam_data = deserialize_eam_wire(plaintext)
                                     custodians = eam_data.get("custodians", [])
-                                    sender_pub1 = bytes.fromhex(custodians[0]["public_key"]) if len(custodians) > 0 else b""
-                                    sender_pub2 = bytes.fromhex(custodians[1]["public_key"]) if len(custodians) > 1 else b""
+                                    if len(custodians) < 2:
+                                        raise ValueError("Two-Person Rule violation: fewer than two custodians provided")
+                                    sender_pub1 = bytes.fromhex(custodians[0]["public_key"])
+                                    sender_pub2 = bytes.fromhex(custodians[1]["public_key"])
+                                    if sender_pub1 == sender_pub2:
+                                        raise ValueError("Two-Person Rule violation: identical custodian keys (distinct officers required)")
+                                    if eam_data.get("expires_at", 0) and eam_data.get("expires_at", 0) < time.time():
+                                        raise ValueError("Temporal expiration guard: EAM has expired")
 
                                     if "alpha" in self.name.lower() or "norad" in self.name.lower():
                                         r1_id, r2_id = "GEN_ALPHA", "ADM_BRAVO"

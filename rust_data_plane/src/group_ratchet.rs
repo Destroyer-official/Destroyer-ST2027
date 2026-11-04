@@ -877,4 +877,84 @@ mod tests {
             Err(GroupError::MemberNotFound)
         );
     }
+
+    #[test]
+    fn test_f07_forged_frame_rejection_across_all_receive_paths() {
+        let epoch_secret = [0x7au8; 48];
+        let mut alpha = SovereignGroupRatchet::new("DEFCON-F07".into(), "ALPHA".into(), epoch_secret).unwrap();
+        let mut bravo = SovereignGroupRatchet::new("DEFCON-F07".into(), "BRAVO".into(), epoch_secret).unwrap();
+
+        let alpha_init_chain = SovereignGroupRatchet::derive_sender_chain(&alpha.epoch_secret, "ALPHA", 0).unwrap();
+        let bravo_init_chain = SovereignGroupRatchet::derive_sender_chain(&bravo.epoch_secret, "BRAVO", 0).unwrap();
+        alpha.add_member("BRAVO".into(), bravo_init_chain);
+        bravo.add_member("ALPHA".into(), alpha_init_chain);
+
+        // Path 1: Unknown sender / unenrolled member
+        let frame0 = alpha.encrypt_group_message(b"MSG-0-TEST").unwrap();
+        assert_eq!(
+            bravo.decrypt_group_message("UNKNOWN_OPERATOR", &frame0),
+            Err(GroupError::MemberNotFound)
+        );
+        assert_eq!(bravo.skipped_message_keys.len(), 0);
+
+        // Path 2: Future epoch rejection (e.g. frame with epoch 99)
+        let mut future_frame = frame0.clone();
+        future_frame[0..8].copy_from_slice(&99u64.to_be_bytes());
+        assert_eq!(
+            bravo.decrypt_group_message("ALPHA", &future_frame),
+            Err(GroupError::InvalidEpoch)
+        );
+
+        // Path 3: Out-of-order delivery with skipped key, followed by forged frame for skipped key
+        let frame1 = alpha.encrypt_group_message(b"MSG-1-TEST").unwrap();
+        let frame2 = alpha.encrypt_group_message(b"MSG-2-TEST").unwrap();
+
+        // Frame 2 arrives first -> seq 0 and seq 1 are skipped
+        let dec2 = bravo.decrypt_group_message("ALPHA", &frame2).unwrap();
+        assert_eq!(dec2, b"MSG-2-TEST");
+        assert_eq!(bravo.skipped_message_keys.len(), 2);
+        assert_eq!(bravo.members["ALPHA"].message_seq, 3);
+
+        // Attacker creates forged frame for skipped seq 1 (tampered ciphertext)
+        let mut forged_frame1 = frame1.clone();
+        let last = forged_frame1.len() - 1;
+        forged_frame1[last] ^= 0x42;
+
+        let res_forged = bravo.decrypt_group_message("ALPHA", &forged_frame1);
+        assert_eq!(res_forged, Err(GroupError::AuthenticationFailed));
+        // Crucial invariant: Skipped key cache is preserved (not purged on unauthenticated frame)
+        assert_eq!(bravo.skipped_message_keys.len(), 2);
+        assert_eq!(bravo.members["ALPHA"].message_seq, 3);
+
+        // Legitimate frame 1 arrives and decrypts cleanly using the cached key
+        let dec1 = bravo.decrypt_group_message("ALPHA", &frame1).unwrap();
+        assert_eq!(dec1, b"MSG-1-TEST");
+        assert_eq!(bravo.skipped_message_keys.len(), 1);
+
+        // Path 4: Replay of already delivered message seq 1 rejected fail-closed
+        assert_eq!(
+            bravo.decrypt_group_message("ALPHA", &frame1),
+            Err(GroupError::SequenceMismatch)
+        );
+
+        // Path 5: Legitimate frame 0 arrives and consumes remaining skipped key
+        let dec0 = bravo.decrypt_group_message("ALPHA", &frame0).unwrap();
+        assert_eq!(dec0, b"MSG-0-TEST");
+        assert_eq!(bravo.skipped_message_keys.len(), 0);
+
+        // Path 6: Stale epoch rejection after PCS epoch advancement
+        let frame3 = alpha.encrypt_group_message(b"MSG-3-PRE-EPOCH").unwrap();
+        let entropy = [0xeeu8; 48];
+        alpha.advance_epoch(&entropy).unwrap();
+        bravo.advance_epoch(&entropy).unwrap();
+        assert_eq!(bravo.epoch, 1);
+
+        // Attempting to deliver frame from epoch 0 when receiver is at epoch 1 must fail
+        assert_eq!(
+            bravo.decrypt_group_message("ALPHA", &frame3),
+            Err(GroupError::InvalidEpoch)
+        );
+        // Epoch 1 remains intact
+        assert_eq!(bravo.epoch, 1);
+    }
 }

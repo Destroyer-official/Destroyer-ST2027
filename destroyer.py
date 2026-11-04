@@ -71,7 +71,10 @@ def probe_hardware_and_environment():
     # 2. LibOQS Post-Quantum Library
     oqs_dll = ROOT / ("oqs.dll" if os.name == "nt" else "liboqs.so")
     oqs_ok = oqs_dll.exists()
-    status_oqs = f"{GREEN}[ACTIVE]{RESET} FIPS 203/204/205 Validated (100% KATs)" if oqs_ok else f"{RED}[ABSENT]{RESET}"
+    status_oqs = (
+        f"{GREEN}[PRESENT]{RESET} Native liboqs binary loaded (FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87; CMVP module certificate pending)"
+        if oqs_ok else f"{RED}[ABSENT]{RESET}"
+    )
     print(f"  • LibOQS PQC Engine        : {status_oqs}")
 
     # 3. Hardware TPM 2.0 / CNG

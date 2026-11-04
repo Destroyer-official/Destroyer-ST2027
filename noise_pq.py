@@ -463,9 +463,23 @@ def _warn_unproven_profile_once() -> None:
     handshake hash) has no reduction to the hfs draft or PQNoise. Documented
     in module header, README, ST2027_SPEC, RUST_CORE, and the ProVerif model.
     This surfaces the same fact at session start under production env flags
-    so operators cannot miss it.
+    so operators cannot miss it. When STRICT_NSS_GATE or
+    P2P_REQUIRE_CERTIFIED_HANDSHAKE is armed, it fails closed immediately
+    with NoiseError to prevent uncertified profile deployment (F-05 remediation).
     """
     global _PROD_UNPROVEN_WARNED
+
+    # Fail-closed gate: if strict certified handshake is enforced, refuse uncertified profile
+    strict_cert = (
+        os.environ.get("STRICT_NSS_GATE", "").strip().lower() in ("1", "true", "yes", "on")
+        or os.environ.get("P2P_REQUIRE_CERTIFIED_HANDSHAKE", "").strip().lower() in ("1", "true", "yes", "on")
+    )
+    if strict_cert:
+        raise NoiseError(
+            "Noise_XXhfs profile uses uncertified custom signature substitution; "
+            "rejected under STRICT_NSS_GATE (F-05 fail-closed policy)."
+        )
+
     if _PROD_UNPROVEN_WARNED:
         return
     from production_gate import is_production

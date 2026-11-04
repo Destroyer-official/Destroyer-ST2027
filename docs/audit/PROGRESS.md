@@ -59,14 +59,20 @@ All 18 product modules have been audited, cross-checked against implementation s
 
 ---
 
-## 4. Forensic Security Audit Remediations (F-01 through F-04)
+## 4. Forensic Security Audit Remediations (F-01 through F-10)
 
 | Finding ID | Severity | Module / File | Root Cause | Remediation & Evidence | Status |
 |---|---|---|---|---|---|
 | **F-01** | High | `hybrid_kex_legacy.py`, `hybrid_kex.py` | `self.authorized_peer_fingerprints` uninitialized in `HybridKeyExchange.__init__`; first-contact unknown peers bypassed production whitelist check without anchoring. | Initialized `authorized_peer_fingerprints` in `__init__`; enforced fail-closed rejection on unanchored peers under strict/production posture; separated in-memory vs disk pin stores; atomic pin commit on signature success. Verified by `tests/test_f01_identity_anchor.py` (3/3 pass). | RESOLVED |
-| **F-02** | Medium | `rust_data_plane/src/group_ratchet.rs` | `self.skipped_message_keys.remove(&lookup_key)` executed before AES-GCM tag verification; forged ciphertext caused permanent key deletion. | Changed to `.get(&lookup_key).cloned()` before AEAD decryption; remove executed strictly after authentication succeeds. Verified by `test_f02_skipped_message_key_survives_forged_auth_failure` (187/187 cargo tests pass). | RESOLVED |
+| **F-02** | Medium | `rust_data_plane/src/group_ratchet.rs` | `self.skipped_message_keys.remove(&lookup_key)` executed before AES-GCM tag verification; forged ciphertext caused permanent key deletion. | Changed to `.get(&lookup_key).cloned()` before AEAD decryption; remove executed strictly after authentication succeeds. Verified by `test_f02_skipped_message_key_survives_forged_auth_failure` (188/188 cargo tests pass). | RESOLVED |
 | **F-03** | Med-High | `noise_pq.py` | `NoiseSession.destroy()` and `quarantine()` zeroized transport buffers but left `sig_sk` and `_e_priv` alive. | In `destroy()`: unlocked and zeroized mutable `sig_sk`, cleared `sig_sk = None`, cleared `_e_priv = None`. In `quarantine()`: purged public metadata and latched shut. Verified by `test_f03_noise_session_sig_sk_and_epriv_destroyed` (12/12 purity tests pass). | RESOLVED |
 | **F-04** | Medium | Repository CI / Branch Rules | `main` branch permitted pushes without required status checks or reviews. | Documented branch protection and CI gate recommendations in `docs/audit/findings/F-01_to_F-04.md` and `docs/audit/proposals.md` (require PR reviews, CI status check passing, signed commits). | DOCUMENTED |
+| **F-05** | High Assurance | `noise_pq.py` | Noise profile warning vs fail-closed policy mismatch in production posture. | Added explicit fail-closed policy refusal under `STRICT_NSS_GATE` / `P2P_REQUIRE_CERTIFIED_HANDSHAKE`; documented symbolic security properties in `docs/audit/findings/F-05_to_F-10.md`. | RESOLVED |
+| **F-06** | Medium | `secure_transmit_2027.py`, `transport_anonymity.py` | Ingress file write used predictable `dest + ".tmp"` and followed symlinks. | Implemented `_secure_atomic_write` using `O_EXCL`, `O_NOFOLLOW`, 0o600 mode, and random temp names. Verified by `tests/test_f06_symlink_atomic_write.py`. | RESOLVED |
+| **F-07** | Medium / Testing | `rust_data_plane/src/group_ratchet.rs` | Group ratchet receive error path coverage gaps across edge cases. | Added `test_f07_forged_frame_rejection_across_all_receive_paths()` exercising 6 distinct failure and recovery paths. Verified by `cargo test` (188/188 pass). | RESOLVED |
+| **F-08** | High Assurance | `secure_p2p.py` | Tactical NC3 EAM directives lacked Two-Person Rule verification on receiver path. | Enforced `two_person_rule == "VERIFIED_2_OF_2"`, dual distinct officer keys, temporal validity, and malformed payload rejection. Verified by `tests/test_f08_f09_tactical_and_inner_ratchet.py`. | RESOLVED |
+| **F-09** | Medium | `secure_p2p.py` | Enclave channel launcher silently passed cleartext on inner ratchet sealing failures. | Enforced mandatory zero-gap inner ratchet in production and fail-closed exception on sealing errors. Verified by `tests/test_f08_f09_tactical_and_inner_ratchet.py`. | RESOLVED |
+| **F-10** | Medium | `destroyer.py` | Hardware probe conflated presence of `oqs.dll` with formal NIST CMVP module validation. | Decoupled binary presence from CMVP certification status. Verified by `tests/test_f10_fips_reporting.py`. | RESOLVED |
 
 ---
 

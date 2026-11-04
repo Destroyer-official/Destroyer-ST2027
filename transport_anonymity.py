@@ -1092,9 +1092,11 @@ def anonymous_recv(
                                 raise OverlayError("overlay rejected")
                             dest = _Path(out_path) if out_path is not None \
                                 else _Path("received_anon.bin")
-                            tmp = dest.with_suffix(dest.suffix + ".tmp")
-                            tmp.write_bytes(blob)
-                            os.replace(tmp, dest)
+                            try:
+                                dest = st._secure_atomic_write(dest, blob)
+                            except Exception as exc:
+                                log.debug("atomic write refused: %r", exc)
+                                raise OverlayError("overlay rejected")
                             # Acknowledge inside the shaped stream so the
                             # sender can stop its pump without a timing leak.
                             # Must be DATA (sender acks DATA only; chaff is

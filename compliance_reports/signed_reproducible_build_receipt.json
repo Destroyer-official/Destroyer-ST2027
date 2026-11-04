@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-04T12:18:53.080567+00:00",
+  "timestamp_utc": "2026-11-04T13:06:48.625198+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 876004,
-      "sha3_512": "9e86975bc89a0a5aad01530154cc3f059275afc30e67769579d018a988873ff679de38cc0d87ffaf411af2e2445648e9b25c18bfd0b1031575d97c3dd6dd34b0"
+      "size_bytes": 878934,
+      "sha3_512": "deb6e58e260a52c5822b13172bb23b6b1fa9366cb8f10a7e3a17fe5462ff1e67932e8980379bd4e85f78d214374b454a147cc9ca1225bcaf57cf21f5619d76d4"
     }
   },
   "sbom_status": {
@@ -65,11 +65,11 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "39de2125ba50f2d6a69c3fcc7ed1f2cf8d4c347487d0764bcd6ada2c0d5cf66f02f09ce6882b9723bb7da545617692f1eac0cfd638d508907db1eb5476053479",
+  "source_tree_merkle_root": "998ba119b78f50fcc70bbd5ad3951bb3b476012f87c0fc1c01786dfda4ecb7f2f2b3c92911ecbbfa12be697be60251a2ffb555eee5483f40a547df24834750d3",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
-      "expected_sha3_512": "e659d26beae64a08414d8ebb4a9642a55938ff3ae932ba36ad7973b659ae5b17e1930cc504348e0c745fe33c91411e99a160ee0b67cc153e45e5116c971b3200",
-      "actual_sha3_512": "e659d26beae64a08414d8ebb4a9642a55938ff3ae932ba36ad7973b659ae5b17e1930cc504348e0c745fe33c91411e99a160ee0b67cc153e45e5116c971b3200",
+      "expected_sha3_512": "92292e0a2b943d39441dc92d4126dba8f6c7d579b6020aa89e44ac12f692070075cb3b4e9a22653702de2e17fda319baf8238da3b4bc0f756f15b1ea3185dfa2",
+      "actual_sha3_512": "92292e0a2b943d39441dc92d4126dba8f6c7d579b6020aa89e44ac12f692070075cb3b4e9a22653702de2e17fda319baf8238da3b4bc0f756f15b1ea3185dfa2",
       "matched": true
     },
     "rust_data_plane/src/main.rs": {

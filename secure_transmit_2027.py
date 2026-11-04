@@ -201,6 +201,48 @@ def _pad_len(n: int) -> int:
     raise SecurityError("record too large")
 
 
+def _secure_atomic_write(dest: Path | str, blob: bytes) -> Path:
+    """Atomic file write with symlink prevention and restricted permissions (remediating F-06).
+
+    Rejects existing symlinks at destination or destination parent.
+    Writes payload to an unguessable temporary file with mode 0o600 and O_EXCL/O_NOFOLLOW,
+    fsyncs to persistent storage, and performs an atomic replace into dest.
+    """
+    dest = Path(dest)
+    parent = dest.parent.resolve()
+    if dest.is_symlink() or parent.is_symlink():
+        raise SecurityError("symlink target refused")
+    if dest.exists() and dest.is_symlink():
+        raise SecurityError("symlink target refused")
+
+    tmp_path = parent / f".st2027_recv_{secrets.token_hex(16)}.tmp"
+
+    flags = (
+        os.O_CREAT
+        | os.O_EXCL
+        | os.O_WRONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    fd = os.open(str(tmp_path), flags, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(blob)
+            f.flush()
+            os.fsync(f.fileno())
+        if dest.is_symlink():
+            raise SecurityError("symlink target refused")
+        os.replace(tmp_path, dest)
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    return dest
+
+
 def identity_pin(local_sig_pk: bytes, remote_sig_pk: bytes) -> str:
     """TOFU identity pin: SHA3-512 over both ML-DSA-87 identity keys, grouped.
 
@@ -1326,9 +1368,7 @@ def server_once(lsock: socket.socket, tls_ctx: ssl.SSLContext,
             if digest is None or not _compare(digest, hashlib.sha384(blob).digest()):
                 raise SecurityError("transfer integrity failed")
             dest = out_path or Path(f"received_{_now()}.bin")
-            tmp = dest.with_suffix(dest.suffix + ".tmp")
-            tmp.write_bytes(blob)
-            os.replace(tmp, dest)
+            dest = _secure_atomic_write(dest, blob)
             audit_event("transfer_recv_ok", {"peer": peer_id, "bytes": total})
             return dest
     finally:
