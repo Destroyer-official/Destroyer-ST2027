@@ -5,7 +5,6 @@
 # NOTUPLOAD FOLDER - Contains all development artifacts, logs, and temp files
 # =============================================================================
 notupload/
-secure_p2p_core/
 tests/scratch/
 tests/__pycache__/
 archive/
