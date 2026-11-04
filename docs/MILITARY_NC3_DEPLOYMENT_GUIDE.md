@@ -1,4 +1,4 @@
-# Sovereign Military-Grade NC3 Deployment & Operations Manual
+# Dual-Authorization (Two-Person Control) Deployment & Operations Manual
 ================================================================================
 **Handling**: UNCLASSIFIED work product (self-authored operations manual; no classification authority has reviewed or marked this document. Design basis cites DoD Directive S-5210.41M / CJCSI 3265.01 / USSTRATCOM EAP-STRAT as requirements sources, not as granted approvals.)
 **Cryptographic Baseline**: NIST FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA-256f), Classic McEliece-8192128f, NSA CNSA 2.0  
@@ -7,7 +7,7 @@
 
 ## 1. Executive Summary & Purpose
 
-This manual establishes the mandatory operational protocols, cryptographic controls, physical hardware baselines, and emergency procedures for deploying and operating the **Destroyer Sovereign Secure P2P Communications Engine** in mission-critical, national-security, and Nuclear Command, Control, and Communications (NC3) enclaves.
+This manual establishes the mandatory operational protocols, cryptographic controls, physical hardware baselines, and emergency procedures for deploying and operating the **Secure P2P Communications Engine** with dual authorization (two-person control) for privileged commands: two signatures verified within 2.0 seconds.
 
 The system is designed to provide non-repudiation, tamper-evident auditability, information-theoretic dual custody (2-of-2 additive sharing), and quantum-resistant confidentiality across inter-governmental, strategic alliance, and command-echelon communication links -- subject to the hardware, bearer, and accreditation limits stated in this manual, not as a guarantee.
 
@@ -37,7 +37,7 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
   - `PCR 7`: Secure Boot state, PK, KEK, DB, DBX certificate registries.
 - **PCR-Sealed Storage**: Key schedules are sealed using an HKDF-SHA3-512 derivation keyed to the 64-byte deterministic SHA3-512 composite of PCRs 0, 1, 2, and 7. Any modification to firmware, bootloader, or Secure Boot keys alters the composite, making secret unsealing cryptographically impossible (`PCRMismatchError`).
 
-### 3.2. Phase 2: NC3 / PAL Two-Person Integrity (TPI) Dual-Custody Protocol
+### 3.2. Phase 2: Two-Person Integrity (TPI) Dual-Custody Protocol
 - **Engines**: `nc3_nuclear_command.py`, `spo_dpo.py`, `secure_transmit_2027.py`, `secure_memory_wiper.py`
 - **Doctrinal Alignment**: DoD Directive S-5210.41M (*Nuclear Weapon Personnel Reliability and Two-Person Rule*) & CJCSI 3265.01.
 - **Core Security Controls**:
@@ -93,18 +93,18 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
    ```
 4. Verify physical PCR measurements match the baseline manifest signed by the Authorizing Official (AO).
 
-### SOP-02: Transmitting an Emergency Action Message (/nc3-send)
+### SOP-02: Transmitting a Dual-Authorized Directive (/nc3-send)
 1. Both certified launch officers must be physically present at the command console.
 2. Station Commander issues command:
    ```text
-   /nc3-send FLASH-DEFCON1-STRIKE-PLAN TARGET-VECTOR-OMNI <CLASSIFIED_PAL_CODE>
+   /nc3-send DIRECTIVE-AUTH-PLAN TARGET-VECTOR-01 <AUTH_CODE>
    ```
 3. Officer 1 enters Officer ID and inserts Hardware Token 1 to sign nonces.
 4. Officer 2 enters Officer ID and inserts Hardware Token 2 within 2.0 seconds.
 5. System verifies $GF(2^{256})$ VSS split, signs with ML-DSA-87, seals to destination peer identity, and transmits via post-quantum Double Ratchet channel.
 6. Local volatile memory schedules are immediately zeroized via DoD 5220.22-M 7-pass wipe.
 
-### SOP-03: Authenticating and Unsealing an EAM (/nc3-verify)
+### SOP-03: Authenticating and Unsealing a Dual-Authorized Directive (/nc3-verify)
 1. Inbound EAM arrives at Station Bravo with an audible, high-priority flash alert.
 2. Recipient Officer 1 and Officer 2 take stations at the receiving terminal.
 3. Issue the verification command:
@@ -154,7 +154,7 @@ pytest test_ts_hw_layer.py \
        test_secure_transmit_2027.py \
        test_ts_attest.py -v
 
-# 4. Sovereign NC3 & TPI Verification Suites
+# 4. Dual-Authorization & Two-Person Integrity Verification Suites
 pytest test_tpm_quote_production.py \
        test_tpm_quote.py \
        test_nc3_two_person_integrity.py \
