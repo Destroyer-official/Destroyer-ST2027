@@ -1,6 +1,6 @@
 # Audit Open Questions & Architectural Decisions
 
-**Audit Run ID:** `RUN-20261104-01`  
+**Audit Run ID:** `RUN-20261104-02`  
 **Date:** 2026-11-04  
 **Audit Protocol:** Production Engineering and Forensic Verification v5.0  
 
@@ -8,34 +8,32 @@ Consolidated register of technical ambiguities, architectural crossroads, and un
 
 ---
 
-## 1. Pre-Existing Uncommitted User Modifications in Working Tree
+## 1. Pre-Existing Uncommitted User Modifications in Working Tree [RESOLVED]
 
 - **Context:**
   At the commencement of this audit run, the workspace contained 37 tracked files with uncommitted modifications and 17 untracked files from earlier implementation sessions (including IPv6 transport additions, 5 operational pillars tests, and native Rust pipeline extensions).
-- **Audit Rule:**
-  "Preserve any existing uncommitted user changes: commit them separately on this branch only if I tell you to; otherwise leave them untouched and exclude them from your commits."
-- **Question for Repository Owner:**
-  Do you want these pre-existing uncommitted modifications committed separately as an initial baseline commit on branch `audit/2026-11-04`, or should they remain untouched and excluded from audit commits?
+- **Resolution:**
+  Committed on branch `audit/2026-11-04` in commit `f115a62` per operator instruction on 2026-11-04. Working tree is synchronized.
 
 ---
 
 ## 2. Hash-Manifest Invalidation in `critical_modules.hashes`
 
 - **Context:**
-  `scripts/verify_reproducible_build.py` enforces SHA3-512 pin equality for critical concurrent-edit files. Because `rust_data_plane/src/main.rs` was modified in recent work, its hash has drifted from the pinned value in `critical_modules.hashes`.
+  `scripts/verify_reproducible_build.py` enforces SHA3-512 pin equality for critical concurrent-edit files. Because `rust_data_plane/src/main.rs` was modified in recent development work, its hash has drifted from the pinned value in `critical_modules.hashes`.
 - **Audit Rule:**
   "Files that are signed or hashed (*.sig, *.hashes, *.pub, signed config, CBOM): do not edit them silently. If a change invalidates a signature or hash, record it in docs/audit/open_questions.md. Never generate or use a real signing key to re-sign."
 - **Status:**
-  Recorded here. Updating `critical_modules.hashes` requires explicit human approval before recalculating or re-signing.
+  Recorded here and in [`docs/audit/proposals.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/proposals.md) (Proposal 3). Re-signing requires repository owner authorization before running `scripts/sign_dependencies.py`.
 
 ---
 
-## 3. Rust 1.99.1 Clippy Compiler Lints
+## 3. Rust 1.99.1 Clippy Compiler Lints [RESOLVED]
 
 - **Context:**
-  Running `cargo clippy --manifest-path rust_data_plane/Cargo.toml --all-targets -- -D warnings` under Rust 1.99.1 reports 6 lints in newly authored native modules (`ffi.rs`, `fragment.rs`, `pipeline.rs`). These do not change wire format or crypto logic.
-- **Question for Repository Owner:**
-  Should we apply minimal code fixes to resolve these 6 clippy lints so that Gate 1.1 passes with zero warnings?
+  Running `cargo clippy --manifest-path rust_data_plane/Cargo.toml --all-targets -- -D warnings` under Rust 1.99.1 reported 6 lints in newly authored native modules (`ffi.rs`, `fragment.rs`, `pipeline.rs`).
+- **Resolution:**
+  Minimal implementation defect fixes applied under `CHG-17`: added `#[allow(clippy::type_complexity)]` on `CoreCot::parse`, replaced manual division with `.div_ceil()`, replaced manual modulo with `.is_multiple_of()`, and collapsed nested conditionals. `cargo clippy` now exits 0 with 0 warnings.
 
 ---
 
