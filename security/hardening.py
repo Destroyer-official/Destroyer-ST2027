@@ -6,7 +6,7 @@ maximum security enforcement, and security manager initialization.
 
 Security features:
 - Anti-debugging protection with ptrace detection
-- Maximum security enforcement with no fallbacks
+- Strict process security hardening enforcement with no fallbacks
 - Security hardening manager initialization
 - Process monitoring and exception handling
 - Self-healing and monitoring capabilities
@@ -48,7 +48,7 @@ class SecurityHardening:
 
     This class implements security hardening features including:
     - Anti-debugging protection
-    - Maximum security enforcement
+    - Strict process security hardening enforcement
     - Security manager initialization
     - Process monitoring
     """
@@ -74,8 +74,8 @@ class SecurityHardening:
             # Initialize the security hardening manager
             self.security_hardening_manager = SecurityHardeningManager()
 
-            # Initialize process monitoring with robust ProcessMonitorManager
-            self.log.info("Initializing robust process monitoring...")
+            # Initialize process monitoring with ProcessMonitorManager
+            self.log.info("Initializing process monitoring...")
             monitoring_config = MonitoringConfig(
                 check_interval=5.0,
                 recovery_attempts=3,
@@ -130,7 +130,7 @@ class SecurityHardening:
                 else:
                     self.log.warning(f"Security protection failed: {protection} - {message}")
 
-            # Get comprehensive security status
+            # Get current security hardening status
             security_status = self.security_hardening_manager.get_security_status()
             self.log.info(f"Security hardening manager status: {security_status.security_level}")
 
@@ -208,41 +208,41 @@ class SecurityHardening:
             return False
 
     def enforce_maximum_security(self):
-        """Enforce maximum security requirements with no fallbacks."""
+        """Enforce strict security requirements with fail-closed behavior."""
         try:
             from maximum_security_hardening import enforce_maximum_security_or_fail
 
-            self.log.info("Enforcing maximum security requirements...")
+            self.log.info("Enforcing strict process security requirements...")
 
             # This will either succeed or terminate the application
             self.maximum_security = enforce_maximum_security_or_fail()
 
-            # If we reach here, maximum security is achieved
-            print("[OK] MAXIMUM SECURITY ACHIEVED")
+            # If we reach here, strict security requirements are satisfied
+            print("[OK] STRICT SECURITY REQUIREMENTS SATISFIED")
 
-            # Update security hardening status to reflect maximum security
+            # Update security hardening status to reflect strict security enforcement
             self.security_hardening['maximum_security'] = True
             self.security_hardening['admin_privileges'] = True
             self.security_hardening['cfg_strict_mode'] = True
             self.security_hardening['no_fallbacks'] = True
 
-            self.log.info("Maximum security enforcement successful")
+            self.log.info("Strict process security enforcement successful")
             return True
 
         except SystemExit:
             # Expected exit for security failures - re-raise
             raise
         except ImportError as e:
-            self.log.critical(f"Maximum security module not available: {e}")
+            self.log.critical(f"Process security hardening module not available: {e}")
             raise SecurityError(
-                "Maximum security enforcement not available",
+                "Process security hardening enforcement not available",
                 severity=SecurityError.SEVERITY_CRITICAL,
                 mitigation_required=True
             )
         except Exception as e:
-            self.log.critical(f"Maximum security enforcement failed: {e}")
+            self.log.critical(f"Process security hardening enforcement failed: {e}")
             raise SecurityError(
-                f"Maximum security enforcement failed: {e}",
+                f"Process security hardening enforcement failed: {e}",
                 severity=SecurityError.SEVERITY_CRITICAL,
                 mitigation_required=True
             )
