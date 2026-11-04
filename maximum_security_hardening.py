@@ -1,19 +1,20 @@
 #!/usr/bin/env python
 """
-Maximum Security Hardening Module
+Process Exploit Mitigation and Security Hardening Module
 
-This module implements the highest level of security hardening with no fallbacks.
-It ensures all security features are enabled at maximum strength or the system
-fails securely rather than degrading.
+This module implements strict process security hardening controls with fail-closed behavior.
+It verifies that system exploit mitigations (CFG, DEP, ASLR), process privilege boundaries,
+and hardware security checks are active, and terminates execution rather than operating
+in an unverified state.
 
 Key Features:
-- Mandatory administrator privileges enforcement
-- No security fallbacks - fail secure instead
-- Maximum CFG protection with strict mode
-- Complete HSM integration requirement
-- Mandatory process monitoring
-- Full exception handling coverage
-- Comprehensive dependency validation
+- Process privilege level verification
+- Fail-closed security validation (no unverified fallbacks)
+- Windows Control Flow Guard (CFG) verification
+- Hardware security module and secure memory availability check
+- Operating system process monitoring
+- Structured exception handling verification
+- Pinned dependency integrity verification
 """
 
 import logging
@@ -52,8 +53,8 @@ max_security_logger.addHandler(console_handler)
 
 
 class MaximumSecurityError(Exception):
-    """Exception raised when maximum security requirements cannot be met."""
-    def __init__(self, message: str = "Maximum security requirements failed", details: Optional[Dict[str, Any]] = None):
+    """Exception raised when strict process security hardening requirements cannot be met."""
+    def __init__(self, message: str = "Strict process security requirements failed", details: Optional[Dict[str, Any]] = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -80,14 +81,14 @@ class SecurityRequirement:
 
 class MaximumSecurityHardening:
     """
-    Maximum Security Hardening implementation with no fallbacks.
+    Strict process security hardening implementation with fail-closed enforcement.
     
-    This class enforces the highest security standards and fails securely
+    This class verifies platform exploit mitigations and fails closed
     if any requirement cannot be met. No degraded modes are allowed.
     """
     
     def __init__(self):
-        """Initialize maximum security hardening."""
+        """Initialize process security hardening."""
         self.platform = platform.system()
         self.architecture = platform.machine().lower()
         self.is_windows = self.platform == "Windows"
@@ -120,7 +121,7 @@ class MaximumSecurityHardening:
         # Administrator privileges requirement
         self.security_requirements.append(SecurityRequirement(
             name="admin_privileges",
-            description="Administrator/root privileges required for maximum security",
+            description="Administrator or root privileges required for strict security hardening",
             mandatory=True,
             check_function=self._check_admin_privileges,
             remediation_function=self._request_admin_privileges,
@@ -161,7 +162,7 @@ class MaximumSecurityHardening:
         # Exception handling requirement
         self.security_requirements.append(SecurityRequirement(
             name="exception_handling",
-            description="Comprehensive exception handling must be active",
+            description="Structured exception handling must be active",
             mandatory=True,
             check_function=self._check_exception_handling,
             remediation_function=self._enable_exception_handling,
@@ -231,7 +232,7 @@ class MaximumSecurityHardening:
     
     def _request_admin_privileges(self) -> bool:
         """Request administrator privileges."""
-        max_security_logger.warning("SECURITY NOTICE: Administrator privileges recommended for maximum security")
+        max_security_logger.warning("SECURITY NOTICE: Elevated privileges required for strict security controls")
         max_security_logger.warning("Some advanced security features may be limited without elevated privileges")
         
         if self.is_windows:
@@ -373,7 +374,7 @@ class MaximumSecurityHardening:
             return False, f"Process monitoring check failed: {e}"
     
     def _enable_process_monitoring(self) -> bool:
-        """Enable comprehensive process monitoring."""
+        """Enable process resource monitoring via psutil."""
         try:
             # psutil must be pre-installed from pinned hashes. Runtime pip
             # installs are REFUSED by policy (supply-chain risk).
@@ -399,7 +400,7 @@ class MaximumSecurityHardening:
             return False
     
     def _check_exception_handling(self) -> Tuple[bool, str]:
-        """Check if comprehensive exception handling is active."""
+        """Check if structured exception handling is active."""
         try:
             # Check if Win32 exception handling is available on Windows
             if self.is_windows:
@@ -416,14 +417,14 @@ class MaximumSecurityHardening:
             return False, f"Exception handling check failed: {e}"
     
     def _enable_exception_handling(self) -> bool:
-        """Enable comprehensive exception handling."""
+        """Enable structured exception handling."""
         try:
             if self.is_windows:
                 # Initialize Win32 exception handling
                 try:
                     from cross_platform_exception_handler import CrossPlatformExceptionHandler
                     exception_manager = CrossPlatformExceptionHandler()
-                    # Configure for maximum security
+                    # Configure strict exploit mitigation flags
                     exception_manager.config.enable_cfg_protection = True
                     exception_manager.config.enable_com_cleanup = True
                     max_security_logger.info("Win32 exception handling enabled")
@@ -558,12 +559,12 @@ class MaximumSecurityHardening:
     
     def enforce_maximum_security(self) -> bool:
         """
-        Enforce maximum security requirements with no fallbacks.
+        Enforce strict process security requirements with fail-closed verification.
         
         Returns:
             bool: True if all requirements are met, False otherwise
         """
-        max_security_logger.info("Enforcing maximum security requirements...")
+        max_security_logger.info("Enforcing process security hardening requirements...")
         
         failed_requirements = []
         
@@ -601,7 +602,7 @@ class MaximumSecurityHardening:
         
         # Check results
         if failed_requirements:
-            max_security_logger.critical("MAXIMUM SECURITY ENFORCEMENT FAILED")
+            max_security_logger.critical("PROCESS SECURITY HARDENING ENFORCEMENT FAILED")
             max_security_logger.critical("The following mandatory requirements are not satisfied:")
             
             for req in failed_requirements:
@@ -610,11 +611,11 @@ class MaximumSecurityHardening:
             max_security_logger.critical("SYSTEM CANNOT OPERATE SECURELY - TERMINATING")
             return False
         
-        max_security_logger.info("[PASS] ALL MAXIMUM SECURITY REQUIREMENTS SATISFIED")
+        max_security_logger.info("[PASS] ALL PROCESS SECURITY HARDENING REQUIREMENTS SATISFIED")
         return True
     
     def get_security_status(self) -> Dict[str, Any]:
-        """Get comprehensive security status."""
+        """Get process security verification status dictionary."""
         return {
             'timestamp': datetime.now().isoformat(),
             'platform': self.platform,
@@ -629,7 +630,7 @@ class MaximumSecurityHardening:
 
 def enforce_maximum_security_or_fail():
     """
-    Enforce maximum security or fail the application.
+    Enforce strict process security or terminate the application.
     
     This function ensures that all security requirements are met
     or terminates the application securely.
@@ -638,10 +639,10 @@ def enforce_maximum_security_or_fail():
         max_security = MaximumSecurityHardening()
         
         if max_security.enforce_maximum_security():
-            max_security_logger.info("MAXIMUM SECURITY ACHIEVED - SYSTEM READY")
+            max_security_logger.info("PROCESS SECURITY HARDENING VERIFIED - SYSTEM READY")
             return max_security
         else:
-            max_security_logger.critical("MAXIMUM SECURITY REQUIREMENTS NOT MET")
+            max_security_logger.critical("PROCESS SECURITY HARDENING REQUIREMENTS NOT MET")
             max_security_logger.critical("APPLICATION TERMINATING FOR SECURITY")
             sys.exit(1)
             
@@ -652,9 +653,9 @@ def enforce_maximum_security_or_fail():
 
 
 def main():
-    """Main function for testing maximum security hardening."""
+    """Execute test verification of process security hardening."""
     try:
-        max_security_logger.info("Starting Maximum Security Hardening test")
+        max_security_logger.info("Starting Process Security Hardening verification")
         
         max_security = enforce_maximum_security_or_fail()
         
@@ -662,14 +663,14 @@ def main():
         status = max_security.get_security_status()
         max_security_logger.info(f"Security status: {status}")
         
-        max_security_logger.info("Maximum Security Hardening test completed successfully")
+        max_security_logger.info("Process Security Hardening verification completed successfully")
         
     except SystemExit as se:
         # Expected exit for security failures
         max_security_logger.info(f"Terminating per security enforcement exit code {se.code}")
         raise
     except Exception as e:
-        max_security_logger.error(f"Maximum Security Hardening test failed: {e}")
+        max_security_logger.error(f"Process Security Hardening verification failed: {e}")
         sys.exit(1)
 
 
