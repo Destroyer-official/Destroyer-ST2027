@@ -1,7 +1,7 @@
 """
 Secure Memory Management System - DoD 5220.22-M Compliant
 
-This module provides comprehensive secure memory management with side-channel attack
+This module provides secure memory management with side-channel attack
 resistance, implementing DoD 5220.22-M guidelines for secure data sanitization
 and NIST Level 5+ security requirements for cryptographic material protection.
 
@@ -52,7 +52,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 
-# Configure comprehensive logging for memory management integration
+# Configure structured logging for memory management integration
 memory_logger = logging.getLogger("secure_memory_manager")
 memory_logger.setLevel(logging.DEBUG)
 
@@ -188,7 +188,7 @@ class HardwareMemoryIsolator:
     Provides hardware-enforced memory isolation using platform-specific features.
 
     Utilizes hardware security features like Intel CET, ARM Pointer Authentication,
-    and memory protection extensions for maximum security isolation.
+    and memory protection extensions for strict memory isolation.
     """
 
     def __init__(self, security_level: MemorySecurityLevel = MemorySecurityLevel.MAXIMUM):
@@ -1230,7 +1230,7 @@ def get_stack_canary() -> StackCanary:
 
 
 def run_comprehensive_security_tests():
-    """Run comprehensive security tests for the memory manager."""
+    """Run security tests for the memory manager."""
     print("Secure Memory Manager - DoD 5220.22-M Compliant")
     print("=" * 60)
 
@@ -1382,7 +1382,7 @@ class TimingAttackResistance:
     """
     Timing Attack Resistance Implementation.
     
-    This class provides comprehensive protection against timing-based
+    This class provides jitter-based protection against timing-based
     side-channel attacks through constant-time operations and timing
     obfuscation techniques.
     """
@@ -1510,7 +1510,7 @@ class AdvancedSecurityEnhancements:
     def _initialize_advanced_features(self) -> None:
         """Initialize all advanced security features."""
         try:
-            # Enable maximum security hardening
+            # Enable strict memory hardening
             self._enable_maximum_hardening()
             
             # Initialize quantum-resistant protections
@@ -1531,7 +1531,7 @@ class AdvancedSecurityEnhancements:
             memory_logger.error(f"Failed to initialize advanced features: {e}")
     
     def _enable_maximum_hardening(self) -> None:
-        """Enable maximum security hardening."""
+        """Enable strict memory hardening."""
         self.hardening_features = {
             'control_flow_integrity': True,
             'stack_protection': True,
@@ -1543,7 +1543,7 @@ class AdvancedSecurityEnhancements:
             'shadow_stack': True
         }
         
-        memory_logger.info("Maximum security hardening enabled")
+        memory_logger.info("Strict memory hardening enabled")
     
     def _initialize_quantum_protections(self) -> None:
         """Initialize quantum-resistant protections."""
@@ -1630,11 +1630,11 @@ class AdvancedSecurityEnhancements:
             if not self.zero_tolerance_mode:
                 return False
             
-            # Verify maximum security level
+            # Verify strict security level
             if self.security_level != "MAXIMUM":
                 return False
             
-            # Verify military grade compliance
+            # Verify policy compliance
             if self.compliance_mode != "MILITARY_GRADE":
                 return False
             
@@ -1649,7 +1649,7 @@ class AdvancedSecurityEnhancements:
     
     def get_security_status(self) -> Dict[str, Any]:
         """
-        Get comprehensive security status.
+        Get memory security status.
         
         Returns:
             Dictionary containing complete security status
