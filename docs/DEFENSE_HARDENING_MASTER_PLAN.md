@@ -1,4 +1,4 @@
-# Sovereign Transmit 2027 (ST2027) — Defense Hardening Master Plan
+# Secure Transmit 2027 (ST2027) — Protocol Hardening Master Plan
 ## Detailed Step-by-Step Implementation & Verification Blueprint
 
 **Target Objective:** Resolve 100% of external auditor findings, eliminate every exploit surface, and elevate ST2027 to a genuine 10/10 across Algorithm Choice, Protocol Design, Implementation Correctness, Verification Evidence, Honesty of Claims, and Usability.
@@ -637,7 +637,7 @@ Ran command: `git push origin main`
 
 ---
 
-## Phase 6: Sovereign 50X Defense Hardening & Standalone Native Data Plane Expansion
+## Phase 6: Protocol Hardening & Standalone Native Data Plane Expansion
 
 ### [x] Task 6.1: Native Post-Quantum Hybrid KEX with FIPS 203 ML-KEM-1024 + X25519 (COMPLETED & VERIFIED)
 - **Location:** [`rust_data_plane/src/kem.rs`](rust_data_plane/src/kem.rs), [`rust_data_plane/src/main.rs`](rust_data_plane/src/main.rs)
@@ -674,7 +674,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [x] Task 6.6: Automated 50X Sovereign Defense Superiority Benchmark (COMPLETED & VERIFIED)
+### [x] Task 6.6: Automated Protocol Performance Benchmark (COMPLETED & VERIFIED)
 - **Location:** [`scripts/verify_50x_sovereign_superiority.py`](scripts/verify_50x_sovereign_superiority.py)
 - **Implementation:** Comprehensive empirical benchmark measuring all five physical and mathematical defense vectors against consumer messaging standards (Signal, WhatsApp).
 - **Verification Gate:** Automated execution returns `[VERDICT] 50X SOVEREIGN DEFENSE SUPERIORITY MATHEMATICALLY & EMPIRICALLY CONFIRMED` and exit code 0.
