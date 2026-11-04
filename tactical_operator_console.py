@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-  DESTROYER ST-2027: TACTICAL C4ISR OPERATIONS CONSOLE & MISSION STATION
-  MILITARY SPECIFICATION: CNSA 2.0 / FIPS 203 / FIPS 204 / DoD Zero-Trust / NC3
+  OPERATIONS CONSOLE & MISSION STATION
+  SPECIFICATION: CNSA 2.0 / FIPS 203 / FIPS 204 / Two-Person Rule
 ================================================================================
-Turnkey operational tactical military station providing:
-  1. MIL-STD-6090 Cursor-on-Target (CoT) Situational Awareness & Blue Force Tracking.
-  2. ATAK / WinTAK Tactical Tablet Integration Bridge (UDP 4242 / Multicast 239.2.3.1:6969).
-  3. Tactical Military Messaging (MMHS Precedence & Bell-LaPadula MLS / NSA RTB).
-  4. Tactical Push-to-Talk (PTT) Voice Bursts with Flat Poisson Chaff Camouflage.
-  5. NC3 Nuclear & Strategic Command Two-Person Rule (Dual-Officer Custody).
-  6. Simplex Optical Data Diode Classified File Transfer (Air-gap / FEC).
+Operational station providing:
+  1. MIL-STD-6090 Cursor-on-Target (CoT) Situational Awareness & Force Tracking.
+  2. Tablet Integration Bridge (UDP 4242 / Multicast 239.2.3.1:6969).
+  3. Messaging (MMHS Precedence & Bell-LaPadula MLS / NSA RTB).
+  4. Push-to-Talk (PTT) Voice Bursts with Flat Poisson Chaff Camouflage.
+  5. Strategic Command Two-Person Rule (Dual-Officer Custody).
+  6. Simplex Optical Data Diode File Transfer (Unidirectional / FEC).
   7. Autonomous Active Cyber Defense (ACD) & Scoring.
   8. NIST SP 800-88 / DoD 5220.22-M Emergency "Scorched Earth" Zeroization.
 """
@@ -163,7 +163,7 @@ def canonical_ptt_bytes(signer: str, chunks: int, duration_ms: int, timestamp: f
 
 class TacticalConsoleStation:
     """
-    Full-featured tactical military C4ISR communications station.
+    Communications console station with dual-authorization and CoT interfaces.
     """
     def __init__(
         self,
@@ -642,7 +642,7 @@ class TacticalConsoleStation:
             "timestamp": now_ts,
         }
         self._send_udp(packet, dest_host, dest_port)
-        print(f"{MAGENTA}[PTT BURST TRANSMITTED]{RESET} Emitted {frames} voice frames ({duration_sec:.1f}s) [ML-DSA-87 signed] -> Transitioned seamlessly to Poisson Chaff cover.")
+        print(f"{MAGENTA}[PTT BURST TRANSMITTED]{RESET} Emitted {frames} voice frames ({duration_sec:.1f}s) [ML-DSA-87 signed] -> Transitioned to Poisson Chaff cover.")
 
     def authorize_dual_eam(
         self,
@@ -798,7 +798,7 @@ class TacticalConsoleStation:
         print(f"  Target Station     : {self.target_host}:{self.target_port if self.target_port else 'N/A'}")
         print(f"  ATAK/WinTAK Bridge : {GREEN}ACTIVE (UDP 4242 / Multicast 239.2.3.1:6969){RESET}")
         print(f"  Active Peer Tracks : {len(self.tracks)}")
-        print(f"  Zero-Trust Score   : {self.trust_score}/100 [ACD Shield Active]")
+        print(f"  Integrity Score    : {self.trust_score}/100 [ACD Shield Active]")
 
     def render_bft_map(self):
         """Render Blue Force Tracking contact table."""
@@ -903,7 +903,7 @@ def run_automated_drill():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Destroyer ST-2027 Tactical C4ISR Station")
+    parser = argparse.ArgumentParser(description="P2P Communications Console Station")
     parser.add_argument("--node", default="BASE-ALPHA", help="Tactical Node Name")
     parser.add_argument("--callsign", default="TACTICAL-01", help="Operator Callsign")
     parser.add_argument("--port", type=int, default=9050, help="Local tactical UDP port")
@@ -916,7 +916,7 @@ def main():
     parser.add_argument("--require-mutual-auth", action="store_true", help="Require mutual ML-DSA-87 authentication")
     parser.add_argument("--lab", action="store_true", help="Explicit lab mode (lower assurance)")
     parser.add_argument("--drill", action="store_true", help="Run automated 2-base tactical battle drill")
-    parser.add_argument("--sovereign", action="store_true", default=True, help="Launch sovereign tactical Zero-Gap node (secure_p2p.py) [Default]")
+    parser.add_argument("--sovereign", action="store_true", default=True, help="Launch local Zero-Gap node (secure_p2p.py) [Default]")
     parser.add_argument("--legacy-lab-only", action="store_true", help="Explicitly allow deprecated unpaced UDP socket (lab only; never in production)")
 
     args = parser.parse_args()
@@ -929,7 +929,7 @@ def main():
         # Default to the Sovereign Zero-Gap node (secure_p2p.py) with full post-quantum ratchet and 20ms pacing
         from secure_p2p import run_interactive_terminal
         role = "responder" if "alpha" in args.node.lower() else "initiator"
-        print(f"\n{BOLD}{CYAN}[SOVEREIGN HARDENING] Directing tactical console to Sovereign Zero-Gap P2P Engine (secure_p2p.py)...{RESET}")
+        print(f"\n{BOLD}{CYAN}[CRYPTO ENGINE] Directing console to Zero-Gap P2P Engine (secure_p2p.py)...{RESET}")
         run_interactive_terminal(
             role=role,
             bind="127.0.0.1",
