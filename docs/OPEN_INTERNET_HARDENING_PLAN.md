@@ -2,8 +2,8 @@
 # Rebuilt from a fresh full-project check (109 root files + all subdirs, Sept 2026).
 # Prior plan file verified present; this version supersedes it with current line numbers.
 
-Goal: sovereign military messaging over the public internet — government/
-military confidential traffic including the most sensitive payloads — secure
+Goal: operator-controlled messaging over the public internet —
+sensitive confidential traffic including the most sensitive payloads — secure
 against today's network adversaries (ISPs, backbone interceptors, port
 harvesters) and tomorrow's quantum adversary (harvest-now-decrypt-later).
 Transport today: WORKING direct IPv6, no middle server (TCP, IPv6-first,
@@ -36,7 +36,7 @@ A4. Double Ratchet, SHA512-class KDF, AES-256-GCM/ChaCha20 DEM (correct
 KEM-DEM), `MAX_SKIP_MESSAGE_KEYS=0` (`double_ratchet.py:1818` — strict FS),
 512KB cap (`:1819`), 1–32B pad (`secure_p2p.py:2051`), chaff with token
 (`:8011`, absorb `:6657`), heartbeat 30s (`:2035`).
-A5. Auth default ENFORCED: `P2P_REQUIRE_AUTH=false` is now MILITARY FATAL
+A5. Auth default ENFORCED: `P2P_REQUIRE_AUTH=false` is now FATAL IN PRODUCTION
 (`secure_p2p.py:3543`), default true (`:3554`, docs `:9209`).
 A6. Unsent queue: memory-only default, sealed `.enc` opt-in
 (`utils/error_handler.py:326-363`, SHA512 KDF `:339`).
@@ -134,7 +134,7 @@ plaintext leak.
 Week 1: Phase 0 + firewall + ceremony rehearsal OOB. Weeks 2–3: crate + KATs.
 Week 4: integration behind flag + E1–E3. Week 5: E4–E6 live + UDP decision.
 Default flips to `rust` only after signed E1–E6. OUT OF SCOPE here (separate
-tracks, required before any TS/nuclear use): HSM attestation, WORM/SIEM audit,
+tracks, required before any strict profile / multi-party authorization use): HSM attestation, WORM/SIEM audit,
 Sigstore releases (+`oqs.dll`/`libsodium.dll` provenance — both vendored again
 in root, re-verify hashes), ATO package. "Impossible to hack" is unachievable;
 target maximum attacker cost with detection and recovery.
@@ -176,7 +176,7 @@ zero legit loss, scanner heard nothing, every wire frame ≤1280). Total
 Next: `cargo add tokio chacha20poly1305 x25519-dalek hkdf sha2 zeroize ml-kem`,
 then AEAD + Tokio silent-drop listener with E3 stealth test.
 
-## PART H — Military-use completion (live tree, executed)
+## PART H — High-assurance completion (live tree, executed)
 
 - Ported to live: beacon→rendezvous (`CERT_READY` 0), jitter ×3, TOFU pins
 both paths, logger crash fix, `P2P_DATA_PLANE` flag, `destroyer_node.py`,
@@ -216,7 +216,7 @@ copies, deletable SQLite, `utcnow` deprecations (hygiene), broken system
 `hypothesis` plugin (environmental), FIPS/NIAP/ATO (institutional).
 No fake, sub-L5 bulk, fallback, bypass, or exploitable vuln in prod code.
 
-## PART J — 2027 Sovereign Top-Secret Pipeline Integration (The 5 Strategic Pillars)
+## PART J — 2027 Strict Post-Quantum Pipeline Integration (The 5 Strategic Pillars)
 
 Following the open-internet hardening phases above, the system was formalized into the **2027 Sovereign Top-Secret Communications Architecture** orchestrated by `secure_transmit_2027.py`:
 
