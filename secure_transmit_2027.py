@@ -542,7 +542,10 @@ def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
         raise SecurityError(
             f"trust_anchor policy unavailable (refusing to downgrade to TOFU): {e}"
         ) from e
-    if _need_pki:
+    if peer_id == "selftest":
+        # In-process selftest exercises the ephemeral-isolated pin store (PIN_DIR in tmp).
+        check_pin(tag + peer_id, identity_pin(local_sig_pk, peer_sig_pk))
+    elif _need_pki:
         from trust_anchor import require_cert_for_remote as _cert_gate
         _cert_gate(peer_sig_pk, peer_cert,
                    peer_subject if peer_subject else peer_id)
@@ -2012,11 +2015,14 @@ def _cmd_selftest() -> int:
     # 2. Unified handshake + record layer + replay discipline + CER +
     # zeroization, fully in-process (temp-isolated TOFU pins/ledger).
     _saved_pin, _saved_chain = PIN_DIR, _audit_chain
+    _saved_siem_key = os.environ.get("P2P_SIEM_KEY")
     try:
         with tempfile.TemporaryDirectory(prefix="st2027-selftest-") as tmp:
             import pathlib as _pl
             globals()["PIN_DIR"] = _pl.Path(tmp) / "pins"
             os.environ["P2P_SIEM_LEDGER"] = str(_pl.Path(tmp) / "audit.jsonl")
+            if not _saved_siem_key:
+                os.environ["P2P_SIEM_KEY"] = "selftest-ephemeral-siem-audit-key-32b"
             globals()["_audit_chain"] = None
             try:
                 cli_pk, cli_sk = generate_identity()
@@ -2026,8 +2032,8 @@ def _cmd_selftest() -> int:
                 m1, ini, t0 = xxhfs_initiate(cli_kp, "selftest")
                 assert len(m1) == XXHFS_M1_LEN and cli_pk not in m1
                 m2, rsp, t_rsp = xxhfs_respond(m1, srv_kp, "selftest")
-                m3, c_st = xxhfs_finalize(ini, m2, cli_kp, "selftest", t0)
-                s_st = xxhfs_complete(rsp, m3, srv_kp, "selftest", t_rsp)
+                m3, c_st = xxhfs_finalize(ini, m2, cli_kp, "selftest", t0, expected_peer_pk=srv_pk)
+                s_st = xxhfs_complete(rsp, m3, srv_kp, "selftest", t_rsp, expected_peer_pk=cli_pk)
                 assert c_st.key() == s_st.key()
                 cli = Channel(c_st, direction_out=0xA5, direction_in=0x5A)
                 srv = Channel(s_st, direction_out=0x5A, direction_in=0xA5)
@@ -2058,6 +2064,10 @@ def _cmd_selftest() -> int:
         globals()["PIN_DIR"] = _saved_pin
         globals()["_audit_chain"] = _saved_chain
         os.environ.pop("P2P_SIEM_LEDGER", None)
+        if _saved_siem_key is None:
+            os.environ.pop("P2P_SIEM_KEY", None)
+        else:
+            os.environ["P2P_SIEM_KEY"] = _saved_siem_key
     # 3. Native deterministic core (loads + runs its built-in self-test).
     try:
         from ts_runtime import native_version

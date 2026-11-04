@@ -67,3 +67,13 @@ All 18 product modules have been audited, cross-checked against implementation s
 | **F-02** | Medium | `rust_data_plane/src/group_ratchet.rs` | `self.skipped_message_keys.remove(&lookup_key)` executed before AES-GCM tag verification; forged ciphertext caused permanent key deletion. | Changed to `.get(&lookup_key).cloned()` before AEAD decryption; remove executed strictly after authentication succeeds. Verified by `test_f02_skipped_message_key_survives_forged_auth_failure` (187/187 cargo tests pass). | RESOLVED |
 | **F-03** | Med-High | `noise_pq.py` | `NoiseSession.destroy()` and `quarantine()` zeroized transport buffers but left `sig_sk` and `_e_priv` alive. | In `destroy()`: unlocked and zeroized mutable `sig_sk`, cleared `sig_sk = None`, cleared `_e_priv = None`. In `quarantine()`: purged public metadata and latched shut. Verified by `test_f03_noise_session_sig_sk_and_epriv_destroyed` (12/12 purity tests pass). | RESOLVED |
 | **F-04** | Medium | Repository CI / Branch Rules | `main` branch permitted pushes without required status checks or reviews. | Documented branch protection and CI gate recommendations in `docs/audit/findings/F-01_to_F-04.md` and `docs/audit/proposals.md` (require PR reviews, CI status check passing, signed commits). | DOCUMENTED |
+
+---
+
+## 5. Control Plane vs Data Plane Authority Boundary
+
+The authoritative separation between Python (Control / Signaling) and Rust (High-Assurance Data Plane) has been formalized in [`docs/audit/modules/authority_boundary.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/authority_boundary.md).
+
+- **Control Plane (Python):** Identity anchoring, PKI certs, ephemeral KEX negotiation, hardware attestation, and SIEM event journaling.
+- **Data Plane (Rust):** High-throughput packet engine (`destroyer_core` / `rust_data_plane`), constant-time AEAD, monotonic anti-replay window, group ratchet state (`group_ratchet.rs`), and locked-memory zeroization (`mlock` / `VirtualLock`).
+- **Production Gate:** In production posture (`SECURE_P2P_PRODUCTION="1"`), `P2P_DATA_PLANE=rust` is mandatory; missing or unbuilt native data plane components fail closed. The pure-Python data plane is quarantined to non-production integration tests.

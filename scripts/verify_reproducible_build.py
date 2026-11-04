@@ -179,16 +179,19 @@ def run_reproducible_build_verification():
                 )
                 if not match and fpath.suffix in (".rs", ".py", ".md", ".json", ".txt"):
                     raw = fpath.read_bytes()
-                    raw_norm = raw.replace(b"\r\n", b"\n")
-                    if (hashlib.sha512(raw_norm).hexdigest() == exp["sha512"] and
-                        hashlib.sha3_512(raw_norm).hexdigest() == exp["sha3_512"] and
-                        len(raw_norm) == exp["size_bytes"]):
-                        match = True
-                        actual = {
-                            "size_bytes": len(raw_norm),
-                            "sha512": exp["sha512"],
-                            "sha3_512": exp["sha3_512"],
-                        }
+                    raw_lf = raw.replace(b"\r\n", b"\n")
+                    raw_crlf = raw_lf.replace(b"\n", b"\r\n")
+                    for cand in (raw_lf, raw_crlf):
+                        if (hashlib.sha512(cand).hexdigest() == exp["sha512"] and
+                            hashlib.sha3_512(cand).hexdigest() == exp["sha3_512"] and
+                            len(cand) == exp["size_bytes"]):
+                            match = True
+                            actual = {
+                                "size_bytes": len(cand),
+                                "sha512": exp["sha512"],
+                                "sha3_512": exp["sha3_512"],
+                            }
+                            break
                 results["critical_modules_manifest"][name] = {
                     "expected_sha3_512": exp["sha3_512"],
                     "actual_sha3_512": actual["sha3_512"],

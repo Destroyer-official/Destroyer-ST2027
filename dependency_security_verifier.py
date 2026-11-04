@@ -500,6 +500,37 @@ class DependencySecurityVerifier:
                     return False
                 logger.info(f"File integrity verified for {name} (embedded sha384 pin)")
                 return True
+
+            # PyPI distribution package verification (e.g. cryptography):
+            # Installed via `pip install --require-hashes -r requirements.txt`.
+            # Verify file integrity against the cryptographically recorded distribution RECORD manifest.
+            if name == "cryptography":
+                try:
+                    import importlib.metadata
+                    import base64
+                    dist = importlib.metadata.distribution(name)
+                    rec = dist.read_text('RECORD')
+                    if rec:
+                        target_path = Path(path).resolve()
+                        for line in rec.splitlines():
+                            parts = line.split(',')
+                            if len(parts) >= 2 and parts[1].startswith('sha256='):
+                                rel_path = parts[0]
+                                expected_b64 = parts[1][len('sha256='):].rstrip('=')
+                                dist_path = dist.locate_file(rel_path)
+                                if Path(dist_path).resolve() == target_path:
+                                    with open(target_path, 'rb') as f:
+                                        content_bytes = f.read()
+                                    actual_b64 = base64.urlsafe_b64encode(hashlib.sha256(content_bytes).digest()).decode('ascii').rstrip('=')
+                                    if not hmac.compare_digest(actual_b64, expected_b64):
+                                        logger.error(f"Hash mismatch for {name} ({rel_path}) against pip RECORD")
+                                        return False
+                                    logger.info(f"File integrity verified for {name} (pip RECORD sha256 pin)")
+                                    return True
+                except Exception as e_dist:
+                    logger.error(f"Distribution RECORD verification failed for {name}: {e_dist}")
+                    return False
+
             # Calculate multiple hashes for enhanced security
             hashes_calculated = {}
             

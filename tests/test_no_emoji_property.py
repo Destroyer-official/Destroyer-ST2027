@@ -21,6 +21,8 @@ from hypothesis import given, strategies as st, settings, assume
 # Add project root and archive/devscripts to path
 PROJECT_ROOT = Path(__file__).resolve().parent if (Path(__file__).resolve().parent / "destroyer.py").exists() else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+if (PROJECT_ROOT / "scripts").exists():
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 if (PROJECT_ROOT / "archive" / "devscripts").exists():
     sys.path.insert(0, str(PROJECT_ROOT / "archive" / "devscripts"))
 
@@ -180,6 +182,8 @@ class TestNoEmojiUnit:
     def test_production_cleanup_utils_is_clean(self):
         """Test that the production_cleanup_utils.py file itself is clean of emoji."""
         file_path = PROJECT_ROOT / "production_cleanup_utils.py"
+        if not file_path.exists():
+            file_path = PROJECT_ROOT / "scripts" / "production_cleanup_utils.py"
         if not file_path.exists():
             file_path = PROJECT_ROOT / "archive" / "devscripts" / "production_cleanup_utils.py"
         

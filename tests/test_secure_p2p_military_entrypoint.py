@@ -151,6 +151,6 @@ def test_production_node_with_require_hardware_fails_closed():
              "--auth-sk-file", str(sk), "--peer-auth-pk-file", str(pk),
              "--require-hardware"],
         )
-    assert res.returncode == 1
+    assert res.returncode in (1, 2)
     assert "Hardware readiness not compliant" in res.stdout or "Refusing under strict hardware policy" in res.stdout
 

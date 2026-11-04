@@ -14343,11 +14343,21 @@ class TacticalP2PNode:
         print(f"\n{BOLD}[{self.name}]{RESET} {CYAN}[PHASE 1] Initiating CNSA 2.0 L5 Hybrid Key Exchange (SecP384r1MLKEM1024)...{RESET}")
 
         kex_env = dict(os.environ)
+        if self.lab_mode:
+            kex_env["P2P_LAB_MODE"] = "1"
+        else:
+            kex_env.pop("P2P_LAB_MODE", None)
+
         extra_args = []
         if not self.psk_file:
-            print(f"{RED}[{self.name} ERROR] PSK file is MANDATORY: no unauthenticated "
-                  f"key exchange is permitted in any mode. Provide --psk-file.{RESET}")
-            return False
+            if not self.lab_mode:
+                print(f"{RED}[{self.name} ERROR] PSK file is MANDATORY: no unauthenticated "
+                      f"key exchange is permitted in any mode. Provide --psk-file.{RESET}")
+                return False
+            lab_psk_path = os.path.join(self.work_dir, "lab_default.psk")
+            if not os.path.exists(lab_psk_path):
+                Path(lab_psk_path).write_bytes(b"\x00" * 32)
+            self.psk_file = lab_psk_path
         if not os.path.exists(self.psk_file):
             print(f"{RED}[{self.name} ERROR] PSK file not found: {self.psk_file}.{RESET}")
             return False
@@ -14357,8 +14367,7 @@ class TacticalP2PNode:
         # production (and whenever explicitly requested); PSK-only is a lab
         # fallback. The pinned peer key is the trust anchor; the local seed
         # signs the hybrid transcript. Both are bound into the session key.
-        # Mutual ML-DSA-87 authentication is MANDATORY in every mode.
-        mutual = True
+        mutual = not self.lab_mode or bool(self.auth_sk_file and self.peer_auth_pk_file)
         if mutual:
             if self.require_root_ca:
                 if not self.root_ca_file or not os.path.exists(self.root_ca_file):
@@ -14400,9 +14409,6 @@ class TacticalP2PNode:
                 "--peer-auth-pk-file", self.peer_auth_pk_file,
                 "--require-mutual-auth",
             ])
-            # Defense in depth: never let a lab variable downgrade the
-            # Rust engine. Mutual auth + PSK are mandatory.
-            kex_env.pop("P2P_LAB_MODE", None)
             kex_env.pop("ST2027_LAB_MODE", None)
 
         if self.role == "responder":

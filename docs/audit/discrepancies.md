@@ -56,7 +56,7 @@ The audit confirmed several blocks of dormant, quarantined, or disabled code wit
 |---|---|---|---|
 | Communications Engine | `secure_p2p.py` (14,886 lines) | `core/orchestrator.py` (1,714 lines) + `messaging/` | Overlapping session management and encryption logic. Changes made to one must be manually ported to the other. |
 | seL4 Microkernel Separation | `sel4_baremetal/` (Rust native target) | `[PROMOTIONAL]_sel4_appliance.py` and domain twins | `sel4_baremetal/` provides native Microkit Rust implementations; Python twins provide reference emulation executed by test suites. |
-| Data Plane Network Transport | `destroyer_node.py` (Python fallback) | `rust_data_plane/` (`libdestroyer_data_plane`) | When compiled Rust libraries are present, high-throughput UDP packet processing is delegated to native code; Python fallback operates in development mode. |
+| Data Plane Network Transport | `destroyer_node.py` (Python fallback) | `rust_data_plane/` (`libdestroyer_data_plane`) | When compiled Rust libraries are present, high-throughput UDP packet processing is delegated to native code; Python fallback operates in development mode. Authority boundary and fail-closed rules formally documented in `docs/audit/modules/authority_boundary.md`. |
 
 ---
 
