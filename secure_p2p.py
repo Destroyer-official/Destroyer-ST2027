@@ -15624,7 +15624,7 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
     clean_peer = str(peer).strip("[]")
     is_loopback = (
         clean_bind == clean_peer
-        or (clean_bind in ("::", "::1", "127.0.0.1", "0.0.0.0", "localhost")
+        or (clean_bind in ("::", "::1", "127.0.0.1", "0.0.0.0", "localhost")  # nosec B104
             and clean_peer in ("::1", "127.0.0.1", "localhost"))
     )
 

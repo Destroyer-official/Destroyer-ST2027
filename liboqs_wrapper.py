@@ -210,6 +210,61 @@ def _find_liboqs_path() -> Path:
                     cand = Path(sys_dir) / sys_path
                     candidates.append(cand)
 
+
+def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
+    """Ensure pinned liboqs (0.16.0) is available on Linux CI/host environments."""
+    if platform.system() != "Linux":
+        return None
+    import subprocess  # nosec: B404
+    import shutil
+
+    # Fast check: package manager
+    if shutil.which("apt-get") and shutil.which("sudo"):
+        try:
+            subprocess.run(["sudo", "apt-get", "update", "-qq"], timeout=45, capture_output=True)  # nosec: B603, B607
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-qq", "liboqs-dev"], timeout=90, capture_output=True)  # nosec: B603, B607
+        except Exception:  # nosec: B110
+            pass
+
+    check_paths = [
+        Path("/usr/local/lib/liboqs.so"),
+        Path("/usr/lib/x86_64-linux-gnu/liboqs.so"),
+        Path("/usr/lib/liboqs.so"),
+        repo_dir / "liboqs.so"
+    ]
+    for p in check_paths:
+        if p.exists() and p.is_file():
+            return p.resolve()
+
+    # Pinned hermetic build from source if native tools exist
+    if shutil.which("git") and shutil.which("cmake"):
+        try:
+            pin_sha = "5a1a854b0dc9f2141bdc771c555ee60c37950183"
+            import tempfile
+            build_dir = Path(tempfile.gettempdir()) / "liboqs_src"  # nosec: B108
+            if not build_dir.exists():
+                subprocess.run(["git", "clone", "--depth", "1", "--branch", "0.16.0", "https://github.com/open-quantum-safe/liboqs.git", str(build_dir)], check=True, timeout=90)  # nosec: B603, B607
+            res = subprocess.run(["git", "-C", str(build_dir), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # nosec: B603, B607
+            if res.stdout.strip() == pin_sha:
+                cmake_b = build_dir / "build"
+                subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
+                nproc = str(os.cpu_count() or 2)
+                subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=180)  # nosec: B603, B607
+                if shutil.which("sudo"):
+                    subprocess.run(["sudo", "cmake", "--install", str(cmake_b)], check=True, timeout=30)  # nosec: B603, B607
+                    subprocess.run(["sudo", "ldconfig"], check=True, timeout=10)  # nosec: B603, B607
+                else:
+                    target_so = cmake_b / "lib" / "liboqs.so"
+                    if target_so.exists():
+                        shutil.copy2(target_so, repo_dir / "liboqs.so")
+        except Exception:  # nosec: B110
+            pass
+
+    for p in check_paths:
+        if p.exists() and p.is_file():
+            return p.resolve()
+    return None
+
     for cand in candidates:
         try:
             if cand.resolve().exists() and cand.is_file():
@@ -217,6 +272,12 @@ def _find_liboqs_path() -> Path:
         # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
         except Exception:  # nosec: B110
             pass
+
+    if platform.system() == "Linux":
+        provisioned = _ensure_liboqs_linux(repo_dir)
+        if provisioned is not None:
+            return provisioned
+
     # Fail-closed default anchored to repo directory
     return (repo_dir / ("oqs.dll" if platform.system() == "Windows" else "liboqs.so")).resolve()
 

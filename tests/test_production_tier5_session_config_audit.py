@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 from network.session_manager import SessionContext, SessionManager, SecurityError
 from utils.config_manager import ConfigManager
-import secure_p2p_core.utils.config_manager as core_cm
+import utils.config_manager as core_cm
 
 
 class TestTier5SessionAndConfigAudit(unittest.IsolatedAsyncioTestCase):

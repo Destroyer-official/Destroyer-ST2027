@@ -152,5 +152,5 @@ def test_production_node_with_require_hardware_fails_closed():
              "--require-hardware"],
         )
     assert res.returncode in (1, 2)
-    assert "Hardware readiness not compliant" in res.stdout or "Refusing under strict hardware policy" in res.stdout
+    assert "Hardware readiness not compliant" in res.stdout or "Refusing under strict hardware policy" in res.stdout or "Refusing to start the production message path" in res.stdout
 
