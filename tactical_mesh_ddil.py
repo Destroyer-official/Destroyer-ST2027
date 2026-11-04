@@ -9,7 +9,7 @@ Features:
 1. Partition-tolerant store-and-forward bundle queuing (in-memory, locked RAM).
 2. Post-Quantum BPsec Encapsulation (AES-256-GCM + ML-DSA-87 digital signatures).
 3. Merkle-DAG delta reconciliation: only synchronize missing bundles on reconnect.
-4. Adaptive packet pacing for low-bandwidth (< 64kbps) tactical military links.
+4. Adaptive packet pacing for low-bandwidth (< 64kbps) DDIL links.
 5. Zero plaintext leakage during store-and-forward offline intervals.
 """
 
@@ -262,7 +262,7 @@ class TacticalAuthorityLevel:
 class TacticalIdentityCache:
     """
     Tactical Identity Cache (TIC) per Tactical Edge Triad Architecture (TETA 2025/2026).
-    Caches identities, roles, and pre-attested credentials for zero-trust authorization offline.
+    Caches identities, roles, and pre-attested credentials for offline mutual authorization.
     """
 
     def __init__(self):
@@ -850,12 +850,12 @@ def get_ddil_node_mesh(node_id: str = "DEFAULT_TACTICAL_NODE") -> DDILNodeMesh:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="DoD CSRMC Phase 5: Tactical DDIL Mesh Self-Test")
+    parser = argparse.ArgumentParser(description="Phase 5: DDIL Mesh Self-Test")
     parser.add_argument("--test", action="store_true", help="Run tactical mesh self-test")
     args = parser.parse_args()
 
     print("=" * 80)
-    print(" DoD CSRMC Phase 5: Tactical DDIL Mesh Resilience Self-Test")
+    print(" Phase 5: DDIL Mesh Resilience Self-Test")
     print("=" * 80)
 
     # 1. Setup two tactical stations (Alpha and Bravo)
@@ -974,6 +974,6 @@ if __name__ == "__main__":
     assert decrypted_comp == b"LOW_BANDWIDTH_COMPRESSED_KEY_PAYLOAD"  # nosec: B101
     print(f"  -> Successfully verified Key-ID compressed bundle (saved 2592B wire overhead, key_id={compressed_bundle.sender_key_id}).")
 
-    print("\n[ALL 5/5 TACTICAL DDIL MESH TESTS PASSED SUCCESSFULLY]\n")
+    print("\n[ALL 5/5 DDIL MESH TESTS PASSED SUCCESSFULLY]\n")
 
 
