@@ -1,6 +1,6 @@
 # Module Documentation: Ratchet and Key Exchange Protocol Subsystem (`ratchet_kex_protocol`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `ratchet_kex_protocol`
 - **Subsystem Classification:** Key Exchange, Forward Secrecy, Post-Quantum Ratcheting, and Group Agreement
@@ -85,7 +85,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. `noise_pq.py` Wire Handshake Layouts
 1. **Message 1 (Initiator $	o$ Responder):**
@@ -147,7 +147,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **ML-KEM-1024 (NIST FIPS 203):**
    - Public Key: 1568 bytes, Ciphertext: 1568 bytes, Shared Secret: 32 bytes.
@@ -173,7 +173,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Dependencies
 - `cryptography` (hazmat primitives: `hashes`, `ec`, `kdf.hkdf`, `ciphers.aead.AESGCM`): Core elliptic-curve and symmetric encryption operations.
@@ -206,7 +206,7 @@
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -225,7 +225,7 @@
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_noise_pq_hardened.py` (14 passed):
@@ -254,7 +254,7 @@
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Deniable Authentication Ring Signatures in `double_ratchet.py:P2P_DENIABLE`:**
    - Although `P2P_DENIABLE` is recognized as an environment flag, true off-the-record deniability (e.g., designated verifier proofs or ring signatures) is not implemented for ML-DSA-87; messages fall back to explicit non-repudiable ML-DSA-87 signatures.
@@ -264,7 +264,7 @@
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **Bandwidth Overhead of Classic McEliece:**
    - In `hybrid_kex.py` and `triple_hybrid_kem.py`, Classic McEliece-8192128f requires an encapsulation key of 1,357,824 bytes (~1.36 MB). Exchanging this public key introduces significant network latency and packet fragmentation on constrained links.
@@ -290,7 +290,7 @@
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **Handshake Unification Strategy:**
    - Is `Noise_XXhfs` (`noise_pq.py`) planned to replace the custom hybrid handshake in `hybrid_kex.py`, or are both intended to coexist indefinitely?

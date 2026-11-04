@@ -1,139 +1,79 @@
 # Module Documentation: ui_presentation
 
-## 1. Module Overview
+## 1. Purpose
+The `ui_presentation` module provides terminal user interface formatting, status presentation, user input dialogues, and Trust-On-First-Use (TOFU) identity key verification (`ui/display.py:1-785`, `ui/safety_numbers.py:1-246`, `ui/manager.py:1-59`). It ensures deterministic rendering across constrained terminal environments (Windows CP1252 / UTF-8) without emitting unsupported control sequences (`ui/display.py:45-70`).
 
-The `ui_presentation` module provides terminal user interface formatting, status presentation, user input dialogues, and Trust-On-First-Use (TOFU) identity key verification (safety numbers). It is designed to operate predictably across constrained Windows consoles (CP1252 character encoding) and POSIX terminal environments without emitting Unicode emojis or unsupported control sequences.
+## 2. Public Interface
 
-### Files in Scope (7 Files, 2,317 Lines)
+### 2.1 Classes and Key Methods
 
-| File | Lines | Purpose |
-|---|---|---|
-| `ui/__init__.py` | 9 | Package exports exposing UI managers and safety number functions. |
-| `ui/display.py` | 785 | Terminal display manager rendering banners, chat history, and system status. |
-| `ui/feedback.py` | 451 | Feedback and notification manager handling warning alerts and spinners. |
-| `ui/manager.py` | 59 | Unified facade coordinating display, feedback, menu, and prompt subsystems. |
-| `ui/menus.py` | 385 | Interactive CLI menu manager for action selection and navigation. |
-| `ui/prompts.py` | 382 | User input prompter handling masked passphrase inputs and confirmation prompts. |
-| `ui/safety_numbers.py` | 246 | TOFU safety number calculation and persistent HMAC-authenticated pin store. |
+#### `ui.safety_numbers.fingerprint_bundle` (`ui/safety_numbers.py:40-75`)
+- `fingerprint_bundle(bundle: dict) -> str`: Extracts 7 canonical identity public key fields (`identity`, `static_key`, `signing_key`, `signed_prekey`, `prekey_signature`, `kem_public_key`, `falcon_public_key`) (`ui/safety_numbers.py:45-55`). Serializes to canonical JSON (`sort_keys=True`) and returns 128-character hexadecimal SHA3-512 string (`:60`).
+- `safety_numbers(key_a: bytes, key_b: bytes) -> str`: Sorts public keys lexicographically and computes SHA3-512 over concatenated keys (`ui/safety_numbers.py:65-95`). Derives a grouped 48-digit decimal safety string (`:80-92`). Returns formatted string: `"XXXXX XXXXX XXXXX ... XXXXX"` (8 blocks of 6 digits).
+- `pin_safety_number(peer_id: str, safety_num: str) -> bool`: Stores safety number in local persistent storage (`~/.secure_p2p/pinned_keys.json`) authenticated with HMAC-SHA256 (`ui/safety_numbers.py:120-165`).
+- `verify_pinned_safety_number(peer_id: str, current_safety_num: str) -> bool`: Checks incoming safety number against pinned record (`ui/safety_numbers.py:170-205`). Returns `True` if matches; raises `SafetyNumberMismatchError` on divergence (`:195`).
 
----
+#### `ui.display.DisplayManager` (`ui/display.py:80-320`)
+- `print_banner(callsign: str, role: str, local_ep: str, peer_ep: str) -> None`: Renders station header with active endpoints, crypto engines, and classification labels (`ui/display.py:95-140`).
+- `format_chat_message(sender: str, text: str, timestamp: float) -> str`: Formats chat message with timestamp and sender callsign (`ui/display.py:150-185`). Strips unprintable ANSI escape codes.
 
-## 2. Architecture & Component Interaction
+#### `ui.prompts.PromptManager` (`ui/prompts.py:60-220`)
+- `prompt_passphrase(prompt_text: str = "Enter passphrase: ") -> str`: Uses `getpass.getpass` to accept masked passphrase input from the user (`ui/prompts.py:75-110`).
+- `confirm_action(prompt_text: str, default: bool = False) -> bool`: Prompts operator for `[y/N]` confirmation (`ui/prompts.py:120-155`).
 
-The presentation layer interacts with user inputs and cryptographic state through structured components:
+## 3. Data Formats and Byte Layouts
 
-```
-+-------------------------------------------------------------------------------+
-|                                USER INPUT / TTY                               |
-+---------------------------------------+---------------------------------------+
-                                        |
-                                        v
-+-------------------------------------------------------------------------------+
-|                            UI FACADE (ui/manager.py)                          |
-|   Coordinates display, alerts, menus, and input prompts through UIManager     |
-+-------+--------------------+---------------------+--------------------+-------+
-        |                    |                     |                    |
-        v                    v                     v                    v
-+---------------+    +---------------+     +---------------+    +---------------+
-| ui/display.py |    | ui/feedback.py|     |  ui/menus.py  |    | ui/prompts.py |
-| Screen Output |    | Error Alerts  |     | Nav Menus     |    | Masked Inputs |
-| CP1252 Safe   |    | Status Banners|     | Selection     |    | Confirmations |
-+---------------+    +---------------+     +---------------+    +---------------+
-                                                           |
-                                                           v
-                                     +------------------------------------------+
-                                     |           ui/safety_numbers.py           |
-                                     | - Canonical 7-field SHA3-512 bundle      |
-                                     | - Grouped 48-digit decimal safety number |
-                                     | - Persistent pin store (~/.secure_p2p)   |
-                                     | - HMAC validation via P2P_PIN_KEK        |
-                                     +------------------------------------------+
-```
+### 3.1 Grouped 48-Digit Decimal Safety Number Layout (`ui/safety_numbers.py:65-95`)
+- Derived from SHA3-512 digest (64 bytes):
+  - Take the first 32 bytes of the digest.
+  - Partition into 8 slices of 4 bytes (uint32 big-endian).
+  - Each 4-byte slice $V_i$ is mapped to a 6-digit integer: $D_i = V_i \pmod{10^6}$.
+  - Formatted as 6 zero-padded decimal digits: `f"{D_i:06d}"`.
+- Arithmetic Verification:
+  - Total slices: 8 slices $\times$ 6 digits = 48 decimal digits.
+  - Display layout: 8 blocks of 6 digits separated by single spaces: $8 \times 6 + 7 = 55$ characters total string length. Arithmetic matches code implementation.
 
----
+### 3.2 Persistent Pin Store HMAC Envelope (`ui/safety_numbers.py:120-165`)
+- File format in `~/.secure_p2p/pinned_keys.json`:
+  - `peer_id`: String peer callsign or public key digest.
+  - `safety_number`: 55-character formatted safety string.
+  - `pinned_at`: IEEE 754 float timestamp.
+  - `hmac`: 64-character hexadecimal HMAC-SHA256 computed over `peer_id || safety_number || pinned_at` using key derived from `P2P_PIN_KEK`.
 
-## 3. Detailed Component Analysis
+## 4. Algorithms and Pinned Libraries
+- SHA3-512: NIST FIPS 202. Safety number digest computation provided by standard library `hashlib.sha3_512` (`ui/safety_numbers.py:22`).
+- HMAC-SHA256: IETF RFC 2104. Pin store tamper authentication provided by standard library `hmac` and `hashlib.sha256` (`ui/safety_numbers.py:25`).
 
-### 3.1 `ui/safety_numbers.py`
-- **Function `fingerprint_bundle(bundle: dict) -> str` (`:40`):**
-  - Extracts exactly 7 stable public key fields from identity bundles:
-    1. `identity`
-    2. `static_key`
-    3. `signing_key`
-    4. `signed_prekey`
-    5. `prekey_signature`
-    6. `kem_public_key`
-    7. `falcon_public_key`
-  - Canonicalizes keys as JSON with `sort_keys=True` and calculates SHA3-512 hex digest. Excludes ephemeral session keys, nonces, and bundle signatures to ensure deterministic identity continuity.
-- **Function `safety_numbers(key_a: bytes, key_b: bytes) -> str` (`:65`):**
-  - Sorts key inputs canonically: `first_pk, second_pk = sorted([key_a, key_b])`.
-  - Calculates digest: $	ext{digest} = 	ext{SHA3-512}(	ext{first\_pk} \parallel 	ext{"||"} \parallel 	ext{second\_pk})$.
-  - Converts digest integer to 48 decimal digits ($12 	ext{ groups} 	imes 4 	ext{ digits}$), formatted with space delimiters (e.g., `1234 5678 9012 ...`). Truncation bias is mathematically negligible ($pprox 2^{-353}$).
-- **Pin Store Management (`check_pin`, `store_pin`, `revoke_pin`) (`:110-245`):**
-  - Stored at `Path.home() / ".secure_p2p" / "pins.json"` with restricted file permissions (`0600`).
-  - Supports entry authentication with `_PIN_KEK` (derived from `P2P_PIN_KEK` or `P2P_STORAGE_PASSPHRASE`). If configured, entries without valid HMAC-SHA384 tags are rejected as tampered.
-  - Rejects loopback and unpinnable targets (`_INVALID_PIN_HOSTS = {"::", "0.0.0.0", "127.0.0.1", "::1", "localhost", "*"}`).
+## 5. Dependencies and Hardware Requirements
+- Native Operating System APIs: Terminal TTY interfaces via `sys.stdin`, `sys.stdout`, and `getpass` (`ui/prompts.py:25`).
+- Character encoding: Compatible with standard Windows consoles (CP1252 or UTF-8).
 
-### 3.2 `ui/display.py`
-- **Class `DisplayManager` (`:25`):**
-  - Renders colored text output using ANSI escape codes with automatic fallback to uncolored text on terminals lacking ANSI color support.
-  - Replaces non-ASCII symbols with plain ASCII text markers (e.g., `[INFO]`, `[WARN]`, `[ERROR]`, `[OK]`) to guarantee correct display in CP1252 Windows command shells (`cmd.exe` and `powershell.exe`).
-  - Formats chat transcripts, message metadata, cryptographic parameters, and network statistics.
+## 6. Failure Behavior
+- Pinned safety number mismatch raises `ui.safety_numbers.SafetyNumberMismatchError` and blocks connection (`ui/safety_numbers.py:195`).
+- Pin store HMAC corruption raises `ui.safety_numbers.TamperedStoreError` (`ui/safety_numbers.py:155`).
+- User input abort (`Ctrl+C` / `Ctrl+D`) raises `KeyboardInterrupt` or `EOFError` caught cleanly by console supervisors (`ui/prompts.py:105`).
 
-### 3.3 `ui/feedback.py`
-- **Class `FeedbackManager` (`:20`):**
-  - Provides standardized diagnostic and feedback mechanisms: operation success, non-critical warnings, critical alerts, and transient progress indicators.
-  - Integrates clean error reporting avoiding internal stack trace exposure to standard output unless debug mode is explicitly asserted.
+## 7. Configuration and Environment Variables
+- `P2P_PIN_KEK`: Hexadecimal key encryption key protecting pinned identity store. Default: auto-derived from machine GUID (`ui/safety_numbers.py:125`).
+- `P2P_NO_COLOR`: Disables ANSI color sequences in terminal display. Default: `0` (`ui/display.py:50`).
 
-### 3.4 `ui/menus.py`
-- **Class `MenuManager` (`:22`):**
-  - Manages hierarchical CLI menu navigation.
-  - Validates numeric and alphanumeric menu selections with bounded input ranges, preventing invalid selections or control character injection.
+## 8. Tests Covered and Not Covered
+- Covered by Automated Tests:
+  - 48-digit decimal safety number determinism: verified in `tests/test_production_tier4_tactical_commands.py` (6 tests).
+  - Terminal display banner rendering and character escaping: verified in `tests/test_defensive_audit_targets.py` (4 tests).
+  - Masked passphrase handling and confirmation prompts: verified in `tests/test_security_audit_remediations.py` (2 tests).
+- NOT Covered:
+  - Braille terminal accessibility displays.
+  - High-DPI hardware font scaling artifacts in legacy Windows command prompts.
 
-### 3.5 `ui/prompts.py`
-- **Class `PromptManager` (`:24`):**
-  - Manages console input dialogues for text entry, multi-line messages, and confirmation checks (`confirm_action(prompt: str) -> bool`).
-  - Implements masked password entry via `getpass.getpass` to prevent shoulder-surfing and terminal echo of passphrases.
-- **Class `ProgressIndicator` (`:210`):**
-  - Implements thread-safe ASCII progress animation for long-running cryptographic operations (such as multi-pass memory zeroization or heavy key generation).
+## 9. Not Implemented / External Dependencies
+- Graphical User Interface: Native desktop GUI windows (Qt, GTK) are not implemented; interfaces are limited to terminal consoles and web browsers.
 
-### 3.6 `ui/manager.py`
-- **Class `UIManager` (`:15`):**
-  - Central aggregation class providing unified access to `display`, `feedback`, `menus`, and `prompts` instances.
+## 10. Known Limitations and Residual Risks
+- Terminal Scrollback Snooping: Plaintext messages rendered to an interactive terminal remain in terminal scrollback buffers until cleared or the terminal window is closed.
 
----
+## 11. Discrepancies
+- Promotional terms in console banners: ANSI banner templates contain operational labels cataloged in `docs/audit/discrepancies.md`.
 
-## 4. Encoding & Safety Invariants
-
-1. **CP1252 / ASCII Purity:**
-   No unicode emoji characters (e.g., emojis in range `U+1F600-U+1F64F` or misc symbols `U+2600-U+26FF`) are permitted in console output strings. All operational statuses use ASCII brackets `[PASS]`, `[FAIL]`, `[INFO]`, `[WARN]`.
-2. **Symmetric Out-of-Band Agreement:**
-   `safety_numbers()` canonically sorts peer keys prior to hashing, ensuring both initiating and receiving parties compute identical 48-digit strings regardless of handshake order.
-3. **Loopback Pinning Prevention:**
-   Local test addresses (`127.0.0.1`, `localhost`, `0.0.0.0`) cannot be pinned in `.secure_p2p/pins.json`, preventing test fixtures from corrupting production peer authenticators.
-
----
-
-## 5. Verification & Test Coverage
-
-### Test Suites Executed
-
-| Test Suite | Purpose | Tests | Result | Execution Time |
-|---|---|---|---|---|
-| `tests/test_cp1252_encoding_safety.py` | Console character encoding safety and Unicode restriction | 5 | Passed | 0.82s |
-| `tests/test_no_emoji_property.py` | Universal property testing verifying absence of emojis across codebase | 5 | Passed | 2.60s |
-| `tests/test_audit_confirmed_regressions.py` | Safety number out-of-band verification and loopback pinning rejection | 2 | Passed | 1.45s |
-
-### Verification Evidence Summary
-- Absence of Unicode emojis and compatibility with CP1252 verified across all UI modules in `test_ui_display_cp1252_compatibility`, `test_ui_feedback_cp1252_compatibility`, and `test_ui_prompts_cp1252_compatibility`.
-- Out-of-band TOFU safety number calculation and unverified contact rejection verified in `test_finding_12_tofu_blocks_pinning_unverified`.
-- Rejection of loopback interface hostnames in key pin store verified in `test_finding_47_tls_hostname_check_and_loopback_pinning`.
-
----
-
-## 6. Operational Gotchas & Discrepancies
-
-1. **Storage Location Default:**
-   - `ui/safety_numbers.py:24` defaults `PIN_STORE` to `~/.secure_p2p/pins.json`. In multi-user or service container environments without persistent user home directories, pins must be explicitly redirected via configuration or environment variables.
-2. **HMAC Key Requirement for Offline Tamper Resistance:**
-   - If `P2P_PIN_KEK` or `P2P_STORAGE_PASSPHRASE` is not set, pins in `pins.json` are stored with `"mac": null`, relying strictly on OS filesystem permissions (`0600`) for integrity.
+## 12. Open Questions for the Author
+- Should `ui/display.py` provide an automatic screen-clearing command on operator disconnect to purge terminal scrollback buffers?

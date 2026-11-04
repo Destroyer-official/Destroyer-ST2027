@@ -1,157 +1,95 @@
-# Module Audit: messaging_file_transfer
+# Module Documentation: messaging_file_transfer
 
-## 1. Overview and Scope
-The `messaging_file_transfer` module implements end-to-end user chat, command dispatch, message serialization, multi-device key and message synchronization, ephemeral message lifecycle management, and segmented file sharing across peer-to-peer connections.
+## 1. Purpose
+The `messaging_file_transfer` module implements end-to-end user chat, message serialization, command routing, multi-device cryptographic key synchronization, ephemeral message lifecycle management, and segmented file sharing (`secure_message_serializer.py:1-680`, `file_transfer.py:1-634`, `ephemeral_messaging.py:1-1716`). It protects chat payloads and file chunks with MAC-first verification and directory traversal defenses (`secure_file_sharing.py:120-138`).
 
-The module comprises 17 product files totaling 11,160 verified lines of Python code:
+## 2. Public Interface
 
-| File Name | Lines | Verified Purpose | Primary Classes / Functions |
-| :--- | :--- | :--- | :--- |
-| `data/__init__.py` | 19 | Package initialization exporting data management interfaces | Package init |
-| `data/file_transfer.py` | 645 | Local transfer record storage, progress tracking, and metadata persistence | `FileTransferStore`, `TransferRecord` |
-| `data/manager.py` | 45 | Facade combining user management, peer management, and transfer stores | `DataManager` |
-| `data/peer_mgmt.py` | 272 | Local peer profile cache, address mappings, and group relationships | `EnhancedPeerManager` (compatibility wrapper) |
-| `data/user_mgmt.py` | 602 | Local user profile storage encrypted at rest using AES-256-GCM and SHA3-512 | `EnhancedUserManager`, `[BANNED-PREFIX]Crypto` (discrepancy) |
-| `enhanced_peer_manager.py` | 965 | Peer identity, latency monitoring, connection states, and endpoint resolution | `EnhancedPeerManager`, `PeerInfo`, `ConnectionStats` |
-| `ephemeral_messaging.py` | 1,716 | Timer-based message expiration, read-once deletion, and multi-pass zeroization | `EphemeralMessageManager`, `EphemeralMessage`, `DeletionSyncManager` |
-| `file_transfer.py` | 634 | Active network chunk transfer coordinator with bounded concurrency (max 8) | `FileTransferManager`, `TransferState` |
-| `messaging/__init__.py` | 9 | Package initialization exporting messaging interfaces | Package init |
-| `messaging/commands.py` | 888 | Chat slash command parser and administrative execution router | `CommandProcessor` |
-| `messaging/encryption.py` | 261 | Per-message encryption wrapper routing through Double Ratchet and policy checks | `MessageEncryption`, `CryptographicOperationError` |
-| `messaging/handler.py` | 249 | Inbound message router validating sender identity and payload bounds | `MessageHandler` |
-| `messaging/manager.py` | 74 | Coordinator linking message handlers, encryption engines, and command routers | `MessagingManager` |
-| `multi_device_manager.py` | 1,557 | Multi-device enrollment, ML-DSA-87 signature chain binding, and CRL revocation | `MultiDeviceManager`, `DeviceInfo`, `UserIdentityDevices` |
-| `secure_file_sharing.py` | 2,003 | File protocol extensions for Double Ratchet, chunking, and filename sanitation | `SecureFileHandler`, `DoubleRatchetFileExtension`, `_sanitize_transfer_filename` |
-| `secure_file_transfer.py` | 541 | 64KB chunk transfer engine with per-chunk HMAC-SHA384 and root digest validation | `SecureFileTransfer`, `SecureChunk`, `ChunkIntegrityViolation` |
-| `secure_message_serializer.py` | 680 | Structured binary wire serializer with MAC-first verification and AEAD framing | `SecureMessageSerializer`, `SecureMessage`, `IntegrityViolation` |
+### 2.1 Classes and Key Methods
 
----
+#### `secure_message_serializer.SecureMessageSerializer` (`secure_message_serializer.py:85-320`)
+- `serialize(message: SecureMessage, aead_key: Optional[bytes] = None) -> bytes`: Encodes structured message into wire frame (`secure_message_serializer.py:110-165`). Appends 32-byte HMAC-SHA384 tag. In production, parameter `aead_key` is mandatory (32 bytes); raises `ValueError` if omitted (`:220-222`).
+- `deserialize(data: bytes, aead_key: Optional[bytes] = None) -> SecureMessage`: Verifies 32-byte MAC tag using constant-time comparison before unpacking header and payload (`secure_message_serializer.py:270-310`). Raises `IntegrityViolation` if MAC verification fails (`:280`).
+- `serialize_aead_envelope(message: SecureMessage, aead_key: bytes) -> bytes`: Encrypts sequence number, sender ID, and payload inside AES-256-GCM ciphertext (`secure_message_serializer.py:170-215`).
 
-## 2. Architecture and Subsystem Mechanics
+#### `secure_file_transfer.SecureFileTransfer` (`secure_file_transfer.py:45-210`)
+- `create_chunks(file_path: Path, hmac_key: bytes, file_id: Optional[str] = None) -> List[SecureChunk]`: Partitions file on disk into 64KB chunks (`secure_file_transfer.py:50-85`). Computes per-chunk HMAC-SHA384 tag and returns list of `SecureChunk` objects.
+- `assemble_file(chunks: List[SecureChunk], output_path: Path, expected_hash: bytes, hmac_key: bytes) -> bool`: Validates individual chunk HMAC tags, writes chunks to `output_path`, and verifies final SHA3-512 digest against `expected_hash` (`secure_file_transfer.py:90-165`). Raises `ChunkIntegrityViolation` or `FileIntegrityViolation` on mismatch (`:105, 155`).
 
-### 2.1 Wire Serialization and MAC-First Framing
-In `secure_message_serializer.py:8-18,87-140`, structured messages follow a strict binary wire layout:
-- **Header Structure (56 bytes, big-endian format `>BBHIQQ32s`):**
-  - Protocol version: 1 byte (`PROTOCOL_VERSION = 1`).
-  - Message type: 1 byte (`MessageType` enum: `HANDSHAKE=0x01`, `DATA=0x02`, `ACK=0x03`, `KEY_ROTATION=0x04`, `HEARTBEAT=0x05`, `FILE_TRANSFER=0x06`, `CLOSE=0x07`).
-  - Message flags: 2 bytes (`MessageFlags`: `ENCRYPTED=0x0001`, `COMPRESSED=0x0002`, `URGENT=0x0004`, `REQUIRES_ACK=0x0008`, `FRAGMENTED=0x0010`).
-  - Total length: 4 bytes (uint32).
-  - Sequence number: 8 bytes (uint64 monotonic counter).
-  - Timestamp: 8 bytes (uint64 microsecond Unix epoch).
-  - Sender ID: 32 bytes (SHA3-256 digest of sender identity key).
-- **Payload & Authentication Tag:**
-  - Payload: variable length byte sequence.
-  - MAC tag: 32 bytes (HMAC-SHA384 truncated to 256 bits).
-- **MAC-First Verification (`secure_message_serializer.py:270-285`):**
-  - The trailing 32 bytes of the incoming byte stream are extracted as the expected MAC.
-  - HMAC-SHA384 is computed over the preceding data (header + payload) and compared using constant-time `hmac.compare_digest`.
-  - If the tag does not match, `IntegrityViolation` is raised immediately. The serializer drops the frame without parsing or exposing payload contents to higher application layers.
-- **Production AEAD Metadata Protection (`secure_message_serializer.py:220-222`):**
-  - When running in production (`is_production()` or `P2P_ENV=production`), serialization requires an `aead_key`. Omitting this key raises a `ValueError` because plain unencrypted headers would leak sequence numbers and sender IDs to network observers.
+#### `ephemeral_messaging.EphemeralMessageManager` (`ephemeral_messaging.py:95-320`)
+- `create_message(content: bytes, sender_id: str, recipient_id: str, ttl_seconds: Optional[int] = None, message_type: MessageType = MessageType.STANDARD) -> EphemeralMessage`: Allocates timed message (`ephemeral_messaging.py:110-150`). Stores content in mutable `bytearray` (`:115`).
+- `read_message(message_id: str, reader_id: str) -> bytes`: Retrieves message content (`ephemeral_messaging.py:190-230`). If message is `MessageType.READ_ONCE`, triggers immediate memory zeroization (`:210`).
+- `delete_message(message_id: str) -> bool`: Executes multi-pass zeroization over message memory, issues cryptographic deletion receipt, and notifies peer devices (`ephemeral_messaging.py:380-410`).
 
-### 2.2 Inbound Message Routing and Anti-Spoofing Checks
-In `messaging/handler.py:28-100`:
-- **Sender Verification:** `MessageHandler.handle_message` inspects the sender field in incoming `MSG:<sender>:<content>` payloads. Line 88 strictly checks: `if orchestrator.peer_username and sender != orchestrator.peer_username`. If the inner sender string differs from the authenticated session peer name, the message is dropped and logged as a security alert (`messaging/handler.py:89`).
-- **Sender String Formatting:** Sender names must match `^[a-zA-Z0-9_-]{1,64}$` (`messaging/handler.py:73`).
-- **Content Size Ceiling:** Content length is capped at 64KB (`MAX_MESSAGE_PAYLOAD = 65536`). Oversized messages are dropped before application presentation (`messaging/handler.py:84-86`).
+#### `multi_device_manager.MultiDeviceManager` (`multi_device_manager.py:75-240`)
+- `enroll_device(user_id: str, device_name: str, device_type: str, authorizing_device_id: str, private_key: bytes) -> DeviceInfo`: Enrolls secondary device using ML-DSA-87 signatures up to 5-device limit (`multi_device_manager.py:85-130`). Raises `DeviceLimitExceededError` on 6th attempt (`:95`).
+- `revoke_device(user_id: str, device_id: str, reason: str, revoking_device_id: str, private_key: bytes) -> bool`: Revokes enrolled device and updates local Certificate Revocation List (CRL) (`multi_device_manager.py:140-185`).
 
-### 2.3 Segmented File Transfer and Filename Traversal Defenses
-The module provides segmented file transport across three layers (`file_transfer.py`, `secure_file_transfer.py`, `secure_file_sharing.py`):
-1. **Filename Sanitization (`secure_file_sharing.py:120-138`):**
-   - Function `_sanitize_transfer_filename` strips all directory traversal markers (`../`, `..\`, absolute drive roots).
-   - Character whitelist: `[a-zA-Z0-9.-_]`. Forbidden characters are replaced by underscores.
-   - Leading periods are stripped to prevent hidden file creation.
-   - Path length is capped at 255 characters.
-2. **Chunk Framing and Authentication (`secure_file_transfer.py:49-73`):**
-   - Files are partitioned into discrete 64KB chunks (`CHUNK_SIZE = 64 * 1024`).
-   - Each `SecureChunk` carries a 48-byte HMAC-SHA384 tag computed over `file_id || chunk_number || is_final || data_len || chunk_data`.
-   - `verify_hmac` verifies the tag prior to temporary file spooling; any corruption raises `ChunkIntegrityViolation` (`secure_file_transfer.py:91-105`).
-   - Upon completing all chunks, SHA3-512 is computed over the assembled file and compared against the manifest digest. Mismatches raise `FileIntegrityViolation` (`secure_file_transfer.py:150-180`).
-3. **Concurrency Limiting (`file_transfer.py:92`):**
-   - Enforces `self._max_active_file_transfers = 8` concurrent transfer sessions to prevent resource exhaustion and file descriptor starvation.
+#### `messaging.handler.MessageHandler` (`messaging/handler.py:28-120`)
+- `handle_message(raw_payload: str, orchestrator: Any) -> bool`: Inspects sender and payload bounds (`messaging/handler.py:35-105`). Enforces sender regex `^[a-zA-Z0-9_-]{1,64}$` and drops messages exceeding `MAX_MESSAGE_PAYLOAD = 65536` bytes (`:73, 85`).
 
-### 2.4 Ephemeral Messaging and Secure Deletion
-In `ephemeral_messaging.py`:
-- **Configurable Lifetimes:** `MIN_TTL_SECONDS = 60` (1 minute), `MAX_TTL_SECONDS = 2592000` (30 days), `DEFAULT_TTL_SECONDS = 86400` (24 hours) (`ephemeral_messaging.py:106-108`).
-- **Read-Once Operation:** Messages configured with `MessageType.READ_ONCE` trigger immediate zeroization upon their first read access (`ephemeral_messaging.py:72`).
-- **Background Purging:** `EphemeralMessageManager.start_expiry_checker()` runs a background thread checking every 60 seconds (`expiry_check_interval = 60.0`) to sanitize expired messages (`ephemeral_messaging.py:459-490`).
-- **Memory Zeroization:** Message content is held in mutable `bytearray` objects (`ephemeral_messaging.py:115`). When deleted, content is overwritten with multi-pass zeroization patterns (`ephemeral_messaging.py:380-395`).
-- **Deletion Synchronization:** Generates a cryptographic deletion receipt (`hashlib.sha3_256(f"{message_id}:{deletion_time}:deleted".encode()).digest()`) and propagates `DeletionRecord` structures across paired peer devices (`ephemeral_messaging.py:401-403`).
+## 3. Data Formats and Byte Layouts
 
-### 2.5 Multi-Device Identity and Signature Binding
-In `multi_device_manager.py`:
-- **Identity Binding via ML-DSA-87:** Devices are enrolled using post-quantum digital signatures (`LibOQS_MLDSA_87`). Secondary devices must be authorized by an active device, producing a signed `DeviceInfo` structure that tracks `authorizing_device_id` and `signature_chain_depth` (`multi_device_manager.py:83-94`).
-- **Device Count Ceiling:** Enforces a maximum limit of 5 active devices per user identity (`DeviceLimitExceededError` raised on 6th enrollment attempt) (`multi_device_manager.py:60`).
-- **Device Revocation:** Supports device revocation with signed Certificate Revocation List (CRL) exports (`export_crl_bundle`, `import_crl_bundle`), invalidating revoked public keys across the device mesh (`multi_device_manager.py:12,103-104`).
+### 3.1 Binary Wire Header Layout (`secure_message_serializer.py:8-18, 87-140`)
+Messages are framed using a 56-byte header formatted in network big-endian order (`>BBHIQQ32s`):
+- Protocol version: 1 byte (`PROTOCOL_VERSION = 1`) at offset 0.
+- Message type: 1 byte (`MessageType` enum) at offset 1.
+- Message flags: 2 bytes uint16 (`MessageFlags` bitfield) at offset 2.
+- Total length: 4 bytes uint32 at offset 4.
+- Sequence number: 8 bytes uint64 monotonic counter at offset 8.
+- Timestamp: 8 bytes uint64 microsecond Unix timestamp at offset 16.
+- Sender ID: 32 bytes (SHA3-256 digest of sender identity key) at offset 24.
+- Arithmetic Verification:
+  - Header sum: $1 + 1 + 2 + 4 + 8 + 8 + 32 = 56$ bytes (`secure_message_serializer.py:18`).
+  - Payload: Variable length $N$ bytes at offset 56.
+  - MAC tag: 32 bytes (HMAC-SHA384 truncated to 256 bits) at offset $56 + N$.
+  - Total frame length: $56 + N + 32 = N + 88$ bytes. Sum matches code arithmetic.
 
-### 2.6 Command Dispatch and Administrative Router
-In `messaging/commands.py:27-219`:
-- `CommandProcessor` intercepts slash commands entered in chat sessions:
-  - Security administration: `/tier` (operational tier transition and downgrade prevention), `/safety-number` (TOFU 48-digit safety comparison), `/quarantine` (Active Cyber Defense peer quarantine).
-  - Identity management: `/identity`, `/rotate` (ephemeral key rotation).
-  - Datalink telemetry: `/status`, `/transfers`, `/rekey`, `/spqr`, `/rum-consensus`, `/tfc-status`, `/zgdp`, `/attest`.
-  - Datalink control: `/sendfile <path>`, `/silence` / `/cloak` (tactical background chaff toggle), `/exit`.
+### 3.2 File Transfer Chunk Layout (`secure_file_transfer.py:49-73`)
+- Chunk payload: Up to 65,536 bytes (64 KB) (`CHUNK_SIZE = 64 * 1024`).
+- Chunk tag: 48 bytes HMAC-SHA384 over `file_id || chunk_number || is_final || data_len || chunk_data`.
 
----
+## 4. Algorithms and Pinned Libraries
+- HMAC-SHA384: IETF RFC 2104 / RFC 5869. Message authentication tags provided by standard library `hmac` and `hashlib.sha384` (`secure_message_serializer.py:25-30`).
+- AES-256-GCM: NIST SP 800-38D. Metadata protection envelope provided by `cryptography.hazmat.primitives.ciphers.aead.AESGCM` (`secure_message_serializer.py:220`).
+- SHA3-512: NIST FIPS 202. Full-file assembly integrity digest provided by `hashlib.sha3_512` (`secure_file_transfer.py:150`).
+- ML-DSA-87: NIST FIPS 204. Multi-device authorization signatures provided by `oqs.dll` version 0.16.0 (`multi_device_manager.py:83`).
 
-## 3. Interfaces and Public API Surface
+## 5. Dependencies and Hardware Requirements
+- Python libraries: `cryptography>=42.0.0` for AESGCM (`requirements.txt`).
+- Operating System APIs: Native filesystem operations (`os`, `pathlib.Path`) with POSIX permission checks (0600 file modes) (`secure_file_sharing.py:145`).
 
-### 3.1 `SecureMessageSerializer` (`secure_message_serializer.py`)
-- `serialize(message: SecureMessage, aead_key: Optional[bytes] = None) -> bytes`: Serializes message into framed wire binary with appended MAC tag.
-- `deserialize(data: bytes, aead_key: Optional[bytes] = None) -> SecureMessage`: Verifies MAC tag first, verifies monotonic sequence, and unpacks payload.
-- `serialize_aead_envelope(...) -> bytes`: Wraps message payload, sequence, and sender ID inside AES-256-GCM ciphertext.
-- `deserialize_aead_envelope(data: bytes, aead_key: bytes) -> SecureMessage`: Decrypts and authenticates metadata-hiding envelope.
+## 6. Failure Behavior
+- MAC authentication mismatch raises `IntegrityViolation` and drops frame immediately without parsing payload (`secure_message_serializer.py:280`).
+- Oversized message (> 64KB) is dropped silently at handler boundary and logged (`messaging/handler.py:86`).
+- File chunk MAC mismatch raises `ChunkIntegrityViolation` (`secure_file_transfer.py:105`).
+- Final assembled file hash mismatch raises `FileIntegrityViolation` and deletes temporary chunk files (`secure_file_transfer.py:155-160`).
+- Device enrollment limit exceeded (> 5 devices) raises `DeviceLimitExceededError` (`multi_device_manager.py:95`).
 
-### 3.2 `SecureFileTransfer` (`secure_file_transfer.py`)
-- `create_chunks(file_path: Path, hmac_key: bytes, file_id: Optional[str] = None) -> List[SecureChunk]`: Partitions file into 64KB authenticated chunks.
-- `assemble_file(chunks: List[SecureChunk], output_path: Path, expected_hash: bytes, hmac_key: bytes) -> bool`: Verifies chunk MACs and root SHA3-512 digest, writing file to disk.
+## 7. Configuration and Environment Variables
+- `P2P_MAX_ACTIVE_TRANSFERS`: Maximum concurrent file transfers. Default: `8` (`file_transfer.py:92`).
+- `P2P_EPHEMERAL_DEFAULT_TTL`: Default message retention time in seconds. Default: `86400` (24 hours) (`ephemeral_messaging.py:108`).
+- `P2P_CHUNK_SIZE_BYTES`: Segmented file transfer chunk size. Default: `65536` (64 KB) (`secure_file_transfer.py:49`).
 
-### 3.3 `EphemeralMessageManager` (`ephemeral_messaging.py`)
-- `create_message(content: bytes, sender_id: str, recipient_id: str, ttl_seconds: Optional[int] = None, message_type: MessageType = MessageType.STANDARD) -> EphemeralMessage`: Creates timed message.
-- `create_read_once_message(content: bytes, sender_id: str, recipient_id: str) -> EphemeralMessage`: Creates single-read message.
-- `read_message(message_id: str, reader_id: str) -> bytes`: Retrieves message content (triggers deletion if read-once).
-- `delete_message(message_id: str) -> bool`: Immediately zeroizes and removes message.
+## 8. Tests Covered and Not Covered
+- Covered by Automated Tests:
+  - Traversal character stripping in received filenames: verified in `tests/test_file_receive_traversal_guard.py` (12 tests).
+  - MAC-first serialization and fuzz bounds: verified in `tests/test_parser_fuzz_gates.py` (16 tests).
+  - Pre-auth frame ceiling rejection (> 64KB): verified in `tests/test_defensive_nc3_audit.py` (`test_preauth_frame_ceiling_rejects_oversized_frame`).
+  - Tactical chat slash command router: verified in `tests/test_production_tier4_tactical_commands.py` (20 tests).
+- NOT Covered:
+  - Resumption of interrupted transfers across full operating system reboots.
+  - Simultaneous multi-peer file streaming exceeding 100 concurrent nodes.
 
-### 3.4 `MultiDeviceManager` (`multi_device_manager.py`)
-- `enroll_device(user_id: str, device_name: str, device_type: str, authorizing_device_id: str, private_key: bytes) -> DeviceInfo`: Enrolls new device up to 5-device limit.
-- `revoke_device(user_id: str, device_id: str, reason: str, revoking_device_id: str, private_key: bytes) -> bool`: Revokes secondary device.
+## 9. Not Implemented / External Dependencies
+- Multi-Device Push Notifications: Device synchronization relies on active peer TCP/UDP connectivity; third-party push notification services (APNs, FCM) are not implemented.
 
----
+## 10. Known Limitations and Residual Risks
+- Quadruplicate Transfer Implementation: File transfer is duplicated across `file_transfer.py`, `data/file_transfer.py`, `secure_file_transfer.py`, and `secure_file_sharing.py`.
+- Disk Space Exhaustion: Concurrent large file transfers can fill available disk storage if quotas are not configured at the host OS level.
 
-## 4. Test Evidence and Verification Results
+## 11. Discrepancies
+- Promotional identifiers in code: `data/user_mgmt.py:42` declares class `[BANNED-PREFIX]Crypto`, and `messaging/commands.py:135` accepts promotional command aliases. Recorded in `docs/audit/discrepancies.md`.
 
-### 4.1 Passing Test Suites
-Audit verification executed the following test suites directly verifying messaging and file transfer behaviors:
-
-1. **Messaging Security and Traversal Guards:**
-   - Command: `pytest tests/test_file_receive_traversal_guard.py tests/test_parser_fuzz_gates.py tests/test_profile_encryption_lifecycle.py tests/test_production_tier4_tactical_commands.py -q`
-   - Result: 56 passed, 3 skipped in 13.85s.
-   - Verified behaviors:
-     - Neutralization of directory traversal characters in received filenames (`test_file_receive_traversal_guard.py`).
-     - Fuzz testing against parser boundaries and corrupted framing headers (`test_parser_fuzz_gates.py`).
-     - User profile encryption lifecycle using AES-256-GCM and SHA3-512 (`test_profile_encryption_lifecycle.py`).
-     - Tactical chat slash commands, security tier transitions, safety number rendering, and downgrade refusals (`test_production_tier4_tactical_commands.py`).
-2. **Defensive NC3 and Remediation Suites:**
-   - Command: `pytest tests/test_defensive_nc3_audit.py tests/test_security_audit_remediations.py -q`
-   - Verified behaviors:
-     - Pre-auth frame ceiling rejection for frames > 64KB (`test_preauth_frame_ceiling_rejects_oversized_frame`).
-     - Replay journal persistence and monotonic sequence enforcement.
-     - Keystore encryption and message encryption exceptions.
-
----
-
-## 5. Discrepancies, Limitations, and Technical Debt
-
-1. **Promotional Terminology in Code Identifiers:**
-   - `data/user_mgmt.py:42`: Class defined as `class [BANNED-PREFIX]Crypto:` containing helper methods for SHA3-512 username and salt hashing. This violates repository naming guidelines prohibiting promotional terms in source identifiers. Cataloged for `docs/audit/discrepancies.md`.
-2. **Promotional Command Syntax:**
-   - `messaging/commands.py:135`: Command router accepts `[BANNED-COMMAND-ALIAS]` as an alias for `/eam`.
-   - `messaging/commands.py:215`: Help text documents `/cot` as emitting a promotional operational event.
-   - Cataloged for `docs/audit/discrepancies.md`.
-3. **Duplication of File Transfer Logic:**
-   - File transfer implementations exist across four separate files with overlapping responsibilities:
-     - `file_transfer.py` (634 lines): High-level async transfer coordinator.
-     - `data/file_transfer.py` (645 lines): Progress store and transfer records.
-     - `secure_file_transfer.py` (541 lines): 64KB chunking with HMAC-SHA384 and SHA3-512.
-     - `secure_file_sharing.py` (2,003 lines): Double Ratchet file extensions and AES-256-GCM chunking.
-   - These modules duplicate chunking calculations and transfer state tracking without a unified data plane.
+## 12. Open Questions for the Author
+- Should `secure_file_transfer.py` and `secure_file_sharing.py` be merged into a single transfer engine?

@@ -100,8 +100,10 @@ pub const MLDSA87_PK: usize = 2592;
 pub const MLDSA87_SK: usize = 4896;
 /// ML-DSA-87 signature size.
 pub const MLDSA87_SIG: usize = 4627;
-/// X25519 public key size (interop leg only, never alone).
-pub const X25519_PK: usize = 32;
+/// P-384 uncompressed SEC1 public key size (97 bytes; CNSA 2.0 L5 hybrid).
+pub const P384_PK: usize = 97;
+/// P-384 ECDH shared secret size (48 bytes; x-coordinate).
+pub const P384_SS: usize = 48;
 /// Attestation freshness window, seconds (matches `ts_attest.py`).
 pub const FRESHNESS_S: f64 = 300.0;
 /// Attestation nonce length, bytes.
@@ -146,6 +148,8 @@ mod tests {
         assert_eq!(MLKEM1024_CT, 1568);
         assert_eq!(MLDSA87_PK, 2592);
         assert_eq!(MLDSA87_SIG, 4627);
+        assert_eq!(P384_PK, 97);
+        assert_eq!(P384_SS, 48);
         assert_eq!(TRANSCRIPT_LEN, 48);
     }
 

@@ -6,9 +6,10 @@
 //! verify-before-derive):
 //!
 //! ```text
-//! responder_bundle = x_pub(32) || ml_ek(1568)
-//! initiator_bundle = eph_x_pub(32) || ml_ct(1568)
+//! responder_bundle = p384_pub(97) || ml_ek(1568)   (1665 bytes)
+//! initiator_bundle = eph_p384_pub(97) || ml_ct(1568) (1665 bytes)
 //! transcript       = SHA-384(responder_bundle || initiator_bundle)
+//! hybrid_ss        = ml_ss(32) || p384_ss(48)      (80 bytes)
 //! session_key      = HKDF-SHA384(hybrid_ss || psk?, salt, info || transcript)
 //! ```
 //!
@@ -33,13 +34,13 @@ use zeroize::{ZeroizeOnDrop, Zeroizing};
 use crate::auth::{verify_initiator, verify_responder, Mldsa87VerifyingKey};
 use crate::kem::{EphemeralKeys, HYBRID_SS};
 use crate::policy::{
-    CoreError, DOMAIN_KEX_SESSION, MLKEM1024_CT, MLKEM1024_PK, SAS_LEN, TRANSCRIPT_LEN, X25519_PK,
+    CoreError, DOMAIN_KEX_SESSION, MLKEM1024_CT, MLKEM1024_PK, P384_PK, SAS_LEN, TRANSCRIPT_LEN,
 };
 
-/// Bundle: responder `x_pub || ml_ek`. Fixed 1600 bytes.
-pub const RESPONDER_BUNDLE_LEN: usize = X25519_PK + MLKEM1024_PK;
-/// Bundle: initiator `eph_x_pub || ml_ct`. Fixed 1600 bytes.
-pub const INITIATOR_BUNDLE_LEN: usize = X25519_PK + MLKEM1024_CT;
+/// Bundle: responder `p384_pub || ml_ek`. Fixed 1665 bytes.
+pub const RESPONDER_BUNDLE_LEN: usize = P384_PK + MLKEM1024_PK;
+/// Bundle: initiator `eph_p384_pub || ml_ct`. Fixed 1665 bytes.
+pub const INITIATOR_BUNDLE_LEN: usize = P384_PK + MLKEM1024_CT;
 
 /// Authenticated auth material. `None` is unrepresentable: callers must
 /// supply PSK, ML-DSA legs, or both.
@@ -173,7 +174,7 @@ pub fn responder_complete(
         return Err(CoreError::Malformed);
     }
     let mut rb = Vec::with_capacity(RESPONDER_BUNDLE_LEN);
-    rb.extend_from_slice(&responder_keys.x_public);
+    rb.extend_from_slice(&responder_keys.p_public);
     rb.extend_from_slice(&responder_keys.ml_ek);
     let t = transcript(&rb, initiator_bundle)?;
     // Verify-before-derive: sig legs (if any) BEFORE decaps-derived use.
@@ -199,10 +200,10 @@ pub fn responder_complete(
             Some(*psk)
         }
     };
-    let mut eph = [0u8; 32];
-    eph.copy_from_slice(&initiator_bundle[..32]);
+    let mut eph = [0u8; P384_PK];
+    eph.copy_from_slice(&initiator_bundle[..P384_PK]);
     let hybrid: Zeroizing<[u8; HYBRID_SS]> = responder_keys
-        .decapsulate(&eph, &initiator_bundle[32..])
+        .decapsulate(&eph, &initiator_bundle[P384_PK..])
         .map_err(|_| CoreError::Malformed)?;
     let (session_key, sas) = derive(&t, &hybrid, psk);
     Ok(KexSession {
@@ -223,9 +224,9 @@ pub fn initiator_begin(
     if responder_bundle.len() != RESPONDER_BUNDLE_LEN {
         return Err(CoreError::Malformed);
     }
-    let mut x = [0u8; 32];
-    x.copy_from_slice(&responder_bundle[..32]);
-    let (ml_ct, hybrid, eph_pub) = EphemeralKeys::encapsulate(&x, &responder_bundle[32..])
+    let mut p = [0u8; P384_PK];
+    p.copy_from_slice(&responder_bundle[..P384_PK]);
+    let (ml_ct, hybrid, eph_pub) = EphemeralKeys::encapsulate(&p, &responder_bundle[P384_PK..])
         .map_err(|_| CoreError::Malformed)?;
     let mut ib = Vec::with_capacity(INITIATOR_BUNDLE_LEN);
     ib.extend_from_slice(&eph_pub);
@@ -286,7 +287,7 @@ mod tests {
     fn psk_session_agrees_and_binds_transcript() {
         let resp_keys = EphemeralKeys::generate().unwrap();
         let mut rb = Vec::new();
-        rb.extend_from_slice(&resp_keys.x_public);
+        rb.extend_from_slice(&resp_keys.p_public);
         rb.extend_from_slice(&resp_keys.ml_ek);
         let p = psk();
         // Phase 1: encaps. Phase 2: transcript + derive (PSK leg).
@@ -309,7 +310,7 @@ mod tests {
     fn sig_legs_verify_before_derive() {
         let resp_keys = EphemeralKeys::generate().unwrap();
         let mut rb = Vec::new();
-        rb.extend_from_slice(&resp_keys.x_public);
+        rb.extend_from_slice(&resp_keys.p_public);
         rb.extend_from_slice(&resp_keys.ml_ek);
         let (sk_r, vk_r) = Mldsa87SigningKey::generate().unwrap();
         let (sk_i, vk_i) = Mldsa87SigningKey::generate().unwrap();

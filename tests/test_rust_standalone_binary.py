@@ -218,7 +218,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
                     recv.kill()
                     recv.communicate()
             self.assertEqual(recv.returncode, 0, err[-1000:])
-            want = hashlib.sha256(payload).hexdigest()
+            want = hashlib.sha384(payload).hexdigest()
             self.assertIn(f"digest={want}", out)
             with open(dst, "rb") as f:
                 self.assertEqual(f.read(), payload)
@@ -403,14 +403,35 @@ class TestRustStandaloneBinary(unittest.TestCase):
             port = _free_tcp_port()
             key_a = os.path.join(tmp, "responder.key")
             key_b = os.path.join(tmp, "initiator.key")
-            lab_env = dict(os.environ, P2P_LAB_MODE="1")
+            psk_file = os.path.join(tmp, "shared.psk")
+            with open(psk_file, "w") as f:
+                f.write(("42" * 32) + "\n")
+            try:
+                os.chmod(psk_file, 0o600)
+            except OSError:
+                pass
+            identities = {}
+            for side in ("resp", "init"):
+                sk = os.path.join(tmp, f"{side}.sk")
+                pk = os.path.join(tmp, f"{side}.pk")
+                gen = _run("auth-keygen", "--out-sk", sk, "--out-pk", pk)
+                self.assertEqual(gen.returncode, 0, gen.stderr[-500:])
+                identities[side] = (sk, pk)
 
             listener = subprocess.Popen(
-                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a, "--timeout-ms", "15000"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE), env=lab_env)
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
+                 "--psk-file", psk_file,
+                 "--auth-sk-file", identities["resp"][0],
+                 "--peer-auth-pk-file", identities["init"][1],
+                 "--require-mutual-auth", "--timeout-ms", "15000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
             try:
                 time.sleep(1.0)
-                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b, "--timeout-ms", "15000", env=lab_env)
+                connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
+                                 "--psk-file", psk_file,
+                                 "--auth-sk-file", identities["init"][0],
+                                 "--peer-auth-pk-file", identities["resp"][1],
+                                 "--require-mutual-auth", "--timeout-ms", "15000")
                 self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
                 out, err = listener.communicate(timeout=15)
             finally:
@@ -470,14 +491,28 @@ class TestRustStandaloneBinary(unittest.TestCase):
             except OSError:
                 pass
 
+            identities = {}
+            for side in ("resp", "init"):
+                sk = os.path.join(tmp, f"{side}.sk")
+                pk = os.path.join(tmp, f"{side}.pk")
+                gen = _run("auth-keygen", "--out-sk", sk, "--out-pk", pk)
+                self.assertEqual(gen.returncode, 0, gen.stderr[-500:])
+                identities[side] = (sk, pk)
+
             listener = subprocess.Popen(
                 [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
-                 "--psk-file", psk_file, "--timeout-ms", "15000"],
+                 "--psk-file", psk_file,
+                 "--auth-sk-file", identities["resp"][0],
+                 "--peer-auth-pk-file", identities["init"][1],
+                 "--require-mutual-auth", "--timeout-ms", "15000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
             try:
                 time.sleep(1.0)
                 connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
-                                 "--psk-file", psk_file, "--timeout-ms", "15000")
+                                 "--psk-file", psk_file,
+                                 "--auth-sk-file", identities["init"][0],
+                                 "--peer-auth-pk-file", identities["resp"][1],
+                                 "--require-mutual-auth", "--timeout-ms", "15000")
                 self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
                 out, err = listener.communicate(timeout=15)
             finally:
@@ -511,14 +546,28 @@ class TestRustStandaloneBinary(unittest.TestCase):
             except OSError:
                 pass
 
+            identities = {}
+            for side in ("resp", "init"):
+                sk = os.path.join(tmp, f"{side}.sk")
+                pk = os.path.join(tmp, f"{side}.pk")
+                gen = _run("auth-keygen", "--out-sk", sk, "--out-pk", pk)
+                self.assertEqual(gen.returncode, 0, gen.stderr[-500:])
+                identities[side] = (sk, pk)
+
             listener = subprocess.Popen(
                 [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}", "--out-key", key_a,
-                 "--psk-file", psk_a, "--timeout-ms", "10000"],
+                 "--psk-file", psk_a,
+                 "--auth-sk-file", identities["resp"][0],
+                 "--peer-auth-pk-file", identities["init"][1],
+                 "--require-mutual-auth", "--timeout-ms", "10000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
             try:
                 time.sleep(1.0)
                 connector = _run("kex-connect", "--to", f"127.0.0.1:{port}", "--out-key", key_b,
-                                 "--psk-file", psk_b, "--timeout-ms", "10000")
+                                 "--psk-file", psk_b,
+                                 "--auth-sk-file", identities["init"][0],
+                                 "--peer-auth-pk-file", identities["resp"][1],
+                                 "--require-mutual-auth", "--timeout-ms", "10000")
                 self.assertNotEqual(connector.returncode, 0)
                 self.assertIn("mismatch", connector.stderr)
                 out, err = listener.communicate(timeout=10)
@@ -531,6 +580,91 @@ class TestRustStandaloneBinary(unittest.TestCase):
             # Neither key file should be written on MITM/mismatch!
             self.assertFalse(os.path.exists(key_a))
             self.assertFalse(os.path.exists(key_b))
+
+    def test_kex_mutual_mldsa87_authentication(self):
+        """Production KEX: PSK + pinned mutual ML-DSA-87 identity signatures."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            port = _free_tcp_port()
+            key_a = os.path.join(tmp, "resp_mutual.key")
+            key_b = os.path.join(tmp, "init_mutual.key")
+            psk_file = os.path.join(tmp, "shared.psk")
+            with open(psk_file, "w") as f:
+                f.write(("5a" * 32) + "\n")
+            try:
+                os.chmod(psk_file, 0o600)
+            except OSError:
+                pass
+
+            identities = {}
+            for side in ("resp", "init"):
+                sk = os.path.join(tmp, f"{side}.sk")
+                pk = os.path.join(tmp, f"{side}.pk")
+                gen = _run("auth-keygen", "--out-sk", sk, "--out-pk", pk)
+                self.assertEqual(gen.returncode, 0, gen.stderr[-500:])
+                identities[side] = (sk, pk)
+
+            listener = subprocess.Popen(
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}",
+                 "--out-key", key_a, "--psk-file", psk_file,
+                 "--auth-sk-file", identities["resp"][0],
+                 "--peer-auth-pk-file", identities["init"][1],
+                 "--require-mutual-auth", "--timeout-ms", "15000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                connector = _run(
+                    "kex-connect", "--to", f"127.0.0.1:{port}",
+                    "--out-key", key_b, "--psk-file", psk_file,
+                    "--auth-sk-file", identities["init"][0],
+                    "--peer-auth-pk-file", identities["resp"][1],
+                    "--require-mutual-auth", "--timeout-ms", "15000")
+                self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
+                out, err = listener.communicate(timeout=15)
+            finally:
+                if listener.poll() is None:
+                    listener.kill()
+                    listener.communicate()
+
+            self.assertEqual(listener.returncode, 0, f"mutual kex-listen failed:\n{err[-500:]}")
+            self.assertIn("mutual ML-DSA-87", out)
+            self.assertIn("mutual ML-DSA-87", connector.stdout)
+            with open(key_a, "r") as f:
+                hex_a = f.read().strip()
+            with open(key_b, "r") as f:
+                hex_b = f.read().strip()
+            self.assertEqual(hex_a, hex_b)
+
+            # A wrong pinned peer key must fail closed and write no session key.
+            port2 = _free_tcp_port()
+            key_c = os.path.join(tmp, "resp_badpin.key")
+            key_d = os.path.join(tmp, "init_badpin.key")
+            listener2 = subprocess.Popen(
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port2}",
+                 "--out-key", key_c, "--psk-file", psk_file,
+                 "--auth-sk-file", identities["resp"][0],
+                 "--peer-auth-pk-file", identities["resp"][1],
+                 "--require-mutual-auth", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                connector2 = _run(
+                    "kex-connect", "--to", f"127.0.0.1:{port2}",
+                    "--out-key", key_d, "--psk-file", psk_file,
+                    "--auth-sk-file", identities["init"][0],
+                    "--peer-auth-pk-file", identities["resp"][1],
+                    "--require-mutual-auth", "--timeout-ms", "8000")
+                self.assertNotEqual(connector2.returncode, 0)
+                listener2.communicate(timeout=10)
+            finally:
+                if listener2.poll() is None:
+                    listener2.kill()
+                    listener2.communicate()
+            self.assertNotEqual(listener2.returncode, 0)
+            self.assertFalse(os.path.exists(key_c))
+            self.assertFalse(os.path.exists(key_d))
 
     def test_zeroize_cryptographic_media_purge(self):
         """NIST SP 800-88 Rev 1 / DoD 5220.22-M 3-pass emergency zeroization."""

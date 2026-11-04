@@ -1,6 +1,6 @@
 # Module Documentation: Host Runtime and Platform Attestation Subsystem (`host_runtime_attestation`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `host_runtime_attestation`
 - **Subsystem Classification:** Hardware Root-of-Trust, Platform Attestation, seL4 Microkernel Domain Isolation, Native Runtime Security, and TEE Interfacing
@@ -86,7 +86,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. `ts_attest.py` Canonical Evidence Wire Format
 - Format: Canonical JSON dictionary:
@@ -118,7 +118,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **IETF RATS Architecture (RFC 9334):**
    - Platform attestation roles: Attester (`ts_attest.py:produce_evidence`), Verifier / Relying Party (`ts_attest.py:appraise_evidence`).
@@ -131,7 +131,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Dependencies
 - `ctypes`: Foreign function interface to `ts_rt.dll` / `libts_rt.so` and Windows system DLLs.
@@ -160,7 +160,7 @@
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -176,7 +176,7 @@
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_ts_hw_layer.py` (14 passed in 1.4s):
@@ -193,7 +193,7 @@
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Baremetal seL4 Microkernel Target Execution:**
    - `sel4_baremetal/` contains the native Rust source code (`main.rs`) and cargo manifests for running as an seL4 microkit root task. In the current workspace, testing and execution take place via the Python reference models (`[ISOLATED]_red_domain.py`, `[ISOLATED]_crypto_domain.py`, `[ISOLATED]_black_domain.py`, `[ISOLATED]_sel4_appliance.py`).
@@ -202,7 +202,7 @@
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **Administrator Elevation Requirement on Windows:**
    - Windows security APIs (reading UEFI Secure Boot variables via `GetFirmwareEnvironmentVariableW`, querying WMI DeviceGuard HVCI status, opening TPM TBS context) require elevated administrator privileges. Non-elevated execution reports `UNKNOWN` for these checks.
@@ -220,7 +220,7 @@
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **seL4 Target Hardware Platform:**
    - What specific hardware boards (e.g., Sabre Lite i.MX6, Raspberry Pi 4, Odroid-C4) are targeted for baremetal deployment of `sel4_baremetal/`?

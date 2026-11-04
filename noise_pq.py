@@ -886,9 +886,9 @@ class StatelessCookieGate:
         if not self.verify_cookie(cookie, client_ip, client_port, m1_prefix):
             return False
         if difficulty_bits > 0:
-            h = hashlib.sha256(cookie + nonce_bytes).digest()
+            h = hashlib.sha384(cookie + nonce_bytes).digest()
             val = int.from_bytes(h, "big")
-            target = 1 << (256 - difficulty_bits)
+            target = 1 << (384 - difficulty_bits)
             if val >= target:
                 return False
 
@@ -912,10 +912,10 @@ class StatelessCookieGate:
         cookie = challenge_payload[len(prefix) + 1:]
         if difficulty_bits == 0:
             return cookie + struct.pack(">Q", 0)
-        target = 1 << (256 - difficulty_bits)
+        target = 1 << (384 - difficulty_bits)
         for nonce in range(max_iterations):
             nb = struct.pack(">Q", nonce)
-            h = hashlib.sha256(cookie + nb).digest()
+            h = hashlib.sha384(cookie + nb).digest()
             if int.from_bytes(h, "big") < target:
                 return cookie + nb
         return None

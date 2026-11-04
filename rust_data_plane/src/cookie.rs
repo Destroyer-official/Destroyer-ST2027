@@ -10,7 +10,7 @@
 
 use aes_gcm::KeyInit;
 use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256, Sha384};
+use sha2::{Digest, Sha384};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -42,7 +42,7 @@ pub fn unpack_cookie_m1(wire: &[u8]) -> (Option<&[u8]>, &[u8]) {
 
 type HmacSha384 = Hmac<Sha384>;
 
-fn leading_zeros_256(hash: &[u8; 32]) -> u32 {
+fn leading_zeros_384(hash: &[u8; 48]) -> u32 {
     let mut count = 0u32;
     for &b in hash {
         let lz = b.leading_zeros();
@@ -276,14 +276,14 @@ impl StatelessCookieGate {
         }
 
         if difficulty_bits > 0 {
-            let mut hasher = Sha256::new();
+            let mut hasher = Sha384::new();
             hasher.update(cookie);
             hasher.update(nonce_bytes);
             let h = hasher.finalize();
-            let mut h_arr = [0u8; 32];
+            let mut h_arr = [0u8; 48];
             h_arr.copy_from_slice(&h);
 
-            if leading_zeros_256(&h_arr) < difficulty_bits as u32 {
+            if leading_zeros_384(&h_arr) < difficulty_bits as u32 {
                 return false;
             }
         }
@@ -319,16 +319,16 @@ impl StatelessCookieGate {
         }
 
         let mut nonce = 0u64;
-        let mut hasher = Sha256::new();
+        let mut hasher = Sha384::new();
         while nonce < max_iterations {
             let nb = nonce.to_be_bytes();
             hasher.update(cookie);
             hasher.update(nb);
             let h = hasher.finalize_reset();
-            let mut h_arr = [0u8; 32];
+            let mut h_arr = [0u8; 48];
             h_arr.copy_from_slice(&h);
 
-            if leading_zeros_256(&h_arr) >= difficulty as u32 {
+            if leading_zeros_384(&h_arr) >= difficulty as u32 {
                 let mut resp = Vec::with_capacity(RESPONSE_LEN);
                 resp.extend_from_slice(cookie);
                 resp.extend_from_slice(&nb);

@@ -1,6 +1,6 @@
 # Module Documentation: TLS Channel Subsystem (`tls_channel`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `tls_channel`
 - **Subsystem Classification:** Transport Layer Security, Post-Quantum TLS 1.3 Configuration, Channel Encapsulation, and Nonce Protection
@@ -52,7 +52,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. TLS 1.3 ClientHello Memory BIO Parsing (`tls_pq_policy.py:56-83`)
 - **Record Layer Header (5 bytes):**
@@ -87,7 +87,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **TLS Protocol Version:**
    - Strictly TLS 1.3 (RFC 8446). TLS 1.2 and earlier versions are disabled across client and server contexts.
@@ -105,7 +105,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Dependencies
 - `ssl`: Standard library TLS implementation.
@@ -142,7 +142,7 @@
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -159,7 +159,7 @@
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_tls_cnsa_suite_pin.py` (2 passed):
@@ -179,7 +179,7 @@
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Dead Code Stubs in `tls_channel_manager.py:5232, 5262`:**
    - `DirectX25519KeyExchange` and `Ed25519Signer` are fully declared but have no caller in the codebase.
@@ -188,7 +188,7 @@
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **CPython Standard Library TLS API Constraints:**
    - CPython's `ssl.SSLContext` exposes neither `set_groups()` nor `get_negotiated_group()`. Consequently, python code cannot programmatically specify or verify the negotiated key exchange group via public API calls; enforcement relies on `OPENSSL_CONF` environment files or memory BIO ClientHello probing.
@@ -206,7 +206,7 @@
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **Timeline for Excising Dead Classical Stubs:**
    - When will `DirectX25519KeyExchange` and `Ed25519Signer` be permanently removed from `tls_channel_manager.py`?

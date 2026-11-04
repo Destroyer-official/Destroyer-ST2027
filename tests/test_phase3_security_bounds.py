@@ -115,7 +115,9 @@ def test_hybrid_kex_keyfile_perms(tmp_path):
     if sys.platform == "win32":
         # Windows ACLs ignore POSIX modes: assert the chmod call path exists
         # in source (defense is best-effort on win32, enforced on POSIX).
-        src = open("hybrid_kex.py", encoding="utf-8").read()
+        # The legacy handshake implementation now lives in
+        # hybrid_kex_legacy.py; hybrid_kex.py re-exports it for callers.
+        src = open("hybrid_kex_legacy.py", encoding="utf-8").read()
         assert "os.chmod(key_file, 0o600)" in src
         assert "os.chmod(self.keys_dir, 0o700)" in src
         return

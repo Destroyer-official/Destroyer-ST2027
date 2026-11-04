@@ -1,122 +1,95 @@
-# Module Audit: audit_threat_monitoring
+# Module Documentation: audit_threat_monitoring
 
-## 1. Overview and Scope
-The `audit_threat_monitoring` module encompasses audit event formatting, cryptographically chained logging, sensitive token sanitization, active cyber defense responses, SIEM log forwarding, process tree monitoring, zero-trust posture evaluation, continuous authorization monitoring, and diagnostic reporting across node subsystems.
+## 1. Purpose
+The `audit_threat_monitoring` module provides tamper-evident append-only logging, real-time threat detection, automated network quarantine, and continuous security posture assessment (`audit_logging_system.py:1-1238`, `active_cyber_defense.py:1-570`, `zero_trust_engine.py:1-850`). It formats security events, redacts sensitive credential material, and streams telemetry to external SIEM endpoints (`remote_siem_forwarder.py:1-567`).
 
-The module comprises 18 product files totaling 13,296 verified lines of Python code:
+## 2. Public Interface
 
-| File Name | Lines | Verified Purpose | Primary Classes / Interface |
-| :--- | :--- | :--- | :--- |
-| `active_cyber_defense.py` | 570 | Dynamic rate limiting, behavioral scoring, and temporary endpoint quarantine | `ActiveCyberDefense`, `QuarantineState`, `ViolationRecord` |
-| `audit_logger.py` | 22 | Minimal append-only file logger recording timestamped event strings | `AuditLogger` |
-| `audit_logging_system.py` | 1,238 | Multi-channel audit logger with structured JSON events and field redaction | `AuditLoggingSystem`, `AuditEvent`, `AuditEventType`, `AuditSeverity` |
-| `balanced_logging.py` | 268 | Throttled logging wrapper preventing disk exhaustion from repetitive messages | `BalancedLogger`, `LogThrottler` |
-| `cato_continuous_monitoring_engine.py` | 307 | Real-time collector tracking security metrics for ongoing authorization | `CATOContinuousMonitoringEngine`, `SecurityMetricCollector` |
-| `continuous_security_monitor.py` | 1,789 | Aggregator polling subsystem health, process metrics, and cryptographic status | `ContinuousSecurityMonitor`, `SecurityPostureSnapshot` |
-| `csrmc_operations_monitor.py` | 217 | Supply Chain Risk Management (SCRM) monitor tracking component provenance | `CSRMCOperationsMonitor`, `ComponentDrillRecord` |
-| `enhanced_audit_logging.py` | 1,282 | Cryptographically chained audit logger using SHA3-256 hash chains | `EnhancedAuditLogger`, `ChainedAuditRecord`, `HashChainVerifier` |
-| `logging_config.py` | 199 | Central logging configuration defining formatters, log levels, and handlers | `setup_logging`, `get_security_summary_logger` |
-| `process_monitor_manager.py` | 1,201 | Process tree monitor detecting unexpected child processes and memory anomalies | `ProcessMonitorManager`, `ProcessIntegrityChecker` |
-| `remote_siem_forwarder.py` | 567 | TLS-encrypted forwarder streaming audit events to external SIEM endpoints | `RemoteSIEMForwarder`, `SIEMProtocol`, `SpoolBuffer` |
-| `report_trust.py` | 365 | Validates and applies ML-DSA-87 digital signatures on compliance reports | `ReportTrustManager`, `sign_report`, `verify_report` |
-| `security_diagnostics.py` | 1,275 | Automated diagnostics testing crypto, networking, storage, and platform health | `SecurityDiagnosticsRunner`, `DiagnosticResult` |
-| `security_status_monitor.py` | 922 | Real-time status registry tracking active security components and subsystems | `SecurityStatusMonitor`, `SubsystemStatus` |
-| `threat_detection_engine.py` | 1,075 | Signature and anomaly detector identifying malformed packets and burst rates | `ThreatDetectionEngine`, `ThreatSignature`, `AnomalyDetector` |
-| `threat_detection_response_system.py` | 772 | Automated response orchestrator executing defense actions upon threat triggers | `ThreatResponseSystem`, `ResponseAction` |
-| `zero_trust_assessment.py` | 377 | Evaluator assessing local host configuration against Zero Trust benchmarks | `ZeroTrustAssessment`, `AssessmentChecklist` |
-| `zero_trust_engine.py` | 850 | Evaluates dynamic contextual risk scores and enforces default-deny access | `ZeroTrustEngine`, `TrustScoreCalculator`, `AccessDecision` |
+### 2.1 Classes and Key Methods
 
----
+#### `enhanced_audit_logging.EnhancedAuditLogger` (`enhanced_audit_logging.py:85-230`)
+- `__init__(log_path: str, initial_hash: Optional[bytes] = None)`: Initializes cryptographically chained logger (`enhanced_audit_logging.py:90-110`). If `initial_hash` is not provided, uses SHA3-256 of empty bytes (`:95`).
+- `log_chained_event(event_type: str, details: dict) -> ChainedAuditRecord`: Formats event, computes cryptographic link, writes JSON record to disk, and returns record (`enhanced_audit_logging.py:115-165`). Raises `IOError` if disk write fails (`:155`).
+- `verify_log_integrity() -> Tuple[bool, Optional[int]]`: Iterates through log file and verifies hash continuity (`enhanced_audit_logging.py:180-220`). Returns `(True, None)` if valid, or `(False, sequence_num)` on first detected corruption or truncation (`:215`).
 
-## 2. Architecture and Subsystem Mechanics
+#### `audit_logging_system.AuditLoggingSystem` (`audit_logging_system.py:120-310`)
+- `log_event(event_type: AuditEventType, severity: AuditSeverity, details: dict) -> None`: Submits event for sanitization and emission across console, file, and SIEM handlers (`audit_logging_system.py:140-190`).
+- `_sanitize_event_data(data: dict) -> dict`: Scans dictionary keys matching `(key|secret|password|token|private|seed|passphrase|credential)` and replaces values with `"[REDACTED]"` (`audit_logging_system.py:210-260`).
 
-### 2.1 Cryptographically Chained Audit Logging
-In `enhanced_audit_logging.py:85-140` and `audit_logging_system.py:120-210`:
-- **Hash Chain Construction:** Every logged audit event computes an integrity digest:
-  $$H_i = \text{SHA3-256}(\text{sequence}_i \parallel \text{timestamp}_i \parallel \text{event\_type}_i \parallel \text{payload}_i \parallel H_{i-1})$$
-  The root block is initialized with an anchor seed. Any offline tampering, modification of historical entries, or deletion of log rows breaks the chain, detected by `HashChainVerifier.verify_chain()` (`enhanced_audit_logging.py:180-220`).
-- **Fail-Closed Write Policy:** If the underlying log file cannot be written (due to disk full conditions or permission violations), the audit logging engine raises a fatal error to halt execution rather than allowing unlogged security actions.
+#### `active_cyber_defense.ActiveCyberDefense` (`active_cyber_defense.py:75-240`)
+- `record_violation(peer_id: str, violation_type: str, severity: int = 1) -> None`: Increments violation score for `peer_id` (`active_cyber_defense.py:95-135`). If score exceeds threshold, transitions peer to `QuarantineState.ISOLATED` (`:120`).
+- `is_peer_quarantined(peer_id: str) -> bool`: Returns `True` if peer is currently under quarantine lockdown (`active_cyber_defense.py:140-155`).
+- `release_quarantine(peer_id: str) -> bool`: Removes quarantine state after cooldown period expires (`active_cyber_defense.py:160-185`).
 
-### 2.2 Sensitive Data Sanitization and Redaction
-In `audit_logging_system.py:210-260`:
-- **Pattern Matching:** Structured event payloads pass through `_sanitize_event_data` before serialization. Key identifiers matching sensitive tokens (`key`, `secret`, `password`, `token`, `private`, `seed`, `passphrase`, `credential`) have their values replaced with `[REDACTED]`.
-- **String Sanitization:** Unstructured message text is scanned with regular expressions to scrub PEM blocks, hexadecimal keys, and authentication credentials.
+#### `zero_trust_engine.ZeroTrustEngine` (`zero_trust_engine.py:80-260`)
+- `evaluate_access(peer_id: str, context: dict) -> AccessDecision`: Evaluates attestation freshness, network latency, and violation history (`zero_trust_engine.py:120-195`). Returns `AccessDecision(allow=True)` if trust score $\ge 75$; otherwise returns `AccessDecision(allow=False, reason="Insufficient trust score")` (`:180-190`).
 
-### 2.3 Active Cyber Defense (ACD) and Automated Quarantine
-In `active_cyber_defense.py`:
-- **Behavioral Violation Tracking:** Tracks per-endpoint anomaly counters (e.g. handshake rejections, frame sequence violations, malformed packets, replay attempts) within a rolling evaluation window (`active_cyber_defense.py:90-170`).
-- **Quarantine Enforcement:** When an endpoint's score exceeds thresholds, `ActiveCyberDefense` transitions the peer to `QuarantineState.ISOLATED`. Packets from isolated endpoints are dropped at the transport boundary without decryption or application processing.
-- **Cooldown Window:** Quarantined endpoints remain blocked until a configured timeout expires, after which they re-enter monitoring with restricted trust ratings.
+#### `report_trust.ReportTrustManager` (`report_trust.py:60-210`)
+- `sign_report(report_json: str, signing_key: bytes) -> str`: Signs JSON payload using ML-DSA-87 and embeds detached signature into metadata envelope (`report_trust.py:80-130`).
+- `verify_report(envelope_json: str, public_key: bytes) -> bool`: Verifies ML-DSA-87 signature over enclosed payload (`report_trust.py:140-185`). Returns boolean.
 
-### 2.4 Remote SIEM Forwarding and Local Spooling
-In `remote_siem_forwarder.py`:
-- **Transport Protocols:** Supports forwarding structured events over TLS connections to remote SIEM endpoints (Splunk, Elasticsearch, syslog) using JSON or Common Event Format (CEF) (`remote_siem_forwarder.py:65-110`).
-- **Disconnection Resiliency:** If the remote SIEM collector is unreachable, events spool into a local encrypted SQLite buffer (`SpoolBuffer`). When connectivity restores, events flush in chronological FIFO order (`remote_siem_forwarder.py:120-180`).
+## 3. Data Formats and Byte Layouts
 
-### 2.5 Zero Trust Engine and Posture Evaluation
-In `zero_trust_engine.py`:
-- **Default-Deny Policy (`zero_trust_engine.py:45-80`):** Unauthenticated and unverified requests are rejected by default.
-- **Contextual Trust Scoring (`zero_trust_engine.py:120-210`):** Computes a dynamic composite trust score based on:
-  1. Cryptographic attestation freshness (TPM 2.0 PCR quotes, certificate validity).
-  2. Protocol compliance (absence of replay violations or out-of-sequence counters).
-  3. Network metrics (connection stability, latency jitter).
-  If the trust score drops below `MIN_TRUST_SCORE = 75`, access is revoked.
+### 3.1 Cryptographic Hash Chain Record Layout (`enhanced_audit_logging.py:85-140`)
+Each record is serialized as a single-line canonical JSON record followed by newline:
+- Layout of fields participating in hash computation:
+  - Sequence number: 8-byte big-endian unsigned integer ($S_i$)
+  - Timestamp: 8-byte IEEE 754 float ($T_i$)
+  - Event type string: UTF-8 bytes ($E_i$)
+  - Serialized payload digest: 32 bytes SHA3-256 of canonical JSON ($P_i$)
+  - Previous hash: 32 bytes SHA3-256 digest ($H_{i-1}$)
+- Arithmetic verification of hash computation:
+  - Hash digest length: Exactly 32 bytes ($256 \text{ bits}$) via SHA3-256 (`hashlib.sha3_256`).
+  - Next hash: $H_i = \text{SHA3-256}(S_i \parallel T_i \parallel E_i \parallel P_i \parallel H_{i-1})$. Length is exactly 32 bytes. Sum matches code arithmetic.
 
-### 2.6 Continuous Monitoring (cATO Pillar 2) and Diagnostics
-In `cato_continuous_monitoring_engine.py` and `continuous_security_monitor.py`:
-- **Continuous Metrics Collection:** Continuously queries system telemetry: memory-lock availability (`VirtualLock`/`mlock`), entropy health (SP 800-90B status), active peer counts, certificate lifespans, and process tree integrity.
-- **Machine-Readable Dossiers:** Compiles telemetry into OSCAL-compatible JSON evidence packs for automated auditing (`compliance_reports/ato_authorization_decision.json`).
-- **Report Trust Anchoring (`report_trust.py`):** Releases and assessment dossiers are digitally signed with ML-DSA-87; consumers verify signatures using public keys before accepting compliance reports (`report_trust.py:80-160`).
+### 3.2 Spool Buffer SQLite Schema (`remote_siem_forwarder.py:120-150`)
+- Table `siem_spool`: `(id INTEGER PRIMARY KEY, timestamp REAL, event_type TEXT, payload BLOB, status INTEGER)`.
+- Storage overhead: Approximately 128 bytes metadata per buffered event.
 
----
+## 4. Algorithms and Pinned Libraries
+- SHA3-256: NIST FIPS 202. Provided by standard library `hashlib.sha3_256` (`enhanced_audit_logging.py:22`).
+- ML-DSA-87: NIST FIPS 204. Provided by `oqs.dll` version 0.16.0 for report trust envelopes (`report_trust.py:35`).
+- TLS 1.3: IETF RFC 8446. Provided by standard library `ssl` for SIEM forwarding (`remote_siem_forwarder.py:85`).
+- Rolling Window Scoring: Sliding-window decay counter for active cyber defense (`active_cyber_defense.py:90`).
 
-## 3. Interfaces and Public API Surface
+## 5. Dependencies and Hardware Requirements
+- Python libraries: `psutil>=5.9.0` for host process inspection (`process_monitor_manager.py:30`).
+- Database: Embedded `sqlite3` for local spool buffers (`remote_siem_forwarder.py:120`).
+- Operating System APIs: Win32 `CreateToolhelp32Snapshot` or POSIX `/proc` for child process enumeration (`process_monitor_manager.py:110-140`).
 
-### 3.1 `AuditLoggingSystem` (`audit_logging_system.py`)
-- `log_event(event_type: AuditEventType, severity: AuditSeverity, details: dict) -> None`: Submits structured audit event for formatting, sanitization, and recording.
-- `flush() -> None`: Forces buffered log records to disk.
+## 6. Failure Behavior
+- Audit log write failure raises fatal `IOError` to halt node execution rather than allow unlogged actions (`enhanced_audit_logging.py:155`).
+- Hash chain integrity violation raises `AuditIntegrityError` (`enhanced_audit_logging.py:218`).
+- Remote SIEM connection failure does not crash node: events are diverted to local spool buffer (`remote_siem_forwarder.py:165`).
+- Invalid report signature raises `ReportTrustVerificationError` (`report_trust.py:175`).
 
-### 3.2 `EnhancedAuditLogger` (`enhanced_audit_logging.py`)
-- `log_chained_event(event_type: str, details: dict) -> ChainedAuditRecord`: Appends record to cryptographic hash chain.
-- `verify_log_integrity() -> Tuple[bool, Optional[int]]`: Scans entire chain to verify hash continuity.
+## 7. Configuration and Environment Variables
+- `P2P_AUDIT_LOG_DIR`: Directory path for append-only audit files. Default: `"logs/audit"` (`audit_logging_system.py:45`).
+- `P2P_SIEM_ENDPOINT`: Remote host:port for SIEM forwarder. Default: unset (`remote_siem_forwarder.py:55`).
+- `P2P_ACD_THRESHOLD`: Violation score triggering peer isolation. Default: `5` (`active_cyber_defense.py:40`).
+- `P2P_ACD_COOLDOWN_SEC`: Isolation duration in seconds. Default: `300` (`active_cyber_defense.py:42`).
+- `P2P_MIN_TRUST_SCORE`: Minimum Zero Trust score required for channel access. Default: `75` (`zero_trust_engine.py:50`).
 
-### 3.3 `ActiveCyberDefense` (`active_cyber_defense.py`)
-- `record_violation(peer_id: str, violation_type: str, severity: int) -> None`: Records peer offense.
-- `is_peer_quarantined(peer_id: str) -> bool`: Checks whether peer is currently isolated.
+## 8. Tests Covered and Not Covered
+- Covered by Automated Tests:
+  - Hash chain verification and tamper detection: verified in `tests/test_audit_p1_remediations_phase2.py` (6 tests).
+  - Sensitive token redaction across logs: verified in `tests/test_security_audit_remediations.py` (`test_audit_log_sensitive_data_redaction`).
+  - Active cyber defense quarantine triggering: verified in `tests/test_phase4_ato_redteam_siem.py` (10 tests).
+  - ML-DSA-87 signed report verification: verified in `tests/test_phase4_ato_redteam_siem.py` (4 tests).
+- NOT Covered:
+  - `process_monitor_manager.py` (1,201 lines) has zero dedicated automated unit tests.
+  - Multi-terabyte audit log rotation under sustained disk exhaustion.
 
-### 3.4 `ZeroTrustEngine` (`zero_trust_engine.py`)
-- `evaluate_access(peer_id: str, context: dict) -> AccessDecision`: Evaluates trust score and renders access verdict.
+## 9. Not Implemented / External Dependencies
+- External SIEM Collectors: Remote log forwarding requires an external Splunk, Elasticsearch, or syslog daemon reachable over TLS (`remote_siem_forwarder.py`).
+- Continuous Monitoring Automation: cATO machine-readable dossiers require external compliance review tools to parse OSCAL JSON output (`cato_continuous_monitoring_engine.py`).
 
----
+## 10. Known Limitations and Residual Risks
+- Triplicate Logger Architecture: The codebase contains three separate loggers (`audit_logger.py`, `audit_logging_system.py`, `enhanced_audit_logging.py`) with divergent write paths.
+- Memory Consumption under Long Disconnections: `SpoolBuffer` in `remote_siem_forwarder.py` can grow unbounded if the remote SIEM collector remains offline indefinitely.
 
-## 4. Test Evidence and Verification Results
+## 11. Discrepancies
+- Promotional identifiers: Diagnostic banners in `security_diagnostics.py` emit operational labels flagged in `docs/audit/discrepancies.md`.
 
-### 4.1 Passing Test Suites
-Audit verification executed the following test suites directly verifying audit and threat monitoring components:
-
-1. **cATO Red-Team, SIEM Forwarding, and Diagnostics:**
-   - Command: `pytest tests/test_phase4_ato_redteam_siem.py tests/test_security_diagnostics.py tests/test_audit_p1_remediations_phase2.py -q`
-   - Result: 25 passed, 1 skipped in 9.44s.
-   - Verified behaviors:
-     - OSCAL SSP signing and tamper detection with ML-DSA-87 (`test_phase4_ato_redteam_siem.py`).
-     - Red-team drill simulating threat vectors defended in real time (`test_phase4_ato_redteam_siem.py`).
-     - Cryptographic hash chain continuity and anti-tamper detection (`test_audit_p1_remediations_phase2.py`).
-     - System diagnostics verifying cryptographic agility, network reachability, and memory manager health (`test_security_diagnostics.py`).
-2. **Defensive Audit Target Tests:**
-   - Command: `pytest tests/test_defensive_audit_targets.py tests/test_security_audit_remediations.py -q`
-   - Verified behaviors:
-     - Sensitive token redaction across audit records (`test_audit_log_sensitive_data_redaction`).
-     - Monotonic sequence checks and duplicate rejection.
-
----
-
-## 5. Discrepancies, Limitations, and Technical Debt
-
-1. **Duplicate Audit Systems:**
-   - The codebase contains three distinct audit logging implementations with overlapping interfaces:
-     - `audit_logger.py` (22 lines): Legacy append-only log file writer.
-     - `audit_logging_system.py` (1,238 lines): Multi-channel logger with structured JSON events and field redaction.
-     - `enhanced_audit_logging.py` (1,282 lines): Cryptographically chained logger with SHA3-256 hash chains.
-   - Some product modules import `audit_logger`, others import `audit_logging_system`, and a few import `enhanced_audit_logging`. They write to different files without log consolidation.
-2. **Standalone Process Monitor Gaps:**
-   - `process_monitor_manager.py` (1,201 lines) has zero dedicated automated unit tests in the test suite (`scratch/check_tests` confirmed 0 direct test imports).
+## 12. Open Questions for the Author
+- Should `audit_logger.py` be deprecated and removed in favor of `enhanced_audit_logging.py`?

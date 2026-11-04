@@ -34,12 +34,12 @@ def _nonce(seq: int, direction: int = DIR_SEND) -> bytes:
 def _derive_hp_key(key: bytes) -> bytes:
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives import hashes
-    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"destroyer/header-protection/v1").derive(key)
+    return HKDF(algorithm=hashes.SHA384(), length=32, salt=None, info=b"destroyer/header-protection/v2").derive(key)
 
 
 def _compute_header_mask(hp_key: bytes, tag: bytes) -> bytes:
     import hashlib
-    return hashlib.sha256(b"ST2027-HEADER-MASK-v1" + hp_key + tag).digest()[:11]
+    return hashlib.sha384(b"ST2027-HEADER-MASK-v2" + hp_key + tag).digest()[:11]
 
 
 def _python_open(key: bytes, frame: bytes):
@@ -155,17 +155,17 @@ def test_native_hybrid_kex_roundtrip():
     import secrets
     transcript = secrets.token_bytes(48)
     
-    # Alice generates ephemeral keys (X25519 + ML-KEM-1024)
+    # Alice generates ephemeral keys (P-384 + ML-KEM-1024)
     alice = NativeHybridKex()
     alice_x_pub, alice_ml_ek = alice.get_public_keys()
-    assert len(alice_x_pub) == 32
+    assert len(alice_x_pub) == 97
     assert len(alice_ml_ek) == 1568
 
     # Bob encapsulates against Alice's public keys
     bob_eph_x, bob_ml_ct, bob_ss = NativeHybridKex.encapsulate_to_peer(
         alice_x_pub, alice_ml_ek, transcript
     )
-    assert len(bob_eph_x) == 32
+    assert len(bob_eph_x) == 97
     assert len(bob_ml_ct) == 1568
     assert len(bob_ss) == 32
 

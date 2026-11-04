@@ -11,7 +11,7 @@ a single message traverses ALL of the following independent barriers:
       - Forward Secrecy (FS) + Post-Compromise Security (PCS)
 
   Layer 2 (Outer): Rust Native AEAD Carrier (destroyer_core via destroyer_node)
-      - AES-256-GCM with HKDF-SHA512 domain-separated frame key
+      - AES-256-GCM with HKDF-SHA384 domain-separated frame key
       - Atomic monotonic nonces (FlushFileBuffers / fsync)
       - RFC 6479 decoupled sliding-window anti-replay
       - VirtualLock / mlock hardware RAM pinning
@@ -123,7 +123,7 @@ class UnifiedSecurePipeline:
             log.error("[PIPELINE] Hybrid root key too short or missing")
             return False
 
-        fp = hashlib.sha3_256(bytes(hybrid_root_key)).digest()
+        fp = hashlib.sha384(bytes(hybrid_root_key)).digest()
 
         # Skip re-establishment if same root key
         if (self._rust_node is not None
@@ -140,7 +140,7 @@ class UnifiedSecurePipeline:
             from cryptography.hazmat.primitives import hashes as crypto_hashes
 
             hkdf = HKDF(
-                algorithm=crypto_hashes.SHA512(),
+                algorithm=crypto_hashes.SHA384(),
                 length=32,
                 salt=LAYER2_HKDF_SALT,
                 info=LAYER2_HKDF_INFO,
@@ -176,12 +176,21 @@ class UnifiedSecurePipeline:
         """Current Continuous Epoch Ratchet (CER) epoch number."""
         return self._current_epoch
 
-    def rotate_epoch(self) -> int:
+    def rotate_epoch(self, extra_entropy: Optional[bytes] = None) -> int:
         """Continuous Epoch Ratchet (CER): advances to a new epoch key.
 
-        Derives NextEpochRoot = HKDF-SHA512(CurrentEpochRoot, salt=CER_HKDF_SALT, info=epoch_bytes).
-        Derives fresh frame key for Rust AEAD, wipes previous epoch secrets from memory.
-        Provides Post-Compromise Security (PCS) healing within one epoch (128 messages).
+        Derives NextEpochRoot = HKDF-SHA384(CurrentEpochRoot || fresh_entropy,
+        salt=CER_HKDF_SALT, info=epoch_bytes). The previous epoch secret is
+        wiped from memory immediately.
+
+        HONEST PCS NOTE: this rotation provides forward secrecy and *best-effort*
+        post-compromise healing by mixing in fresh OS entropy (secrets.token_bytes)
+        and any caller-supplied entropy. It is NOT a substitute for a fresh
+        authenticated key exchange (which is the only construction that heals
+        against a fully compromised previous epoch key); use
+        TacticalP2PNode.rekey_with_fresh_kex() for true PCS on the production
+        path. The symmetric CER epoch rotation is retained for low-latency
+        in-band rekeying between full KEX rekeys.
 
         Returns:
             The new epoch number.
@@ -197,7 +206,7 @@ class UnifiedSecurePipeline:
             from cryptography.hazmat.primitives import hashes as crypto_hashes
 
             hkdf = HKDF(
-                algorithm=crypto_hashes.SHA512(),
+                algorithm=crypto_hashes.SHA384(),
                 length=32,
                 salt=CER_HKDF_SALT,
                 info=epoch_info,
@@ -616,7 +625,7 @@ class AutonomousDefenseRatchet:
     """High-Assurance Forward-Secret Autonomous Ratchet for Zero-Gap Defense.
 
     Provides per-message forward secrecy (FS), break-in recovery, monotonic
-    sequence tracking, and dual authentication (ChaCha20-Poly1305 AEAD + HMAC-SHA512)
+    sequence tracking, and dual authentication (AES-256-GCM AEAD + HMAC-SHA384)
     operating autonomously on any 32-byte shared root secret without requiring
     asymmetric key exchange round-trips.
 
@@ -641,18 +650,18 @@ class AutonomousDefenseRatchet:
             from cryptography.hazmat.primitives.kdf.hkdf import HKDF
             from cryptography.hazmat.primitives import hashes as crypto_hashes
 
-            # Derive directional chain keys using HKDF-SHA512
+            # Derive directional chain keys using HKDF-SHA384
             info_send = b"initiator-to-responder" if is_initiator else b"responder-to-initiator"
             info_recv = b"responder-to-initiator" if is_initiator else b"initiator-to-responder"
 
             hkdf_send = HKDF(
-                algorithm=crypto_hashes.SHA512(),
+                algorithm=crypto_hashes.SHA384(),
                 length=32,
                 salt=self.RATCHET_SALT,
                 info=info_send,
             )
             hkdf_recv = HKDF(
-                algorithm=crypto_hashes.SHA512(),
+                algorithm=crypto_hashes.SHA384(),
                 length=32,
                 salt=self.RATCHET_SALT,
                 info=info_recv,
@@ -668,14 +677,14 @@ class AutonomousDefenseRatchet:
         if not plaintext:
             raise PipelineSecurityError("Cannot encrypt empty plaintext")
 
-        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives import hashes as crypto_hashes
 
         with self._lock:
-            # Advance sending chain key and derive 32-byte message key via HKDF-SHA512
+            # Advance sending chain key and derive 32-byte message key via HKDF-SHA384
             hkdf = HKDF(
-                algorithm=crypto_hashes.SHA512(),
+                algorithm=crypto_hashes.SHA384(),
                 length=64,
                 salt=self.STEP_SALT,
                 info=struct.pack(">Q", self._send_seq) + b"-step",
@@ -693,11 +702,11 @@ class AutonomousDefenseRatchet:
         nonce = struct.pack(">Q", seq) + b"\x5A\x47\x44\x50"  # 8 bytes seq + 4 bytes "ZGDP"
         aad = struct.pack(">Q", seq) + PIPELINE_VERSION
 
-        aead = ChaCha20Poly1305(msg_key)
+        aead = AESGCM(msg_key)
         ciphertext = aead.encrypt(nonce, plaintext, aad)
 
         # Dual MAC verification layer
-        mac = hmac.new(msg_key, aad + nonce + ciphertext, hashlib.sha512).digest()[:32]
+        mac = hmac.new(msg_key, aad + nonce + ciphertext, hashlib.sha384).digest()[:32]
 
         del msg_key
         del derived
@@ -716,7 +725,7 @@ class AutonomousDefenseRatchet:
         expected_mac = wire_data[20:52]
         ciphertext = wire_data[52:]
 
-        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives import hashes as crypto_hashes
 
@@ -735,7 +744,7 @@ class AutonomousDefenseRatchet:
             cur_seq = self._recv_seq
             while cur_seq < seq:
                 hkdf_skip = HKDF(
-                    algorithm=crypto_hashes.SHA512(),
+                    algorithm=crypto_hashes.SHA384(),
                     length=64,
                     salt=self.STEP_SALT,
                     info=struct.pack(">Q", cur_seq) + b"-step",
@@ -745,7 +754,7 @@ class AutonomousDefenseRatchet:
                 cur_seq += 1
 
             hkdf = HKDF(
-                algorithm=crypto_hashes.SHA512(),
+                algorithm=crypto_hashes.SHA384(),
                 length=64,
                 salt=self.STEP_SALT,
                 info=struct.pack(">Q", cur_seq) + b"-step",
@@ -758,13 +767,13 @@ class AutonomousDefenseRatchet:
         # Authenticate BEFORE committing chain/seq state.
         aad = struct.pack(">Q", seq) + PIPELINE_VERSION
         computed_mac = hmac.new(
-            msg_key, aad + nonce + ciphertext, hashlib.sha512).digest()[:32]
+            msg_key, aad + nonce + ciphertext, hashlib.sha384).digest()[:32]
         if not secrets.compare_digest(computed_mac, expected_mac):
             del msg_key
             raise PipelineSecurityError("Ratchet message authentication failed")
 
         try:
-            aead = ChaCha20Poly1305(msg_key)
+            aead = AESGCM(msg_key)
             plaintext = aead.decrypt(nonce, ciphertext, aad)
         except Exception as e:
             del msg_key
@@ -796,7 +805,7 @@ def create_zero_gap_session(shared_secret: bytes,
     """Factory creating a fully armed Zero-Gap Defense Pipeline and Ratchet.
 
     Chains:
-      - Layer 1: AutonomousDefenseRatchet (ChaCha20-Poly1305 + HKDF-SHA512 + Per-message FS)
+      - Layer 1: AutonomousDefenseRatchet (AES-256-GCM + HKDF-SHA384 + Per-message FS)
       - Layer 2: Rust Native AEAD (AES-256-GCM + Monotonic Nonces + Sliding Window)
       - Layer 3: Quantized Padding (Constant Quanta Traffic Flow Confidentiality)
     """

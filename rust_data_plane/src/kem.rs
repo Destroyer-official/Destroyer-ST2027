@@ -1,13 +1,13 @@
-//! Hybrid key exchange: X25519 + ML-KEM-1024 (FIPS 203).
+//! Hybrid key exchange: SecP384r1 + ML-KEM-1024 (RFC 10024 / CNSA 2.0 L5).
 //!
-//! Construction follows RFC 10024 (PQ/T hybrids for TLS 1.3, Aug 2026):
+//! Construction follows RFC 10024 (PQ/T hybrids for TLS 1.3):
 //! both algorithms run, outputs are concatenated — the session is safe while
-//! AT LEAST ONE component holds. Shared secret = `ml_ss(32) || x_ss(32)`.
+//! AT LEAST ONE component holds. Shared secret = `ml_ss(32) || p384_ss(48)`.
 //!
-//! Category note: this pairs ML-KEM-1024 (Cat-5) with X25519. The CNSA L5
-//! path is SecP384r1MLKEM1024; X25519 legs remain for interop and are NEVER
-//! trusted alone — `hybrid_secret` requires both halves, and policy forbids
-//! classical-only use (see `nist_level5_policy_engine.py`).
+//! Group: `SecP384r1MLKEM1024`. This is the NSA CNSA 2.0 Level-5 hybrid
+//! pairing (ML-KEM-1024, FIPS 203, Cat-5 + P-384 ECDH). There is no
+//! X25519 path here: classical-only operation is unrepresentable and the
+//! L5 policy engine refuses anything below this pairing.
 //!
 //! `ml-kem` is unaudited upstream (their warning honored): KAT sizes pinned,
 //! cross-checked against the Python liboqs path at integration time, and the
@@ -17,21 +17,28 @@ use ml_kem::{
     kem::{Decapsulate, Encapsulate, Kem, KeyExport, SharedKey},
     EncapsulationKey, MlKem1024,
 };
-use x25519_dalek::{PublicKey, StaticSecret};
+use p384::{ecdh::EphemeralSecret, elliptic_curve::Generate, PublicKey as P384PublicKey, Sec1Point};
 use zeroize::{Zeroize, Zeroizing};
 
 /// ML-KEM-1024 encapsulation key size (FIPS 203 Table 3).
 pub const MLKEM_PK: usize = 1568;
 /// ML-KEM-1024 ciphertext size.
 pub const MLKEM_CT: usize = 1568;
-/// Shared secret halves: 32B ML-KEM + 32B X25519.
-pub const HYBRID_SS: usize = 64;
+/// P-384 uncompressed SEC1 public key (`0x04 || X48 || Y48`).
+pub const P384_PK: usize = 97;
+/// P-384 ECDH shared secret (x-coordinate, 48 bytes).
+pub const P384_SS: usize = 48;
+/// Shared secret halves: 32B ML-KEM + 48B P-384.
+pub const HYBRID_SS: usize = MLKEM_SS + P384_SS;
+/// ML-KEM-1024 shared secret size.
+pub const MLKEM_SS: usize = 32;
 
 #[derive(Debug)]
 pub enum KemError {
     BadLength,
     DecapsFailed,
     OsRandom,
+    BadPoint,
 }
 
 impl std::fmt::Display for KemError {
@@ -40,116 +47,133 @@ impl std::fmt::Display for KemError {
             KemError::BadLength => write!(f, "malformed KEM public key/ciphertext length"),
             KemError::DecapsFailed => write!(f, "KEM decapsulation failed"),
             KemError::OsRandom => write!(f, "OS randomness unavailable"),
+            KemError::BadPoint => write!(f, "malformed P-384 public key"),
         }
     }
 }
 
 impl std::error::Error for KemError {}
 
-fn os_random_32() -> Result<[u8; 32], KemError> {
-    let mut buf = [0u8; 32];
-    getrandom::fill(&mut buf).map_err(|_| KemError::OsRandom)?;
-    Ok(buf)
+/// Encode a P-384 public key as pinned uncompressed SEC1 (97 bytes, `0x04`).
+fn encode_p384(public: &P384PublicKey) -> Result<[u8; P384_PK], KemError> {
+    let enc = Sec1Point::from(*public);
+    let b = enc.as_ref();
+    if b.len() != P384_PK || b[0] != 0x04 {
+        return Err(KemError::BadPoint);
+    }
+    let mut out = [0u8; P384_PK];
+    out.copy_from_slice(b);
+    Ok(out)
 }
 
-/// Ephemeral hybrid keypair (initiator side).
+/// Parse and validate a peer P-384 public key (SEC1 uncompressed only).
+fn decode_p384(bytes: &[u8; P384_PK]) -> Result<P384PublicKey, KemError> {
+    if bytes[0] != 0x04 {
+        return Err(KemError::BadPoint);
+    }
+    P384PublicKey::from_sec1_bytes(bytes).map_err(|_| KemError::BadPoint)
+}
+
+/// Ephemeral hybrid keypair (responder side).
 pub struct EphemeralKeys {
-    x_secret: StaticSecret,
-    pub x_public: [u8; 32],
+    p_secret: EphemeralSecret,
+    /// Our P-384 public key, uncompressed SEC1 (97 bytes).
+    pub p_public: [u8; P384_PK],
     ml_dk: ml_kem::DecapsulationKey<MlKem1024>,
+    /// Our ML-KEM-1024 encapsulation key (1568 bytes).
     pub ml_ek: Vec<u8>,
 }
 
-pub type HybridEncapsResult = (Vec<u8>, Zeroizing<[u8; HYBRID_SS]>, [u8; 32]);
+/// `(ml_ct, hybrid_shared_secret, initiator_ephemeral_p384_public)`.
+pub type HybridEncapsResult = (Vec<u8>, Zeroizing<[u8; HYBRID_SS]>, [u8; P384_PK]);
 
 impl EphemeralKeys {
     pub fn generate() -> Result<Self, KemError> {
-        let x_secret = StaticSecret::from(os_random_32()?);
-        let x_public = PublicKey::from(&x_secret).to_bytes();
+        let p_secret = EphemeralSecret::generate();
+        let p_public = encode_p384(&p_secret.public_key())?;
         let (dk, ek) = MlKem1024::generate_keypair();
         let ml_ek = ek.to_bytes().to_vec();
         debug_assert_eq!(ml_ek.len(), MLKEM_PK);
         Ok(EphemeralKeys {
-            x_secret,
-            x_public,
+            p_secret,
+            p_public,
             ml_dk: dk,
             ml_ek,
         })
     }
 
-    /// Encapsulate to a peer's `(x25519_pk, mlkem_ek)`.
-    /// Returns `(our_x_pub_unused_here, ml_ct, hybrid_ss)`.
-    /// (Our X25519 public was already sent in our bundle; the peer's static
-    /// DH uses it. The initiator contributes handshake freshness via ML-KEM.)
+    /// Encapsulate to a peer's `(p384_pk, mlkem_ek)`.
+    /// Returns `(ml_ct, hybrid_ss, our_ephemeral_p384_public)`.
     pub fn encapsulate(
-        peer_x_pub: &[u8; 32],
+        peer_p_pub: &[u8; P384_PK],
         peer_ml_ek: &[u8],
     ) -> Result<HybridEncapsResult, KemError> {
         use ml_kem::Key;
         if peer_ml_ek.len() != MLKEM_PK {
             return Err(KemError::BadLength);
         }
+        let peer = decode_p384(peer_p_pub)?;
         let ek_arr: [u8; MLKEM_PK] = peer_ml_ek.try_into().map_err(|_| KemError::BadLength)?;
         let ek_key: Key<EncapsulationKey<MlKem1024>> = ek_arr.into();
         let ek = EncapsulationKey::<MlKem1024>::new(&ek_key).map_err(|_| KemError::BadLength)?;
-        let eph = StaticSecret::from(os_random_32()?);
-        let eph_pub = PublicKey::from(&eph).to_bytes();
-        let x_ss = eph.diffie_hellman(&PublicKey::from(*peer_x_pub)).to_bytes();
+        let eph = EphemeralSecret::generate();
+        let eph_pub = encode_p384(&eph.public_key())?;
+        let p_ss = eph.diffie_hellman(&peer);
+        let mut p_raw = [0u8; P384_SS];
+        p_raw.copy_from_slice(p_ss.raw_secret_bytes().as_slice());
         let (ct, ml_ss) = ek.encapsulate();
         let mut hybrid = Zeroizing::new([0u8; HYBRID_SS]);
-        hybrid[..32].copy_from_slice(ml_ss.as_slice());
-        hybrid[32..].copy_from_slice(&x_ss);
-        let mut x_ss_mut = x_ss;
-        x_ss_mut.zeroize();
+        hybrid[..MLKEM_SS].copy_from_slice(ml_ss.as_slice());
+        hybrid[MLKEM_SS..].copy_from_slice(&p_raw);
+        p_raw.zeroize();
         Ok((ct.to_vec(), hybrid, eph_pub))
     }
 
-    /// Decapsulate after receiving the peer's `(eph_x_pub, ml_ct)`.
+    /// Decapsulate after receiving the peer's `(eph_p384_pub, ml_ct)`.
     pub fn decapsulate(
         &self,
-        peer_eph_x_pub: &[u8; 32],
+        peer_eph_p_pub: &[u8; P384_PK],
         ml_ct: &[u8],
     ) -> Result<Zeroizing<[u8; HYBRID_SS]>, KemError> {
         if ml_ct.len() != MLKEM_CT {
             return Err(KemError::BadLength);
         }
-        let x_ss = self
-            .x_secret
-            .diffie_hellman(&PublicKey::from(*peer_eph_x_pub))
-            .to_bytes();
+        let peer = decode_p384(peer_eph_p_pub)?;
+        let p_ss = self.p_secret.diffie_hellman(&peer);
+        let mut p_raw = [0u8; P384_SS];
+        p_raw.copy_from_slice(p_ss.raw_secret_bytes().as_slice());
         use ml_kem::Ciphertext;
         let ct_arr: [u8; MLKEM_CT] = ml_ct.try_into().map_err(|_| KemError::BadLength)?;
         let ct: Ciphertext<MlKem1024> = ct_arr.into();
         let ml_ss: SharedKey<MlKem1024> = self.ml_dk.decapsulate(&ct);
         let mut hybrid = Zeroizing::new([0u8; HYBRID_SS]);
-        hybrid[..32].copy_from_slice(ml_ss.as_slice());
-        hybrid[32..].copy_from_slice(&x_ss);
-        let mut x_ss_mut = x_ss;
-        x_ss_mut.zeroize();
+        hybrid[..MLKEM_SS].copy_from_slice(ml_ss.as_slice());
+        hybrid[MLKEM_SS..].copy_from_slice(&p_raw);
+        p_raw.zeroize();
         Ok(hybrid)
     }
 }
 
 impl Drop for EphemeralKeys {
     fn drop(&mut self) {
-        // StaticSecret zeroizes itself; ml_dk zeroizes with its feature.
-        self.x_public.zeroize();
+        // EphemeralSecret zeroizes its scalar on drop; ml_dk zeroizes with its feature.
+        self.p_public.zeroize();
         self.ml_ek.zeroize();
     }
 }
 
-/// Derive a 32-byte AES-256 frame key from the 64-byte hybrid shared secret via HKDF-SHA384.
+/// Derive a 32-byte AES-256 frame key from the 80-byte hybrid shared secret via HKDF-SHA384.
 pub fn derive_session_key(hybrid_ss: &[u8; HYBRID_SS], context_info: &[u8]) -> [u8; 32] {
     use hkdf::Hkdf;
     use sha2::Sha384;
-    let hk = Hkdf::<Sha384>::new(Some(b"ST2027-HYBRID-KEX-v1-SALT"), hybrid_ss);
+    let hk = Hkdf::<Sha384>::new(Some(b"ST2027-SecP384r1MLKEM1024-KEX-v2-SALT"), hybrid_ss);
     let mut okm = [0u8; 32];
     hk.expand(context_info, &mut okm)
         .expect("HKDF-SHA384 expand with 32-byte output cannot fail");
     okm
 }
 
-/// Derive a 32-byte AES-256 frame key from the 64-byte hybrid shared secret via HKDF-SHA384,
+/// Derive a 32-byte AES-256 frame key from the 80-byte hybrid shared secret via HKDF-SHA384,
 /// cryptographically bound to the handshake transcript hash.
 /// If `psk` is provided (pre-shared key), it is used as salt to guarantee authentication.
 pub fn derive_session_key_transcript(
@@ -161,19 +185,19 @@ pub fn derive_session_key_transcript(
     use sha2::Sha384;
     let salt: &[u8] = match psk {
         Some(p) if !p.is_empty() => p,
-        _ => b"ST2027-HYBRID-KEX-v1-SALT",
+        _ => b"ST2027-SecP384r1MLKEM1024-KEX-v2-SALT",
     };
     let hk = Hkdf::<Sha384>::new(Some(salt), hybrid_ss);
     let mut okm = [0u8; 32];
     let mut info = Vec::with_capacity(64 + 48);
-    info.extend_from_slice(b"DESTROYER-ST2027-TRANSCRIPT-BOUND-KEY-AES256GCM");
+    info.extend_from_slice(b"DESTROYER-ST2027-TRANSCRIPT-BOUND-KEY-AES256GCM-v2");
     info.extend_from_slice(transcript_hash);
     hk.expand(&info, &mut okm)
         .expect("HKDF-SHA384 expand with 32-byte output cannot fail");
     okm
 }
 
-/// Compute a 32-byte key confirmation tag: HMAC-SHA384(session_key, label || transcript_hash)[..32]
+/// Compute a 32-byte key confirmation tag: HKDF-SHA384(session_key, label || transcript_hash)[..32]
 pub fn compute_confirmation_tag(
     session_key: &[u8; 32],
     label: &[u8],
@@ -188,18 +212,23 @@ pub fn compute_confirmation_tag(
     tag
 }
 
-/// Compute a 16-character Short Authentication String (SAS) fingerprint
-/// formatted as 4 groups of 4 hex chars: `XXXX-XXXX-XXXX-XXXX`
+/// Compute a 128-bit Short Authentication String (SAS) fingerprint
+/// formatted as 8 groups of 4 hex chars: `XXXX-XXXX-...` (39 chars).
+/// Uses SHA-384 so the SAS tracks the CNSA 2.0 hash floor.
 pub fn compute_sas(session_key: &[u8; 32], transcript_hash: &[u8; 48]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
+    use sha2::{Digest, Sha384};
+    let mut hasher = Sha384::new();
     hasher.update(session_key);
     hasher.update(transcript_hash);
     let digest = hasher.finalize();
-    format!(
-        "{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}",
-        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
-    )
+    let mut s = String::with_capacity(39);
+    for (i, b) in digest[..16].iter().enumerate() {
+        if i > 0 && i % 2 == 0 {
+            s.push('-');
+        }
+        s.push_str(&format!("{b:02X}"));
+    }
+    s
 }
 
 /// Constant-time 32-byte equality comparison to prevent timing or cache side channels.
@@ -216,42 +245,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fips203_sizes_pinned() {
+    fn cnsa_sizes_pinned() {
         let keys = EphemeralKeys::generate().unwrap();
         assert_eq!(keys.ml_ek.len(), MLKEM_PK);
-        // Ciphertext/shared-secret sizes asserted in roundtrip below.
+        assert_eq!(keys.p_public.len(), P384_PK);
+        assert_eq!(keys.p_public[0], 0x04);
+        assert_eq!(HYBRID_SS, 80);
     }
 
     #[test]
     fn initiator_responder_agree() {
-        // Responder (long-term-ish ephemeral for the test) publishes bundle.
         let resp = EphemeralKeys::generate().unwrap();
-        // Initiator encapsulates to responder bundle.
         let (ml_ct, ss_init, eph_pub) =
-            EphemeralKeys::encapsulate(&resp.x_public, &resp.ml_ek).unwrap();
+            EphemeralKeys::encapsulate(&resp.p_public, &resp.ml_ek).unwrap();
         assert_eq!(ml_ct.len(), MLKEM_CT);
-        // Responder decapsulates with initiator ephemeral.
+        assert_eq!(eph_pub.len(), P384_PK);
         let ss_resp = resp.decapsulate(&eph_pub, &ml_ct).unwrap();
         assert_eq!(&ss_init[..], &ss_resp[..]);
-        // Both halves contribute: flipping responder X key changes agreement.
+        // Both halves contribute: a different P-384 key changes agreement.
         let other = EphemeralKeys::generate().unwrap();
-        let (_, ss_other, _) = EphemeralKeys::encapsulate(&other.x_public, &resp.ml_ek).unwrap();
+        let (_, ss_other, _) = EphemeralKeys::encapsulate(&other.p_public, &resp.ml_ek).unwrap();
         assert_ne!(&ss_init[..], &ss_other[..]);
     }
 
     #[test]
     fn malformed_inputs_fail_closed() {
         let resp = EphemeralKeys::generate().unwrap();
-        assert!(EphemeralKeys::encapsulate(&resp.x_public, &[0u8; 10]).is_err());
-        assert!(resp.decapsulate(&[0u8; 32], &[0u8; 10]).is_err());
-        // Wrong-length peer X key cannot even be constructed: fixed arrays.
+        assert!(EphemeralKeys::encapsulate(&resp.p_public, &[0u8; 10]).is_err());
+        assert!(resp.decapsulate(&[0u8; P384_PK], &[0u8; 10]).is_err());
+        // Invalid SEC1 prefix / point is refused before any DH.
+        let mut bad = resp.p_public;
+        bad[0] = 0x02;
+        assert!(matches!(
+            EphemeralKeys::encapsulate(&bad, &resp.ml_ek),
+            Err(KemError::BadPoint)
+        ));
     }
 
     #[test]
     fn tampered_ciphertext_does_not_match() {
         let resp = EphemeralKeys::generate().unwrap();
         let (mut ml_ct, ss_init, eph_pub) =
-            EphemeralKeys::encapsulate(&resp.x_public, &resp.ml_ek).unwrap();
+            EphemeralKeys::encapsulate(&resp.p_public, &resp.ml_ek).unwrap();
         ml_ct[100] ^= 0x01;
         // ML-KEM implicit rejection: decaps still returns *a* secret, but it
         // must NOT equal the initiator's. (FO transform property.)
@@ -277,16 +312,13 @@ mod tests {
         let k2 = derive_session_key_transcript(&ss, None, &transcript);
         assert_eq!(k1, k2);
 
-        // PSK variation changes key
         let k_psk = derive_session_key_transcript(&ss, Some(b"sovereign-psk"), &transcript);
         assert_ne!(k1, k_psk);
 
-        // Different transcript changes key
         let diff_transcript = [0x43u8; 48];
         let k_diff = derive_session_key_transcript(&ss, None, &diff_transcript);
         assert_ne!(k1, k_diff);
 
-        // Confirmation tags
         let tag1 = compute_confirmation_tag(&k1, b"TEST-TAG", &transcript);
         let tag2 = compute_confirmation_tag(&k1, b"TEST-TAG", &transcript);
         assert!(constant_time_eq_32(&tag1, &tag2));
@@ -295,10 +327,9 @@ mod tests {
         bad_tag[0] ^= 0x01;
         assert!(!constant_time_eq_32(&tag1, &bad_tag));
 
-        // SAS formatting
         let sas1 = compute_sas(&k1, &transcript);
         let sas2 = compute_sas(&k1, &transcript);
         assert_eq!(sas1, sas2);
-        assert_eq!(sas1.len(), 19); // 4 groups of 4 + 3 dashes = 19
+        assert_eq!(sas1.len(), 39); // 16 hex bytes in 8 groups + 7 dashes
     }
 }

@@ -1,6 +1,6 @@
 # Module Documentation: Native Rust Data Plane Subsystem (`rust_data_plane`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `rust_data_plane`
 - **Subsystem Classification:** Native High-Performance Data Plane (`destroyer_core`), Python-Rust FFI, Memory Security, and Wire Framing
@@ -84,7 +84,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. `destroyer_core::frame` Wire Envelope Layout
 - **Frame Header (22 bytes):**
@@ -113,7 +113,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **Noise Protocol Framework (`Noise_XXhfs`):**
    - Implemented in `destroyer_core::handshake` with SecP384r1 + ML-KEM-1024 + ML-DSA-87.
@@ -128,7 +128,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Rust Crates (Cargo.toml)
 - `pyo3`: Python C extension generation.
@@ -154,7 +154,7 @@
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -163,7 +163,7 @@
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_rust_core_security_suite.py` (9 passed in 0.4s):
@@ -180,7 +180,7 @@
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Standalone `no_std` Microkernel Build:**
    - `nostd_microcore.rs` provides architecture skeletons for running `destroyer_core` in embedded or microkernel environments without the Rust standard library; standard production builds link against `std`.
@@ -189,7 +189,7 @@
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **Host Compilation Dependencies:**
    - Building `destroyer_core` from source requires a working Cargo toolchain and C compiler. If the precompiled shared library is missing and no compiler is installed, the system falls back to Python.
@@ -207,7 +207,7 @@
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **Long-Term Data Plane Migration:**
    - Is `destroyer_core` planned to completely supersede Python socket I/O in future releases, relegating Python strictly to orchestration?

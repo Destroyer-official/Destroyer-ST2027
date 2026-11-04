@@ -180,8 +180,11 @@ class CNSA2PolicyEngine:
     FORBIDDEN_ALGORITHMS: FrozenSet[str] = frozenset({
         'AES-128', 'AES-192', 'AES-128-GCM', 'AES-128-CBC',
         'SHA-1', 'SHA-224', 'MD5', 'DES', '3DES', 'RC4',
-        'RSA-1024', 'RSA-2048', 'RSA-3072',
-        'ML-KEM-512', 'ML-KEM-768', 'ML-DSA-44', 'ML-DSA-65',
+        'RSA', 'RSA-1024', 'RSA-2048', 'RSA-3072', 'RSA-4096',
+        'DSA', 'ECDSA', 'ECDH', 'Blowfish', 'Twofish',
+        'ML-KEM-512', 'ML-KEM-768', 'Kyber512', 'Kyber768', 'Kyber-512', 'Kyber-768',
+        'ML-DSA-44', 'ML-DSA-65', 'Dilithium2', 'Dilithium3', 'Dilithium-2', 'Dilithium-3',
+        'Falcon-512', 'Falcon512',
         'X25519', 'Ed25519',
     })
 

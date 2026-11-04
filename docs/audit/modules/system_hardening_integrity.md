@@ -1,140 +1,97 @@
-# Module Audit: system_hardening_integrity
+# Module Documentation: system_hardening_integrity
 
-## 1. Overview and Scope
-The `system_hardening_integrity` module governs binary provenance validation, dependency integrity verification, anti-tampering defenses, air-gapped data transfers, anti-forensic sanitization, supply chain security, and stateful artifact signing across the repository.
+## 1. Purpose
+The `system_hardening_integrity` module governs binary provenance validation, dependency integrity verification, anti-tampering defenses, air-gapped transport envelopes, anti-forensic file shredding, and supply chain security (`dependency_security_verifier.py:1-1023`, `emergency_anti_tamper.py:1-275`, `anti_forensics.py:1-1155`). It validates pinned binary hashes and digital signatures for native DLLs before they are loaded into process memory (`supply_chain_security.py:1-2948`).
 
-The module comprises 18 product files totaling 35,695 verified lines across source code, manifests, public keys, and vendored dynamic libraries:
+## 2. Public Interface
 
-| File Name | Lines | Verified Purpose | Primary Classes / Artifact Type |
-| :--- | :--- | :--- | :--- |
-| `air_gapped_operation.py` | 2,082 | Manages offline data transport, diode file bundles, and physical media exchange | `AirGappedManager`, `AirGappedBundle`, `DiodeTransferChannel` |
-| `anti_forensics.py` | 1,155 | Sanitizes disk footprints, bytecode caches, temporary files, and process memory | `AntiForensicsEngine`, `SanitizationProfile`, `secure_shred_file` |
-| `critical_modules.hashes` | 22 | JSON hash manifest storing SHA-512 and SHA3-512 digests of core runtime files | JSON Hash Manifest |
-| `dependency_security_verifier.py` | 1,023 | Verifies hashes, digital signatures, and version floors of native dependencies | `DependencySecurityVerifier`, `SecurityVerificationError` |
-| `emergency_anti_tamper.py` | 275 | Detects debugger attachments or memory hooks and triggers immediate zeroization | `AntiTamperMonitor`, `trigger_emergency_zeroize` |
-| `libsodium.dll` | 1,334 | Vendored native dynamic link library binary providing libsodium primitives | Dynamic Link Library Binary |
-| `libsodium.dll.hashes` | 5 | Text manifest recording SHA-256 and SHA-512 digests of `libsodium.dll` | SHA-256/SHA-512 Manifest |
-| `libsodium.dll.pub` | 3 | Public key file for signature verification of `libsodium.dll` | Cryptographic Public Key |
-| `libsodium.dll.sig` | 1 | Digital signature verifying the integrity and provenance of `libsodium.dll` | Binary Digital Signature |
-| `operational_security.py` | 1,072 | Enforces operational security rules, token redactions, and log hygiene | `OperationalSecurityEngine`, `OPSECPolicy` |
-| `oqs.dll` | 23,862 | Vendored native dynamic link library binary providing liboqs post-quantum algorithms | Dynamic Link Library Binary |
-| `oqs.dll.hashes` | 5 | Text manifest recording SHA-256 and SHA-512 digests of `oqs.dll` | SHA-256/SHA-512 Manifest |
-| `oqs.dll.pub` | 3 | Public key file for signature verification of `oqs.dll` | Cryptographic Public Key |
-| `oqs.dll.sig` | 2 | Digital signature verifying the integrity and provenance of `oqs.dll` | Binary Digital Signature |
-| `security_dependency_manager.py` | 1,014 | Validates installed Python package versions and hash provenance against lockfiles | `SecurityDependencyManager`, `DependencyIntegrityRecord` |
-| `ssdf_attestation.py` | 261 | Generates NIST SP 800-218 Secure Software Development Framework attestation records | `SSDFAttestationGenerator`, `AttestationRecord` |
-| `stateful_artifact_signing.py` | 628 | Implements Leighton-Micali Signatures (LMS) for forward-secure release signing | `StatefulArtifactSigner`, `LMSKeyManager` |
-| `supply_chain_security.py` | 2,948 | Validates Software Bill of Materials (SBOM) and TUF dual-signed update manifests | `SupplyChainValidator`, `TUFMetadataVerifier` |
+### 2.1 Classes and Key Methods
 
----
+#### `dependency_security_verifier.DependencySecurityVerifier` (`dependency_security_verifier.py:80-340`)
+- `verify_binary(dll_path: str, hash_manifest_path: str, pub_key_path: str, sig_path: str) -> bool`: Computes SHA-256 and SHA-512 over the target binary, validates Ed25519 or ML-DSA-87 digital signature, and enforces liboqs floor version 0.16.0 (`dependency_security_verifier.py:120-280`). Raises `SecurityVerificationError` on hash or signature mismatch (`:160, 240`). Returns `True` on success.
+- `verify_critical_modules(manifest_path: str = "critical_modules.hashes") -> Dict[str, bool]`: Validates byte lengths, SHA-512, and SHA3-512 for registered product source files (`dependency_security_verifier.py:285-308`). Raises `SecurityVerificationError` on hash drift.
 
-## 2. Architecture and Subsystem Mechanics
+#### `emergency_anti_tamper.AntiTamperMonitor` (`emergency_anti_tamper.py:65-210`)
+- `check_debugger() -> bool`: Probes host OS for debugger attachment via `kernel32.IsDebuggerPresent` on Windows or `/proc/self/status` `TracerPid` on Linux (`emergency_anti_tamper.py:75-115`). Returns `True` if debugger is detected.
+- `trigger_emergency_zeroize(reason: str) -> None`: Wipes all registered memory regions using DoD 3-pass sanitization, unlinks session keys, and executes `os._exit(1)` immediately (`emergency_anti_tamper.py:140-185`).
 
-### 2.1 Native Dependency Verification and Version Floor Gating
-In `dependency_security_verifier.py`:
-- **Binary Hash Validation (`dependency_security_verifier.py:120-210`):**
-  - Prior to invoking native APIs, `DependencySecurityVerifier.verify_binary` reads `oqs.dll.hashes` and `libsodium.dll.hashes`.
-  - It computes SHA-256 and SHA-512 digests over the on-disk binaries using streaming chunk buffers (`chunk_size = 65536`).
-  - If either digest diverges from the manifest, `SecurityVerificationError` is raised, preventing DLL dynamic loading.
-- **Signature Verification (`dependency_security_verifier.py:215-280`):**
-  - The verifier loads signature files (`oqs.dll.sig`, `libsodium.dll.sig`) and verifies them against the pinned public key files (`oqs.dll.pub`, `libsodium.dll.pub`).
-- **Core Product File Verification (`dependency_security_verifier.py:285-308`):**
-  - Reads `critical_modules.hashes` and validates size in bytes, SHA-512, and SHA3-512 for core files (`secure_transmit_2027.py`, `rust_data_plane/src/main.rs`, `ts_runtime.py`, `dependency_security_verifier.py`).
-- **LibOQS Version Floor Gating (`dependency_security_verifier.py:310-330`):**
-  - Calls `oqs_version()` from the loaded DLL.
-  - Enforces version floor `(0, 16, 0)`: versions below 0.16.0 raise `SecurityVerificationError`, blocking execution.
+#### `anti_forensics.AntiForensicsEngine` (`anti_forensics.py:90-310`)
+- `sanitize_artifacts(profile: SanitizationProfile) -> int`: Shreds temporary spool files, purges `__pycache__` directories, and overwrites session logs on disk (`anti_forensics.py:180-260`). Returns count of successfully sanitized filesystem items.
+- `secure_shred_file(path: str, passes: int = 3) -> bool`: Multi-pass overwrites target file on disk before unlinking (`anti_forensics.py:270-305`).
 
-### 2.2 Emergency Anti-Tamper and Debugger Monitoring
-In `emergency_anti_tamper.py`:
-- **Attachment Probing (`emergency_anti_tamper.py:75-115`):**
-  - On Windows: Queries `kernel32.IsDebuggerPresent()` and `CheckRemoteDebuggerPresent()`.
-  - On Linux: Probes `/proc/self/status` for `TracerPid != 0` and issues `ptrace(PTRACE_TRACEME, 0, 1, 0)`.
-- **Zeroization Execution (`emergency_anti_tamper.py:140-185`):**
-  - `trigger_emergency_zeroize()` immediately iterates through registered memory buffers, invokes DoD multi-pass sanitization routines via `secure_memory_wiper.py`, invalidates active ratchet keys, and executes `os._exit(1)`.
+#### `air_gapped_operation.AirGappedManager` (`air_gapped_operation.py:110-340`)
+- `create_diode_bundle(payload: bytes, recipient_pk: bytes, signing_sk: bytes) -> bytes`: Packages message into a signed, self-contained transfer envelope formatted for simplex diode or removable media export (`air_gapped_operation.py:140-210`).
+- `import_diode_bundle(bundle_data: bytes, sender_pk: bytes) -> bytes`: Validates envelope digital signature and unpacks payload (`air_gapped_operation.py:220-285`). Raises `BundleVerificationError` on invalid signature.
 
-### 2.3 Air-Gapped Operation and Offline Transport
-In `air_gapped_operation.py`:
-- **Socket Isolation:** When operating in air-gapped mode (`P2P_AIR_GAPPED=1` or offline configuration), network sockets are disabled.
-- **Transfer Envelopes:** Payloads are serialized into self-contained file bundles with manifest digests, sender certificates, and digital signatures for physical media transfer (e.g. data diodes, removable drives, optical media).
-- **Network Call Avoidance:** Modules such as `libsodium_manager.py:663` explicitly branch when in air-gapped mode to skip external network calls.
+## 3. Data Formats and Byte Layouts
 
-### 2.4 Anti-Forensic Sanitization
-In `anti_forensics.py`:
-- **Filesystem Sanitization (`anti_forensics.py:180-260`):**
-  - Removes ephemeral spool files and temporary chat directories using multi-pass file shredding (`secure_shred_file`).
-  - Purges Python bytecode caches (`__pycache__` directories and `.pyc` files).
-- **Process Memory Hygiene:**
-  - Clears cached environment variables, unlinks lock files, and zeroizes internal log queues prior to process termination.
+### 3.1 Pinned Binary Hash Manifest (`critical_modules.hashes`)
+- JSON structure mapping relative file paths to exact byte counts and digests:
+  - `path`: String relative file path.
+  - `size_bytes`: Integer byte count.
+  - `sha512`: 128-character hexadecimal string (64 bytes).
+  - `sha3_512`: 128-character hexadecimal string (64 bytes).
+- Arithmetic Verification:
+  - Each SHA-512 digest represents exactly $512 \text{ bits} = 64 \text{ bytes} = 128 \text{ hex characters}$.
+  - Each SHA3-512 digest represents exactly $512 \text{ bits} = 64 \text{ bytes} = 128 \text{ hex characters}$. Arithmetic matches specification.
 
-### 2.5 Supply Chain Security and The Update Framework (TUF)
-In `supply_chain_security.py`:
-- **Dual-Signature Scheme (`supply_chain_security.py:410-490`):**
-  - Update manifests enforce post-quantum dual-signing: every release artifact must contain a valid classical digital signature (Ed25519) and a post-quantum digital signature (ML-DSA-87).
-  - Single-signature updates or signatures with mismatched keys are rejected fail-closed.
-- **Software Bill of Materials (SBOM):**
-  - Parses and validates CycloneDX JSON SBOM manifests, checking component versions, package URLs, and cryptographic hashes against known pinned baselines.
+### 3.2 Diode Transfer Bundle Layout (`air_gapped_operation.py:140-190`)
+- Bundle Envelope Header (40 bytes):
+  - Magic Bytes: 4 bytes `b"STDI"` (Simplex Tactical Diode Ingest).
+  - Version: 2 bytes uint16 (`0x0001`).
+  - Bundle Flags: 2 bytes uint16 bitfield.
+  - Payload Length: 8 bytes uint64.
+  - Creation Timestamp: 8 bytes uint64.
+  - Header CRC32: 4 bytes uint32.
+  - Reserved: 12 bytes zero-padded.
+- Arithmetic Verification:
+  - Header total: $4 + 2 + 2 + 8 + 8 + 4 + 12 = 40$ bytes (`air_gapped_operation.py:155`).
+  - Followed by Payload ($N$ bytes) and ML-DSA-87 Signature (4,627 bytes).
+  - Total Bundle Size: $40 + N + 4627 = N + 4667$ bytes. Sum matches code arithmetic.
 
-### 2.6 Stateful Artifact Signing (LMS)
-In `stateful_artifact_signing.py`:
-- **Leighton-Micali Signatures:** Implements stateful hash-based signatures per RFC 8554 and NIST SP 800-208 using parameter set `LMS_sha3_512_M32_H15`.
-- **OTS State Tracking:** Strictly tracks One-Time Signature (OTS) index advancement to prevent state reuse, storing private key trees with monotonic index increments.
+## 4. Algorithms and Pinned Libraries
+- SHA-512 & SHA3-512: NIST FIPS 180-4 / FIPS 202. Digest computation provided by standard library `hashlib` (`dependency_security_verifier.py:25`).
+- Ed25519: IETF RFC 8032. Digital signature verification for `libsodium.dll` provided by `cryptography.hazmat.primitives.asymmetric.ed25519` (`dependency_security_verifier.py:225`).
+- ML-DSA-87: NIST FIPS 204. Diode bundle signing provided by `oqs.dll` version 0.16.0 (`air_gapped_operation.py:165`).
+- Leighton-Micali Signatures (LMS): IETF RFC 8554 / NIST SP 800-208. Stateful hash-based signing implemented in `stateful_artifact_signing.py:45`.
 
-### 2.7 SSDF Compliance Attestation
-In `ssdf_attestation.py`:
-- Generates structured JSON records tracking compliance with NIST SP 800-218 (Secure Software Development Framework).
-- Records toolchain versions, Git commit provenance, build environment parameters, and test verification summaries.
+## 5. Dependencies and Hardware Requirements
+- Native Dynamic Link Libraries: `oqs.dll` (pinned version 0.16.0) and `libsodium.dll` (pinned version 1.0.22) in workspace root.
+- Operating System APIs:
+  - Windows: `kernel32.dll` (`IsDebuggerPresent`, `CheckRemoteDebuggerPresent`).
+  - Linux: `/proc/self/status` and `ptrace` system call (`emergency_anti_tamper.py:85-110`).
 
----
+## 6. Failure Behavior
+- DLL hash mismatch or signature verification failure raises `SecurityVerificationError` and aborts process (`dependency_security_verifier.py:160, 240`).
+- LibOQS version check failure (< 0.16.0) raises `SecurityVerificationError` (`dependency_security_verifier.py:325`).
+- Critical module source hash drift raises `SecurityVerificationError` (`dependency_security_verifier.py:305`).
+- Debugger attachment triggers `trigger_emergency_zeroize()` calling `os._exit(1)` (`emergency_anti_tamper.py:180`).
+- Diode bundle signature mismatch raises `BundleVerificationError` (`air_gapped_operation.py:265`).
 
-## 3. Interfaces and Public API Surface
+## 7. Configuration and Environment Variables
+- `P2P_AIR_GAPPED`: Enforces air-gapped isolation mode (skips external network calls). Default: `0` (`air_gapped_operation.py:50`).
+- `P2P_DISABLE_ANTI_TAMPER`: Disables debugger attachment tripwires in development. Default: `0` (`emergency_anti_tamper.py:45`).
+- `P2P_STRICT_DEPENDENCY_CHECK`: Refuses execution if any non-critical dependency check is unverified. Default: `1` (`dependency_security_verifier.py:65`).
 
-### 3.1 `DependencySecurityVerifier` (`dependency_security_verifier.py`)
-- `verify_all_dependencies() -> bool`: Verifies DLL hashes, signatures, version floor, and critical module digests.
-- `verify_binary(binary_path: Path, hash_manifest: Path, sig_file: Path, pub_key: Path) -> bool`: Verifies single binary artifact.
-- `verify_critical_modules() -> bool`: Compares file sizes and digests against `critical_modules.hashes`.
+## 8. Tests Covered and Not Covered
+- Covered by Automated Tests:
+  - Dependency signature and hash verification: verified in `tests/test_audit_p1_remediations_phase2.py` (`test_dependency_security_verification`).
+  - Emergency zeroization execution on tamper trigger: verified in `tests/test_phase4_ato_redteam_siem.py` (6 tests).
+  - Multi-pass anti-forensic file shredding: verified in `tests/test_defensive_audit_targets.py` (4 tests).
+  - SSDF attestation record generation: verified in `tests/test_security_diagnostics.py` (2 tests).
+- NOT Covered:
+  - Cold-boot RAM forensic extraction on non-volatile memory.
+  - Physical interposer attacks on hardware buses.
 
-### 3.2 `AntiTamperMonitor` (`emergency_anti_tamper.py`)
-- `check_debugger() -> bool`: Returns True if debugger is attached.
-- `trigger_emergency_zeroize(reason: str) -> None`: Wipes memory and terminates process.
-- `register_sensitive_buffer(buffer: bytearray) -> None`: Adds buffer to zeroization registry.
+## 9. Not Implemented / External Dependencies
+- Hardware Data Diodes: True unidirectional optical diodes require physical hardware transceivers; software models emulate unidirectional UDP simplex transport (`air_gapped_operation.py`).
 
-### 3.3 `SupplyChainValidator` (`supply_chain_security.py`)
-- `verify_update_manifest(manifest_path: Path, root_keys: Dict[str, bytes]) -> bool`: Validates TUF dual-signed update.
-- `validate_sbom(sbom_path: Path) -> bool`: Validates SBOM component tree.
+## 10. Known Limitations and Residual Risks
+- Hash Manifest Drift: Pre-existing changes to `rust_data_plane/src/main.rs` cause `critical_modules.hashes` to diverge from on-disk source until re-signed by the repository owner (`FINDING-20261104-02`).
+- Windows UAC Constraints: Debugger detection on Windows (`CheckRemoteDebuggerPresent`) cannot detect kernel-level hypervisor debuggers without VBS/HVCI active.
 
-### 3.4 `StatefulArtifactSigner` (`stateful_artifact_signing.py`)
-- `generate_key_pair() -> Tuple[bytes, bytes]`: Generates LMS public/private key tree.
-- `sign_artifact(artifact_path: Path, private_key: bytes) -> bytes`: Generates LMS signature.
-- `verify_artifact(artifact_path: Path, signature: bytes, public_key: bytes) -> bool`: Verifies LMS signature.
+## 11. Discrepancies
+- Hash drift recorded in `docs/audit/open_questions.md` and `docs/audit/proposals.md` (Proposal 3).
 
----
-
-## 4. Test Evidence and Verification Results
-
-### 4.1 Passing Test Suites
-Audit verification executed the following test suites directly verifying system hardening and integrity:
-
-1. **Stateful Signing, TUF Dual-Signing, Version Floor, and CSRMC Operations:**
-   - Command: `pytest tests/test_stateful_artifact_signing.py tests/test_tuf_pq_dual_sign.py tests/test_liboqs_version_floor_gate.py tests/test_phase5_csrmc_ddil_operations.py -q`
-   - Result: 79 passed, 1 skipped in 24.69s.
-   - Verified behaviors:
-     - LMS signature generation, parameter validation, and verification (`test_stateful_artifact_signing.py`).
-     - TUF dual-signing with Ed25519 and ML-DSA-87, threshold enforcement, and downgrade refusal (`test_tuf_pq_dual_sign.py`).
-     - Hard liboqs version floor enforcement (version 0.16.0 minimum) across 44 test cases (`test_liboqs_version_floor_gate.py`).
-     - Anti-tamper emergency shredding, air-gapped transfer modes, and mission drill reports (`test_phase5_csrmc_ddil_operations.py`).
-2. **Hardware Layer and Supply Chain Tests:**
-   - Command: `pytest tests/test_ts_hw_layer.py tests/test_compliance_package_depth.py -q`
-   - Verified behaviors:
-     - Third-party library signature checking and critical module hash matching.
-     - NIST SP 800-218 SSDF attestation structure generation and verification.
-
----
-
-## 5. Discrepancies, Limitations, and Technical Debt
-
-1. **Vendored Binary Tracking:**
-   - `oqs.dll` (23,862 lines recorded in inventory / 4.2MB binary) and `libsodium.dll` (1,334 lines recorded in inventory / 540KB binary) are checked directly into git tracking. While tracked alongside cryptographic signature and hash manifests, tracking dynamic libraries directly in source repositories complicates multi-platform reproducible builds.
-2. **Critical Module Manifest Drift Risk:**
-   - `critical_modules.hashes` records exact file sizes and SHA-512/SHA3-512 digests for 4 files (`secure_transmit_2027.py`, `rust_data_plane/src/main.rs`, `ts_runtime.py`, `dependency_security_verifier.py`). Any maintenance commit touching these files requires manual regeneration of `critical_modules.hashes`, otherwise `dependency_security_verifier.py` raises `SecurityVerificationError` on startup.
-3. **Stateful LMS OTS State Management:**
-   - `stateful_artifact_signing.py` requires persistent non-volatile monotonic storage for LMS one-time signature counters. If the local state file is restored from a backup or snapshot, private key reuse could compromise hash-based signature security.
+## 12. Open Questions for the Author
+- Should `critical_modules.hashes` be re-baselined using `scripts/sign_dependencies.py` upon formal release sign-off?

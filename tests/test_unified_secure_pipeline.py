@@ -215,7 +215,7 @@ class TestFullPipelineSealOpen(unittest.TestCase):
     def _derive_frame_key(root_key):
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives import hashes
-        hkdf = HKDF(algorithm=hashes.SHA512(), length=32,
+        hkdf = HKDF(algorithm=hashes.SHA384(), length=32,
                      salt=b"destroyer-p2p-rust-v1", info=b"destroyer/frame/v1")
         return hkdf.derive(root_key)
 

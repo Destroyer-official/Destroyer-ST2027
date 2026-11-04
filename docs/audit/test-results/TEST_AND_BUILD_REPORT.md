@@ -1,4 +1,4 @@
-# Comprehensive Test and Build Verification Report
+# Full Test and Build Verification Report
 
 **Audit Run ID:** `RUN-20261025-01`
 **Date:** 2026-10-25
@@ -16,7 +16,7 @@
 | **Forensic Remediation Battery** | `pytest tests/test_audit_forensic_remediations.py` | 20 | 0 | 0 | 0.81s | **PASS** |
 | **Rust Data-Plane Strict Tests** | `cargo test` in `rust_data_plane/` | 159 (122 lib + 37 kani) | 0 | 0 | 17.20s | **PASS** |
 | **PBKDF2 Migration & Group Ratchet** | `pytest tests/test_pbkdf2_migration_and_group_architecture.py` | 5 | 0 | 0 | 3.42s | **PASS** |
-| **Two-Terminal Live Military Drill** | `pytest tests/test_military_bases_two_terminal_live_drill.py` | 2 | 0 | 0 | 33.20s | **PASS** |
+| **Two-Terminal Live Station Drill** | `pytest tests/test_military_bases_two_terminal_live_drill.py` | 2 | 0 | 0 | 33.20s | **PASS** |
 | **Live Standalone Drill Execution** | `python run_two_terminals_secure_p2_test.py` | 1 full drill | 0 | 0 | 1.20s | **PASS** |
 | **Linguistic & Property Proofs** | `pytest tests/test_no_marketing_buzzwords_property.py tests/test_no_emoji_property.py` | 11 | 0 | 0 | 5.08s | **PASS** |
 | **Deployment Verification Gates** | `python verify_deployment.py --policy cnsa_2_0` | 95 gates (0 FAIL, 1 WARN) | 0 | 0 | 3.12s | **PASS** |

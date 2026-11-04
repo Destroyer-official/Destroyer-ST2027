@@ -910,12 +910,38 @@ def main():
     parser.add_argument("--target-host", default=None, help="Target peer host IP")
     parser.add_argument("--target-port", type=int, default=None, help="Target peer port")
     parser.add_argument("--clearance", default="TOP_SECRET", help="Security Clearance")
+    parser.add_argument("--psk-file", default=os.environ.get("P2P_PSK_FILE"), help="Pre-shared key file")
+    parser.add_argument("--auth-sk-file", default=os.environ.get("P2P_AUTH_SK_FILE"), help="Local ML-DSA-87 signing-key seed")
+    parser.add_argument("--peer-auth-pk-file", default=os.environ.get("P2P_PEER_AUTH_PK_FILE"), help="Pinned peer ML-DSA-87 public key")
+    parser.add_argument("--require-mutual-auth", action="store_true", help="Require mutual ML-DSA-87 authentication")
+    parser.add_argument("--lab", action="store_true", help="Explicit lab mode (lower assurance)")
     parser.add_argument("--drill", action="store_true", help="Run automated 2-base tactical battle drill")
+    parser.add_argument("--sovereign", action="store_true", default=True, help="Launch sovereign tactical Zero-Gap node (secure_p2p.py) [Default]")
+    parser.add_argument("--legacy-lab-only", action="store_true", help="Explicitly allow deprecated unpaced UDP socket (lab only; never in production)")
 
     args = parser.parse_args()
 
     if args.drill:
         run_automated_drill()
+        return
+
+    if not args.legacy_lab_only:
+        # Default to the Sovereign Zero-Gap node (secure_p2p.py) with full post-quantum ratchet and 20ms pacing
+        from secure_p2p import run_interactive_terminal
+        role = "responder" if "alpha" in args.node.lower() else "initiator"
+        print(f"\n{BOLD}{CYAN}[SOVEREIGN HARDENING] Directing tactical console to Sovereign Zero-Gap P2P Engine (secure_p2p.py)...{RESET}")
+        run_interactive_terminal(
+            role=role,
+            bind="127.0.0.1",
+            peer=args.target_host or "127.0.0.1",
+            name=args.callsign,
+            channel_port=args.port,
+            psk_file=args.psk_file,
+            auth_sk_file=args.auth_sk_file,
+            peer_auth_pk_file=args.peer_auth_pk_file,
+            require_mutual_auth=(args.require_mutual_auth or None),
+            lab_mode=(True if args.lab else None),
+        )
         return
 
     station = TacticalConsoleStation(

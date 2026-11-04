@@ -50,6 +50,31 @@ def run_test() -> bool:
     except OSError:
         pass
 
+    # Military Root Certificate Authority & ML-DSA-87 Identity Key Provisioning
+    import subprocess
+    from secure_p2p import NATIVE_BIN
+    from pq_certificate_authority import create_certificate_authority
+
+    ca = create_certificate_authority("US_STRATEGIC_DEFENSE_ROOT_CA")
+    root_ca_file = os.path.join(tmp_dir, "military_root_ca.crt")
+    ca.save_root_certificate(root_ca_file)
+
+    alpha_sk_file = os.path.join(tmp_dir, "alpha.auth.sk")
+    alpha_pk_file = os.path.join(tmp_dir, "alpha.auth.pk")
+    subprocess.run([str(NATIVE_BIN), "auth-keygen", "--out-sk", alpha_sk_file, "--out-pk", alpha_pk_file], check=True, capture_output=True)
+    alpha_pk_bytes = bytes.fromhex(Path(alpha_pk_file).read_text(encoding="utf-8").strip())
+    alpha_cert = ca.issue_certificate("NORAD_ALPHA", alpha_pk_bytes, validity_days=30)
+    alpha_cert_file = os.path.join(tmp_dir, "alpha_norad.crt")
+    alpha_cert.save_to_file(alpha_cert_file)
+
+    bravo_sk_file = os.path.join(tmp_dir, "bravo.auth.sk")
+    bravo_pk_file = os.path.join(tmp_dir, "bravo.auth.pk")
+    subprocess.run([str(NATIVE_BIN), "auth-keygen", "--out-sk", bravo_sk_file, "--out-pk", bravo_pk_file], check=True, capture_output=True)
+    bravo_pk_bytes = bytes.fromhex(Path(bravo_pk_file).read_text(encoding="utf-8").strip())
+    bravo_cert = ca.issue_certificate("PENTAGON_BRAVO", bravo_pk_bytes, validity_days=30)
+    bravo_cert_file = os.path.join(tmp_dir, "bravo_pentagon.crt")
+    bravo_cert.save_to_file(bravo_cert_file)
+
     try:
         norad = TacticalP2PNode(
             name="NORAD_ALPHA",
@@ -61,7 +86,15 @@ def run_test() -> bool:
             channel_port=9210,
             peer_channel_port=9211,
             work_dir=os.path.join(tmp_dir, "norad"),
-            psk_file=drill_psk
+            psk_file=drill_psk,
+            lab_mode=True,
+            auth_sk_file=alpha_sk_file,
+            peer_auth_pk_file=bravo_pk_file,
+            root_ca_file=root_ca_file,
+            node_cert_file=alpha_cert_file,
+            peer_cert_file=bravo_cert_file,
+            require_mutual_auth=True,
+            require_root_ca=True,
         )
         pentagon = TacticalP2PNode(
             name="PENTAGON_BRAVO",
@@ -73,7 +106,15 @@ def run_test() -> bool:
             channel_port=9211,
             peer_channel_port=9210,
             work_dir=os.path.join(tmp_dir, "pentagon"),
-            psk_file=drill_psk
+            psk_file=drill_psk,
+            lab_mode=True,
+            auth_sk_file=bravo_sk_file,
+            peer_auth_pk_file=alpha_pk_file,
+            root_ca_file=root_ca_file,
+            node_cert_file=bravo_cert_file,
+            peer_cert_file=alpha_cert_file,
+            require_mutual_auth=True,
+            require_root_ca=True,
         )
 
         os.makedirs(norad.work_dir, exist_ok=True)

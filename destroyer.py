@@ -115,7 +115,7 @@ def launch_web_console():
 def launch_tactical_node(role: str = "interactive"):
     """Launch the Sovereign Tactical P2P Node."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Launching Sovereign Tactical P2P Node ({role})...{RESET}")
-    cmd = [sys.executable, str(ROOT / "destroyer_tactical_p2p.py")]
+    cmd = [sys.executable, str(ROOT / "secure_p2p.py")]
     if role and role != "interactive":
         cmd.append(role)
     subprocess.run(cmd)
@@ -127,7 +127,7 @@ def launch_interactive_chat():
     target = ROOT / "secure_p2p.py"
     if not target.exists():
         target = ROOT / "archive" / "legacy_prototype" / "secure_p2.py"
-    cmd = [sys.executable, str(target), "--data-plane", "rust", "--tactical-cloak"]
+    cmd = [sys.executable, str(target), "chat", "--data-plane", "rust", "--tactical-cloak"]
     subprocess.run(cmd)
 
 
@@ -259,7 +259,8 @@ def run_master_defense_audit():
     """Run all 10 defense assurance gates with ML-DSA-87 signed evaluation receipt."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Executing Master Defense Audit (10/10 Cryptographic Gates)...{RESET}")
     cmd = [sys.executable, str(ROOT / "scripts" / "run_defense_audit.py")]
-    subprocess.run(cmd)
+    res = subprocess.run(cmd)
+    return res.returncode == 0
 
 
 def run_50x_superiority_benchmark():
@@ -272,7 +273,7 @@ def run_50x_superiority_benchmark():
 def run_tactical_automated_drill():
     """Run the two-terminal automated tactical drill (NORAD vs Pentagon)."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Running Automated Tactical P2P Drill (NORAD vs Pentagon)...{RESET}")
-    cmd = [sys.executable, str(ROOT / "destroyer_tactical_p2p.py"), "demo"]
+    cmd = [sys.executable, str(ROOT / "secure_p2p.py"), "demo", "--lab"]
     subprocess.run(cmd)
 
 
@@ -346,15 +347,16 @@ def launch_dual_tactical_terminals():
             subprocess.run(["cmd.exe", "/c", str(launcher_bat)])
             return
     # Cross-platform fallback: spawn two processes
+    psk_path = str(ROOT / "tactical_station.psk")
     print(f"{YELLOW}Spawning Terminal 1 (NORAD Alpha)...{RESET}")
-    subprocess.Popen([sys.executable, str(ROOT / "destroyer_tactical_p2p.py"), "node",
+    subprocess.Popen([sys.executable, str(ROOT / "secure_p2p.py"), "node",
                       "--role", "responder", "--bind", "127.0.0.1", "--peer", "127.0.0.1",
-                      "--name", "NORAD_ALPHA"])
+                      "--name", "NORAD_ALPHA", "--psk-file", psk_path])
     time.sleep(1.5)
     print(f"{YELLOW}Spawning Terminal 2 (Pentagon Bravo)...{RESET}")
-    subprocess.Popen([sys.executable, str(ROOT / "destroyer_tactical_p2p.py"), "node",
+    subprocess.Popen([sys.executable, str(ROOT / "secure_p2p.py"), "node",
                       "--role", "initiator", "--bind", "127.0.0.1", "--peer", "127.0.0.1",
-                      "--name", "PENTAGON_BRAVO"])
+                      "--name", "PENTAGON_BRAVO", "--psk-file", psk_path])
 
 
 def inspect_tpm_quote():

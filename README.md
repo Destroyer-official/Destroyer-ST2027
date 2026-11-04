@@ -22,7 +22,7 @@
 
 Modern peer-to-peer and client-server communication channels operating across adversarial public packet networks face two existential threats: contemporary high-rate signals intelligence (traffic analysis, timing correlation, deep packet inspection, and metadata harvesting) and the emergent cryptanalytic threat of quantum computers capable of Shor's and Grover's algorithms (Harvest-Now-Decrypt-Later).
 
-This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses X25519 + ML-KEM-1024 as an interop leg that is NEVER trusted alone (both halves required, classical-only refused). X25519 is not the CNSA L5 leg. 
+This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses the same `SecP384r1MLKEM1024` pairing (both halves required, classical-only operation unrepresentable).
 
 The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) is whitened using a tag-derived PRF mask (`ST2027-HEADER-MASK-v1`), authenticated as unmasked AAD by the 16-byte GHASH tag, with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum size class and header fields appear pseudorandom on the wire, while message COUNT is hidden under constant-rate `channel`/chaff cover. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are formally verified in **ProVerif 2.05 symbolic models enforced as a blocking gate in CI** (deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 5); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — executed in Linux CI) and deterministic property doubles green under `cargo test`.
 
@@ -86,7 +86,9 @@ To preserve complete engineering truth and auditability, this repository maintai
 
 **Evaluation boundary (read before citing):** This software is an engineering baseline designed to meet the technical specifications of CNSA 2.0. It has not undergone accredited laboratory evaluation (FIPS 140-3 CMVP / Common Criteria) and does not possess a government Authority to Operate (ATO).
 
-**Messenger-path honesty (research prototype):** the messaging path (`hybrid_kex.py` + `double_ratchet.py` + `secure_p2p.py`) is a Signal-style **hybrid-transition prototype** (X25519 + ML-KEM + ChaCha20-Poly1305 + Falcon-verify/ML-DSA) — it is **NOT CNSA-pure** and is **NOT audited**. Only `noise_pq.py` + `secure_transmit_2027.py` enforce the strict CNSA 2.0 session set (ML-KEM-1024 / ML-DSA-87 / AES-256-GCM / SHA-384 / HKDF-SHA384). For real messaging today, use Signal (audited, loss-tolerant, PQ handshake + ratchet).
+**Messenger-path honesty (production entry point):** the only supported production network path is `secure_p2p.py node --role initiator|responder --psk-file FILE --auth-sk-file FILE --peer-auth-pk-file FILE`. It runs the native Rust data plane with **SecP384r1MLKEM1024** (P-384 + ML-KEM-1024), **pinned mutual ML-DSA-87** transcript authentication, a 32-byte PSK as an additional factor, **AES-256-GCM**, and **SHA-384 / HKDF-SHA384**. PSK-only KEX is refused outside explicit `--lab` mode, and simulated NC3/EAM/PTT surfaces are disabled on the production path. Legacy `SecureP2PChat` (`chat`/`monolith`), `demo`, and `web` remain quarantined behind `--lab`.
+
+No software-only system can guarantee "nuclear-code" security. This code has **not** undergone FIPS 140-3 CMVP validation, Common Criteria evaluation, or an independent cryptographic audit, and it does not replace hardware key custody (TPM/HSM), TEMPEST shielding, two-person integrity procedures, or a government ATO. See `docs/ST2027_MUTUAL_AUTH_HARDENING.md` for the protocol, threat model, and residual risks.
 
 **Security gates (fail-closed; every escape hatch in one table):** production (`P2P_PRODUCTION=1`, sticky at import) refuses weaker paths unless the listed opt-in is explicitly set. Setting an opt-in in production is an intentional downgrade — log it, time-limit it, and remove it.
 
@@ -98,12 +100,42 @@ To preserve complete engineering truth and auditability, this repository maintai
 | Unpinned peers (TOFU) | Refused in prod/TS | `SecurityError`, pin required | none (lab only) |
 | Missing `unified_secure_pipeline` | Refused in prod | `RuntimeError`, no legacy path | none (lab only) |
 | Rust KEX without PSK | Refused in prod/TS | fail, `--psk` required | none (lab: verify SAS OOB) |
+| Rust KEX without mutual ML-DSA-87 | Refused outside `--lab` | fail, `--auth-sk-file` + `--peer-auth-pk-file` required | `--lab` only (PSK-only, lower assurance) |
+| Simulated NC3/EAM/PTT surfaces | Disabled in production | command refused | `--lab` only |
 | TLS `verify_certs=False` / TLS < 1.3 | Refused in prod | `ValueError` / TLS 1.3 floor | none (lab only) |
 | Config without CNSA sig (Ed25519-only) | Refused in prod (sticky) | `ConfigurationError` | none (lab only) |
 | HQC-256 (vuln oqs.dll) | Refused everywhere | `RuntimeError` | `P2P_ENABLE_VULN_HQC=1` (reserve only) |
 | DPO same-channel approvals | Allowed (lab); distinct enforced if both given | — | `P2P_DPO_REQUIRE_CHANNELS=1` to require |
 | Handshake-bound AD | Opt-in, warn in prod | warning once | `P2P_REQUIRE_HANDSHAKE_BINDING=1` to require |
 | DPO for TOP SECRET | Always required | `AuthorizationError` otherwise | none |
+
+### Production quick start (mutual ML-DSA-87)
+
+Generate one ML-DSA-87 identity per node, exchange the **public** keys over an
+authenticated out-of-band channel, and provision the same 32-byte PSK on both
+sides. The signing-key seed file must be owner-only (`0600` on POSIX); the
+public key is 2592 bytes (5184 hex chars).
+
+```bash
+# Node A (responder)
+secure-transmit auth-keygen --out-sk alpha.auth.sk --out-pk alpha.auth.pk
+# Node B (initiator)
+secure-transmit auth-keygen --out-sk bravo.auth.sk --out-pk bravo.auth.pk
+
+# Pin the peer's public key out-of-band, then:
+python secure_p2p.py node --role responder --bind 0.0.0.0 --peer <B_IP> \
+  --psk-file shared.psk --auth-sk-file alpha.auth.sk \
+  --peer-auth-pk-file bravo.auth.pk --require-mutual-auth
+
+python secure_p2p.py node --role initiator --bind 0.0.0.0 --peer <A_IP> \
+  --psk-file shared.psk --auth-sk-file bravo.auth.sk \
+  --peer-auth-pk-file alpha.auth.pk --require-mutual-auth
+```
+
+The session key is bound to the hybrid KEM transcript **and** both ML-DSA-87
+signatures **and** the PSK, so stripping either signature changes the key and
+the SAS. Compare the printed SAS out-of-band before transmitting sensitive
+material. `secure_p2p.py selftest` exercises this exact mutual-auth path.
 
 The security architecture is formally specified against a multidimensional threat matrix addressing physical, network, system, and algorithmic attack surfaces:
 
@@ -163,7 +195,7 @@ The security architecture is formally specified against a multidimensional threa
 | [PILLAR 3] CRYPTOGRAPHY & PROTOCOL ARCHITECTURE (noise_pq.py, cnsa_purity.py, crypto_selftest.py)      |
 |   ├── Noise_XXhfs + ML-KEM-1024 + P-384 ECDH + ML-DSA-87 handshake (UNPROVEN custom sig substitution,    |
 |   │   unofficial hfs draft — NOT Signal/Noise/MLS compatible; Python path only)                          |
-|   ├── Rust data-plane KEM is SEPARATE: X25519 + ML-KEM-1024 hybrid (interop leg, never alone)             |
+|   ├── Rust data-plane KEM is SEPARATE: SecP384r1MLKEM1024 (P-384 + ML-KEM-1024), both halves required       |
 |   ├── CNSA 2.0 Pure Tokenizer & Runtime Policy (Strict rejection of non-CNSA algorithm suites)          |
 |   ├── FIPS 140-3 Section 10 Power-Up Self-Tests & Pairwise Consistency Tests (OpenSSL vs PyCryptodome)  |
 |   └── ProVerif 2.05 symbolic analyses, model-scoped (NOT a system proof — see Section 5)                |
@@ -205,7 +237,7 @@ The security architecture is formally specified against a multidimensional threa
 - **Source Modules:** [`noise_pq.py`](noise_pq.py), [`cnsa_purity.py`](cnsa_purity.py), [`crypto_selftest.py`](crypto_selftest.py), [`rust_data_plane/src/kem.rs`](rust_data_plane/src/kem.rs)
 - **Handshake Protocol (Python, UNPROVEN custom profile):** Implements `Noise_XXhfs+sig_P384+MLKEM1024_AES256GCM_SHA384` (unofficial hfs draft + custom ML-DSA sig substitution replacing es/se, verify-before-derive, fixed lengths). NOT Signal/Noise/MLS compatible, no reduction to PQNoise, M2 ~5.35x amplification — never expose over unauthenticated UDP without cookie/return-routability gate; runs over TCP/TLS outer envelope here:
   $$\text{SharedSecret} = \text{HKDF-SHA384}(\text{ECDH}(P_{384}) \parallel \text{ML-KEM-1024-Decaps}(ct), \text{Transcript})$$
-  Rust data-plane KEM (`rust_data_plane/src/kem.rs`) is SEPARATE: X25519 + ML-KEM-1024 hybrid, both halves required.
+  Rust data-plane KEM (`rust_data_plane/src/kem.rs`) is SEPARATE: SecP384r1MLKEM1024 (P-384 + ML-KEM-1024) hybrid, both halves required.
 - **CNSA Suite 2.0 Purity Policy:** Strict tokenizer rejects non-compliant algorithms (Falcon, McEliece, Kyber, Dilithium, ChaCha20, RSA, DSA). Permits only FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, AES-256-GCM, SHA-384/512, and HKDF-SHA384.
 - **FIPS 140-3 Known Answer Tests (KAT):** Executes cryptographic self-tests at startup, comparing OpenSSL against PyCryptodome and RFC 7748 test vectors for AES-256-GCM, HKDF, SHA-384, P-384, and ML-KEM/ML-DSA Pairwise Consistency Tests (PCT).
 

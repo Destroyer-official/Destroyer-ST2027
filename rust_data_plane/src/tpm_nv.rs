@@ -14,7 +14,7 @@
 //!   value any NV counter on this TPM has ever held, then increments (TCG
 //!   TPM 2.0 Part 1, 37.2.6.3) — the chain survives index deletion.
 //! - Sidecar `<state>.nvck` (append-only, mirrors `.seqlog`): one line per
-//!   checkpoint `<gen> <send_seq> <hex HMAC-SHA256>`. The tag is keyed from
+//!   checkpoint `<gen> <send_seq> <hex HMAC-SHA384[:32]>`. The tag is keyed from
 //!   the session key (HKDF subkey `DESTROYER-ST2027-NVCK-AUTH-SUBKEY-v1`),
 //!   so a file-only attacker cannot forge a plausible `(gen, send_seq)`
 //!   even though the counter value may be readable via `ownerread`.
@@ -55,11 +55,11 @@
 
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
+use sha2::Sha384;
 use std::fs::OpenOptions;
 use std::io::Write;
 
-type HmacSha256 = Hmac<Sha256>;
+type HmacSha384 = Hmac<Sha384>;
 
 /// Failure modes surfaced by an [`NvTransport`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -500,22 +500,22 @@ fn sidecar_path(state_path: &str) -> String {
 }
 
 fn nvck_subkey(master: &[u8; 32]) -> [u8; 32] {
-    let hk = Hkdf::<Sha256>::new(None, master);
+    let hk = Hkdf::<Sha384>::new(None, master);
     let mut okm = [0u8; 32];
-    hk.expand(b"DESTROYER-ST2027-NVCK-AUTH-SUBKEY-v1", &mut okm)
-        .expect("HKDF-SHA256 expand for NV checkpoint subkey cannot fail");
+    hk.expand(b"DESTROYER-ST2027-NVCK-AUTH-SUBKEY-v2", &mut okm)
+        .expect("HKDF-SHA384 expand for NV checkpoint subkey cannot fail");
     okm
 }
 
 fn nvck_tag(master: &[u8; 32], gen: u64, send_seq: u64) -> [u8; 32] {
     let subkey = nvck_subkey(master);
-    let mut mac = HmacSha256::new_from_slice(&subkey).expect("HMAC can take key of any size");
-    mac.update(b"DESTROYER-ST2027-NVCK-v1");
+    let mut mac = HmacSha384::new_from_slice(&subkey).expect("HMAC can take key of any size");
+    mac.update(b"DESTROYER-ST2027-NVCK-v2");
     mac.update(&gen.to_le_bytes());
     mac.update(&send_seq.to_le_bytes());
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; 32];
-    out.copy_from_slice(&result);
+    out.copy_from_slice(&result[..32]);
     out
 }
 

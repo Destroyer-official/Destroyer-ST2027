@@ -6,13 +6,13 @@
 //! `secure_transmit_2027.py::rehandshake`, but WITHOUT any legacy mode:
 //! there is no v1 KEM-reuse path in this crate, so "downgrade to reuse"
 //! is unrepresentable. Every DH step performs a FRESH hybrid encapsulation
-//! (fresh ML-KEM-1024 + fresh ephemeral X25519 against the peer's
+//! (fresh ML-KEM-1024 + fresh ephemeral P-384 against the peer's
 //! advertised bundle); any fresh-KEM failure is a hard error (strict abort
 //! is the only behavior — no flag exists to disable it).
 //!
 //! Construction (per step, role-separated epochs):
 //! ```text
-//! (ml_ct, pq_hybrid, eph_x) = encaps(peer_x_pub, peer_ek)  // fresh both halves
+//! (ml_ct, pq_hybrid, eph_p) = encaps(peer_p384_pub, peer_ek)  // fresh both halves
 //! root_n   = HKDF-SHA384(root_{n-1} || pq_hybrid, ROOT || epoch)
 //! chain_n  = HKDF-SHA384(chain_{n-1} || pq_hybrid, CHAIN || epoch)
 //! msg_key  = HKDF-SHA384(chain_n, b"msg" || seq)
@@ -30,17 +30,18 @@ use sha2::Sha384;
 use std::collections::VecDeque;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::kem::{EphemeralKeys, HYBRID_SS, MLKEM_CT, MLKEM_PK};
+use crate::kem::{EphemeralKeys, HYBRID_SS, MLKEM_CT, MLKEM_PK, P384_PK};
 use crate::policy::{CoreError, DOMAIN_RATCHET_CHAIN, DOMAIN_RATCHET_ROOT, MAX_SKIPPED_KEYS};
 
 /// One sending step's fresh material for the peer.
+#[derive(Debug, Clone)]
 pub struct RatchetStep {
-    /// Our fresh ephemeral X25519 public (32 bytes).
-    pub eph_x_pub: [u8; 32],
+    /// Our fresh ephemeral P-384 public (97 bytes, uncompressed SEC1).
+    pub eph_p_pub: [u8; P384_PK],
     /// Fresh ML-KEM ciphertext (1568 bytes) for this step.
     pub ml_ct: Vec<u8>,
     /// Our NEXT advertised bundle for the following step.
-    pub next_x_pub: [u8; 32],
+    pub next_p_pub: [u8; P384_PK],
     /// Next encapsulation key bytes (1568).
     pub next_ek: Vec<u8>,
     /// Epoch number (monotonic).
@@ -88,9 +89,9 @@ impl PcsRatchet {
         })
     }
 
-    /// Currently advertised `(x_pub, ek)` pair.
-    pub fn advertise(&self) -> ([u8; 32], Vec<u8>) {
-        (self.bundle.x_public, self.bundle.ml_ek.clone())
+    /// Currently advertised `(p384_pub, ek)` pair.
+    pub fn advertise(&self) -> ([u8; P384_PK], Vec<u8>) {
+        (self.bundle.p_public, self.bundle.ml_ek.clone())
     }
 
     /// Epoch (monotonic step counter).
@@ -98,12 +99,12 @@ impl PcsRatchet {
         self.epoch
     }
 
-    /// Sending step against the peer's advertised `(peer_x_pub, peer_ek)`:
+    /// Sending step against the peer's advertised `(peer_p_pub, peer_ek)`:
     /// fresh-encaps both halves, evolve root+chain, emit message key plus
     /// fresh step material. Every fallible operation precedes the state commit.
     pub fn send_step(
         &mut self,
-        peer_x_pub: &[u8; 32],
+        peer_p_pub: &[u8; P384_PK],
         peer_ek: &[u8],
     ) -> Result<(RatchetStep, [u8; 32]), CoreError> {
         if peer_ek.len() != MLKEM_PK {
@@ -112,7 +113,7 @@ impl PcsRatchet {
         let next_seq = self.send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
         let next_epoch = self.epoch.checked_add(1).ok_or(CoreError::Oversize)?;
         let (ml_ct, hybrid, eph_pub) =
-            EphemeralKeys::encapsulate(peer_x_pub, peer_ek).map_err(|_| CoreError::Malformed)?;
+            EphemeralKeys::encapsulate(peer_p_pub, peer_ek).map_err(|_| CoreError::Malformed)?;
         if ml_ct.len() != MLKEM_CT {
             return Err(CoreError::Malformed);
         }
@@ -122,9 +123,9 @@ impl PcsRatchet {
         let (new_root, new_chain) = self.evolved(&hybrid)?;
         let msg_key = Self::message_key_for(&new_chain, self.send_seq)?;
         let step = RatchetStep {
-            eph_x_pub: eph_pub,
+            eph_p_pub: eph_pub,
             ml_ct,
-            next_x_pub: fresh.x_public,
+            next_p_pub: fresh.p_public,
             next_ek: fresh.ml_ek.clone(),
             epoch: next_epoch,
         };
@@ -132,12 +133,12 @@ impl PcsRatchet {
         Ok((step, msg_key))
     }
 
-    /// Receiving step: decapsulate the peer's fresh `(eph_x_pub, ml_ct)`
+    /// Receiving step: decapsulate the peer's fresh `(eph_p_pub, ml_ct)`
     /// with our current bundle, evolve identically, emit message key,
     /// rotate bundle (consumed — no reuse window).
     pub fn receive_step(
         &mut self,
-        peer_eph_x_pub: &[u8; 32],
+        peer_eph_p_pub: &[u8; P384_PK],
         peer_ml_ct: &[u8],
     ) -> Result<[u8; 32], CoreError> {
         if peer_ml_ct.len() != MLKEM_CT {
@@ -147,7 +148,7 @@ impl PcsRatchet {
         let next_epoch = self.epoch.checked_add(1).ok_or(CoreError::Oversize)?;
         let hybrid: Zeroizing<[u8; HYBRID_SS]> = self
             .bundle
-            .decapsulate(peer_eph_x_pub, peer_ml_ct)
+            .decapsulate(peer_eph_p_pub, peer_ml_ct)
             .map_err(|_| CoreError::Malformed)?;
         let fresh = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
         let (new_root, new_chain) = self.evolved(&hybrid)?;
@@ -225,7 +226,7 @@ fn hkdf32(key: &[u8], salt: &[u8], info: &[u8]) -> Result<[u8; 32], CoreError> {
 }
 
 fn hkdf64(root: &[u8; 32], pq: &[u8; HYBRID_SS], info: &[u8]) -> Result<[u8; 64], CoreError> {
-    let mut ikm = [0u8; 96];
+    let mut ikm = [0u8; 32 + HYBRID_SS];
     ikm[..32].copy_from_slice(root);
     ikm[32..].copy_from_slice(&pq[..]);
     let hk = Hkdf::<Sha384>::new(Some(DOMAIN_RATCHET_ROOT), &ikm);
@@ -250,7 +251,7 @@ mod tests {
         let (step, k_send) = a.send_step(&b_x, &b_ek).unwrap();
         assert_eq!(step.ml_ct.len(), MLKEM_CT);
         assert_eq!(step.next_ek.len(), MLKEM_PK);
-        let k_recv = b.receive_step(&step.eph_x_pub, &step.ml_ct).unwrap();
+        let k_recv = b.receive_step(&step.eph_p_pub, &step.ml_ct).unwrap();
         assert_eq!(k_send, k_recv);
         // Epochs advanced on both sides (healing is per-step).
         assert_eq!(a.epoch(), 1);
@@ -258,7 +259,7 @@ mod tests {
         // Second step uses rotated bundles (no reuse): take fresh adverts.
         let (b_x2, b_ek2) = b.advertise();
         let (step2, k2) = a.send_step(&b_x2, &b_ek2).unwrap();
-        let k2r = b.receive_step(&step2.eph_x_pub, &step2.ml_ct).unwrap();
+        let k2r = b.receive_step(&step2.eph_p_pub, &step2.ml_ct).unwrap();
         assert_eq!(k2, k2r);
         assert_ne!(k_send, k2);
     }
@@ -277,7 +278,7 @@ mod tests {
         a.send_seq = 0;
         let (step, _) = a.send_step(&b_x, &b_ek).unwrap();
         b.epoch = u64::MAX;
-        assert!(b.receive_step(&step.eph_x_pub, &step.ml_ct).is_err());
+        assert!(b.receive_step(&step.eph_p_pub, &step.ml_ct).is_err());
         assert_eq!(b.epoch, u64::MAX);
         assert_eq!(b.send_seq, 0);
     }
@@ -288,7 +289,7 @@ mod tests {
         let mut r = PcsRatchet::new(&sk).unwrap();
         let (x, ek) = r.advertise();
         assert!(r.send_step(&x, &[0u8; 10]).is_err());
-        assert!(r.receive_step(&[0u8; 32], &[0u8; 10]).is_err());
+        assert!(r.receive_step(&[0u8; P384_PK], &[0u8; 10]).is_err());
         let _ = ek;
         for i in 0..MAX_SKIPPED_KEYS {
             r.store_skipped([0u8; 32], i as u64).unwrap();

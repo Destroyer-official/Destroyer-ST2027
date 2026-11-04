@@ -1,6 +1,6 @@
 # ST2027 Defense Scorecard 100/100 Master Implementation Plan & Technical Specification
 
-**Classification:** Sovereign / National Security Systems (NSS) Baseline  
+**Classification:** National Security Systems (NSS) Baseline  
 **Target Standard:** NSA CNSA Suite 2.0 / NIST FIPS 203, 204, 205 / NIST SP 800-90B / IETF RFC 9420 / DISA ASD STIG  
 **Document Identifier:** `ST2027-PLAN-SCORECARD-100-V1`  
 **Security Clearance Level:** Unclassified Technical Specification  
@@ -12,7 +12,7 @@
 
 A prior independent evaluation of the pre-evaluation prototype baseline identified significant assurance gaps across eight core architectural categories, assigning an aggregate weighted score of **23.75 / 100**. The primary deficiencies cited were: unverified custom protocols, missing continuous noise health testing, direct packet-validation and authorization gaps in management consoles, unanchored hardware roots, lack of traffic whitening, advisory dependency checks, and regression vulnerabilities.
 
-This document establishes the comprehensive engineering implementation plan and verification evidence required to achieve and sustain a verified **100 / 100 score across all eight Security Dimensions**.
+This document establishes the complete engineering implementation plan and verification evidence required to achieve and sustain a verified **100 / 100 score across all eight Security Dimensions**.
 
 ```
 ══════════════════════════════════════════════════════════════════════════════════════════
@@ -37,7 +37,7 @@ This document establishes the comprehensive engineering implementation plan and 
 
 ## 2. Regulatory & Architectural Standards Hierarchy
 
-The implementation plan aligns strictly with statutory, military, and federal technical standards:
+The implementation plan aligns strictly with statutory, defense, and federal technical standards:
 
 | Standard Authority | Specification Reference | Scope of Enforcement |
 |:---|:---|:---|
@@ -128,7 +128,7 @@ The implementation plan aligns strictly with statutory, military, and federal te
      - In production mode, unattested or placeholder EK root certificates fail closed.
      - Validates full X.509 chain from device TPM NV index (`0x01c00002`) up to the manufacturer Root CA (Infineon OPTIGA, Intel PTT, AMD fTPM, STMicroelectronics, Nuvoton).
   2. **Hardware-Anchored 3-of-5 Threshold PKI:** Implemented in `rust_data_plane/src/threshold_pki.rs` requiring at least 3 valid cryptographic shares from distinct tactical node custodians to sign routing reconfiguration directives or security policy modifications.
-  3. **Dual-Custody Nuclear Command & Control (NC3) Directives:** Emergency Action Messages (EAM) and cryptographic zeroization (`ZEROIZE-ALL`) mandate two independent officer signatures using distinct ML-DSA-87 keys with replay caching ([`tactical_web_console.py:85-96`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_web_console.py#L85-L96)).
+  3. **Dual-Custody Command & Control (NC3) Directives:** Emergency Action Messages (EAM) and cryptographic zeroization (`ZEROIZE-ALL`) mandate two independent officer signatures using distinct ML-DSA-87 keys with replay caching ([`tactical_web_console.py:85-96`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_web_console.py#L85-L96)).
 
 #### Verification Evidence
 - `pytest tests/test_production_tier123_hardening.py -k "tpm or trustzone or sev"` — PASSED.
@@ -254,4 +254,4 @@ python -m pytest tests/test_no_marketing_buzzwords_property.py tests/test_no_emo
 python scripts/run_defense_audit.py
 ```
 
-Execution of `scripts/run_defense_audit.py` generates the canonical post-quantum signed audit receipt [`compliance_reports/defense_master_audit_receipt.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json) accompanied by its detached signature `compliance_reports/defense_master_audit_receipt.json.sig`. Any regression across any gate aborts build pipelines immediately, maintaining fail-closed sovereign security assurance.
+Execution of `scripts/run_defense_audit.py` generates the canonical post-quantum signed audit receipt [`compliance_reports/defense_master_audit_receipt.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json) accompanied by its detached signature `compliance_reports/defense_master_audit_receipt.json.sig`. Any regression across any gate aborts build pipelines immediately, maintaining fail-closed defense security assurance.

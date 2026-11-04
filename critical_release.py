@@ -212,8 +212,9 @@ class CriticalReleaseAuthority:
             raise ValueError("raw_key must be exactly 32 bytes")
 
         op_ids = list(self._verifiers.keys())
-        salt1, verifier1 = self._verifiers[op_ids[0]]
-        salt2, verifier2 = self._verifiers[op_ids[1]]
+        # Entries are (salt, verifier, iterations); accept legacy 2-tuples too.
+        salt1, verifier1, *_ = self._verifiers[op_ids[0]]
+        salt2, verifier2, *_ = self._verifiers[op_ids[1]]
 
         share1 = bytearray(secrets.token_bytes(32))
         share2 = bytearray(a ^ b for a, b in zip(raw_key, share1))
@@ -278,8 +279,9 @@ class CriticalReleaseAuthority:
         )
 
         op_ids = list(self._verifiers.keys())
-        salt1, verifier1 = self._verifiers[op_ids[0]]
-        salt2, verifier2 = self._verifiers[op_ids[1]]
+        # Entries are (salt, verifier, iterations); accept legacy 2-tuples too.
+        salt1, verifier1, *_ = self._verifiers[op_ids[0]]
+        salt2, verifier2, *_ = self._verifiers[op_ids[1]]
 
         k1 = HKDF(
             algorithm=hashes.SHA512(),

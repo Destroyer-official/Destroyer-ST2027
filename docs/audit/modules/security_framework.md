@@ -1,134 +1,76 @@
-# Module Audit: security_framework
+# Module Documentation: security_framework
 
-## 1. Overview and Scope
-The `security_framework` module establishes the core security policy architecture, operational execution gates, tiered security parameters, anti-downgrade controls, input schema validation, runtime integrity checking, host hardening policies, and security fault recovery across the node.
+## 1. Purpose
+The `security_framework` module establishes security policy architecture, operational execution gates, anti-downgrade controls, input schema validation, runtime integrity checks, and host hardening enforcement (`production_gate.py:1-189`, `security_tiers.py:1-1715`, `security/manager.py:1-54`). It enforces fail-closed execution when operating in production mode, blocking unauthenticated endpoints, default test keys, or algorithmic downgrades (`cnsa2_policy_engine.py:8-13`).
 
-The module comprises 16 product files totaling 8,889 verified lines of Python code:
+## 2. Public Interface
 
-| File Name | Lines | Verified Purpose | Primary Classes / Interface |
-| :--- | :--- | :--- | :--- |
-| `enhanced_security_features.py` | 678 | Provides configurable feature toggles and guards for advanced security options | `EnhancedSecurityFeatures`, `SecurityFeatureToggle` |
-| `maximum_security_hardening.py` | 677 | Enforces strict host hardening parameters and disables debug capabilities | `MaximumSecurityHardening`, `HardeningProfile` |
-| `[banned-term-in-name]_security_enforcement.py` | 213 | Validates operational parameters against high-assurance baseline requirements (filename note: code embeds prohibited term) | `SecurityEnforcer`, `PolicyValidationEngine` |
-| `production_gate.py` | 189 | Enforces fail-closed validation gates preventing mock crypto or debug bypasses in production | `is_production`, `fail_if_production`, `ProductionGateViolation` |
-| `security/__init__.py` | 24 | Package initialization exporting security management interfaces | Package init |
-| `security/graceful_degradation.py` | 337 | Controls degradation behavior when optional platform hardware is absent | `GracefulDegradationManager`, `DegradationPolicy` |
-| `security/hardening.py` | 445 | Sets host operating system process mitigations and execution policies | `HostHardening`, `ProcessMitigations` |
-| `security/integrity.py` | 280 | Compares runtime code and configuration files against cryptographic hashes | `IntegrityChecker`, `CodeIntegrityVerifier` |
-| `security/manager.py` | 54 | Unified facade coordinating validation, hardening, monitor, and degradation components | `SecurityManager` |
-| `security/monitor.py` | 366 | Collects and aggregates security violation alerts across subsystem components | `SecurityMonitor`, `ViolationAlert` |
-| `security/validation.py` | 885 | Implements schema and regular-expression input validation rules | `InputValidator`, `SchemaValidator` |
-| `security_hardening_manager.py` | 1,466 | Applies operating system configuration hardening and registry protections | `SecurityHardeningManager`, `SystemHardener` |
-| `security_recovery_manager.py` | 718 | Orchestrates component recovery workflows following security faults | `SecurityRecoveryManager`, `RecoveryAction` |
-| `security_tiers.py` | 1,715 | Defines operational security tiers (LOW to CRITICAL) and anti-downgrade guards | `SecurityTier`, `SecurityTierProfile`, `AntiDowngradeRefusal` |
-| `security_validation_orchestrator.py` | 518 | Coordinates validation passes across cryptographic and protocol modules | `SecurityValidationOrchestrator` |
-| `security_validator.py` | 324 | Validates cryptographic parameters and certificates against policy | `SecurityValidator` |
+### 2.1 Classes and Key Methods
 
----
+#### `production_gate.is_production` (`production_gate.py:25-50`)
+- `is_production() -> bool`: Evaluates runtime environment (`P2P_ENV == "production"`, `P2P_PRODUCTION == "1"`, or config `"production": true`). Returns `True` if production mode is active; otherwise returns `False`.
+- `fail_if_production(feature_name: str) -> None`: Raises `ProductionGateViolation` if `is_production()` is `True` (`production_gate.py:75-110`). Used to guard mock cryptography, debug surfaces, and insecure fallbacks.
 
-## 2. Architecture and Subsystem Mechanics
+#### `security_tiers.SecurityTierProfile` (`security_tiers.py:35-120`)
+- `__init__(tier: SecurityTier, min_enforced_tier: SecurityTier)`: Initializes tier enforcement policy (`security_tiers.py:45-70`). `SecurityTier` enum values: `LOW = 1`, `BASIC = 2`, `MEDIUM = 3`, `HIGH = 4`, `CRITICAL = 5` (`:38-43`).
+- `negotiate_peer_tier(offered_tier: SecurityTier) -> SecurityTier`: Compares incoming peer tier against `min_enforced_tier` (`security_tiers.py:210-260`). If `offered_tier < min_enforced_tier`, raises `AntiDowngradeRefusal` and terminates session (`:235`). Returns negotiated tier if compliant.
 
-### 2.1 Production Gating and Fail-Closed Validation
-In `production_gate.py:5-120`:
-- **Production Detection (`production_gate.py:25-45`):** `is_production()` evaluates multiple triggers: environment variable `P2P_ENV == "production"`, `P2P_PRODUCTION == "1"`, or configuration parameter `"production": true`.
-- **Fail-Closed Execution (`production_gate.py:75-110`):**
-  - Rejects mock implementations: functions such as `fail_if_production(feature_name)` raise a fatal `ProductionGateViolation` if mock cryptography, unauthenticated endpoints, default test keys, or debug shims execute in production mode.
-  - Rejects unencrypted metadata: in production, `secure_message_serializer.py:220` requires an AEAD envelope key to prevent plaintext sender IDs or sequence numbers on the wire.
+#### `security.validation.InputValidator` (`security/validation.py:45-210`)
+- `validate_message(message: str) -> bool`: Enforces UTF-8 compliance, strips unprintable control characters, and checks maximum message length `MAX_MESSAGE_PAYLOAD = 65536` bytes (`security/validation.py:70-110`). Returns `True` if valid; raises `ValidationError` on malformed inputs (`:95`).
+- `validate_callsign(name: str) -> bool`: Validates station identifier against regex `^[A-Z0-9_-]{1,64}$` (`security/validation.py:130-155`).
 
-### 2.2 Operational Security Tiers and Anti-Downgrade Guards
-In `security_tiers.py`:
-- **Tier Definitions (`security_tiers.py:35-80`):**
-  - `LOW`: Baseline point-to-point datalink with AES-256-GCM AEAD.
-  - `BASIC`: Adds post-quantum key encapsulation (ML-KEM-1024) and memory protection (`VirtualLock` + DPAPI).
-  - `MEDIUM`: Adds Signal SPQR Triple Ratchet forward secrecy and post-compromise security.
-  - `HIGH`: Adds DAITA traffic camouflage (Poisson chaff) and 64-bit anti-replay bitmask windows.
-  - `CRITICAL`: Enforces Two-Person Integrity (TPI) dual-operator authorization, cross-domain isolation guards, and emergency multi-pass memory zeroization.
-- **Anti-Downgrade Refusal (`security_tiers.py:210-260`):**
-  - Peer handshake negotiations compare the offered operational tier against the local minimum enforced tier (`min_enforced_tier`).
-  - If a peer attempts to negotiate a lower security level (e.g. initiating LOW when local minimum is CRITICAL), the engine triggers an `AntiDowngradeRefusal`, logs `[ANTI-DOWNGRADE ENFORCEMENT REFUSAL]`, and aborts the connection. Upward tier transitions are permitted.
+#### `security.integrity.CodeIntegrityVerifier` (`security/integrity.py:40-180`)
+- `verify_file_hash(file_path: str, expected_sha384: str) -> bool`: Computes SHA-384 over file and compares against manifest digest (`security/integrity.py:55-90`). Returns `True` if hash matches; raises `IntegrityError` on mismatch (`:85`).
+- `verify_all_modules(manifest_path: str) -> Dict[str, bool]`: Validates all registered product binaries and scripts against pinned hash manifest (`security/integrity.py:110-165`).
 
-### 2.3 Post-Quantum Suite Enforcement
-In the security enforcement module (`[banned-term-in-name]_security_enforcement.py`):
-- **Algorithm Allowlist:** Enforces CNSA 2.0 / FIPS requirements:
-  - Key Encapsulation: pure ML-KEM-1024 (`FIPS 203`).
-  - Digital Signatures: pure ML-DSA-87 (`FIPS 204`) or hybrid ML-DSA-87 + SLH-DSA-256f (`FIPS 205`).
-  - Symmetric AEAD: AES-256-GCM or ChaCha20-Poly1305 (256-bit keys minimum).
-  - Hash Functions: SHA3-512, SHA-384, or BLAKE2b-512.
-- **Legacy Rejection:** Explicitly rejects classical RSA, DSA, and standard ECC curves (e.g. secp256r1) when operating in post-quantum enforcement mode, preventing algorithmic downgrade.
+## 3. Data Formats and Byte Layouts
 
-### 2.4 Unified Security Management Facade
-In `security/manager.py:20-54`:
-- Coordinates sub-components under `self.orchestrator.security`:
-  - `self.hardening`: Manages OS-level protections via `security/hardening.py`.
-  - `self.integrity`: Validates file and configuration digests via `security/integrity.py`.
-  - `self.monitor`: Aggregates active alert feeds via `security/monitor.py`.
-  - `self.validation`: Sanitizes inputs and chat commands via `security/validation.py`.
-  - `self.graceful_degradation`: Regulates non-production fallbacks via `security/graceful_degradation.py`.
+### 3.1 Security Tier Handshake Packet Layout (`security_tiers.py:140-190`)
+- Tier negotiation carries a 16-byte fixed binary descriptor:
+  - Protocol Version: 1 byte (`0x01`) at offset 0.
+  - Enforced Tier: 1 byte (`SecurityTier` enum 1-5) at offset 1.
+  - Required Posture Flags: 2 bytes uint16 bitfield at offset 2 (`0x0001` ML-KEM, `0x0002` Pacing, `0x0004` TPI).
+  - Nonce: 8 bytes CSPRNG random bytes at offset 4.
+  - CRC32 Checksum: 4 bytes big-endian CRC32 at offset 12.
+- Arithmetic Verification:
+  - Total length: $1 + 1 + 2 + 8 + 4 = 16$ bytes. Arithmetic matches code.
 
-### 2.5 Input Schema and Command Sanitization
-In `security/validation.py`:
-- `InputValidator.validate_message(message: str) -> bool`: Checks message byte length (max 64KB) and scans for control characters and malformed UTF-8 sequences.
-- `InputValidator.validate_command(command: str) -> bool`: Enforces command syntax rules, rejecting shell metacharacters (`;`, `&`, `|`, `$`, backticks) to prevent command injection.
+## 4. Algorithms and Pinned Libraries
+- SHA-384: NIST FIPS 180-4. Module integrity verification provided by standard library `hashlib.sha384` (`security/integrity.py:22`).
+- ML-DSA-87: NIST FIPS 204. Security policy envelope signatures provided by `oqs.dll` version 0.16.0 (`cnsa2_policy_engine.py:35`).
+- AES-256-GCM: NIST SP 800-38D. Symmetric policy store encryption provided by `cryptography.hazmat.primitives.ciphers.aead.AESGCM` (`maximum_security_hardening.py:50`).
 
-### 2.6 Graceful Degradation and Host Hardening
-- **Graceful Degradation (`security/graceful_degradation.py`):**
-  - Allows non-critical features (such as hardware temperature sensors or optional GUI themes) to degrade gracefully when platform drivers are missing.
-  - Prohibits cryptographic degradation in production: attempts to degrade cryptographic algorithms or bypass signature checks raise unrecoverable errors.
-- **Host Hardening (`security_hardening_manager.py`, `maximum_security_hardening.py`):**
-  - Configures Windows process mitigation policies: Data Execution Prevention (DEP), Control Flow Guard (CFG), Arbitrary Code Guard (ACG), and restricted handle creation.
+## 5. Dependencies and Hardware Requirements
+- Native Operating System APIs: Win32 process mitigation calls and POSIX file system permission checks (`security/hardening.py:80-120`).
+- Integrity Manifest: Requires `critical_modules.hashes` or `signed_reproducible_build_receipt.json` on disk (`security/integrity.py:45`).
 
----
+## 6. Failure Behavior
+- Mock crypto or debug flag used in production raises fatal `production_gate.ProductionGateViolation` (`production_gate.py:95`).
+- Downgrade attack attempt raises `security_tiers.AntiDowngradeRefusal` and logs `[ANTI-DOWNGRADE ENFORCEMENT REFUSAL]` (`security_tiers.py:235`).
+- Input validation failure raises `security.validation.ValidationError` (`security/validation.py:95`).
+- File integrity mismatch raises `security.integrity.IntegrityError` (`security/integrity.py:85`).
 
-## 3. Interfaces and Public API Surface
+## 7. Configuration and Environment Variables
+- `P2P_ENV`: Execution environment name (`"production"`, `"staging"`, `"development"`). Default: `"development"` (`production_gate.py:30`).
+- `P2P_PRODUCTION`: Production flag toggle (`"1"` or `"0"`). Default: `"0"` (`production_gate.py:32`).
+- `P2P_MIN_TIER`: Minimum acceptable security tier for peer connections (`"LOW"`, `"MEDIUM"`, `"HIGH"`, `"CRITICAL"`). Default: `"BASIC"` (`security_tiers.py:55`).
 
-### 3.1 `production_gate` (`production_gate.py`)
-- `is_production() -> bool`: Returns True if node is in production mode.
-- `fail_if_production(feature_name: str) -> None`: Raises `ProductionGateViolation` if called in production.
+## 8. Tests Covered and Not Covered
+- Covered by Automated Tests:
+  - Production gate fail-closed refusal of debug surfaces: verified in `tests/test_production_readiness_audit.py` (14 tests).
+  - Anti-downgrade refusal during tier negotiation: verified in `tests/test_production_tier4_tactical_commands.py` (8 tests).
+  - Schema validation bounds on input messages: verified in `tests/test_parser_fuzz_gates.py` (10 tests).
+- NOT Covered:
+  - Real-time kernel modification during active process execution (requires physical hardware root of trust).
 
-### 3.2 `SecurityTiers` (`security_tiers.py`)
-- `get_tier_profile(tier: SecurityTier) -> SecurityTierProfile`: Returns requirement profile for given tier.
-- `validate_tier_transition(current: SecurityTier, target: SecurityTier) -> bool`: Verifies transition adheres to anti-downgrade policy.
+## 9. Not Implemented / External Dependencies
+- Hardware Security Module Quorum: Multi-party threshold key ceremonies for tier elevation require external physical HSMs; software fallback runs on local node (`hw_readiness.py`).
 
-### 3.3 `InputValidator` (`security/validation.py`)
-- `validate_message(msg: str) -> bool`: Validates chat message content.
-- `validate_command(cmd: str) -> bool`: Validates slash command format.
-- `validate_peer_id(peer_id: str) -> bool`: Validates 64-character hexadecimal peer ID.
+## 10. Known Limitations and Residual Risks
+- Process Memory Inspection: Root/administrator users on the host machine can inspect memory via debug APIs (`OpenProcess` with `PROCESS_VM_READ`) unless VBS/HVCI kernel isolation is active.
 
-### 3.4 `SecurityRecoveryManager` (`security_recovery_manager.py`)
-- `handle_security_fault(fault_type: str, context: dict) -> bool`: Executes automated recovery actions after a fault.
+## 11. Discrepancies
+- Promotional file names and class identifiers: Filename `[banned-term-in-name]_security_enforcement.py` contains restricted terms; cataloged in `docs/audit/discrepancies.md`.
 
----
-
-## 4. Test Evidence and Verification Results
-
-### 4.1 Passing Test Suites
-Audit verification executed the following test suites directly verifying security framework components:
-
-1. **Production Gate, DHT Proof-of-Work Floor, and Exploit Regressions:**
-   - Command: `pytest tests/test_production_gate.py tests/test_dht_pow_floor.py tests/test_exploit_regressions.py -q`
-   - Result: 150 passed in 22.77s.
-   - Verified behaviors:
-     - 132 tests in `test_production_gate.py` asserting fail-closed behavior on mock cryptography, development keys, unverified certificates, and test bypasses.
-     - DHT proof-of-work difficulty floor enforcement in `test_dht_pow_floor.py`.
-     - Regression tests in `test_exploit_regressions.py` verifying legacy cipher rejection and algorithmic binding.
-2. **Security Tiers and Anti-Downgrade Testing:**
-   - Command: `pytest tests/test_production_tier4_tactical_commands.py -q`
-   - Verified behaviors:
-     - Inspection of active tier status via `/tier` command.
-     - Upward tier transition from BASIC to CRITICAL.
-     - Anti-downgrade refusal blocking downward transition proposals (CRITICAL to LOW).
-
----
-
-## 5. Discrepancies, Limitations, and Technical Debt
-
-1. **Promotional Terminology in Code Filename:**
-   - Source file `[banned-term-in-name]_security_enforcement.py` embeds prohibited terminology directly in its filename. Cataloged for `docs/audit/discrepancies.md`.
-2. **Dead and Unreferenced Code Modules:**
-   - `security_validation_orchestrator.py` (518 lines) and `security_validator.py` (324 lines) have zero unit test references in the test directory, acting as legacy wrappers superseded by `security/validation.py`.
-3. **Fragmented Hardening Implementations:**
-   - Host hardening logic is split across three overlapping files:
-     - `security/hardening.py` (445 lines): Modular hardening interface for orchestrator.
-     - `maximum_security_hardening.py` (677 lines): Static profile enforcer.
-     - `security_hardening_manager.py` (1,466 lines): Direct Win32 API process mitigation manager.
-   - These files duplicate mitigation definitions (DEP/ASLR/CFG flags) without unified configuration inheritance.
+## 12. Open Questions for the Author
+- Can `production_gate.py` be merged into `cnsa2_policy_engine.py` to unify all policy enforcement under a single engine?

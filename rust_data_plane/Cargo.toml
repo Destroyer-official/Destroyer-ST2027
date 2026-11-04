@@ -34,6 +34,14 @@ zeroize = { version = "1.9.0", features = ["derive"] }
 # ml-kem) are added via `cargo add` at module-implementation time, then frozen
 # in Cargo.lock. Maturin packaging config lives in pyproject.toml.
 
+[features]
+default = ["lab-surfaces"]
+# Simulated NC3/EAM/PTT/CoT lab surfaces. Production builds MUST disable
+# this feature (`--no-default-features`) so the simulated command surfaces
+# are absent from the binary at compile time rather than merely refused at
+# runtime. Defensive NC3 safety-gate checks remain available unconditionally.
+lab-surfaces = []
+
 [profile.release]
 lto = true
 codegen-units = 1

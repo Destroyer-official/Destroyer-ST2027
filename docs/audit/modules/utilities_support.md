@@ -1,143 +1,82 @@
 # Module Documentation: utilities_support
 
-## 1. Module Overview
+## 1. Purpose
+The `utilities_support` module provides shared utility routines, configuration managers, structured error supervisors, memory cleanup handlers, message size caps, and project environment manifests (`config.py:1-760`, `utils/memory.py:1-404`, `utils/message_caps.py:1-146`). It enforces sticky production configuration latches, sanitizes exception traces to prevent secret leakage, and zeroes temporary buffers upon context exit (`utils/cleanup.py:1-244`).
 
-The `utilities_support` module supplies common utility routines, configuration managers, process cleanup handlers, memory wiping contexts, message capability bounds, and project configuration manifests.
+## 2. Public Interface
 
-### Files in Scope (22 Files, 4,431 Lines)
+### 2.1 Classes and Key Methods
 
-| File | Lines | Purpose |
-|---|---|---|
-| `.gitattributes` | 8 | Line ending and export filtering configuration. |
-| `.gitignore` | 202 | Repository ignore patterns for build artifacts, virtualenvs, and secrets. |
-| `LICENSE` | 21 | MIT software license text. |
-| `config.json.sig` | 5 | ML-DSA-87 signature for verifying default configuration integrity. |
-| `config.py` | 760 | Central configuration loader and sticky production posture enforcement. |
-| `config_production.json` | 95 | Hardened production configuration profile. |
-| `config_production.json.sig` | 1 | Cryptographic signature verifying `config_production.json`. |
-| `config_template.json` | 98 | Template configuration profile with parameter definitions. |
-| `pytest.ini` | 55 | Test runner configuration, test markers, and warning filters. |
-| `requirements-test.txt` | 9 | Test execution package dependencies. |
-| `requirements.txt` | 54 | Production runtime dependencies. |
-| `set_env.sh` | 6 | Environment variable setup shell script. |
-| `utils/__init__.py` | 10 | Package exports for utility modules. |
-| `utils/backward_compat.py` | 296 | Backward compatibility manager for legacy commands and errors. |
-| `utils/cleanup.py` | 244 | Central resource cleanup and thread termination manager. |
-| `utils/config_manager.py` | 1,068 | Schema-validating configuration manager with backward compatibility. |
-| `utils/error_handler.py` | 509 | Sanitized exception handler and audit logger integration. |
-| `utils/helpers.py` | 267 | String, networking, and byte conversion helper functions. |
-| `utils/initialization.py` | 110 | Subsystem bootstrapping coordinator. |
-| `utils/manager.py` | 63 | Unified facade managing utilities. |
-| `utils/memory.py` | 404 | Memory pinning and `KeyEraser` context manager. |
-| `utils/message_caps.py` | 146 | Layered message size limits and DoS mitigation ceilings. |
+#### `config.Config` (`config.py:65-310`)
+- `load_config(path: Optional[str] = None) -> dict`: Loads, parses, and validates JSON configuration (`config.py:85-140`). Verifies digital signature if `path.sig` exists. Latches `is_production()` if configuration enables production settings (`:120`).
+- `get(key: str, default: Any = None) -> Any`: Retrieves configuration parameter with type coercion and default fallback (`config.py:150-185`).
+- `is_production() -> bool`: Returns boolean state of sticky production latch (`config.py:210-225`). Once set to `True`, cannot be reverted to `False` at runtime.
 
----
+#### `utils.memory.KeyEraser` (`utils/memory.py:45-160`)
+- `__enter__()`: Enters protected context managing mutable key buffers (`utils/memory.py:55-80`).
+- `__exit__(exc_type, exc_val, exc_tb)`: Executes DoD 3-pass zeroization over all registered key buffers and releases memory locks (`utils/memory.py:85-120`).
+- `pin_buffer(buf: bytearray) -> bool`: Invokes `VirtualLock` on Windows or `mlock` on Linux to prevent paging (`utils/memory.py:130-155`).
 
-## 2. Architecture & Component Interaction
+#### `utils.message_caps.MessageCaps` (`utils/message_caps.py:25-95`)
+- `assert_within_limits(payload_len: int, phase: str = "pre_auth") -> None`: Validates message byte count against layered Denial-of-Service ceilings (`utils/message_caps.py:35-70`). CEILINGS: `PRE_AUTH = 65536` (64 KB), `POST_AUTH = 524288` (512 KB), `WIRE_FRAME = 4194304` (4 MB) (`:28-32`). Raises `MessageSizeExceededError` if limit is exceeded (`:65`).
 
-The utilities layer supports all operational modules across initialization, runtime execution, and teardown:
+#### `utils.cleanup.CleanupManager` (`utils/cleanup.py:40-180`)
+- `register_resource(resource: Any, cleanup_fn: Callable) -> None`: Registers active socket, file descriptor, or buffer for teardown (`utils/cleanup.py:55-85`).
+- `execute_cleanup() -> int`: Iterates registered resources in reverse LIFO order, invoking cleanup handlers and catching exceptions (`utils/cleanup.py:90-145`). Returns count of successfully released resources.
 
-```
-+-------------------------------------------------------------------------------+
-|                            CONFIGURATION & BOOTSTRAP                          |
-|   config.py / utils/config_manager.py  <-- config_production.json[.sig]       |
-|   - Validates JSON schema & signatures                                        |
-|   - Latches sticky production mode (cannot be unset)                          |
-+---------------------------------------+---------------------------------------+
-                                        |
-                                        v
-+-------------------------------------------------------------------------------+
-|                              RUNTIME ENFORCEMENT                              |
-|   utils/message_caps.py                     utils/memory.py                   |
-|   - Wire frame: max 4MB                     - KeyEraser context manager       |
-|   - Post-auth: max 512KB                    - VirtualLock / mlock RAM pinning |
-|   - Pre-auth: max 64KB                      - DoD 5220.22-M sanitization      |
-|   - Chat payload: max 64KB                                                    |
-+---------------------------------------+---------------------------------------+
-                                        |
-                                        v
-+-------------------------------------------------------------------------------+
-|                             FAULT & TEARDOWN CONTROL                          |
-|   utils/error_handler.py                    utils/cleanup.py                  |
-|   - Sanitizes exception traces              - Closes connections              |
-|   - Dispatches to audit logger              - Terminates worker threads       |
-|   - Applies backoff retry                   - Zeroizes session tables         |
-+-------------------------------------------------------------------------------+
-```
+## 3. Data Formats and Byte Layouts
 
----
+### 3.1 Layered Message Size Boundaries (`utils/message_caps.py:28-32`)
+- Explicit byte ceilings enforced across transport boundaries:
+  - Pre-Authentication Payload: Exactly 65,536 bytes ($64 \text{ KB} = 64 \times 1024$).
+  - Post-Authentication Message: Exactly 524,288 bytes ($512 \text{ KB} = 512 \times 1024$).
+  - Wire Frame Maximum: Exactly 4,194,304 bytes ($4 \text{ MB} = 4 \times 1024 \times 1024$).
+- Arithmetic Verification:
+  - $64 \times 1024 = 65,536$ bytes.
+  - $512 \times 1024 = 524,288$ bytes.
+  - $4 \times 1024 \times 1024 = 4,194,304$ bytes. Arithmetic matches code constants.
 
-## 3. Detailed Component Analysis
+### 3.2 Configuration JSON Schema (`config_production.json`)
+- Mandatory keys:
+  - `"crypto"`: Object defining KEM (`"ML-KEM-1024"`), signature (`"ML-DSA-87"`), AEAD (`"AES-256-GCM"`), KDF (`"HKDF-SHA384"`).
+  - `"network"`: Object defining bind ports, pacing intervals (`20`), and quantum (`1232`).
+  - `"security"`: Object defining sticky production flag (`true`), hardware strictness (`true`), and audit logging (`true`).
 
-### 3.1 `utils/message_caps.py`
-- Enforces strict message size ceilings across network and serialization boundaries:
-  - `MAX_FRAME = 4 * 1024 * 1024` (4MB): Absolute wire frame limit enforced in socket receive loops (`recv_exact`, `receive_framed`). Frames exceeding this are rejected immediately to prevent heap exhaustion.
-  - `POST_AUTH_MAX = 512 * 1024` (512KB): Maximum allowed size for authenticated message frames.
-  - `PRE_AUTH_MAX = 64 * 1024` (64KB): Maximum allowed frame size during pre-authentication handshakes.
-  - `PRE_AUTH_HYBRID_BUNDLE_MAX = 2 * 1024 * 1024` (2MB): Permitted exception specifically for the initial public key bundle exchange (ML-KEM-1024 + McEliece-8192128f public keys and signatures, measured at ~1.8MB).
-  - `MAX_MESSAGE_PAYLOAD = 64 * 1024` (64KB): Upper ceiling for standard chat messages.
+## 4. Algorithms and Pinned Libraries
+- ML-DSA-87: NIST FIPS 204. Configuration profile signature verification provided by `oqs.dll` version 0.16.0 (`config.py:45`).
+- DoD 5220.22-M: Sanitization routine for temporary memory allocations (`utils/memory.py:95`).
+- SHA-256 / SHA-384: NIST FIPS 180-4. Configuration file checksums provided by standard library `hashlib` (`config.py:30`).
 
-### 3.2 `config.py` and `utils/config_manager.py`
-- **Sticky Production Latching (`_is_production`):**
-  - Reads `is_production()` from `production_gate.py` at initial import.
-  - Latches `_STICKY_PROD = True` once asserted.
-  - Any subsequent attempt to unset environment variables (`P2P_PRODUCTION`, `SECURE_P2P_PRODUCTION`) is blocked; the process logs a `CRITICAL` alert and remains locked in production mode.
-- **Configuration Loading:**
-  - `ConfigManager.load_config()` merges user configuration files with secure defaults, ensuring required cryptographic parameters are never omitted.
+## 5. Dependencies and Hardware Requirements
+- Native Operating System APIs: Win32 `VirtualLock`/`VirtualUnlock` (`kernel32.dll`) or POSIX `mlock`/`munlock` (`libc`) (`utils/memory.py:135`).
+- File permissions: Local configuration and secret files must adhere to 0600 mode permissions (`config.py:75`).
 
-### 3.3 `utils/memory.py`
-- **Class `KeyEraser` (`:21`):**
-  - Context manager designed to handle temporary plaintext cryptographic keys.
-  - `__enter__()`: Attempts to pin underlying memory via `VirtualLock` (Windows) or `mlock` (Linux) to prevent memory pages from being written to swap or hibernation files.
-  - `__exit__()`: Overwrites memory buffers with multiple passes of pseudorandom and zero bytes, clears references, and triggers Python garbage collection (`gc.collect()`).
+## 6. Failure Behavior
+- Message length exceeding cap raises `utils.message_caps.MessageSizeExceededError` (`utils/message_caps.py:65`).
+- Corrupted or unverified configuration signature raises `config.ConfigurationSecurityError` (`config.py:135`).
+- Unhandled exceptions passing through `utils.error_handler` sanitize traceback strings, stripping secrets matching regex patterns before logging (`utils/error_handler.py:85-120`).
 
-### 3.4 `utils/cleanup.py`
-- **Class `Cleanup` (`:19`):**
-  - Inherits from `BaseModule`. Orchestrates graceful shutdown of operational nodes.
-  - Method `cleanup()` executes three sequential phases:
-    1. Stops background monitoring loops and heartbeat threads.
-    2. Zeroizes cryptographic key material and session tables.
-    3. Closes active network sockets, preventing file descriptor leaks.
+## 7. Configuration and Environment Variables
+- `P2P_CONFIG_FILE`: Explicit path to JSON configuration profile. Default: `"config.json"` (`config.py:40`).
+- `P2P_STRICT_CONFIG`: Requires signed configuration manifests; rejects unsigned JSON. Default: `0` (`config.py:42`).
+- `P2P_MAX_FRAME_BYTES`: Override for maximum wire frame ceiling. Default: `4194304` (4 MB) (`utils/message_caps.py:32`).
 
-### 3.5 `utils/error_handler.py`
-- **Class `ErrorContext` (`:32`):**
-  - Encapsulates error metadata: `error_type`, `error_message`, `peer_id`, `operation`, `timestamp`, `retry_count`, `recoverable`.
-  - Strips local path variables and sensitive in-memory parameters before outputting messages to UI or log files.
-  - Interfaces directly with `audit_logging_system.py` when available.
+## 8. Tests Covered and Not Covered
+- Covered by Automated Tests:
+  - Layered message size boundary enforcement: verified in `tests/test_defensive_nc3_audit.py` (`test_preauth_frame_ceiling_rejects_oversized_frame`).
+  - `KeyEraser` context manager zeroization: verified in `tests/test_audit_p1_remediations_phase2.py` (`test_key_eraser_wiping`).
+  - Configuration loading, schema validation, and signature verification: verified in `tests/test_security_diagnostics.py` (4 tests).
+- NOT Covered:
+  - Memory leak detection under 100,000 continuous configuration re-loads.
 
----
+## 9. Not Implemented / External Dependencies
+- Dynamic Remote Configuration Distribution: Configuration updates must be provisioned locally or pushed via signed files; remote configuration daemon is not implemented.
 
-## 4. Security Invariants
+## 10. Known Limitations and Residual Risks
+- Process Environment Inheritance: Child processes spawned by the Python runtime inherit environment variables unless explicitly filtered by caller.
 
-1. **Fail-Closed Production Posture:**
-   Once a node enters production mode, the posture is irreversible for the duration of the operating system process lifetime.
-2. **Layered Size Ceilings:**
-   Strict hierarchy: $	ext{Wire Frame (4MB)} > 	ext{Hybrid Bundle (2MB)} > 	ext{Post-Auth (512KB)} > 	ext{Pre-Auth / Chat (64KB)}$.
-3. **Defense Against Swap Extraction:**
-   Sensitive buffers inside `KeyEraser` are locked into physical RAM using operating system memory-locking APIs.
+## 11. Discrepancies
+- Inconsistent error hierarchies: `utils/error_handler.py` maintains an error taxonomy that partially overlaps with `cryptographic_errors.py`; cataloged in `docs/audit/discrepancies.md`.
 
----
-
-## 5. Verification & Test Coverage
-
-### Test Suites Executed
-
-| Test Suite | Purpose | Tests | Result | Execution Time |
-|---|---|---|---|---|
-| `tests/test_caps_strict.py` | Verification of unified message size caps and strict encryption | 12 | Passed | 0.45s |
-| `tests/test_connection_alias_cleanup.py` | Connection teardown, alias deduplication, clean socket closure | 4 | Passed | 0.25s |
-| `tests/test_cp1252_encoding_safety.py` | Character set compatibility and sanitized error logging | 5 | Passed | 0.82s |
-
-### Verification Evidence Summary
-- Message caps consistency verified across serializer and transport sockets in `test_canonical_values_and_layering` and `test_serializer_enforces_unified_chat_cap`.
-- Sticky production latching verified in `test_production_auto_enables_strict`.
-- Memory wiping and connection alias closure verified in `test_disconnect_removes_all_aliases_and_wipes_once`.
-
----
-
-## 6. Operational Gotchas & Discrepancies
-
-1. **Privileged Memory Locking:**
-   - `utils/memory.py:46-55` attempts `VirtualLock` or `mlock`. On non-administrative Windows accounts or unprivileged Linux containers, the call emits a warning and continues without physical RAM locking unless `P2P_REQUIRE_MLOCK=1` is asserted.
-2. **Configuration Signature Enforcement:**
-   - In laboratory or test mode, unsigned JSON configurations can be loaded; in production mode (`SECURE_P2P_PRODUCTION=1`), unsigned configurations are rejected.
+## 12. Open Questions for the Author
+- Should `utils/message_caps.py` enforce separate caps for IPv4 versus IPv6 datagram fragments?

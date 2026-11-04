@@ -86,6 +86,7 @@ logs/
 # =============================================================================
 *.pem
 *.key
+*.psk
 *.crt
 *.cert
 *.seal
@@ -102,7 +103,8 @@ private_keys/
 secrets/
 keys/*
 # ...but keys/*.py is SOURCE (manager/storage/generation), not key material.
-# Un-ignore source so it stays tracked; material (*.pem/*.key/sealed) above stays ignored.
+# Un-ignore source so it stays tracked; material (*.pem/*.key/*.psk/sealed)
+# above stays ignored.
 # NOTE: `keys/` alone would ignore the directory itself, which makes `!keys/*.py`
 # ineffective (git cannot re-include paths inside an excluded dir). `keys/*`
 # ignores the *contents* instead, so the negation below works (verified with
@@ -215,3 +217,6 @@ docs/review_tmp/
 audit_*.json
 audit_request.txt
 out/
+
+*.sk
+*.auth.*

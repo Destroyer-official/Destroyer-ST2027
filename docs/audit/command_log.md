@@ -56,13 +56,13 @@
 | CMD-45 | `repo_root` | `python -m compileall -q -x "notupload\|\.audit" .` | 0 | 100% syntax and bytecode compilation clean across codebase. |
 | CMD-47 | `repo_root` | `python -m unittest tests/test_audit_forensic_remediations.py` | 0 | 20 passed in 0.26s (SEC-01 through SEC-16 verified). |
 | CMD-48 | `repo_root` | `git commit -m "feat(security): military production hardening..."` | 0 | Committed 83 files (3461+, 282-) as commit `cd1a348`. |
-| CMD-49 | `repo_root` | `git push -u origin release/st2027-military-production-hardening` | 0 | Published hardening release branch to remote GitHub. |
-| CMD-50 | `repo_root` | `gh pr create --base main --head release/st2027-military-production-hardening ...` | 0 | Created Pull Request #2 for military production hardening. |
+| CMD-49 | `repo_root` | `git push -u origin release/st2027-production-hardening` | 0 | Published hardening release branch to remote GitHub. |
+| CMD-50 | `repo_root` | `gh pr create --base main --head release/st2027-production-hardening ...` | 0 | Created Pull Request #2 for production hardening. |
 | CMD-51 | `repo_root` | `gh pr merge 2 --merge --delete-branch=false` | 0 | Merged Pull Request #2 into `main` on GitHub. |
 | CMD-52 | `repo_root` | `git checkout main && git pull origin main` | 0 | Local `main` fast-forwarded to merge commit `3917880`. |
 | CMD-53 | `repo_root` | `git ls-remote origin refs/heads/main; git rev-parse HEAD` | 0 | Remote SHA verified matching local HEAD: `3917880ba54332cc869a8bf4afcb52dc7038c510`. |
 | CMD-54 | `repo_root` | `git status` | 0 | Verified working tree clean and synchronized with `origin/main`. |
-| CMD-55 | `repo_root` | `python scripts/update_release_headers.py` | 0 | Synchronized 483 candidate files with ST2027 military production release stamp. |
+| CMD-55 | `repo_root` | `python scripts/update_release_headers.py` | 0 | Synchronized 483 candidate files with ST2027 production release stamp. |
 | CMD-56 | `repo_root` | `python -m compileall -q -x "notupload\|\.audit" .` | 0 | Bytecode compilation verified clean across 100% of Python modules. |
 | CMD-57 | `rust_data_plane` | `cargo test` | 0 | 159 passed (122 lib + 37 kani formal proofs). |
 | CMD-58 | `rust_data_plane` | `cargo clippy --all-targets -- -D warnings` | 0 | 0 compiler warnings, 0 clippy warnings. |

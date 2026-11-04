@@ -212,6 +212,53 @@ class PQCertificate:
         """Check if certificate is not yet valid."""
         return datetime.now(timezone.utc) < self.not_before
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize complete signed certificate to dictionary."""
+        return {
+            "version": self.version,
+            "serial": self.serial,
+            "issuer": self.issuer,
+            "subject": self.subject,
+            "not_before": self.not_before.isoformat(),
+            "not_after": self.not_after.isoformat(),
+            "public_key": base64.b64encode(self.public_key).decode('utf-8') if self.public_key else "",
+            "signature_algorithm": self.signature_algorithm,
+            "signature": base64.b64encode(self.signature).decode('utf-8') if self.signature else "",
+            "extensions": self.extensions,
+            "issuer_public_key": base64.b64encode(self.issuer_public_key).decode('utf-8') if self.issuer_public_key else "",
+            "secondary_sig": base64.b64encode(self.secondary_sig).decode('utf-8') if self.secondary_sig else "",
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PQCertificate':
+        """Construct PQCertificate from dictionary."""
+        return cls(
+            version=int(data.get("version", 3)),
+            serial=int(data.get("serial", 0)),
+            issuer=str(data.get("issuer", "")),
+            subject=str(data.get("subject", "")),
+            not_before=datetime.fromisoformat(data["not_before"]),
+            not_after=datetime.fromisoformat(data["not_after"]),
+            public_key=base64.b64decode(data["public_key"]) if data.get("public_key") else b"",
+            signature_algorithm=str(data.get("signature_algorithm", "ML-DSA-87")),
+            signature=base64.b64decode(data["signature"]) if data.get("signature") else b"",
+            extensions=dict(data.get("extensions", {})),
+            issuer_public_key=base64.b64decode(data["issuer_public_key"]) if data.get("issuer_public_key") else b"",
+            secondary_sig=base64.b64decode(data["secondary_sig"]) if data.get("secondary_sig") else b"",
+        )
+
+    def save_to_file(self, filepath: str) -> None:
+        """Save certificate to JSON file."""
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2, sort_keys=True)
+
+    @classmethod
+    def load_from_file(cls, filepath: str) -> 'PQCertificate':
+        """Load certificate from JSON file."""
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
 
 @dataclass
 class OCSPResponse:
@@ -431,6 +478,33 @@ class PQCertificateAuthority:
     def get_root_certificate(self) -> PQCertificate:
         """Get the root CA certificate."""
         return self._root_cert
+
+    def save_root_certificate(self, filepath: str) -> None:
+        """Save the Root CA certificate to a JSON file."""
+        self._root_cert.save_to_file(filepath)
+
+    @staticmethod
+    def verify_cert_against_root(root_cert: PQCertificate, node_cert: PQCertificate) -> bool:
+        """
+        Verify that a node certificate is cryptographically signed by the given Root CA certificate,
+        is within its validity window, and is valid.
+        """
+        if node_cert.is_expired():
+            raise CertificateExpiredError(f"Certificate expired for subject '{node_cert.subject}'")
+        if node_cert.is_not_yet_valid():
+            raise CertificateValidationError(f"Certificate not yet valid for subject '{node_cert.subject}'")
+        if node_cert.issuer != root_cert.subject:
+            raise CertificateValidationError(f"Issuer mismatch: cert issuer '{node_cert.issuer}' != root subject '{root_cert.subject}'")
+        
+        ca_pub = root_cert.public_key
+        if not ca_pub:
+            raise CertificateValidationError("Root certificate missing public key")
+        
+        mldsa = LibOQS_MLDSA_87()
+        tbs = node_cert.to_bytes()
+        if not mldsa.verify(ca_pub, tbs, node_cert.signature):
+            raise SignatureVerificationError(f"ML-DSA-87 signature invalid for certificate '{node_cert.subject}' against Root CA '{root_cert.subject}'")
+        return True
     
     def get_ca_public_key(self) -> bytes:
         """Get the CA's public key."""

@@ -19,12 +19,22 @@ use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::Aes256Gcm;
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256, Sha384};
+use sha2::{Digest, Sha384};
 use std::collections::HashMap;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 
-type HmacSha256 = Hmac<Sha256>;
+type HmacSha384 = Hmac<Sha384>;
+
+/// CNSA 2.0 hash floor: SHA-384 truncated to the fixed 32-byte field width.
+/// Truncation is domain-separated by the calling context and never used as a
+/// collision-resistance argument on its own; it preserves wire/struct sizes.
+fn sha384_32(data: &[u8]) -> [u8; 32] {
+    let d = Sha384::digest(data);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&d[..32]);
+    out
+}
 
 /// Version 2 uses canonical length-prefixed AAD. Frames encrypted with the
 /// legacy ambiguous v1 AAD are intentionally not accepted by this profile.
@@ -74,11 +84,11 @@ fn message_aad(
 }
 
 fn compute_officer_hmac(key: &[u8], tbs_bytes: &[u8]) -> Result<[u8; 32], GroupError> {
-    let mut mac = HmacSha256::new_from_slice(key).map_err(|_| GroupError::KdfError)?;
+    let mut mac = HmacSha384::new_from_slice(key).map_err(|_| GroupError::KdfError)?;
     mac.update(tbs_bytes);
     let result = mac.finalize().into_bytes();
     let mut tag = [0u8; 32];
-    tag.copy_from_slice(&result);
+    tag.copy_from_slice(&result[..32]);
     Ok(tag)
 }
 
@@ -113,7 +123,7 @@ impl EpochAuthToken {
         if officer1_id == officer2_id {
             return Err(GroupError::TpiInsufficientOfficers);
         }
-        let entropy_commitment: [u8; 32] = Sha256::digest(fresh_entropy).into();
+        let entropy_commitment: [u8; 32] = sha384_32(fresh_entropy);
         let mut tbs = Vec::new();
         tbs.extend_from_slice(EPOCH_AUTH_DOMAIN);
         tbs.extend_from_slice(&(group_id.len() as u32).to_be_bytes());
@@ -162,7 +172,7 @@ impl EpochAuthToken {
         if &self.roster_hash != roster_hash {
             return Err(GroupError::AuthenticationFailed);
         }
-        let expected_entropy_comm: [u8; 32] = Sha256::digest(fresh_entropy).into();
+        let expected_entropy_comm: [u8; 32] = sha384_32(fresh_entropy);
         if self.entropy_commitment != expected_entropy_comm {
             return Err(GroupError::AuthenticationFailed);
         }
@@ -265,17 +275,20 @@ impl SovereignGroupRatchet {
         Ok(group)
     }
 
-    /// Compute canonical SHA-256 roster hash for TPI authorization binding.
+    /// Compute canonical SHA-384 (truncated to 256-bit) roster hash for TPI binding.
     pub fn compute_roster_hash(&self) -> [u8; 32] {
         let mut sorted = self.roster.clone();
         sorted.sort();
-        let mut hasher = Sha256::new();
-        hasher.update(b"ST2027-ROSTER-V1");
+        let mut hasher = Sha384::new();
+        hasher.update(b"ST2027-ROSTER-V2");
         for m in sorted {
             hasher.update((m.len() as u32).to_be_bytes());
             hasher.update(m.as_bytes());
         }
-        hasher.finalize().into()
+        let d = hasher.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&d[..32]);
+        out
     }
 
     fn derive_sender_chain(

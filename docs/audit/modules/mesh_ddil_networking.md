@@ -1,6 +1,6 @@
 # Module Documentation: Mesh and DDIL Networking Subsystem (`mesh_ddil_networking`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `mesh_ddil_networking`
 - **Subsystem Classification:** Mesh Routing, Disruption/Delay-Tolerant Networking (DDIL), Simplex Data Diodes, Byzantine Quorum Consensus, and Socket Transport
@@ -82,7 +82,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. `tactical_data_diode.py` Erasure Coding & Wire Envelopes
 1. **Cauchy Reed-Solomon Parameters:**
@@ -123,7 +123,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **Cauchy Reed-Solomon Erasure Coding:**
    - Evaluated over Galois Field $\text{GF}(2^8)$ using Cauchy generator matrix $A_{i,j} = \frac{1}{x_i \oplus y_j}$.
@@ -138,7 +138,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Dependencies
 - `cryptography` (hazmat primitives: `AESGCM`, `hashes`, `hmac`).
@@ -166,7 +166,7 @@
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -180,7 +180,7 @@
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_diode_binding.py` (6 passed in 0.8s):
@@ -201,7 +201,7 @@
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Hardware Optical Isolation:**
    - `tactical_data_diode.py` provides software socket directionality and forward error correction; it cannot replace physical fiber optic hardware diodes (e.g. transmit LED disconnected from receive photodiode) required for high-assurance cross-domain network boundary crossing.
@@ -210,7 +210,7 @@
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **Erasure Coding Packet Drop Bounds:**
    - Cauchy Reed-Solomon coding with $K=8, M=4$ tolerates a maximum of 4 lost packets per 12-packet block. If 5 or more shards are dropped on high-loss radio channels, the entire block is unrecoverable without retransmission.
@@ -228,7 +228,7 @@
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **Transport Layer Consolidation:**
    - The codebase contains both `p2p_core.py` (direct TCP) and `network/` (`connection.py`, `io.py`, `handshake.py`). Does `network/` represent an architectural migration away from `p2p_core.py`?

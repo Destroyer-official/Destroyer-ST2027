@@ -86,7 +86,9 @@ def _web_response(wfile: BytesIO) -> dict:
 class TestA4CriticalSignatureFixes:
     def test_a4_01_hybrid_kex_checks_verify_result(self):
         """A4-01: the handshake path must not discard dss.verify()'s bool."""
-        src = (ROOT / "hybrid_kex.py").read_text(encoding="utf-8")
+        # The legacy handshake implementation now lives in
+        # hybrid_kex_legacy.py; hybrid_kex.py re-exports it for callers.
+        src = (ROOT / "hybrid_kex_legacy.py").read_text(encoding="utf-8")
         marker = "Verify FALCON signature"
         idx = src.index(marker)
         segment = src[idx:idx + 1200]

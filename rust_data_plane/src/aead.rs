@@ -2,7 +2,7 @@
 //!
 //! Wire frame: `[masked_header: 11B | ciphertext | tag: 16B]`, where
 //! `masked_header = (seq: u64 BE | len: u16 BE | ftype: u8) XOR
-//! SHA256("ST2027-HEADER-MASK-v1" || hp_key || tag)[..11]`.
+//! SHA384("ST2027-HEADER-MASK-v2" || hp_key || tag)[..11]`.
 //! The 16-byte GHASH tag covers the UNMASKED header + ciphertext
 //! (AAD = unmasked header, recovered via the tag-derived mask before
 //! verification). seq/len/ftype are pseudorandom on the wire; only the
@@ -39,15 +39,15 @@ impl FrameKey {
     }
 
     /// Construct FrameKey directly from a borrowed 32-byte secret slice,
-    /// deriving a dedicated header-protection key (HKDF-SHA256) for whitening.
+    /// deriving a dedicated header-protection key (HKDF-SHA384) for whitening.
     pub fn from_slice(slice: &[u8; 32]) -> Self {
         use hkdf::Hkdf;
-        use sha2::Sha256;
+        use sha2::Sha384;
         let cipher = Key::<Aes256Gcm>::from(*slice);
-        let hk = Hkdf::<Sha256>::new(None, slice);
+        let hk = Hkdf::<Sha384>::new(None, slice);
         let mut hp_key = [0u8; 32];
-        hk.expand(b"destroyer/header-protection/v1", &mut hp_key)
-            .expect("HKDF-SHA256 expand with 32-byte output cannot fail");
+        hk.expand(b"destroyer/header-protection/v2", &mut hp_key)
+            .expect("HKDF-SHA384 expand with 32-byte output cannot fail");
         FrameKey(cipher, hp_key)
     }
 
@@ -89,9 +89,9 @@ pub fn make_nonce(seq: u64, dir: u8) -> Nonce<Aes256Gcm> {
 /// Guarantees that wire sequence numbers, lengths, and type flags (MSG vs CHAFF)
 /// are cryptographically masked and indistinguishable from random bytes.
 fn compute_header_mask(hp_key: &[u8; 32], tag: &[u8; 16]) -> [u8; 11] {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(b"ST2027-HEADER-MASK-v1");
+    use sha2::{Digest, Sha384};
+    let mut hasher = Sha384::new();
+    hasher.update(b"ST2027-HEADER-MASK-v2");
     hasher.update(hp_key);
     hasher.update(tag);
     let digest = hasher.finalize();

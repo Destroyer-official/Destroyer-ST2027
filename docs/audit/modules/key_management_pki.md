@@ -1,6 +1,6 @@
 # Module Documentation: Key Management and PKI Subsystem (`key_management_pki`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `key_management_pki`
 - **Subsystem Classification:** Key Custody, Hardware Security Modules, TPM Integration, and Public Key Infrastructure
@@ -114,7 +114,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. `trust_anchor.py` Canonical Formats
 1. **To-Be-Signed (TBS) Certificate Wire Format (`tbs_bytes` at `:164-174`):**
@@ -176,7 +176,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **ML-DSA-87 (NIST FIPS 204):**
    - PKIX OID: `"2.16.840.1.101.3.4.3.19"` (RFC 9881 pure variant; HashML-DSA explicitly prohibited).
@@ -207,7 +207,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Dependencies
 - `cryptography` (hazmat primitives: `AESGCM`, `hashes`, `HKDF`, `x509`, `serialization`): Core cryptographic operations.
@@ -263,7 +263,7 @@ e 2592$, raises `TrustError("trust rejected")` (`:165`).
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -292,7 +292,7 @@ e 2592$, raises `TrustError("trust rejected")` (`:165`).
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_trust_anchor.py` (10 passed in 10.2s):
@@ -329,7 +329,7 @@ e 2592$, raises `TrustError("trust rejected")` (`:165`).
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Vendor EK Roots in `tpm_quote.py:87-103`:**
    - `_EK_VENDOR_ROOTS` contains placeholder strings:
@@ -356,7 +356,7 @@ e 2592$, raises `TrustError("trust rejected")` (`:165`).
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **Windows Platform Crypto Provider Key Type Restrictions:**
    - `cng_platform.py` relies on `"Microsoft Platform Crypto Provider"` via TPM 2.0. The TPM Platform Crypto Provider on Windows supports only standard elliptic curve (`ECDSA_P256`) and RSA keys. It cannot store post-quantum keys (ML-DSA-87 / ML-KEM-1024) or persisted AES keys (`NTE_NOT_SUPPORTED`). Therefore, hardware TPM key custody is limited to device attestation and cannot protect post-quantum operational identity keys directly in hardware non-volatile storage.
@@ -388,7 +388,7 @@ e 2592$, raises `TrustError("trust rejected")` (`:165`).
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **Deprecation of `keys/` Subsystem:**
    - Is the `keys/` package (`keys/generation.py`, `keys/storage.py`, etc.) an obsolete prototype intended for deletion, or an incomplete refactoring target intended to replace `secure_key_manager.py`?

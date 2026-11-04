@@ -8,7 +8,7 @@
 //!     Ratchet research; not Signal SPQR or a standards-conformant implementation
 //!     (`destroyer_core::ratchet`).
 //!   * 3-of-5 threshold PKI quorum verification & CRL revocation (`destroyer_core::pki`).
-//!   * Authenticated hybrid KEX (ML-KEM-1024 + X25519) (`destroyer_core::kem`, `destroyer_core::kex_auth`).
+//!   * Authenticated hybrid KEX (SecP384r1MLKEM1024) (`destroyer_core::kem`, `destroyer_core::kex_auth`).
 //!   * Sealed key-file custody (0600 / exclusive lock / memory zeroization) (`destroyer_core::keystore`).
 //!   * NIST SP 800-88 Rev 1 media sanitization (`destroyer_core::purge`).
 //! - High-Assurance Data-Plane:
@@ -26,12 +26,15 @@
 
 use destroyer_core::acd::{ActiveCyberDefenseEngine, DefensivePlaybook, ThreatTrigger};
 use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
-use destroyer_core::auth::{Mldsa87SigningKey, Mldsa87VerifyingKey};
+use destroyer_core::auth::{
+    sign_initiator, sign_responder, verify_initiator, verify_responder, Mldsa87SigningKey,
+    Mldsa87VerifyingKey,
+};
 use destroyer_core::cookie::StatelessCookieGate;
 use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
 use destroyer_core::handshake::Handshake;
-use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK};
+use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK, P384_PK};
 use destroyer_core::keystore;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::memory_guard::GuardedBuffer;
@@ -43,13 +46,12 @@ use destroyer_core::purge;
 use destroyer_core::ratchet::PcsRatchet;
 use destroyer_core::replay::AntiReplayWindow;
 use destroyer_core::tpm_nv;
-use destroyer_core::zero_trust::{
-    inspect_content_rtb, ClearanceLevel, SecurityRole, ZeroTrustEngine, PERM_CRITICAL_RELEASE,
-    PERM_MESSAGE_SEND,
-};
+use destroyer_core::zero_trust::{SecurityRole, ZeroTrustEngine, PERM_MESSAGE_SEND, PERM_CRITICAL_RELEASE};
+#[cfg(feature = "lab-surfaces")]
+use destroyer_core::zero_trust::{inspect_content_rtb, ClearanceLevel};
 use fs2::FileExt;
 use hmac::{Hmac, KeyInit, Mac};
-use sha2::{Digest, Sha256, Sha384};
+use sha2::{Digest, Sha384};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -58,7 +60,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::{Zeroize, Zeroizing};
 
-type HmacSha256 = Hmac<Sha256>;
+type HmacSha384 = Hmac<Sha384>;
 
 const VERSION: &str = "0.2.0";
 /// Largest user payload accepted by `send` (largest fixed quantum, frame.rs).
@@ -68,9 +70,11 @@ const MAX_PAYLOAD: usize = 1205;
 const MAX_STREAM_BYTES: usize = 16 << 20;
 /// Persistent state file layout: MAGIC(8) || key_id(16) || send_seq(8LE)
 /// || recv_last(8LE) || recv_bitmap(256LE: 32 words) || hmac_tag(32) = 328 bytes.
-/// Authenticated via HMAC-SHA256 with key derived from session key via HKDF (S-08)
-/// to defeat sequence rollback / state tampering attacks. Full 32-word bitmap
-/// prevents replay history loss across restarts (S-02).
+/// Authenticated via HMAC-SHA384 with a subkey derived from the session key via
+/// HKDF-SHA384 (S-08) to defeat sequence rollback / state tampering attacks.
+/// The 48-byte HMAC-SHA384 tag is truncated to 256 bits so the on-disk
+/// layout remains stable while the hash floor tracks CNSA 2.0. Full 32-word
+/// bitmap prevents replay history loss across restarts (S-02).
 const STATE_MAGIC: &[u8; 8] = b"STSTATE3";
 const STATE_RAW_LEN: usize = 296;
 const STATE_HMAC_LEN: usize = 32;
@@ -84,8 +88,12 @@ fn usage() -> ! {
          auth-keygen --out-sk PATH --out-pk PATH       generate ML-DSA-87 (FIPS 204) keypair\n\
          auth-sign   --sk-file PATH [--domain TEXT] --in PATH --out PATH  sign file with ML-DSA-87\n\
          auth-verify --pk-file PATH [--domain TEXT] --in PATH --sig-file PATH verify ML-DSA-87 signature\n\
-         kex-listen  --bind ADDR --out-key PATH --psk-file PATH [--timeout-ms MS]  negotiate ML-KEM-1024 hybrid key (listen)\n\
-         kex-connect --to ADDR --out-key PATH --psk-file PATH [--timeout-ms MS]    negotiate ML-KEM-1024 hybrid key (connect)\n\
+         kex-listen  --bind ADDR --out-key PATH --psk-file PATH --auth-sk-file PATH --peer-auth-pk-file PATH [--timeout-ms MS]  negotiate SecP384r1MLKEM1024 key (listen)\n\
+         kex-connect --to ADDR --out-key PATH --psk-file PATH --auth-sk-file PATH --peer-auth-pk-file PATH [--timeout-ms MS]    negotiate SecP384r1MLKEM1024 key (connect)\n\
+         \n\
+         Mutual ML-DSA-87 authentication is MANDATORY outside P2P_LAB_MODE=1:\n\
+         both sides pin the peer's 2592-byte ML-DSA-87 public key and sign the\n\
+         hybrid transcript. --require-mutual-auth forces this even in lab mode.\n\
          send   --key-file PATH|--key-stdin --state PATH --to ADDR --msg TEXT\n\
          recv   --key-file PATH|--key-stdin --state PATH --bind ADDR [--count N] [--timeout-ms MS]\n\
          send-file --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH\n\
@@ -106,7 +114,7 @@ fn usage() -> ! {
          selftest                        deterministic module self-checks\n\
          \n\
          send-file splits at the 1205B quantum with incrementing seq; recv-file\n\
-         accepts only K consecutive seqs, reassembles, prints SHA-256, and\n\
+         accepts only K consecutive seqs, reassembles, prints SHA-384, and\n\
          writes the file. Any gap/tamper/timeout: exit 4, nothing written.\n\
          \n\
          diode-send/recv: Simplex Optical Data Diode transfer with Cauchy-Reed-Solomon\n\
@@ -121,7 +129,7 @@ fn usage() -> ! {
          Security: --seq, --key HEX and --psk HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Keys/PSK NEVER\n\
          appear in argv (visible via ps): provision via --key-file (0600), --key-stdin,\n\
-         --psk-file, or native quantum-resistant kex-listen/kex-connect with ML-KEM-1024 + X25519.\n\
+         --psk-file, or native quantum-resistant kex-listen/kex-connect with SecP384r1MLKEM1024.\n\
          \n\
          Env: P2P_TPM_NV_INDEX=0x<hex> binds seq reservations to a TPM 2.0 NV monotonic\n\
          counter (fail-closed hardware rollback guard; P2P_TPM_NV_REPROVISION=1 is the\n\
@@ -166,6 +174,59 @@ fn load_psk_file(path: &str) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(guard.as_bytes());
     out
+}
+
+/// Load the local ML-DSA-87 signing seed from a hardened 32-byte key file.
+/// The seed is expanded in-process and never appears in argv or the
+/// environment. The FIPS 204 signing key wipes itself on drop.
+fn load_auth_signing_key(path: &str) -> Mldsa87SigningKey {
+    let guard = keystore::read_key_file(path).unwrap_or_else(|_| {
+        fail("auth signing-key file unreadable or permission-hardening failed")
+    });
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(guard.as_bytes());
+    let (sk, _vk) = Mldsa87SigningKey::from_seed(&seed);
+    seed.zeroize();
+    sk
+}
+
+/// Load a pinned peer ML-DSA-87 verifying key (2592 bytes, hex encoded).
+/// Pinning is the trust anchor: a self-supplied peer key proves nothing.
+fn load_peer_verifying_key(path: &str) -> Mldsa87VerifyingKey {
+    let hex_str =
+        std::fs::read_to_string(path).unwrap_or_else(|_| fail("peer auth public-key file unreadable"));
+    let bytes = decode_hex(&hex_str)
+        .unwrap_or_else(|_| fail("peer auth public-key file is not valid hex"));
+    Mldsa87VerifyingKey::from_bytes(&bytes)
+        .unwrap_or_else(|_| fail("peer auth public-key is not a valid ML-DSA-87 key"))
+}
+
+/// Mutual identity authentication is mandatory outside explicit lab mode.
+/// `--require-mutual-auth` pins it on even if a lab variable is present.
+fn mutual_auth_required(_args: &[String]) -> bool {
+    // Mutual ML-DSA-87 authentication is MANDATORY. There is no lab bypass
+    // for unauthenticated key exchange: a key without pinned peer identity
+    // provides no MITM resistance and is never acceptable.
+    true
+}
+
+/// Final handshake binding = SHA-384(domain || transcript || resp_sig || init_sig).
+/// Signatures are length-prefixed so the encoding is unambiguous, and the
+/// binding is fed to the KDF so stripping or substituting a signature changes
+/// the session key (no downgrade to PSK-only).
+fn auth_binding(
+    transcript_hash: &[u8; 48],
+    responder_sig: &[u8],
+    initiator_sig: &[u8],
+) -> [u8; 48] {
+    let mut h = Sha384::new();
+    h.update(b"ST2027-KEX-v2::auth-binding");
+    h.update(transcript_hash);
+    h.update((responder_sig.len() as u32).to_be_bytes());
+    h.update(responder_sig);
+    h.update((initiator_sig.len() as u32).to_be_bytes());
+    h.update(initiator_sig);
+    h.finalize().into()
 }
 
 /// Load frame key bytes from --key-file or --key-stdin (exactly one).
@@ -282,34 +343,36 @@ struct SessionState {
     recv_bitmap: [u64; destroyer_core::replay::WINDOW_WORDS],
 }
 
-/// Derive dedicated HMAC subkey from master key via HKDF-SHA256 (S-08).
-/// Eliminates key reuse across AES-GCM and HMAC-SHA256 primitives.
+/// Derive dedicated HMAC subkey from master key via HKDF-SHA384 (S-08).
+/// Eliminates key reuse across AES-GCM and HMAC-SHA384 primitives.
 fn derive_state_hmac_key(master_key: &[u8; 32]) -> [u8; 32] {
     use hkdf::Hkdf;
-    let hk = Hkdf::<Sha256>::new(None, master_key);
+    let hk = Hkdf::<Sha384>::new(None, master_key);
     let mut subkey = [0u8; 32];
-    hk.expand(b"DESTROYER-ST2027-STATE-FILE-AUTH-SUBKEY-v1", &mut subkey)
-        .expect("HKDF-SHA256 expand for state HMAC subkey cannot fail");
+    hk.expand(b"DESTROYER-ST2027-STATE-FILE-AUTH-SUBKEY-v2", &mut subkey)
+        .expect("HKDF-SHA384 expand for state HMAC subkey cannot fail");
     subkey
 }
 
 fn compute_state_hmac(key: &[u8; 32], raw: &[u8]) -> [u8; STATE_HMAC_LEN] {
     let hmac_key = derive_state_hmac_key(key);
-    let mut mac = HmacSha256::new_from_slice(&hmac_key).expect("HMAC can take key of any size");
-    mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v1");
+    let mut mac = HmacSha384::new_from_slice(&hmac_key).expect("HMAC can take key of any size");
+    mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v2");
     mac.update(raw);
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; STATE_HMAC_LEN];
-    out.copy_from_slice(&result);
+    out.copy_from_slice(&result[..STATE_HMAC_LEN]);
     out
 }
 
 fn verify_state_hmac(key: &[u8; 32], raw: &[u8], expected_tag: &[u8; STATE_HMAC_LEN]) -> bool {
     let hmac_key = derive_state_hmac_key(key);
-    let mut mac = HmacSha256::new_from_slice(&hmac_key).expect("HMAC init");
-    mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v1");
+    let mut mac = HmacSha384::new_from_slice(&hmac_key).expect("HMAC init");
+    mac.update(b"DESTROYER-ST2027-STATE-FILE-AUTH-v2");
     mac.update(raw);
-    mac.verify_slice(expected_tag).is_ok()
+    let result = mac.finalize().into_bytes();
+    // Constant-time compare on the truncated tag.
+    destroyer_core::ct::ct_eq(&result[..STATE_HMAC_LEN], expected_tag)
 }
 
 fn encode_state(st: &SessionState, key: &[u8; 32]) -> [u8; STATE_LEN] {
@@ -856,7 +919,7 @@ fn cmd_selftest() {
     let dec = decode_state(&enc, &test_key, &[0xABu8; 16]);
     assert_eq!(dec.send_seq, 41);
     assert_eq!(dec.recv_bitmap[0], 0b11);
-    // Verify HMAC-SHA256 tamper / rollback detection (Finding 04):
+    // Verify HMAC-SHA384 tamper / rollback detection (Finding 04):
     let mut tampered_enc = enc;
     tampered_enc[24] ^= 0x01; // flip sequence counter bit
     assert!(
@@ -910,10 +973,10 @@ fn cmd_selftest() {
     assert_eq!(c_seq, 99);
     assert_eq!(c_type, frame::FTYPE_CHAFF);
 
-    // Hybrid KEM (ML-KEM-1024 + X25519) self-check
+    // Hybrid KEM (SecP384r1MLKEM1024) self-check
     let resp = EphemeralKeys::generate().expect("kem keygen");
     let (ml_ct, ss_init, eph_pub) =
-        EphemeralKeys::encapsulate(&resp.x_public, &resp.ml_ek).expect("encaps");
+        EphemeralKeys::encapsulate(&resp.p_public, &resp.ml_ek).expect("encaps");
     let ss_resp = resp.decapsulate(&eph_pub, &ml_ct).expect("decaps");
     assert_eq!(&ss_init[..], &ss_resp[..]);
     let k_init = kem::derive_session_key(&ss_init, b"selftest-kex");
@@ -977,7 +1040,7 @@ fn cmd_selftest() {
     let (bob_x, bob_ek) = r_bob.advertise();
     let (r_step, a_msg_key) = r_alice.send_step(&bob_x, &bob_ek).expect("alice step");
     let b_msg_key = r_bob
-        .receive_step(&r_step.eph_x_pub, &r_step.ml_ct)
+        .receive_step(&r_step.eph_p_pub, &r_step.ml_ct)
         .expect("bob step");
     assert_eq!(a_msg_key, b_msg_key);
 
@@ -1095,7 +1158,7 @@ fn cmd_send_file(args: &[String]) {
         fail("file exceeds 16 MiB stream cap");
     }
     let chunks = frame::split_payload(&bytes);
-    let digest = hex_of(&Sha256::digest(&bytes));
+    let digest = hex_of(&Sha384::digest(&bytes));
     let n = chunks.len() as u64;
     if n == 0 {
         drop(kb);
@@ -1269,7 +1332,7 @@ fn cmd_recv_file(args: &[String]) {
         );
         std::process::exit(4);
     };
-    let digest = hex_of(&Sha256::digest(&data));
+    let digest = hex_of(&Sha384::digest(&data));
     std::fs::write(&out, &data).unwrap_or_else(|_| fail("output unwritable"));
     println!(
         "received chunks={want} bytes={} digest={digest}",
@@ -1966,30 +2029,9 @@ fn cmd_channel(args: &[String]) {
     });
 }
 
-fn is_lab_mode() -> bool {
-    for k in ["P2P_LAB_MODE", "ST2027_LAB_MODE"] {
-        if let Ok(v) = std::env::var(k) {
-            let v = v.trim().to_lowercase();
-            if v == "1" || v == "true" || v == "yes" || v == "on" {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn kex_auth_required() -> bool {
-    // Strict fail-closed: authentication is REQUIRED by default.
-    // Unauthenticated KEX is strictly refused unless explicit lab mode is enabled.
-    !is_lab_mode()
-}
-
 fn require_kex_auth(psk_present: bool) {
-    if kex_auth_required() && !psk_present {
-        fail("kex PSK required by default (set --psk-file); unauthenticated KEX refused (MITM protection; set P2P_LAB_MODE=1 for lab testing)");
-    }
     if !psk_present {
-        eprintln!("WARNING: kex running WITHOUT PSK — key is NOT authenticated. You MUST compare SAS out-of-band before use (lab only).");
+        fail("kex PSK is MANDATORY (set --psk-file); unauthenticated key exchange is never permitted.");
     }
 }
 
@@ -2005,6 +2047,24 @@ fn cmd_kex_listen(args: &[String]) {
         .unwrap_or(30000);
     let mut psk_bytes = get_flag(args, "--psk-file").map(|path| load_psk_file(&path));
     require_kex_auth(psk_bytes.is_some());
+    let mutual = mutual_auth_required(args);
+    let auth_sk = if mutual {
+        let path = get_flag(args, "--auth-sk-file")
+            .unwrap_or_else(|| fail("mutual auth requires --auth-sk-file PATH"));
+        Some(load_auth_signing_key(&path))
+    } else {
+        None
+    };
+    let peer_vk = if mutual {
+        let path = get_flag(args, "--peer-auth-pk-file")
+            .unwrap_or_else(|| fail("mutual auth requires --peer-auth-pk-file PATH"));
+        Some(load_peer_verifying_key(&path))
+    } else {
+        None
+    };
+    if mutual && psk_bytes.is_none() {
+        fail("mutual ML-DSA-87 authentication also requires --psk-file (defense in depth)");
+    }
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -2019,28 +2079,28 @@ fn cmd_kex_listen(args: &[String]) {
         let accept_fut = async {
             let (mut socket, _peer) = listener.accept().await.map_err(|_| "accept failed")?;
 
-            // 1. Generate ephemeral hybrid keypair (X25519 + ML-KEM-1024)
+            // 1. Generate ephemeral hybrid keypair (P-384 + ML-KEM-1024)
             let resp_keys = EphemeralKeys::generate().map_err(|_| "KEM key generation failed")?;
 
-            // 2. Transmit responder bundle: x_public (32) || ml_ek (MLKEM_PK)
-            let mut bundle = Vec::with_capacity(32 + MLKEM_PK);
-            bundle.extend_from_slice(&resp_keys.x_public);
+            // 2. Transmit responder bundle: p384_pub (97) || ml_ek (MLKEM_PK)
+            let mut bundle = Vec::with_capacity(P384_PK + MLKEM_PK);
+            bundle.extend_from_slice(&resp_keys.p_public);
             bundle.extend_from_slice(&resp_keys.ml_ek);
             socket
                 .write_all(&bundle)
                 .await
                 .map_err(|_| "bundle write failed")?;
 
-            // 3. Receive initiator bundle: eph_pub (32) || ml_ct (MLKEM_CT)
-            let mut init_bundle = vec![0u8; 32 + MLKEM_CT];
+            // 3. Receive initiator bundle: eph_pub (97) || ml_ct (MLKEM_CT)
+            let mut init_bundle = vec![0u8; P384_PK + MLKEM_CT];
             socket
                 .read_exact(&mut init_bundle)
                 .await
                 .map_err(|_| "initiator bundle read failed")?;
 
-            let mut eph_pub = [0u8; 32];
-            eph_pub.copy_from_slice(&init_bundle[..32]);
-            let ml_ct = &init_bundle[32..];
+            let mut eph_pub = [0u8; P384_PK];
+            eph_pub.copy_from_slice(&init_bundle[..P384_PK]);
+            let ml_ct = &init_bundle[P384_PK..];
 
             // 4. Decapsulate hybrid shared secret
             let hybrid_ss = resp_keys
@@ -2053,23 +2113,46 @@ fn cmd_kex_listen(args: &[String]) {
             transcript_hasher.update(&init_bundle);
             let transcript_hash: [u8; 48] = transcript_hasher.finalize().into();
 
-            // 6. Derive symmetric frame key bound to transcript (and optional PSK)
+            // 5b. Mutual ML-DSA-87 identity authentication (production
+            // default). The responder signs the hybrid transcript first,
+            // then verifies the initiator's signature against the pinned
+            // peer key BEFORE deriving any key material.
+            let binding = if let (Some(sk), Some(vk)) = (auth_sk.as_ref(), peer_vk.as_ref()) {
+                let resp_sig = sign_responder(sk, &transcript_hash);
+                socket
+                    .write_all(&resp_sig)
+                    .await
+                    .map_err(|_| "responder signature write failed")?;
+                let mut init_sig = vec![0u8; MLDSA87_SIG];
+                socket
+                    .read_exact(&mut init_sig)
+                    .await
+                    .map_err(|_| "initiator signature read failed")?;
+                verify_initiator(vk, &transcript_hash, &init_sig)
+                    .map_err(|_| "initiator ML-DSA-87 signature invalid")?;
+                auth_binding(&transcript_hash, &resp_sig, &init_sig)
+            } else {
+                transcript_hash
+            };
+
+            // 6. Derive symmetric frame key bound to transcript, signatures,
+            // and PSK (all three contribute).
             let frame_key = kem::derive_session_key_transcript(
                 &hybrid_ss,
                 psk_bytes.as_ref().map(|b| &b[..]),
-                &transcript_hash,
+                &binding,
             );
 
             // 7. Mutual Key Confirmation tag exchange
             let resp_tag = kem::compute_confirmation_tag(
                 &frame_key,
                 b"ST2027-RESPONDER-CONFIRM",
-                &transcript_hash,
+                &binding,
             );
             let init_tag = kem::compute_confirmation_tag(
                 &frame_key,
                 b"ST2027-INITIATOR-CONFIRM",
-                &transcript_hash,
+                &binding,
             );
 
             socket
@@ -2085,7 +2168,7 @@ fn cmd_kex_listen(args: &[String]) {
                 return Err("initiator confirmation tag mismatch (MITM detected)");
             }
 
-            let sas = kem::compute_sas(&frame_key, &transcript_hash);
+            let sas = kem::compute_sas(&frame_key, &binding);
             let hex = hex_of(&frame_key);
             Ok::<(String, String), &'static str>((hex, sas))
         };
@@ -2098,10 +2181,12 @@ fn cmd_kex_listen(args: &[String]) {
     });
 
     write_key_file(&out, &key_hex);
-    if psk_bytes.is_some() {
-        println!("kex-listen SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
+    if mutual {
+        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
+    } else if psk_bytes.is_some() {
+        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
     } else {
-        println!("kex-listen SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
     }
     // Wipe the PSK stack copy now that derivation is complete.
     if let Some(ref mut b) = psk_bytes {
@@ -2121,6 +2206,24 @@ fn cmd_kex_connect(args: &[String]) {
         .unwrap_or(30000);
     let mut psk_bytes = get_flag(args, "--psk-file").map(|path| load_psk_file(&path));
     require_kex_auth(psk_bytes.is_some());
+    let mutual = mutual_auth_required(args);
+    let auth_sk = if mutual {
+        let path = get_flag(args, "--auth-sk-file")
+            .unwrap_or_else(|| fail("mutual auth requires --auth-sk-file PATH"));
+        Some(load_auth_signing_key(&path))
+    } else {
+        None
+    };
+    let peer_vk = if mutual {
+        let path = get_flag(args, "--peer-auth-pk-file")
+            .unwrap_or_else(|| fail("mutual auth requires --peer-auth-pk-file PATH"));
+        Some(load_peer_verifying_key(&path))
+    } else {
+        None
+    };
+    if mutual && psk_bytes.is_none() {
+        fail("mutual ML-DSA-87 authentication also requires --psk-file (defense in depth)");
+    }
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -2133,23 +2236,23 @@ fn cmd_kex_connect(args: &[String]) {
                 .await
                 .map_err(|_| "connect failed")?;
 
-            // 1. Receive responder bundle: resp_x_pub (32) || resp_ml_ek (MLKEM_PK)
-            let mut resp_bundle = vec![0u8; 32 + MLKEM_PK];
+            // 1. Receive responder bundle: resp_p_pub (97) || resp_ml_ek (MLKEM_PK)
+            let mut resp_bundle = vec![0u8; P384_PK + MLKEM_PK];
             socket
                 .read_exact(&mut resp_bundle)
                 .await
                 .map_err(|_| "bundle read failed")?;
 
-            let mut resp_x_pub = [0u8; 32];
-            resp_x_pub.copy_from_slice(&resp_bundle[..32]);
-            let resp_ml_ek = &resp_bundle[32..];
+            let mut resp_p_pub = [0u8; P384_PK];
+            resp_p_pub.copy_from_slice(&resp_bundle[..P384_PK]);
+            let resp_ml_ek = &resp_bundle[P384_PK..];
 
             // 2. Encapsulate hybrid shared secret
-            let (ml_ct, hybrid_ss, eph_pub) = EphemeralKeys::encapsulate(&resp_x_pub, resp_ml_ek)
+            let (ml_ct, hybrid_ss, eph_pub) = EphemeralKeys::encapsulate(&resp_p_pub, resp_ml_ek)
                 .map_err(|_| "encapsulate failed")?;
 
-            // 3. Transmit initiator bundle: eph_pub (32) || ml_ct (MLKEM_CT)
-            let mut init_bundle = Vec::with_capacity(32 + MLKEM_CT);
+            // 3. Transmit initiator bundle: eph_pub (97) || ml_ct (MLKEM_CT)
+            let mut init_bundle = Vec::with_capacity(P384_PK + MLKEM_CT);
             init_bundle.extend_from_slice(&eph_pub);
             init_bundle.extend_from_slice(&ml_ct);
             socket
@@ -2163,23 +2266,45 @@ fn cmd_kex_connect(args: &[String]) {
             transcript_hasher.update(&init_bundle);
             let transcript_hash: [u8; 48] = transcript_hasher.finalize().into();
 
-            // 5. Derive symmetric frame key bound to transcript (and optional PSK)
+            // 4b. Mutual ML-DSA-87 identity authentication (production
+            // default). Verify the responder's signature against the pinned
+            // peer key BEFORE sending our signature or deriving any key.
+            let binding = if let (Some(sk), Some(vk)) = (auth_sk.as_ref(), peer_vk.as_ref()) {
+                let mut resp_sig = vec![0u8; MLDSA87_SIG];
+                socket
+                    .read_exact(&mut resp_sig)
+                    .await
+                    .map_err(|_| "responder signature read failed")?;
+                verify_responder(vk, &transcript_hash, &resp_sig)
+                    .map_err(|_| "responder ML-DSA-87 signature invalid")?;
+                let init_sig = sign_initiator(sk, &transcript_hash);
+                socket
+                    .write_all(&init_sig)
+                    .await
+                    .map_err(|_| "initiator signature write failed")?;
+                auth_binding(&transcript_hash, &resp_sig, &init_sig)
+            } else {
+                transcript_hash
+            };
+
+            // 5. Derive symmetric frame key bound to transcript, signatures,
+            // and PSK (all three contribute).
             let frame_key = kem::derive_session_key_transcript(
                 &hybrid_ss,
                 psk_bytes.as_ref().map(|b| &b[..]),
-                &transcript_hash,
+                &binding,
             );
 
             // 6. Mutual Key Confirmation tag exchange
             let resp_tag = kem::compute_confirmation_tag(
                 &frame_key,
                 b"ST2027-RESPONDER-CONFIRM",
-                &transcript_hash,
+                &binding,
             );
             let init_tag = kem::compute_confirmation_tag(
                 &frame_key,
                 b"ST2027-INITIATOR-CONFIRM",
-                &transcript_hash,
+                &binding,
             );
 
             let mut recv_resp_tag = [0u8; 32];
@@ -2196,7 +2321,7 @@ fn cmd_kex_connect(args: &[String]) {
                 .await
                 .map_err(|_| "initiator confirmation tag write failed")?;
 
-            let sas = kem::compute_sas(&frame_key, &transcript_hash);
+            let sas = kem::compute_sas(&frame_key, &binding);
             let hex = hex_of(&frame_key);
             Ok::<(String, String), &'static str>((hex, sas))
         };
@@ -2209,10 +2334,12 @@ fn cmd_kex_connect(args: &[String]) {
     });
 
     write_key_file(&out, &key_hex);
-    if psk_bytes.is_some() {
-        println!("kex-connect SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
+    if mutual {
+        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
+    } else if psk_bytes.is_some() {
+        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
     } else {
-        println!("kex-connect SUCCESS: ML-KEM-1024 + X25519 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
     }
     // Wipe the PSK stack copy now that derivation is complete.
     if let Some(ref mut b) = psk_bytes {
@@ -2441,6 +2568,7 @@ fn cmd_zero_trust_eval(args: &[String]) {
     );
 }
 
+#[cfg(feature = "lab-surfaces")]
 fn cmd_cot_beacon(args: &[String]) {
     reject_forbidden_cli(args);
     // F-15 fence: cot-beacon is a FORMATTER that emits demo/lab CoT XML.
@@ -2504,6 +2632,7 @@ local inputs; this is a demo/lab formatter, not an operational tactical data lin
     }
 }
 
+#[cfg(feature = "lab-surfaces")]
 fn cmd_tactical_msg(args: &[String]) {
     reject_forbidden_cli(args);
     // F-15 fence: tactical-msg is a FORMATTER that renders an MMHS-style
@@ -2560,6 +2689,7 @@ this is a demo/lab formatter, not an operational message-center transmit."
     println!("telegram: {wire_telegram}");
 }
 
+#[cfg(feature = "lab-surfaces")]
 fn cmd_eam_auth(args: &[String]) {
     reject_forbidden_cli(args);
     // F-15 fence: eam-auth verifies dual-officer signatures over a directive
@@ -2630,6 +2760,51 @@ verification runs without a roster cross-check of officer identity."
     println!("authorized_directive: {directive}");
 }
 
+
+fn cmd_nc3_safety_gate(args: &[String]) {
+    reject_forbidden_cli(args);
+    let msg = get_flag(args, "--msg").unwrap_or_else(|| fail("missing --msg TEXT"));
+    match destroyer_core::nc3::check_nc3_safety_gate(msg.as_bytes()) {
+        Ok(()) => {
+            println!("nc3-safety-gate: PASS (no nuclear command keywords detected)");
+        }
+        Err(indicator) => {
+            fail(&format!("NC3 SAFETY GATE VIOLATION: detected single-officer nuclear directive indicator '{indicator}'"));
+        }
+    }
+}
+
+fn cmd_doc_seal(args: &[String]) {
+    reject_forbidden_cli(args);
+    let path = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
+    let bytes = std::fs::read(&path).unwrap_or_else(|_| fail("cannot read file"));
+    let filename = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file.dat");
+    let (meta, wire) = destroyer_core::doc_transfer::package_document(filename, &bytes);
+    if let Some(out) = get_flag(args, "--out") {
+        std::fs::write(&out, &wire).unwrap_or_else(|_| fail("cannot write output"));
+        println!("doc-seal: SUCCESS file={} size={} sha384={}", meta.filename, meta.size_bytes, meta.sha384_hex);
+    } else {
+        println!("{}", String::from_utf8_lossy(&wire));
+    }
+}
+
+fn cmd_doc_open(args: &[String]) {
+    reject_forbidden_cli(args);
+    let path = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
+    let wire = std::fs::read(&path).unwrap_or_else(|_| fail("cannot read file"));
+    let (meta, content) = destroyer_core::doc_transfer::unpack_and_verify_document(&wire)
+        .unwrap_or_else(|e| fail(&format!("unpack and verify failed: {e}")));
+    if let Some(out) = get_flag(args, "--out") {
+        std::fs::write(&out, &content).unwrap_or_else(|_| fail("cannot write output"));
+        println!("doc-open: SUCCESS verified={} size={}", meta.filename, meta.size_bytes);
+    } else {
+        println!("doc-open: SUCCESS verified sha384={}", meta.sha384_hex);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -2655,9 +2830,27 @@ fn main() {
         "cookie-verify" => cmd_cookie_verify(&args[2..]),
         "threat-eval" => cmd_threat_eval(&args[2..]),
         "zero-trust-eval" => cmd_zero_trust_eval(&args[2..]),
-        "cot-beacon" => cmd_cot_beacon(&args[2..]),
-        "tactical-msg" => cmd_tactical_msg(&args[2..]),
-        "eam-auth" => cmd_eam_auth(&args[2..]),
+        "cot-beacon" => {
+            #[cfg(feature = "lab-surfaces")]
+            { cmd_cot_beacon(&args[2..]); }
+            #[cfg(not(feature = "lab-surfaces"))]
+            { fail("cot-beacon is a simulated/lab surface and is not available in production builds"); }
+        }
+        "tactical-msg" => {
+            #[cfg(feature = "lab-surfaces")]
+            { cmd_tactical_msg(&args[2..]); }
+            #[cfg(not(feature = "lab-surfaces"))]
+            { fail("tactical-msg is a simulated/lab surface and is not available in production builds"); }
+        }
+        "eam-auth" => {
+            #[cfg(feature = "lab-surfaces")]
+            { cmd_eam_auth(&args[2..]); }
+            #[cfg(not(feature = "lab-surfaces"))]
+            { fail("eam-auth is a simulated/lab surface and is not available in production builds"); }
+        }
+        "nc3-safety-gate" => cmd_nc3_safety_gate(&args[2..]),
+        "doc-seal" => cmd_doc_seal(&args[2..]),
+        "doc-open" => cmd_doc_open(&args[2..]),
         "zeroize" | "purge" => cmd_zeroize(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),

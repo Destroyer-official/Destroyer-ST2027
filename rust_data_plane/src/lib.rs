@@ -13,7 +13,7 @@
 //! Secure-core modules (NEW, strict-only):
 //! - `policy`: single fail-closed truth (no opt-outs exist in Rust).
 //! - `auth`: native ML-DSA-87 (FIPS 204, pure-Rust `ml-dsa` crate).
-//! - `kex_auth`: authenticated hybrid KEX (X25519 + ML-KEM-1024,
+//! - `kex_auth`: authenticated hybrid KEX (SecP384r1 + ML-KEM-1024,
 //!   transcript-bound, PSK-or-MLDSA, SAS out-of-band).
 //! - `ratchet`: project-specific fresh-KEM-per-step ratchet (no v1 reuse;
 //!   inspired by SPQR research, not an SPQR implementation).
@@ -44,9 +44,12 @@ pub mod attest;
 pub mod auth;
 pub mod chaff;
 pub mod cookie;
+pub mod cot;
 pub mod ct;
+pub mod doc_transfer;
 pub mod fec;
 pub mod ffi;
+pub mod fragment;
 pub mod frame;
 pub mod group_ratchet;
 pub mod handshake;
@@ -55,12 +58,16 @@ pub mod kex_auth;
 pub mod keystore;
 pub mod memlock;
 pub mod memory_guard;
+pub mod mmhs;
+pub mod nc3;
 pub mod net;
 pub mod nostd_microcore;
 pub mod pacing;
+pub mod pipeline;
 pub mod pad;
 pub mod pki;
 pub mod policy;
+pub mod ptt;
 pub mod purge;
 pub mod ratchet;
 pub mod replay;
@@ -362,7 +369,7 @@ impl SecureEngine {
     }
 }
 
-/// Native Hybrid Key Exchange (X25519 + ML-KEM-1024) exposed to Python.
+/// Native Hybrid Key Exchange (SecP384r1 + ML-KEM-1024) exposed to Python.
 /// Ephemeral private keys and raw shared secrets remain sealed and zeroized in Rust memory.
 #[pyclass]
 pub struct NativeHybridKex {
@@ -378,25 +385,25 @@ impl NativeHybridKex {
         Ok(NativeHybridKex { keys: Some(keys) })
     }
 
-    /// Return our ephemeral public keys: (x25519_pub_32B, mlkem1024_ek_1568B).
+    /// Return our ephemeral public keys: (p384_pub_97B, mlkem1024_ek_1568B).
     pub fn get_public_keys(&self) -> PyResult<(Vec<u8>, Vec<u8>)> {
         let keys = self
             .keys
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
-        Ok((keys.x_public.to_vec(), keys.ml_ek.clone()))
+        Ok((keys.p_public.to_vec(), keys.ml_ek.clone()))
     }
 
-    /// Responder encapsulation: encapsulate against peer's (x_pub, ml_ek).
-    /// Returns (eph_x_pub_32B, ml_ct_1568B, session_key_32B).
+    /// Responder encapsulation: encapsulate against peer's (p384_pub, ml_ek).
+    /// Returns (eph_p384_pub_97B, ml_ct_1568B, session_key_32B).
     #[staticmethod]
     pub fn encapsulate_to_peer(
-        peer_x_pub: Vec<u8>,
+        peer_p_pub: Vec<u8>,
         peer_ml_ek: Vec<u8>,
         transcript_hash: Vec<u8>,
     ) -> PyResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-        if peer_x_pub.len() != 32 {
-            return Err(PyValueError::new_err("peer_x_pub must be 32 bytes"));
+        if peer_p_pub.len() != kem::P384_PK {
+            return Err(PyValueError::new_err("peer_p_pub must be 97 bytes"));
         }
         if peer_ml_ek.len() != kem::MLKEM_PK {
             return Err(PyValueError::new_err(format!(
@@ -405,9 +412,9 @@ impl NativeHybridKex {
                 peer_ml_ek.len()
             )));
         }
-        let mut x_arr = [0u8; 32];
-        x_arr.copy_from_slice(&peer_x_pub);
-        let (ct, hybrid_ss, eph_pub) = kem::EphemeralKeys::encapsulate(&x_arr, &peer_ml_ek)
+        let mut p_arr = [0u8; kem::P384_PK];
+        p_arr.copy_from_slice(&peer_p_pub);
+        let (ct, hybrid_ss, eph_pub) = kem::EphemeralKeys::encapsulate(&p_arr, &peer_ml_ek)
             .map_err(|e| PyValueError::new_err(format!("encapsulate failed: {e:?}")))?;
 
         let session_key = if transcript_hash.len() == 48 {
@@ -415,15 +422,15 @@ impl NativeHybridKex {
             th.copy_from_slice(&transcript_hash);
             kem::derive_session_key_transcript(&hybrid_ss, None, &th)
         } else {
-            kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V1")
+            kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V2")
         };
         Ok((eph_pub.to_vec(), ct, session_key.to_vec()))
     }
 
-    /// Initiator decapsulation: decapsulate peer's (eph_x_pub, ml_ct) and derive 32B session key.
+    /// Initiator decapsulation: decapsulate peer's (eph_p384_pub, ml_ct) and derive 32B session key.
     pub fn decapsulate_session_key(
         &mut self,
-        peer_eph_x_pub: Vec<u8>,
+        peer_eph_p_pub: Vec<u8>,
         peer_ml_ct: Vec<u8>,
         transcript_hash: Vec<u8>,
     ) -> PyResult<Vec<u8>> {
@@ -431,8 +438,8 @@ impl NativeHybridKex {
             .keys
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
-        if peer_eph_x_pub.len() != 32 {
-            return Err(PyValueError::new_err("peer_eph_x_pub must be 32 bytes"));
+        if peer_eph_p_pub.len() != kem::P384_PK {
+            return Err(PyValueError::new_err("peer_eph_p_pub must be 97 bytes"));
         }
         if peer_ml_ct.len() != kem::MLKEM_CT {
             return Err(PyValueError::new_err(format!(
@@ -441,10 +448,10 @@ impl NativeHybridKex {
                 peer_ml_ct.len()
             )));
         }
-        let mut x_arr = [0u8; 32];
-        x_arr.copy_from_slice(&peer_eph_x_pub);
+        let mut p_arr = [0u8; kem::P384_PK];
+        p_arr.copy_from_slice(&peer_eph_p_pub);
         let hybrid_ss = keys
-            .decapsulate(&x_arr, &peer_ml_ct)
+            .decapsulate(&p_arr, &peer_ml_ct)
             .map_err(|e| PyValueError::new_err(format!("decapsulate failed: {e:?}")))?;
 
         let session_key = if transcript_hash.len() == 48 {
@@ -452,7 +459,7 @@ impl NativeHybridKex {
             th.copy_from_slice(&transcript_hash);
             kem::derive_session_key_transcript(&hybrid_ss, None, &th)
         } else {
-            kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V1")
+            kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V2")
         };
         Ok(session_key.to_vec())
     }

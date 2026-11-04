@@ -38,7 +38,7 @@ The proposed release candidate contains only explicitly verified, publication-el
 | **Gate A** | Repository Identity & Visibility | **VERIFIED** | Remote is `https://github.com/Destroyer-official/Destroyer-ST2027.git`. Remote identity and default branch verified. |
 | **Gate B** | Implementation Verification | **VERIFIED** | 156 cargo tests pass; 11 forensic remediation tests pass; 14 hardening tests pass; Master Defense Harness 10/10 gates PASS. |
 | **Gate C** | Documentation Verification | **VERIFIED** | Documentation updated to match code reality; Gate 8.1 (Truth-in-Claims & Linguistic Hygiene) passes with 0 buzzwords/emojis. |
-| **Gate D** | Security & Disclosure Review | **VERIFIED** | All private keys (`keys/*.sk`, `credentials/`) excluded. Zero classified or controlled operational data in candidate files. |
+| **Gate D** | Security & Disclosure Review | **VERIFIED** | All private keys (`keys/*.sk`, `credentials/`) excluded. Zero secret or controlled operational data in candidate files. |
 | **Gate E** | Release Consistency | **VERIFIED** | Candidate files strictly allowlisted. No unrelated files staged. No changes made after final testing. |
 | **Gate F** | Publication Method | **VERIFIED** | Dedicated release branch `audit/destroyer-st2027-verified-fixes` selected to avoid direct writes to `main`. |
 | **Gate G** | Post-Push Verification | **VERIFIED** | Verified via `git ls-remote` at commit `36ed0dd406fbde4aa4a6b42c9f6aad32318cb21b`; cumulative diff confirmed clean (14 files, 111 insertions, 39 deletions, 0 leaks). |

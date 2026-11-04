@@ -2,7 +2,7 @@
   "metadata": {
     "assessment_name": "DoD RMF Red-Team Penetration Assessment",
     "version": "2028.1.0",
-    "timestamp_utc": "2026-10-23T17:23:51.573646+00:00",
+    "timestamp_utc": "2026-11-03T14:34:33.258222+00:00",
     "adversary_threat_tier": "TIER-6 (Nation-State Strategic SIGINT)",
     "overall_status": "DEFENDED"
   },
@@ -10,7 +10,7 @@
     "total_vectors": 5,
     "passed": 5,
     "failed": 0,
-    "duration_seconds": 3.75,
+    "duration_seconds": 3.49,
     "all_passed": true
   },
   "drill_results": [
@@ -18,15 +18,15 @@
       "vector_id": "V1",
       "title": "Timing Attack & Constant-Time Probe",
       "status": "PASS",
-      "details": "Timing delta across early/mid/late tamper offsets: 0.013ms (<5.0ms gate)",
-      "duration_ms": 20.56
+      "details": "Timing delta across early/mid/late tamper offsets: 0.007ms (<5.0ms gate)",
+      "duration_ms": 21.85
     },
     {
       "vector_id": "V2",
       "title": "Network Jamming & Malformed Injection",
       "status": "PASS",
       "details": "9/9 corrupted frames dropped; 0 replies leaked to attacker",
-      "duration_ms": 2459.76
+      "duration_ms": 2360.22
     },
     {
       "vector_id": "V3",
@@ -47,7 +47,7 @@
       "title": "Replay Swarm & Rogue Impersonation Probe",
       "status": "PASS",
       "details": "100% of replayed swarm packets rejected fail-closed (20/20)",
-      "duration_ms": 1270.84
+      "duration_ms": 1109.1
     }
   ]
 }

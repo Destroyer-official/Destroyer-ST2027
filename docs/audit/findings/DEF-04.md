@@ -10,13 +10,13 @@
 
 ## 1. Observed Behavior & Evidence
 
-`scripts/audit_pins.py` attempted to connect to the public Internet endpoint `https://api.osv.dev/v1/query` to evaluate package vulnerabilities. In disconnected, classified, or air-gapped field deployments, this caused socket timeout errors and broken pre-flight deployment audits.
+`scripts/audit_pins.py` attempted to connect to the public Internet endpoint `https://api.osv.dev/v1/query` to evaluate package vulnerabilities. In disconnected, air-gapped, or isolated field deployments, this caused socket timeout errors and broken pre-flight deployment audits.
 
 ---
 
 ## 2. Technical Consequences
 
-- Inability to perform dependency audits in air-gapped sovereign environments.
+- Inability to perform dependency audits in air-gapped isolated environments.
 - False failure reports during automated deployment verification.
 
 ---

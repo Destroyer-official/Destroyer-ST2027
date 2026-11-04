@@ -220,7 +220,8 @@ def test_backend_mechanism_allowlist_and_unavailable():
     from secure_enclave_key_storage import (
         HardwareUnavailableError, KeyOperationError,
         PKCS11HSMBackend, _resolve_token_sign_mechanism)
-    import pkcs11
+    pkcs11 = pytest.importorskip(
+        "pkcs11", reason="python-pkcs11 is optional on this platform")
     assert _resolve_token_sign_mechanism("ECDSA", pkcs11.Mechanism) is pkcs11.Mechanism.ECDSA  # nosec: B101
     assert _resolve_token_sign_mechanism("sha384_rsa_pkcs", pkcs11.Mechanism) is pkcs11.Mechanism.SHA384_RSA_PKCS  # nosec: B101
     for bad in ("MD5_RSA_PKCS", "SHA1_RSA_PKCS", "RSA_PKCS_PSS", "HMAC", ""):
@@ -237,7 +238,8 @@ def test_spki_builder_shapes():
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from secure_enclave_key_storage import _spki_from_token_pubkey
-    import pkcs11
+    pkcs11 = pytest.importorskip(
+        "pkcs11", reason="python-pkcs11 is optional on this platform")
 
     class _Attrs(dict):
         pass

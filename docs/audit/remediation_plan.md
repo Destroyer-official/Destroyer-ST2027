@@ -46,7 +46,7 @@ Technical engineering specifications, verified implementations, and architectura
 ### 1.4 Remediation for DEF-04: Offline Vulnerability Scanning
 
 - **Target Location:** `scripts/audit_pins.py:58-100`
-- **Issue Description:** Dependency pin auditor attempted to connect to public Internet API `https://api.osv.dev/v1/query`, causing immediate failures when executed in disconnected, air-gapped, or classified networks.
+- **Issue Description:** Dependency pin auditor attempted to connect to public Internet API `https://api.osv.dev/v1/query`, causing immediate failures when executed in disconnected, air-gapped, or isolated networks.
 - **Implemented Remediation:**
   Added CLI arguments `--offline` and `--mirror <path>`. When executed in offline mode or when `P2P_AIRGAP_MODE=1` is set, the auditor evaluates dependency hashes against the local snapshot mirror (`compliance_reports/cve_scan_offline.json`) without initiating any network connections.
 - **Verification Status:** **REMEDIATED & VERIFIED** (`python scripts/audit_pins.py --offline` verified 14/14 pinned packages with zero network calls).
@@ -102,7 +102,7 @@ Operational deployment in defense environments involves statutory boundaries tha
    - Software serves as an algorithmic fail-closed gatekeeper (`TSRequiredError`, `production_gate`).
    - Physical security properties—including TEMPEST SDIP-27 RF attenuation, physical optical fiber diodes, and FIPS 140-3 Level 3/4 anti-tamper response enclosures—must be provided by certified physical appliances wired to the system's hardware interfaces (`emergency_anti_tamper.py`, `platform_hsm_interface.py`).
 3. **Cryptographic Suite Purity (Category 4):**
-   - The TOP SECRET data plane (`secure_transmit_2027.py`, `noise_pq.py`, `rust_data_plane`) strictly enforces NSA CNSA Suite 2.0 (pure ML-KEM-1024, ML-DSA-87, AES-256-GCM, SHA-384).
+   - The isolated data plane (`secure_transmit_2027.py`, `noise_pq.py`, `rust_data_plane`) strictly enforces NSA CNSA Suite 2.0 (pure ML-KEM-1024, ML-DSA-87, AES-256-GCM, SHA-384).
    - The legacy messaging engine (`secure_p2p.py`, `double_ratchet.py`) operates as a Signal-style hybrid-transition layer and is explicitly quarantined as non-pure in `cnsa_purity.py`.
 4. **Decentralized Tactical Discovery (Category 6):**
    - Production configuration (`config_production.json`) binds to `"::"` in air-gapped mode with zero hardcoded bootstrap IPs, ensuring ad-hoc peer discovery functions autonomously over tactical mesh networks.

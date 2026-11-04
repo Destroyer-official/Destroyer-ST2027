@@ -132,14 +132,14 @@ impl CoreKexResponder {
         })
     }
 
-    /// Our bundle `x_pub(32) || ml_ek(1568)` to send to the initiator.
+    /// Our bundle `p384_pub(97) || ml_ek(1568)` to send to the initiator.
     pub fn bundle(&self) -> PyResult<Vec<u8>> {
         let k = self
             .keys
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("responder consumed"))?;
         let mut b = Vec::with_capacity(RESPONDER_BUNDLE_LEN);
-        b.extend_from_slice(&k.x_public);
+        b.extend_from_slice(&k.p_public);
         b.extend_from_slice(&k.ml_ek);
         Ok(b)
     }
@@ -299,27 +299,27 @@ impl CoreRatchet {
             .epoch())
     }
 
-    /// Sending step. Returns `(eph_x_pub, ml_ct, next_x_pub, next_ek, epoch, msg_key)`.
+    /// Sending step. Returns `(eph_p_pub, ml_ct, next_p_pub, next_ek, epoch, msg_key)`.
     #[allow(clippy::type_complexity)]
     pub fn send_step(
         &mut self,
-        peer_x: Vec<u8>,
+        peer_p: Vec<u8>,
         peer_ek: Vec<u8>,
     ) -> PyResult<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, u64, Vec<u8>)> {
-        if peer_x.len() != 32 {
-            return Err(PyValueError::new_err("peer_x_pub must be 32 bytes"));
+        if peer_p.len() != crate::kem::P384_PK {
+            return Err(PyValueError::new_err("peer_p_pub must be 97 bytes"));
         }
-        let mut xa = [0u8; 32];
-        xa.copy_from_slice(&peer_x);
+        let mut pa = [0u8; crate::kem::P384_PK];
+        pa.copy_from_slice(&peer_p);
         let r = self
             .inner
             .as_mut()
             .ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
-        let (step, key) = r.send_step(&xa, &peer_ek).map_err(err)?;
+        let (step, key) = r.send_step(&pa, &peer_ek).map_err(err)?;
         Ok((
-            step.eph_x_pub.to_vec(),
+            step.eph_p_pub.to_vec(),
             step.ml_ct,
-            step.next_x_pub.to_vec(),
+            step.next_p_pub.to_vec(),
             step.next_ek,
             step.epoch,
             key.to_vec(),
@@ -327,17 +327,17 @@ impl CoreRatchet {
     }
 
     /// Receiving step. Returns the message key.
-    pub fn receive_step(&mut self, eph_x: Vec<u8>, ml_ct: Vec<u8>) -> PyResult<Vec<u8>> {
-        if eph_x.len() != 32 {
-            return Err(PyValueError::new_err("eph_x_pub must be 32 bytes"));
+    pub fn receive_step(&mut self, eph_p: Vec<u8>, ml_ct: Vec<u8>) -> PyResult<Vec<u8>> {
+        if eph_p.len() != crate::kem::P384_PK {
+            return Err(PyValueError::new_err("eph_p_pub must be 97 bytes"));
         }
-        let mut xa = [0u8; 32];
-        xa.copy_from_slice(&eph_x);
+        let mut pa = [0u8; crate::kem::P384_PK];
+        pa.copy_from_slice(&eph_p);
         Ok(self
             .inner
             .as_mut()
             .ok_or_else(|| PyValueError::new_err("ratchet consumed"))?
-            .receive_step(&xa, &ml_ct)
+            .receive_step(&pa, &ml_ct)
             .map_err(err)?
             .to_vec())
     }
@@ -1121,7 +1121,295 @@ impl CoreGroupRatchet {
     }
 }
 
+
+use crate::cot::{format_cot_xml, new_event, parse_cot_xml};
+use crate::doc_transfer::{package_document, unpack_and_verify_document};
+use crate::fragment::{fragment, Fragment, ReassemblyBuffer, TX_ID_LEN};
+use crate::mmhs::{format_caveats, format_telegram, parse_telegram, Precedence};
+use crate::nc3::{check_nc3_safety_gate, create_eam, verify_eam, verify_two_person_rule, EamDirective};
+use crate::pipeline::{derive_war_key_sha512, ZeroGapPipeline};
+
+#[pyclass]
+pub struct CoreMmhs;
+
+#[pymethods]
+impl CoreMmhs {
+    #[staticmethod]
+    pub fn format(precedence_label: &str, clearance_u8: u8, caveats: u32, message: Vec<u8>) -> PyResult<Vec<u8>> {
+        let prec = Precedence::from_label(precedence_label).map_err(err)?;
+        let clr = ClearanceLevel::from_u8(clearance_u8).map_err(err)?;
+        format_telegram(prec, clr, caveats, &message).map_err(err)
+    }
+
+    #[staticmethod]
+    pub fn parse(telegram: Vec<u8>) -> PyResult<(String, u8, u32, Vec<u8>)> {
+        let (prec, clr, cavs, body) = parse_telegram(&telegram).map_err(err)?;
+        Ok((prec.label().to_string(), clr as u8, cavs, body))
+    }
+
+    #[staticmethod]
+    pub fn format_caveats_str(caveats: u32) -> String {
+        format_caveats(caveats)
+    }
+}
+
+#[pyclass]
+pub struct CoreNc3;
+
+#[pymethods]
+impl CoreNc3 {
+    #[staticmethod]
+    pub fn check_safety_gate(message: Vec<u8>) -> Option<String> {
+        check_nc3_safety_gate(&message).err().map(|s| s.to_string())
+    }
+
+    #[staticmethod]
+    pub fn verify_two_person(vk1_bytes: Vec<u8>, vk2_bytes: Vec<u8>) -> PyResult<()> {
+        verify_two_person_rule(&vk1_bytes, &vk2_bytes).map_err(err)
+    }
+
+    #[staticmethod]
+    pub fn create_eam_directive(
+        directive_text: Vec<u8>,
+        sk1: &CoreMldsaSigner,
+        sk2: &CoreMldsaSigner,
+    ) -> PyResult<Vec<u8>> {
+        let s1 = sk1.inner.as_ref().ok_or_else(|| PyValueError::new_err("signer 1 consumed"))?;
+        let s2 = sk2.inner.as_ref().ok_or_else(|| PyValueError::new_err("signer 2 consumed"))?;
+        let eam = create_eam(&directive_text, s1, s2).map_err(err)?;
+        Ok(eam.to_bytes())
+    }
+
+    #[staticmethod]
+    pub fn verify_eam_directive(
+        eam_wire: Vec<u8>,
+        vk1_bytes: Vec<u8>,
+        vk2_bytes: Vec<u8>,
+        max_age_secs: Option<u64>,
+    ) -> PyResult<Vec<u8>> {
+        let eam = EamDirective::from_bytes(&eam_wire).map_err(err)?;
+        let vk1 = Mldsa87VerifyingKey::from_bytes(&vk1_bytes).map_err(err)?;
+        let vk2 = Mldsa87VerifyingKey::from_bytes(&vk2_bytes).map_err(err)?;
+        verify_eam(&eam, &vk1, &vk2, max_age_secs).map_err(err)?;
+        Ok(eam.directive_text)
+    }
+}
+
+#[pyclass]
+pub struct CoreReassemblyBuffer {
+    inner: ReassemblyBuffer,
+}
+
+#[pymethods]
+impl CoreReassemblyBuffer {
+    #[new]
+    pub fn new(tx_id: Vec<u8>, total: u16) -> PyResult<Self> {
+        if tx_id.len() != TX_ID_LEN {
+            return Err(PyValueError::new_err("tx_id must be 8 bytes"));
+        }
+        let mut id = [0u8; TX_ID_LEN];
+        id.copy_from_slice(&tx_id);
+        let inner = ReassemblyBuffer::new(id, total).map_err(err)?;
+        Ok(Self { inner })
+    }
+
+    pub fn insert_wire(&mut self, wire: Vec<u8>) -> PyResult<bool> {
+        let frag = Fragment::from_wire(&wire).map_err(err)?;
+        self.inner.insert(frag).map_err(err)
+    }
+
+    pub fn insert_text_line(&mut self, line: &str) -> PyResult<bool> {
+        let frag = Fragment::from_text_line(line).map_err(err)?;
+        self.inner.insert(frag).map_err(err)
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.inner.is_complete()
+    }
+
+    pub fn reassemble(&self) -> PyResult<Vec<u8>> {
+        self.inner.reassemble().map_err(err)
+    }
+}
+
+#[pyclass]
+pub struct CoreFragmenter;
+
+#[pymethods]
+impl CoreFragmenter {
+    #[staticmethod]
+    pub fn fragment_payload(payload: Vec<u8>, chunk_size: Option<usize>) -> PyResult<Vec<Vec<u8>>> {
+        let size = chunk_size.unwrap_or(crate::fragment::DEFAULT_CHUNK_SIZE);
+        let frags = fragment(&payload, size).map_err(err)?;
+        Ok(frags.into_iter().map(|f| f.to_wire()).collect())
+    }
+
+    #[staticmethod]
+    pub fn fragment_to_lines(payload: Vec<u8>, chunk_size: Option<usize>) -> PyResult<Vec<String>> {
+        let size = chunk_size.unwrap_or(crate::fragment::DEFAULT_CHUNK_SIZE);
+        let frags = fragment(&payload, size).map_err(err)?;
+        Ok(frags.into_iter().map(|f| f.to_text_line()).collect())
+    }
+}
+
+#[pyclass]
+pub struct CoreDocTransfer;
+
+#[pymethods]
+impl CoreDocTransfer {
+    #[staticmethod]
+    pub fn package(filename: &str, content: Vec<u8>) -> (String, usize, String, Vec<u8>) {
+        let (meta, wire) = package_document(filename, &content);
+        (meta.filename, meta.size_bytes, meta.sha384_hex, wire)
+    }
+
+    #[staticmethod]
+    pub fn unpack_and_verify(payload: Vec<u8>) -> PyResult<(String, usize, String, Vec<u8>)> {
+        let (meta, content) = unpack_and_verify_document(&payload).map_err(err)?;
+        Ok((meta.filename, meta.size_bytes, meta.sha384_hex, content))
+    }
+}
+
+#[pyclass]
+pub struct CorePtt;
+
+#[pymethods]
+impl CorePtt {
+    #[staticmethod]
+    pub fn package(callsign: &str, frame_count: u32, duration_ms: u32, audio_payload: Vec<u8>) -> Vec<u8> {
+        crate::ptt::package_ptt_burst(callsign, frame_count, duration_ms, &audio_payload)
+    }
+
+    #[staticmethod]
+    pub fn unpack(payload: Vec<u8>) -> PyResult<(String, u32, u32, Vec<u8>)> {
+        let b = crate::ptt::unpack_ptt_burst(&payload).map_err(err)?;
+        Ok((b.callsign, b.frame_count, b.duration_ms, b.audio_payload))
+    }
+}
+
+#[pyclass]
+pub struct CoreCot;
+
+#[pymethods]
+impl CoreCot {
+    #[staticmethod]
+    pub fn create_and_format(
+        callsign: &str,
+        event_type: &str,
+        lat: f64,
+        lon: f64,
+        hae: f64,
+        status: &str,
+        stale_offset_secs: u64,
+    ) -> String {
+        let ev = new_event(callsign, event_type, lat, lon, hae, status, stale_offset_secs);
+        format_cot_xml(&ev)
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[staticmethod]
+    pub fn parse(xml: &str) -> PyResult<(String, String, u64, u64, f64, f64, f64, String, String)> {
+        let ev = parse_cot_xml(xml).map_err(err)?;
+        Ok((
+            ev.uid,
+            ev.event_type,
+            ev.time_secs,
+            ev.stale_secs,
+            ev.lat,
+            ev.lon,
+            ev.hae,
+            ev.callsign,
+            ev.status,
+        ))
+    }
+}
+
+#[pyclass]
+pub struct CoreZeroGapPipeline {
+    inner: Option<ZeroGapPipeline>,
+}
+
+#[pymethods]
+impl CoreZeroGapPipeline {
+    #[new]
+    pub fn new(hybrid_root_key: Vec<u8>, is_initiator: bool, stealth: bool) -> PyResult<Self> {
+        let a = psk32(hybrid_root_key)?;
+        let inner = ZeroGapPipeline::new(&a, is_initiator, stealth).map_err(err)?;
+        Ok(Self { inner: Some(inner) })
+    }
+
+    pub fn rotate_epoch(&mut self) -> PyResult<u64> {
+        let pipe = self.inner.as_mut().ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
+        pipe.rotate_epoch().map_err(err)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn seal(
+        &mut self,
+        plaintext: Vec<u8>,
+        msg_type: u8,
+        clearance: u8,
+        ratchet: &mut CoreRatchet,
+        peer_p: Vec<u8>,
+        peer_ek: Vec<u8>,
+    ) -> PyResult<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, u64, Vec<u8>)> {
+        if peer_p.len() != crate::kem::P384_PK {
+            return Err(PyValueError::new_err("peer_p must be 97 bytes"));
+        }
+        let mut px = [0u8; crate::kem::P384_PK];
+        px.copy_from_slice(&peer_p);
+
+        let pipe = self.inner.as_mut().ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
+        let r = ratchet.inner.as_mut().ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
+        let clr = ClearanceLevel::from_u8(clearance).map_err(err)?;
+
+        let (step, wire_frame) = pipe.seal(&plaintext, msg_type, clr, r, &px, &peer_ek).map_err(err)?;
+
+        Ok((
+            step.eph_p_pub.to_vec(),
+            step.ml_ct,
+            step.next_p_pub.to_vec(),
+            step.next_ek,
+            step.epoch,
+            wire_frame,
+        ))
+    }
+
+    pub fn open(
+        &mut self,
+        wire_frame: Vec<u8>,
+        ratchet: &mut CoreRatchet,
+        peer_eph_p: Vec<u8>,
+        peer_ml_ct: Vec<u8>,
+    ) -> PyResult<(u8, Vec<u8>)> {
+        if peer_eph_p.len() != crate::kem::P384_PK {
+            return Err(PyValueError::new_err("peer_eph_p must be 97 bytes"));
+        }
+        let mut px = [0u8; crate::kem::P384_PK];
+        px.copy_from_slice(&peer_eph_p);
+
+        let pipe = self.inner.as_mut().ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
+        let r = ratchet.inner.as_mut().ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
+
+        pipe.open(&wire_frame, r, &px, &peer_ml_ct).map_err(err)
+    }
+
+    #[staticmethod]
+    pub fn derive_war_key(master_secret: Vec<u8>, info: Vec<u8>) -> PyResult<Vec<u8>> {
+        let key = derive_war_key_sha512(&master_secret, &info).map_err(err)?;
+        Ok(key.to_vec())
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<CoreMmhs>()?;
+    m.add_class::<CoreNc3>()?;
+    m.add_class::<CoreReassemblyBuffer>()?;
+    m.add_class::<CoreFragmenter>()?;
+    m.add_class::<CoreDocTransfer>()?;
+    m.add_class::<CorePtt>()?;
+    m.add_class::<CoreCot>()?;
+    m.add_class::<CoreZeroGapPipeline>()?;
     m.add_class::<CoreMldsaSigner>()?;
     m.add_class::<CoreKexResponder>()?;
     m.add_class::<CoreKexInitiator>()?;

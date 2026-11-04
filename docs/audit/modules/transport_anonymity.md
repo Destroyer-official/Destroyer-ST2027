@@ -1,6 +1,6 @@
 # Module Documentation: Transport Anonymity and Traffic Shaping Subsystem (`transport_anonymity`)
 
-## 1. Module Name & Purpose
+## 1. Purpose
 
 - **Module Name:** `transport_anonymity`
 - **Subsystem Classification:** Traffic Analysis Countermeasures, Overlay Transport, Constant-Rate Cell Shaping, Wire Camouflage, and Dual-Person Authorization
@@ -86,7 +86,7 @@
 
 ---
 
-## 3. Data Formats & Byte Layouts
+## 3. Data Formats and Byte Layouts
 
 ### 3.1. `transport_anonymity.py` Wire Cell Layout
 1. **Plain Cell Layout (`CELL_PLAIN = 1216` bytes at `:91`):**
@@ -135,7 +135,7 @@
 
 ---
 
-## 4. Algorithms & Pinned Libraries
+## 4. Algorithms and Pinned Libraries
 
 1. **AES-256-GCM (NIST SP 800-38D):**
    - Bulk wire cell encryption and authentication in `transport_anonymity.py`. Key: 32 bytes, Tag: 16 bytes.
@@ -152,7 +152,7 @@
 
 ---
 
-## 5. Dependencies
+## 5. Dependencies and Hardware Requirements
 
 ### 5.1. External Dependencies
 - `cryptography` (hazmat primitives: `AESGCM`, `ChaCha20Poly1305`, `hashes`, `HKDF`).
@@ -187,7 +187,7 @@
 
 ---
 
-## 7. Configuration / Environment Variables
+## 7. Configuration and Environment Variables
 
 | Variable Name | Defined In File | Default Value | Technical Purpose & Impact |
 |:---|:---|:---|:---|
@@ -207,7 +207,7 @@
 
 ---
 
-## 8. Tests Covered & Not Covered
+## 8. Tests Covered and Not Covered
 
 ### 8.1. Tests Covered (Directly Executed and Verified)
 - `tests/test_spo_dpo.py` (8 passed in 0.8s):
@@ -229,7 +229,7 @@
 
 ---
 
-## 9. Not Implemented / Stubs
+## 9. Not Implemented / External Dependencies
 
 1. **Physical Two-Person Presence in `spo_dpo.py:22-25`:**
    - Software cannot prove two distinct human beings are physically present in the room; `spo_dpo.py` enforces a dual-signature cryptographic protocol between two hardware tokens, noting that true physical presence requires external administrative controls.
@@ -238,7 +238,7 @@
 
 ---
 
-## 10. Known Limitations
+## 10. Known Limitations and Residual Risks
 
 1. **Shaped Channel Bandwidth Cap:**
    - At a 50 ms tick rate and 1205 bytes of payload per cell, maximum throughput is strictly capped at $\approx 24.1$ KB/s. This makes the shaped transport unsuitable for large bulk file transfers.
@@ -263,7 +263,7 @@
 
 ---
 
-## 12. Open Questions
+## 12. Open Questions for the Author
 
 1. **Subsystem Redundancy:**
    - Are `covert_channel_defense.py` and `metadata_resistance.py` deprecated prototypes that were superseded by `transport_anonymity.py` and `tactical_cloaking_router.py`, or are they slated for future integration?
