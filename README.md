@@ -1,5 +1,5 @@
-# Sovereign Post-Quantum Communications Architecture (ST2027)
-## High-Assurance Zero-Trust Transport Protocol for National Security Systems over Untrusted Networks
+# Post-Quantum Communications Architecture (ST2027)
+## High-Assurance Transport Protocol for National Security Systems over Untrusted Networks
 
 [![Posture: NSA CNSA Suite 2.0 Engineering Baseline](https://img.shields.io/badge/Posture-NSA_CNSA_Suite_2.0_Engineering_Baseline-800000.svg)](https://www.nsa.gov/Cybersecurity/Commercial-National-Security-Algorithm-Suite-2-0/)
 [![Cryptography: NIST FIPS 203 / 204 / 205](https://img.shields.io/badge/Cryptography-FIPS_203_%7C_204_%7C_205-006633.svg)](https://csrc.nist.gov/publications/detail/fips/203/final)
@@ -11,8 +11,8 @@
 ---
 
 ### Document Metadata & Evaluation Boundary
-- **Technical Nomenclature:** Sovereign Transmit 2027 (`Destroyer-ST2027`)
-- **System Classification:** UNCLASSIFIED / DEFENSE TECHNICAL RECORD (All test fixtures and keys are explicitly synthetic).
+- **Technical Nomenclature:** Secure Transmit 2027 (`ST2027`)
+- **System Marking:** UNCLASSIFIED TECHNICAL SPECIFICATION (All test fixtures and keys are explicitly synthetic).
 - **Target Operational Posture:** 2027 NSA Commercial National Security Algorithm (CNSA) Suite 2.0 Mandate, Cryptographic Dual-Person Authorization (DPA), IETF RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange, and seL4 Microkernel Enforced Execution.
 - **Physical vs Software Boundary:** User-space software acts strictly as a **fail-closed gatekeeper** (`TSRequiredError`). Software cannot independently certify physical physics; physical FIPS 140-3 Level 3/4 hardware tamper enclosures, TEMPEST SDIP-27/28/29 attenuation, physical optical unidirectional diodes, and Authorizing Official (AO) ATO certifications require physical facility accreditation and designated hardware.
 
@@ -22,7 +22,7 @@
 
 Modern peer-to-peer and client-server communication channels operating across adversarial public packet networks face two existential threats: contemporary high-rate signals intelligence (traffic analysis, timing correlation, deep packet inspection, and metadata harvesting) and the emergent cryptanalytic threat of quantum computers capable of Shor's and Grover's algorithms (Harvest-Now-Decrypt-Later).
 
-This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Sovereign Transmit 2027 (ST2027)**. ST2027 establishes a zero-trust, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses the same `SecP384r1MLKEM1024` pairing (both halves required, classical-only operation unrepresentable).
+This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Secure Transmit 2027 (ST2027)**. ST2027 establishes a mutually authenticated, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses the same `SecP384r1MLKEM1024` pairing (both halves required, classical-only operation unrepresentable).
 
 The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) is whitened using a tag-derived PRF mask (`ST2027-HEADER-MASK-v1`), authenticated as unmasked AAD by the 16-byte GHASH tag, with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum size class and header fields appear pseudorandom on the wire, while message COUNT is hidden under constant-rate `channel`/chaff cover. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are formally verified in **ProVerif 2.05 symbolic models enforced as a blocking gate in CI** (deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 5); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — executed in Linux CI) and deterministic property doubles green under `cargo test`.
 
@@ -51,7 +51,7 @@ To maintain absolute scientific honesty and avoid any unearned accreditation cla
 
 ---
 
-## 1. System Architectures: Sovereign Pipeline vs. Quarantined Research Prototype
+## 1. System Architectures: Production Pipeline vs. Quarantined Research Prototype
 
 To preserve complete engineering truth and auditability, this repository maintains an absolute architectural separation between the modern 2027 production target and the quarantined historical prototype:
 
@@ -59,7 +59,7 @@ To preserve complete engineering truth and auditability, this repository maintai
 +---------------------------------------------------------------------------------------------------------+
 |                                    REPOSITORY ARCHITECTURAL REALITY                                     |
 +---------------------------------------------------------------------------------------------------------+
-| [A] THE 2027 SOVEREIGN DEFENSE PIPELINE (ST2027 - ACTIVE PRODUCTION TARGET)                             |
+| [A] THE 2027 PRODUCTION DEFENSE PIPELINE (ST2027 - ACTIVE PRODUCTION TARGET)                             |
 |   ├── Python Master Orchestrator: secure_transmit_2027.py                                               |
 |   ├── Standalone Zero-Python Binary: rust_data_plane/src/main.rs (secure-transmit CLI & daemon)          |
 |   ├── Rust Secure Core & Data Plane: rust_data_plane/src/lib.rs (destroyer_core PyO3 native module)     |
@@ -86,9 +86,9 @@ To preserve complete engineering truth and auditability, this repository maintai
 
 **Evaluation boundary (read before citing):** This software is an engineering baseline designed to meet the technical specifications of CNSA 2.0. It has not undergone accredited laboratory evaluation (FIPS 140-3 CMVP / Common Criteria) and does not possess a government Authority to Operate (ATO).
 
-**Messenger-path honesty (production entry point):** the only supported production network path is `secure_p2p.py node --role initiator|responder --psk-file FILE --auth-sk-file FILE --peer-auth-pk-file FILE`. It runs the native Rust data plane with **SecP384r1MLKEM1024** (P-384 + ML-KEM-1024), **pinned mutual ML-DSA-87** transcript authentication, a 32-byte PSK as an additional factor, **AES-256-GCM**, and **SHA-384 / HKDF-SHA384**. PSK-only KEX is refused outside explicit `--lab` mode, and simulated NC3/EAM/PTT surfaces are disabled on the production path. Legacy `SecureP2PChat` (`chat`/`monolith`), `demo`, and `web` remain quarantined behind `--lab`.
+**Messenger-path honesty (production entry point):** the only supported production network path is `secure_p2p.py node --role initiator|responder --psk-file FILE --auth-sk-file FILE --peer-auth-pk-file FILE`. It runs the native Rust data plane with **SecP384r1MLKEM1024** (P-384 + ML-KEM-1024), **pinned mutual ML-DSA-87** transcript authentication, a 32-byte PSK as an additional factor, **AES-256-GCM**, and **SHA-384 / HKDF-SHA384**. PSK-only KEX is refused outside explicit `--lab` mode, and simulated dual-authorization EAM/PTT surfaces are disabled on the production path. Legacy `SecureP2PChat` (`chat`/`monolith`), `demo`, and `web` remain quarantined behind `--lab`.
 
-No software-only system can guarantee "nuclear-code" security. This code has **not** undergone FIPS 140-3 CMVP validation, Common Criteria evaluation, or an independent cryptographic audit, and it does not replace hardware key custody (TPM/HSM), TEMPEST shielding, two-person integrity procedures, or a government ATO. See `docs/ST2027_MUTUAL_AUTH_HARDENING.md` for the protocol, threat model, and residual risks.
+No software-only system can guarantee absolute physical security or bypass hardware limits. This code has **not** undergone FIPS 140-3 CMVP validation, Common Criteria evaluation, or an independent cryptographic audit, and it does not replace hardware key custody (TPM/HSM), records of emissions security, two-person integrity procedures, or a government ATO. See `docs/ST2027_MUTUAL_AUTH_HARDENING.md` for the protocol, threat model, and residual risks.
 
 **Security gates (fail-closed; every escape hatch in one table):** production (`P2P_PRODUCTION=1`, sticky at import) refuses weaker paths unless the listed opt-in is explicitly set. Setting an opt-in in production is an intentional downgrade — log it, time-limit it, and remove it.
 
@@ -101,13 +101,13 @@ No software-only system can guarantee "nuclear-code" security. This code has **n
 | Missing `unified_secure_pipeline` | Refused in prod | `RuntimeError`, no legacy path | none (lab only) |
 | Rust KEX without PSK | Refused in prod/TS | fail, `--psk` required | none (lab: verify SAS OOB) |
 | Rust KEX without mutual ML-DSA-87 | Refused outside `--lab` | fail, `--auth-sk-file` + `--peer-auth-pk-file` required | `--lab` only (PSK-only, lower assurance) |
-| Simulated NC3/EAM/PTT surfaces | Disabled in production | command refused | `--lab` only |
+| Simulated dual-authorization EAM/PTT surfaces | Disabled in production | command refused | `--lab` only |
 | TLS `verify_certs=False` / TLS < 1.3 | Refused in prod | `ValueError` / TLS 1.3 floor | none (lab only) |
 | Config without CNSA sig (Ed25519-only) | Refused in prod (sticky) | `ConfigurationError` | none (lab only) |
 | HQC-256 (vuln oqs.dll) | Refused everywhere | `RuntimeError` | `P2P_ENABLE_VULN_HQC=1` (reserve only) |
 | DPO same-channel approvals | Allowed (lab); distinct enforced if both given | — | `P2P_DPO_REQUIRE_CHANNELS=1` to require |
 | Handshake-bound AD | Opt-in, warn in prod | warning once | `P2P_REQUIRE_HANDSHAKE_BINDING=1` to require |
-| DPO for TOP SECRET | Always required | `AuthorizationError` otherwise | none |
+| Dual-person authorization for strict profile | Always required | `AuthorizationError` otherwise | none |
 
 ### Production quick start (mutual ML-DSA-87)
 
@@ -176,7 +176,7 @@ The security architecture is formally specified against a multidimensional threa
 
 ```
 +=========================================================================================================+
-|                                2027 TOP SECRET COMMUNICATIONS STACK                                     |
+|                                2027 HIGH-ASSURANCE COMMUNICATIONS STACK                                     |
 +=========================================================================================================+
 | [PILLAR 5] TRUST ANCHOR & OPERATIONAL KEY MANAGEMENT (trust_anchor.py)                                   |
 |   ├── 3-of-5 Threshold ML-DSA-87 Root CA (NOT Shamir secret sharing: 5 independent ML-DSA-87 custodian  |
@@ -186,7 +186,7 @@ The security architecture is formally specified against a multidimensional threa
 |   └── Strict Amnesia / Zero-Plaintext-Disk Profile (Fail-closed on any non-volatile key persistence)    |
 +---------------------------------------------------------------------------------------------------------+
 | [PILLAR 4] NETWORK TRANSPORT & ANONYMITY (transport_anonymity.py & spo_dpo.py)                         |
-|   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS resolution or Interface-Pinned Sovereign APN)    |
+|   ├── Mandatory Overlay (Tor v3 SOCKS5 with remote DNS resolution or Interface-Pinned APN)    |
 |   ├── Constant-Rate (50ms tick) Constant-Size (1232B cell / 1280B IPv6 MTU) Traffic Shaping             |
 |   ├── Python anonymity cells: header inside AES-GCM; Rust frames: quanta-      |
 |   │   padded + tag-derived header masking (only size class observable)          |
@@ -211,7 +211,7 @@ The security architecture is formally specified against a multidimensional threa
 |   ├── TPM device key is ECDSA-P256 (NOT post-quantum, attestation-identity only — never covers data/   |
 |   │   session keys); ML-DSA-87 hardware custody only via PKCS#11 HSM (see cng_platform.py, trust_anchor.py) |
 |   ├── Physical RED / BLACK Interface Separation (psutil live NIC bind enforcement, no wildcards)        |
-|   ├── TEMPEST/SCIF host-state probe ONLY (checks facility records/host posture — NOT RF-emanation        |
+|   ├── Emissions-security records probe ONLY (checks operator facility records/host posture — this software does not measure or provide emissions security        |
 |   │   certification; SDIP-27/28/29 attenuation requires accredited lab/facility, never software)          |
 |   ├── Active Multi-Trigger Zeroization Mesh (Debugger, TPM PCR drift, Heartbeat loss, ML-DSA-87 duress) |
 |   └── Hardware Optical Data Diode Gate (Simplex UDP-only unacknowledged transfer framing)                |
@@ -223,7 +223,7 @@ The security architecture is formally specified against a multidimensional threa
 - **FIPS 140-3 Cryptographic Module Gate:** Dynamically validates that OpenSSL 3.1+ FIPS Provider (e.g. CMVP Certificate #4985) is loaded into the process memory space. If the provider is missing or fails integrity verification, initialization aborts with `TSRequiredError`.
 - **Non-Exportable Hardware Key Storage:** Leverages Windows Cryptography Next Generation (CNG) `Microsoft Platform Crypto Provider` and PKCS#11 HSM middleware. Private signing keys are bound to physical TPM 2.0 silicon; keys are physically incapable of being exported or read into general-purpose RAM.
 - **Physical RED/BLACK Network Separation:** Validates physical network adapter assignments via `psutil`. Binds strictly to accredited RED (plaintext processing) or BLACK (ciphertext transport) interfaces. Binds to wildcard addresses (`0.0.0.0`, `::`) are explicitly rejected.
-- **TEMPEST & SCIF Facility Registry (host-state probe ONLY):** Checks host facility records against NATO SDIP-27/28/29 labels. Software cannot certify RF emanations, shielding effectiveness, or separation distances — those require accredited lab/facility evaluation.
+- **Emissions-Security Records Registry (host-state probe ONLY):** Checks operator facility records against NATO SDIP-27/28/29 labels. Software cannot certify RF emanations, shielding effectiveness, or separation distances — those require accredited lab/facility evaluation.
 - **Active Multi-Trigger Zeroization Mesh:** Real-time tamper engine listening to debugger attachment (`CheckRemoteDebuggerPresent`), TPM PCR register deviation, heartbeat timeout, and authenticated ML-DSA-87 signed duress messages. Implements volatile in-memory zeroization via OS-level memory locking (`VirtualLock`/`mlock`) and compiler memory fences (`compiler_fence(SeqCst)`) across all registered buffers.
 
 ### Pillar 2: Operating System & Execution Runtime Layer
@@ -343,7 +343,7 @@ The ST2027 documentation suite is authored as an interconnected defense research
          ┌──────────────────────────────┬─────────────┴─────────────┬──────────────────────────────┐
          ▼                              ▼                           ▼                              ▼
    [RESEARCH TRACK 1]            [RESEARCH TRACK 2]          [RESEARCH TRACK 3]             [RESEARCH TRACK 4]
- Architecture & Strategy       Formal Verification & PQC     Doctrine, NC3 & CONOPS         Security Policies & CC
+ Architecture & Strategy       Formal Verification & PQC     Dual-Authorization & CONOPS         Security Policies & CC
  - ARCHITECTURE.md             - formal/README.md            - MILITARY_NC3_GUIDE.md        - FIPS_140_3_POLICY.md
  - SOVEREIGN_SPEC_PLAN.md      - st2027_handshake.pv         - CONOPS_TACTICAL.md           - NIAP_CC_TARGET.md
  - COMPETITOR_ANALYSIS.md      - st2027_pcs.pv               - KEY_CEREMONY.md              - EVALUATION_DOSSIER.md
@@ -396,8 +396,8 @@ The ST2027 documentation suite is authored as an interconnected defense research
 4. **[`docs/formal/handshake_model.pv`](docs/formal/handshake_model.pv):** Baseline handshake structural verification model.
 5. **[`rust_data_plane/tests/kani_harness.rs`](rust_data_plane/tests/kani_harness.rs):** 6 `#[kani::proof]` harnesses (`kani_cookie_gate_stateless_verification`, `kani_frame_split_reassemble_roundtrip`, `kani_nonce_domain_separation`, `kani_replay_window_monotonic`, `kani_max_stream_bytes_cap`, `kani_nostd_frame_parse_never_panics` — defined; execution requires the Kani + CBMC toolchain) plus 8 deterministic property doubles green under `cargo test` (`cookie_gate_stateless_verification`, `frame_split_reassemble_roundtrip_bounded`, `nonce_domain_separation`, `replay_window_monotonic_and_drops`, `ct_eq_and_select_no_secret_branch`, `max_stream_bytes_cap_enforced`, `nostd_frame_parse_never_panics_property_sweep`, `nostd_stack_secret_ct_eq_property_sweep`); the 34-test harness binary additionally re-runs re-exported module unit tests.
 
-### 6.3 Research Track 3: High-Consequence Military Operations, Doctrine & NC3 Protocols
-1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD Directive S-5210.41M Two-Person Integrity deployment manual.
+### 6.3 Research Track 3: High-Consequence Operations, Multi-Party Authorization & Operational Runbooks
+1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Dual-Authorization Command (NC3) / DoD Directive S-5210.41M Two-Person Integrity deployment manual.
 2. **[`docs/CONOPS_TACTICAL_DEPLOYMENT.md`](docs/CONOPS_TACTICAL_DEPLOYMENT.md):** Concept of Operations for forward tactical deployment across DDIL networks and CJADC2 environments.
 3. **[`docs/KEY_CEREMONY.md`](docs/KEY_CEREMONY.md):** Standard Operating Procedure for offline 3-of-5 threshold ML-DSA-87 Root CA key generation ceremonies.
 4. **[`docs/KEY_MANAGEMENT_PLAN_KMP.md`](docs/KEY_MANAGEMENT_PLAN_KMP.md):** Comprehensive cryptographic key lifecycle plan (generation, storage, escrow, revocation, zeroization) compliant with NIST SP 800-57 Part 1 Rev 5.
@@ -450,7 +450,7 @@ The ST2027 documentation suite is authored as an interconnected defense research
 24. **[`docs/modules/secure_p2p.md`](docs/modules/secure_p2p.md):** Secure P2P Communications — High-level peer handshake state machine, session establishment, and multiplexed stream channels.
 25. **[`docs/modules/subsystems_core.md`](docs/modules/subsystems_core.md):** Core Subsystems — Cryptographic serialization formats, protocol frame encapsulation, and session state persistence.
 26. **[`docs/modules/subsystems_support.md`](docs/modules/subsystems_support.md):** Support Subsystems — Remote syslog/SIEM log forwarders, platform health telemetry, and background watchdog timers.
-27. **[`docs/modules/trust_policy.md`](docs/modules/trust_policy.md):** Zero-Trust Policy Engine — Real-time dynamic authorization rules, peer posture evaluation, and access control gating.
+27. **[`docs/modules/trust_policy.md`](docs/modules/trust_policy.md):** Continuous Policy Enforcement Engine — Real-time dynamic authorization rules, peer posture evaluation, and access control gating.
 
 ### 6.7 Research Track 7: Master Engineering Compendiums & Defense Security Audits
 1. **[`docs/SYSTEM_SECURITY_DOCUMENTATION.md`](docs/SYSTEM_SECURITY_DOCUMENTATION.md) (Volume A — 64,000+ lines):** The master engineering record detailing Tier 0 through Tier 7 architectures, mathematical formulations of post-quantum primitives, pairwise and group sequence diagrams, the fail-closed policy catalog, and wire formats.
@@ -491,7 +491,7 @@ To facilitate navigation across defense agencies, evaluators, and operators, the
   Follow: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) $\to$ [`docs/ST2027_SPEC.md`](docs/ST2027_SPEC.md) $\to$ [`docs/formal/README.md`](docs/formal/README.md) $\to$ [`docs/formal/st2027_handshake.pv`](docs/formal/st2027_handshake.pv) $\to$ [`rust_data_plane/tests/kani_harness.rs`](rust_data_plane/tests/kani_harness.rs).
 * **Trajectory Bravo: Authorizing Official (AO) & ATO Compliance Assessment:**
   Follow: [`docs/FIPS_140_3_SECURITY_POLICY.md`](docs/FIPS_140_3_SECURITY_POLICY.md) $\to$ [`docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md`](docs/NIAP_COMMON_CRITERIA_SECURITY_TARGET.md) $\to$ [`docs/EVALUATION_DOSSIER.md`](docs/EVALUATION_DOSSIER.md) $\to$ [`compliance_reports/oscal_ssp_cnsa2.json`](compliance_reports/oscal_ssp_cnsa2.json) $\to$ [`compliance_reports/defense_master_audit_receipt.json`](compliance_reports/defense_master_audit_receipt.json).
-* **Trajectory Charlie: High-Consequence NC3 & Dual-Custody Doctrine:**
+* **Trajectory Charlie: High-Consequence Dual-Authorization & Dual-Custody Procedures:**
   Follow: [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md) $\to$ [`docs/KEY_CEREMONY.md`](docs/KEY_CEREMONY.md) $\to$ [`docs/KEY_MANAGEMENT_PLAN_KMP.md`](docs/KEY_MANAGEMENT_PLAN_KMP.md) $\to$ [`docs/modules/critical_release.md`](docs/modules/critical_release.md).
 * **Trajectory Delta: Systems Engineering & Forward Tactical Deployment:**
   Follow: [`docs/CONOPS_TACTICAL_DEPLOYMENT.md`](docs/CONOPS_TACTICAL_DEPLOYMENT.md) $\to$ [`docs/deployment_hardening_guide.md`](docs/deployment_hardening_guide.md) $\to$ [`docs/hw_tpm_hsm_setup.md`](docs/hw_tpm_hsm_setup.md) $\to$ [`docs/airgap_runbook.md`](docs/airgap_runbook.md) $\to$ [`docs/modules/rust_data_plane.md`](docs/modules/rust_data_plane.md).
@@ -594,7 +594,7 @@ The platform is backed by the full automated suite (Python suites plus cargo-tes
 
 ### 10.1 Environment Setup
 ```bash
-# Clone the sovereign repository
+# Clone the repository
 git clone https://github.com/Destroyer-official/Destroyer-ST2027.git
 cd Destroyer-ST2027
 
@@ -696,9 +696,9 @@ python secure_transmit_2027.py send \
   --count 0
 ```
 
-### 10.9 Unified Sovereign Military Tactical P2P Node (`destroyer_tactical_p2p.py`)
+### 10.9 Unified Terminal P2P Interface (`destroyer_tactical_p2p.py`)
 
-The unified sovereign node orchestrates the full post-quantum lifecycle, full-duplex hardware pacing, in-band encrypted messaging, simplex optical diode transmission, and emergency zeroization:
+The unified terminal interface orchestrates the full post-quantum lifecycle, full-duplex hardware pacing, in-band encrypted messaging, simplex optical diode transmission, and emergency zeroization:
 
 ```bash
 # Automated Dual-Terminal Verification Drill (100% in-process test):
@@ -743,7 +743,7 @@ Accessible via browser at `http://127.0.0.1:8443`:
 - **Continuous Shannon Entropy Dial**: Real-time chaff-sanity telemetry ($H > 7.95$ bits/byte target; the security property is constant-rate + fixed-size cells, not the entropy statistic).
 - **Dual-Node Enclave Architecture Map**: Real-time link status between NORAD Alpha and Pentagon Bravo.
 - **Mutual Out-of-Band SAS Verification**: Short Authentication String display with confirmation badge.
-- **In-Band Classified Messaging**: Encrypted bidirectional transmission with audio/visual alerts.
+- **In-Band Encrypted Messaging**: Encrypted bidirectional transmission with audio/visual alerts.
 - **MIL-STD-6090 Cursor-on-Target (CoT)**: Dispatcher generating ML-DSA-87 signed situational awareness events.
 - **Simplex Optical Diode Visualizer**: Cauchy-Reed-Solomon $GF(2^8)$ matrix chunking and transmission animation.
 - **Two-Person Integrity (TPI) Zeroize Console**: Dual-key safety switch authorizing NIST SP 800-88 3-pass purge.
@@ -751,7 +751,7 @@ Accessible via browser at `http://127.0.0.1:8443`:
 
 ### 10.11 Confidential Information Transfer Channels & Verification Suite
 
-ST2027 provides 5 independent, fail-closed transport channels engineered for classified information up to TOP SECRET // SCI // NOFORN:
+ST2027 provides 5 independent, fail-closed transport channels engineered for sensitive information up to TOP SECRET // SCI // NOFORN:
 
 1. **Wire-Camouflaged Tactical Comms Channel**:
    - Continuous 20ms hardware cadence with constant 1232B cells and CSPRNG chaff (uniform-looking cover; entropy is a chaff-sanity figure, not the security claim).
@@ -775,10 +775,10 @@ python scripts/run_defense_audit.py
 # 2. Master Tactical Battle-Readiness Drill (100% In-Band Directives & Purge):
 python destroyer_tactical_p2p.py demo
 
-# 3. Comprehensive Multi-Trial Battle Readiness Suite (12/12 Trials Passed):
+# 3. Comprehensive Multi-Trial Integration Test Suite (12/12 Trials Passed):
 python tests/scratch/master_military_battle_readiness_test.py
 
-# 4. 50X Sovereign Defense Superiority Benchmark (5/5 Vectors Verified):
+# 4. Rekey Latency vs RSA-4096 Benchmark (5/5 Vectors Verified):
 python scripts/verify_50x_sovereign_superiority.py
 
 # 5. Reproducible Build Verification & Local Provenance (SLSA-Aligned):
@@ -842,7 +842,7 @@ Capabilities:
 
 ---
 
-## 11. Competitor Architectural Analysis & Sovereign Superiority
+## 11. Architectural Comparison Matrix
 
 For an exhaustive, technical comparison detailing why ST2027 delivers 50X greater security than consumer messaging platforms (Signal, WhatsApp, Telegram) and commercial Cross-Domain Solution (CDS) diodes, refer to:
 * **Detailed White Paper:** [docs/COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md](docs/COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md)
@@ -887,4 +887,4 @@ In compliance with defense engineering ethics, the following boundaries are expl
 ## 14. License & Attribution
 
 - **License:** MIT License — Authorized for defense, national security research, and governmental evaluation.
-- **Attribution:** Developed for high-assurance communications under the Sovereign Transmit 2027 research program.
+- **Attribution:** Developed for high-assurance communications under the Secure Transmit 2027 research program.
