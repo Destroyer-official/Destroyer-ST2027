@@ -305,11 +305,11 @@ try:
     pqc_logger.info("[OK] Hybrid Signatures: ML-DSA-87 (fast) + SLH-DSA-256f (secure)")
     
     # Create aliases for backward compatibility and consistency
-    # These are the PRIMARY implementations - always use hybrid for maximum security
+    # These are the primary implementations configuring hybrid key exchange
     ProductionKEM = HybridKEM  # Primary KEM is now Hybrid
     ProductionSignature = HybridSignature  # Primary Signature is now Hybrid
     
-    pqc_logger.info("[OK] Primary algorithms set to HYBRID for maximum security")
+    pqc_logger.info("[OK] Primary algorithms configured for hybrid key exchange")
     pqc_logger.info("[SECURITY] All operations will use algorithm diversity (lattice + code-based/hash-based)")
     
 except ImportError as e:
@@ -1959,7 +1959,7 @@ class SecurityPolicyEnforcer:
         'HKDF-SHA3_512': {'type': 'KDF', 'security_level': 5, 'quantum_safe': False, 'nist_approved': True}
     }
 
-    # Forbidden algorithms that will be rejected - COMPREHENSIVE LIST
+    # Forbidden algorithms that will be rejected - complete catalog
     FORBIDDEN_ALGORITHMS = [
         # Classical algorithms vulnerable to quantum attacks
         'RSA', 'RSA-1024', 'RSA-2048', 'RSA-3072', 'RSA-4096',
@@ -2234,7 +2234,7 @@ class KeySeparationManager:
                 # Get domain separation info for this context
                 info = cls.KEY_CONTEXTS[context]
 
-                # Use HKDF-SHA3_512 for maximum security
+                # Use HKDF-SHA3-512 key derivation
                 hkdf = HKDF(
                     algorithm=hashes.SHA3_512(),
                     length=key_length,
@@ -2395,7 +2395,7 @@ class HQCCryptoEngine:
     4. Standardization Timeline: NIST IR 8545 provides alternative to FIPS 203
     5. Implementation Diversity: Different attack surfaces and side-channel profiles
 
-    This enables seamless algorithm transition if weaknesses are discovered in
+    This enables cryptographic agility if weaknesses are discovered in
     either ML-KEM or HQC, maintaining system security through crypto-agility.
     """
 
@@ -2487,7 +2487,7 @@ class HQCCryptoEngine:
 
 class CryptoAgilityManager:
     """
-    Cryptographic Agility Manager for seamless algorithm transitions.
+    Cryptographic Agility Manager for modular algorithm transitions.
 
     Implements runtime algorithm selection and fallback mechanisms per
     NIST recommendations for post-quantum cryptographic transitions.
@@ -2779,7 +2779,7 @@ class PostQuantumTestVectors:
         Returns:
             bool: True if all test vectors pass, False otherwise
         """
-        pqc_logger.info("Running comprehensive test vector validation")
+        pqc_logger.info("Running NIST test vector validation")
 
         results = {
             'ML-KEM-1024': cls.validate_ml_kem_implementation(),
@@ -3194,7 +3194,7 @@ class HardcodedKeyScanner:
     """
     Scanner to detect and prevent hardcoded keys, backdoors, and development shortcuts.
 
-    This class implements comprehensive scanning for security violations that could
+    This class implements policy scanning for security violations that could
     compromise NIST Level 5+ security requirements.
     """
 
@@ -3378,7 +3378,7 @@ class HardcodedKeyScanner:
 
 class NISTLevel5Enforcer:
     """
-    Comprehensive NIST Level 5+ security enforcement and validation.
+    NIST Level 5+ security enforcement and validation.
 
     This class provides the main interface for enforcing NIST Level 5+ security
     across all cryptographic operations with no fallbacks to weaker security.
@@ -3389,7 +3389,7 @@ class NISTLevel5Enforcer:
         """
         Initialize and enforce NIST Level 5+ security across all modules.
 
-        This method performs comprehensive security initialization and validation
+        This method performs security parameter initialization and validation
         to ensure the system operates at NIST Level 5+ security with no fallbacks.
 
         Raises:
@@ -3694,7 +3694,7 @@ class EnhancedMLKEM_1024:
 
     This class provides a production-ready implementation of the Module Lattice-based
     Key Encapsulation Mechanism (ML-KEM) at security level 5, as standardized in
-    NIST FIPS 203 (August 2024). The implementation incorporates comprehensive
+    NIST FIPS 203 (August 2024). The implementation incorporates the following
     protections against implementation attacks while maintaining compatibility
     with the baseline ML-KEM-1024 specification.
 
@@ -3770,10 +3770,10 @@ class EnhancedMLKEM_1024:
 
     def __init__(self, use_mceliece: Optional[bool] = None):
         """
-        Initialize ML-KEM-1024 with comprehensive security hardening.
+        Initialize ML-KEM-1024 with security hardening parameters.
 
         Supports standard CNSA 2.0 / NIST FIPS 203 pure ML-KEM-1024 (1568B PK / 1568B CT)
-        for interactive tactical communication, or optional McEliece-8192128f hybrid
+        for interactive P2P communication, or optional McEliece-8192128f hybrid
         hedge (P2P_ENABLE_MCELIECE=1) for deep archival resilience.
 
         Size Specifications:
@@ -3901,7 +3901,7 @@ class EnhancedMLKEM_1024:
         """
         Validate ML-KEM-1024 parameter set against NIST FIPS 203 specification.
 
-        This method performs comprehensive validation of the underlying implementation
+        This method performs validation of the underlying implementation
         to ensure compliance with NIST standardized parameters and prevent
         parameter substitution attacks.
         """
@@ -5008,7 +5008,7 @@ class EnhancedFALCON_1024:
     • FAIL CLOSED SECURITY MODEL
     
     Provides real NIST Level 5 lattice-based signatures using Fast-Fourier transforms
-    over NTRU lattices. Seamlessly supports both raw Falcon-1024 key material and
+    over NTRU lattices. Supports both raw Falcon-1024 key material and
     hybrid signature dictionaries for backward compatibility.
     """
 
@@ -5166,7 +5166,7 @@ class EnhancedFALCON_1024:
     def secure_destroy(self, key_material):
         """Securely erase cryptographic key material from memory.
 
-        Implements comprehensive secure erasure techniques to protect against
+        Implements secure erasure techniques to protect against
         memory disclosure attacks:
 
         1. Multiple overwrite patterns:
@@ -5636,7 +5636,7 @@ class HybridKEX:
 
 class SecurityTest:
     """
-    Comprehensive security testing for PQC implementations.
+    Automated security testing for PQC implementations.
 
     This class provides methods to test for various security properties:
     - Constant-time behavior
@@ -5736,7 +5736,7 @@ class SecurityTest:
     @staticmethod
     def verify_cryptographic_quality(data: bytes) -> tuple:
         """
-        Comprehensive verification of cryptographic quality.
+        Verification of cryptographic parameter quality.
 
         Args:
             data: Byte data to analyze
@@ -6067,7 +6067,7 @@ class SecurityTest:
                 return False
 
             # Return true to pass the test
-            # The comprehensive test for key validation is done in test_comprehensive.py
+            # Extended key validation testing is performed in test suite
             return True
 
         except Exception:
@@ -7030,7 +7030,7 @@ class EnhancedXMSS:
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     • Secure state management to prevent reuse of one-time keys
     • Constant-time operations for side-channel resistance
-    • Comprehensive error handling for state corruption detection using CRC32 checksums
+    • Error handling for state corruption detection using CRC32 checksums
     • Multiple signature format options for interoperability
 
     CAUTION: As a stateful scheme, XMSS requires careful management of signing state.
@@ -7420,7 +7420,7 @@ class EnhancedLMS:
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     • Secure state management to prevent reuse of one-time keys
     • Constant-time operations for side-channel resistance
-    • Comprehensive error handling for state corruption detection using sha3_512 integrity verification
+    • Error handling for state corruption detection using SHA3-512 integrity verification
     • Support for hierarchical signatures for improved scalability
 
     CAUTION: As a stateful scheme, LMS requires careful management of signing state.
@@ -7950,7 +7950,7 @@ class NISTTestVectorValidator:
         Returns:
             Dict[str, bool]: Validation results for each algorithm
         """
-        pqc_logger.info("Starting comprehensive NIST test vector validation")
+        pqc_logger.info("Starting NIST test vector validation")
 
         results = {}
 
