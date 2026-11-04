@@ -485,7 +485,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ### class `CAExchange` (ca_services.py:436) methods:41 — Manages certificate exchange for P2P connections following best practices from RFC 8446 (TLS 1.3) and RFC 5280 (X.509).
 #### `CAExchange.__init__` (ca_services.py:465) — (self, exchange_port_offset, buffer_size, validity_days, key_type, secure_exchange, enable_hpkp, enable_ocsp_stapling, authorized_peer_fingerprints, stealth_knock_token) | branches:ifx9,forx2,tryx2 calls:add,lower,InputValidationError,startswith,SecurityError,all,debug raises:InputValidationError,SecurityError catches:Exception returns:0 — Initialize the certificate exchange manager with security parameters.
-#### `CAExchange.add_authorized_fingerprint` (ca_services.py:587) — (self, fingerprint) | branches:ifx1 calls:lower,add,info returns:0 — Add an authorized peer SHA3-512 fingerprint to the zero-trust whitelist.
+#### `CAExchange.add_authorized_fingerprint` (ca_services.py:587) — (self, fingerprint) | branches:ifx1 calls:lower,add,info returns:0 — Add an authorized peer SHA3-512 fingerprint to the certificate pin whitelist.
 #### `CAExchange.load_authorized_peers` (ca_services.py:594) — (self, file_path) | branches:ifx9,forx3,tryx1 calls:exists,FileNotFoundError,read,startswith,loads,add_authorized_fingerprint,splitlines raises:FileNotFoundError,SecurityError catches:Exception returns:1 — Load authorized peer fingerprints from a JSON or line-delimited text file.
 #### `CAExchange._is_local_or_loopback` (ca_services.py:634) — (target_host) | branches:ifx5,forx2,tryx2 calls:lower,ip_address,net_if_addrs catches:ValueError,Exception returns:5 — Check if target host is loopback, unspecified, link-local, or a local interface of this machine.
 #### `CAExchange._calculate_cert_fingerprint` (ca_services.py:663) — (self, cert_pem) | branches:tryx1 calls:load_pem_x509_certificate,hex,fingerprint,SHA3_512,error,SecurityError raises:SecurityError catches:Exception returns:1 — Calculate sha3_512 fingerprint of a certificate.
@@ -2467,7 +2467,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ## `maximum_security_hardening.py`
 
-### class `MaximumSecurityError` (maximum_security_hardening.py:54) bases:Exception methods:1 — Exception raised when maximum security requirements cannot be met.
+### class `MaximumSecurityError` (maximum_security_hardening.py:54) bases:Exception methods:1 — Exception raised when strict profile requirements cannot be met.
 #### `MaximumSecurityError.__init__` (maximum_security_hardening.py:56) — (self, message, details) | calls:__init__ returns:0
 
 ### class `SecurityRequirementError` (maximum_security_hardening.py:62) bases:Exception methods:1 — Exception raised when a security requirement is not satisfied.
@@ -2475,8 +2475,8 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ### class `SecurityRequirement` (maximum_security_hardening.py:71) methods:0 — Security requirement definition.
 
-### class `MaximumSecurityHardening` (maximum_security_hardening.py:81) methods:20 — Maximum Security Hardening implementation with no fallbacks.
-#### `MaximumSecurityHardening.__init__` (maximum_security_hardening.py:89) — (self) | calls:system,lower,machine,info,_register_security_requirements returns:0 — Initialize maximum security hardening.
+### class `MaximumSecurityHardening` (maximum_security_hardening.py:81) methods:20 — Strict Profile Hardening implementation with no fallbacks.
+#### `MaximumSecurityHardening.__init__` (maximum_security_hardening.py:89) — (self) | calls:system,lower,machine,info,_register_security_requirements returns:0 — Initialize strict profile hardening.
 #### `MaximumSecurityHardening._register_security_requirements` (maximum_security_hardening.py:117) — (self) | branches:ifx1 calls:SecurityRequirement,info returns:0 — Register all mandatory security requirements.
 #### `MaximumSecurityHardening._check_admin_privileges` (maximum_security_hardening.py:203) — (self) | branches:ifx4,tryx1 calls:IsUserAnAdmin,debug,geteuid,warning catches:Exception returns:6 — Check if running with administrator privileges.
 #### `MaximumSecurityHardening._request_admin_privileges` (maximum_security_hardening.py:232) — (self) | branches:ifx2 calls:warning,info returns:1 — Request administrator privileges.
@@ -2494,10 +2494,10 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `MaximumSecurityHardening._enable_memory_protection` (maximum_security_hardening.py:508) — (self) | branches:tryx2 calls:EnhancedDEP,enable_dep,info,warning catches:Exception returns:3 — Enable advanced memory protection.
 #### `MaximumSecurityHardening._check_anti_debugging` (maximum_security_hardening.py:528) — (self) | branches:ifx2,tryx1 calls:detect_debugger catches:ImportError,Exception returns:5 — Check if anti-debugging protection is active.
 #### `MaximumSecurityHardening._enable_anti_debugging` (maximum_security_hardening.py:548) — (self) | branches:tryx1 calls:info,error catches:Exception returns:2 — Enable anti-debugging protection.
-#### `MaximumSecurityHardening.enforce_maximum_security` (maximum_security_hardening.py:559) — (self) | branches:ifx5,forx2 calls:info,check_function,warning,remediation_function,error,critical returns:2 — Enforce maximum security requirements with no fallbacks.
+#### `MaximumSecurityHardening.enforce_maximum_security` (maximum_security_hardening.py:559) — (self) | branches:ifx5,forx2 calls:info,check_function,warning,remediation_function,error,critical returns:2 — Enforce strict profile requirements with no fallbacks.
 #### `MaximumSecurityHardening.get_security_status` (maximum_security_hardening.py:616) — (self) | calls:isoformat,all,copy,sum returns:1 — Get comprehensive security status.
-#### `enforce_maximum_security_or_fail` (maximum_security_hardening.py:630) — () | branches:ifx1,tryx1 calls:MaximumSecurityHardening,enforce_maximum_security,info,critical,exit catches:Exception returns:1 — Enforce maximum security or fail the application.
-#### `main` (maximum_security_hardening.py:654) — () | branches:tryx1 calls:info,enforce_maximum_security_or_fail,get_security_status,error,exit catches:SystemExit,Exception returns:0 — Main function for testing maximum security hardening.
+#### `enforce_maximum_security_or_fail` (maximum_security_hardening.py:630) — () | branches:ifx1,tryx1 calls:MaximumSecurityHardening,enforce_maximum_security,info,critical,exit catches:Exception returns:1 — Enforce strict profile or fail the application.
+#### `main` (maximum_security_hardening.py:654) — () | branches:tryx1 calls:info,enforce_maximum_security_or_fail,get_security_status,error,exit catches:SystemExit,Exception returns:0 — Main function for testing strict profile hardening.
 
 ## `memory_manager.py`
 
@@ -2603,7 +2603,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 ### class `AdvancedSecurityEnhancements` (memory_manager.py:1447) methods:9 — Advanced Security Enhancements for achieving 100% security compliance.
 #### `AdvancedSecurityEnhancements.__init__` (memory_manager.py:1455) — (self) | calls:_initialize_advanced_features,info returns:0 — Initialize advanced security enhancements.
 #### `AdvancedSecurityEnhancements._initialize_advanced_features` (memory_manager.py:1467) — (self) | branches:tryx1 calls:_enable_maximum_hardening,_initialize_quantum_protections,_enable_advanced_memory_protections,_initialize_side_channel_protections,_enable_fault_injection_protections,info,error catches:Exception returns:0 — Initialize all advanced security features.
-#### `AdvancedSecurityEnhancements._enable_maximum_hardening` (memory_manager.py:1490) — (self) | calls:info returns:0 — Enable maximum security hardening.
+#### `AdvancedSecurityEnhancements._enable_maximum_hardening` (memory_manager.py:1490) — (self) | calls:info returns:0 — Enable strict profile hardening.
 #### `AdvancedSecurityEnhancements._initialize_quantum_protections` (memory_manager.py:1505) — (self) | calls:info returns:0 — Initialize quantum-resistant protections.
 #### `AdvancedSecurityEnhancements._enable_advanced_memory_protections` (memory_manager.py:1517) — (self) | calls:info returns:0 — Enable advanced memory protections.
 #### `AdvancedSecurityEnhancements._initialize_side_channel_protections` (memory_manager.py:1532) — (self) | calls:info returns:0 — Initialize side-channel attack protections.
@@ -2927,7 +2927,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `NC3CommandController.__init__` (nc3_nuclear_command.py:445) — (self) | calls:EnhancedMLDSA_87,_load_eam_journal returns:0
 #### `NC3CommandController._load_eam_journal` (nc3_nuclear_command.py:450) — (self) | branches:ifx2,forx1,tryx1 calls:exists,add catches:Exception returns:1
 #### `NC3CommandController._record_processed_eam` (nc3_nuclear_command.py:464) — (self, eam_id) | branches:tryx1 calls:add,makedirs,dirname,write catches:Exception returns:0
-#### `NC3CommandController.generate_officer_credentials` (nc3_nuclear_command.py:475) — (officer_id, rank, duty_title) | calls:EnhancedMLDSA_87,keygen,OfficerIdentity returns:1 — Generate sovereign ML-DSA-87 keypair for an authorized strategic officer.
+#### `NC3CommandController.generate_officer_credentials` (nc3_nuclear_command.py:475) — (officer_id, rank, duty_title) | calls:EnhancedMLDSA_87,keygen,OfficerIdentity returns:1 — Generate operator-controlled ML-DSA-87 keypair for an authorized strategic officer.
 #### `NC3CommandController._compute_canonical_digest` (nc3_nuclear_command.py:488) — (eam_id, timestamp_utc, validity_window, directive_code, target_command, encrypted_pal, salt_b64, nonce_b64, classification, hw_auth_digest_hex, vss_commitment_hex) | branches:ifx2 calls:sha3_512,update,pack,float,digest returns:1 — Computes unambiguous SHA3-512 canonical digest over immutable message fields.
 #### `NC3CommandController._compute_hw_auth_digest` (nc3_nuclear_command.py:521) — (challenge_id, server_nonce, officer_id, token_id, client_nonce, timestamp_utc, tpm_pcr_composite) | branches:ifx1 calls:sha3_512,update,pack,float,digest returns:1 — Computes unambiguous SHA3-512 challenge transcript for physical hardware token authorization.
 #### `NC3CommandController.issue_hardware_challenge` (nc3_nuclear_command.py:544) — (self, expiry_seconds) | calls:HardwareChallenge,token_hex,token_bytes,timestamp returns:1 — Issues an ephemeral hardware challenge requiring physical cryptographic token response.
@@ -4747,7 +4747,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `SecureP2PChat.__init__` (secure_p2.py:2123) — (self, identity, ephemeral, in_memory_only, key_lifetime, security_level, profile_file, port, anonymous, authorized_peer_fingerprint, authorized_peers_file) | branches:ifx10,tryx10 calls:_load_heavy_modules,SimpleP2PChat,initialize_audit_system,log_event,SecureFileHandler,SecureFileTransferManager,initialize_threat_detection raises:SecurityError catches:Exception,ImportError returns:0 — Initialize the secure P2P chat system with NIST Level-5 post-quantum security.
 #### `SecureP2PChat._initialize_security_hardening_manager` (secure_p2.py:2539) — (self) | branches:ifx4,forx1,tryx1 calls:SecurityHardeningManager,info,MonitoringConfig,ProcessMonitorManager,start_monitoring,debug,getpid catches:ImportError,Exception returns:0 — Initialize the SecurityHardeningManager for coordinated security management.
 #### `SecureP2PChat._initialize_fallback_security_components` (secure_p2.py:2646) — (self) | calls:SecurityError raises:SecurityError returns:0 — MILITARY ENFORCEMENT: Fallback security components are strictly forbidden.
-#### `SecureP2PChat._enforce_maximum_security` (secure_p2.py:2654) — (self) | branches:ifx1,tryx2 calls:info,enforce_maximum_security_or_fail,enable_full_logging,EnhancedUserManager,EnhancedPeerManager,create_ephemeral_user,error raises:SecurityError catches:Exception,SystemExit,ImportError returns:0 — Enforce maximum security requirements with no fallbacks.
+#### `SecureP2PChat._enforce_maximum_security` (secure_p2.py:2654) — (self) | branches:ifx1,tryx2 calls:info,enforce_maximum_security_or_fail,enable_full_logging,EnhancedUserManager,EnhancedPeerManager,create_ephemeral_user,error raises:SecurityError catches:Exception,SystemExit,ImportError returns:0 — Enforce strict profile requirements with no fallbacks.
 #### `SecureP2PChat._enable_anti_debugging` (secure_p2.py:2726) — (self) | branches:ifx3,tryx1 calls:lower,info,detect_debugger,critical,_emergency_wipe,emergency_security_response,exit catches:Exception returns:3 — Enable anti-debugging protection using ptrace detection to prevent reverse engineering
 #### `SecureP2PChat._start_debugger_detection_thread` (secure_p2.py:2763) — (self) | branches:ifx5,whilex1,tryx2 calls:lower,info,warning,randbelow,detect_debugger,critical,_emergency_wipe catches:Exception returns:2 — Start a background thread that periodically checks for debuggers.
 #### `SecureP2PChat._initialize_security_validation_framework` (secure_p2.py:2823) — (self) | branches:ifx1,tryx1 calls:info,SecurityError,_start_runtime_security_monitoring,_register_all_security_validators,_setup_periodic_security_validation,critical raises:SecurityError catches:Exception returns:0 — Initialize the Security Validation Framework for NIST Level 5+ compliance.
@@ -4965,7 +4965,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `SecureP2PChat.__init__` (secure_p2p.py:2123) — (self, identity, ephemeral, in_memory_only, key_lifetime, security_level, profile_file, port, anonymous, authorized_peer_fingerprint, authorized_peers_file) | branches:ifx10,tryx10 calls:_load_heavy_modules,SimpleP2PChat,initialize_audit_system,log_event,SecureFileHandler,SecureFileTransferManager,initialize_threat_detection raises:SecurityError catches:Exception,ImportError returns:0 — Initialize the secure P2P chat system with NIST Level-5 post-quantum security.
 #### `SecureP2PChat._initialize_security_hardening_manager` (secure_p2p.py:2539) — (self) | branches:ifx4,forx1,tryx1 calls:SecurityHardeningManager,info,MonitoringConfig,ProcessMonitorManager,start_monitoring,debug,getpid catches:ImportError,Exception returns:0 — Initialize the SecurityHardeningManager for coordinated security management.
 #### `SecureP2PChat._initialize_fallback_security_components` (secure_p2p.py:2646) — (self) | calls:SecurityError raises:SecurityError returns:0 — MILITARY ENFORCEMENT: Fallback security components are strictly forbidden.
-#### `SecureP2PChat._enforce_maximum_security` (secure_p2p.py:2654) — (self) | branches:ifx1,tryx2 calls:info,enforce_maximum_security_or_fail,enable_full_logging,EnhancedUserManager,EnhancedPeerManager,create_ephemeral_user,error raises:SecurityError catches:Exception,SystemExit,ImportError returns:0 — Enforce maximum security requirements with no fallbacks.
+#### `SecureP2PChat._enforce_maximum_security` (secure_p2p.py:2654) — (self) | branches:ifx1,tryx2 calls:info,enforce_maximum_security_or_fail,enable_full_logging,EnhancedUserManager,EnhancedPeerManager,create_ephemeral_user,error raises:SecurityError catches:Exception,SystemExit,ImportError returns:0 — Enforce strict profile requirements with no fallbacks.
 #### `SecureP2PChat._enable_anti_debugging` (secure_p2p.py:2726) — (self) | branches:ifx3,tryx1 calls:lower,info,detect_debugger,critical,_emergency_wipe,emergency_security_response,exit catches:Exception returns:3 — Enable anti-debugging protection using ptrace detection to prevent reverse engineering
 #### `SecureP2PChat._start_debugger_detection_thread` (secure_p2p.py:2763) — (self) | branches:ifx5,whilex1,tryx2 calls:lower,info,warning,randbelow,detect_debugger,critical,_emergency_wipe catches:Exception returns:2 — Start a background thread that periodically checks for debuggers.
 #### `SecureP2PChat._initialize_security_validation_framework` (secure_p2p.py:2823) — (self) | branches:ifx1,tryx1 calls:info,SecurityError,_start_runtime_security_monitoring,_register_all_security_validators,_setup_periodic_security_validation,critical raises:SecurityError catches:Exception returns:0 — Initialize the Security Validation Framework for NIST Level 5+ compliance.
@@ -5895,7 +5895,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ## `test_2028_national_security_remediations.py`
 
-### class `TestZeroTrustRBAC` (test_2028_national_security_remediations.py:55) bases:TestCase methods:5 — Test 1: Zero-Trust Role-Based Access Control and Granular Authorization.
+### class `TestZeroTrustRBAC` (test_2028_national_security_remediations.py:55) bases:TestCase methods:5 — Test 1: Mutual Authentication Role-Based Access Control and Granular Authorization.
 #### `TestZeroTrustRBAC.setUp` (test_2028_national_security_remediations.py:58) — (self) | calls:RBACPolicyEngine returns:0
 #### `TestZeroTrustRBAC.test_operator_least_privilege` (test_2028_national_security_remediations.py:61) — (self) | calls:assign_role,assertTrue,check_permission,assertFalse,assertRaises,enforce_permission returns:0 — Operators can send chat and files, but never NC3 or emergency release.
 #### `TestZeroTrustRBAC.test_commander_privileges` (test_2028_national_security_remediations.py:76) — (self) | calls:assign_role,assertTrue,check_permission returns:0 — Commanders hold NC3 launch and emergency release authorization.
@@ -6647,7 +6647,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `TestActiveCyberDefenseSuite.test_acd_playbook_execution_and_thresholds` (test_phase4_ato_redteam_siem.py:276) — (self, tmp_path) | branches:forx2 calls:ActiveCyberDefenseEngine,ingest_event,is_peer_quarantined,is_session_severed,is_source_blocked returns:0
 #### `TestActiveCyberDefenseSuite.test_acd_report_signing_and_verification` (test_phase4_ato_redteam_siem.py:313) — (self, tmp_path) | calls:ActiveCyberDefenseEngine,sign_and_export_acd_report,exists,verify_acd_report_signature,read_bytes,replace,write_bytes returns:0
 
-### class `TestDoDZeroTrustSuite` (test_phase4_ato_redteam_siem.py:333) methods:2 — DoD Zero Trust Architecture (ZTA 2.0) 2027 Target Level Evaluation Suite.
+### class `TestDoDZeroTrustSuite` (test_phase4_ato_redteam_siem.py:333) methods:2 — DoD Mutual Authentication Architecture (ZTA 2.0) 2027 Target Level Evaluation Suite.
 #### `TestDoDZeroTrustSuite.test_zero_trust_7_pillar_scoring` (test_phase4_ato_redteam_siem.py:336) — (self) | branches:forx1 calls:DoDZeroTrustEvaluator,perform_full_assessment returns:0
 #### `TestDoDZeroTrustSuite.test_zero_trust_report_signing_and_verification` (test_phase4_ato_redteam_siem.py:352) — (self, tmp_path) | calls:sign_and_export_zero_trust_assessment,exists,verify_zero_trust_assessment_signature returns:0
 
@@ -7636,7 +7636,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `AODecisionEngine.evaluate_gate_6_conops_and_kmp` (verify_ato_deployment_package.py:232) — (self) | branches:ifx4,tryx1 calls:exists,_record,load,ValueError,any raises:ValueError catches:Exception returns:3 — Verify CONOPS operational profile and Key Management Plan (KMP).
 #### `AODecisionEngine.evaluate_gate_7_canary_pilot_iscm` (verify_ato_deployment_package.py:269) — (self) | branches:ifx1,tryx2 calls:exists,CanaryPilotDeployer,run_pilot_evaluation,export_telemetry_report,_record,load catches:Exception returns:3 — Verify Canary Pilot Deployment & Continuous Monitoring (ISCM / cATO) Telemetry.
 #### `AODecisionEngine.evaluate_gate_8_active_cyber_defense` (verify_ato_deployment_package.py:304) — (self) | branches:ifx2,tryx1 calls:exists,_record,load,ValueError,verify_acd_report_signature raises:ValueError catches:Exception returns:3 — Verify DoD cATO Pillar 2: Active Cyber Defense (ACD) automated response engine.
-#### `AODecisionEngine.evaluate_gate_9_zero_trust_architecture` (verify_ato_deployment_package.py:334) — (self) | branches:ifx2,tryx1 calls:exists,_record,load,ValueError,verify_zero_trust_assessment_signature raises:ValueError catches:Exception returns:3 — Verify DoD Zero Trust Strategy 2027 Target Level Capabilities (7 Pillars).
+#### `AODecisionEngine.evaluate_gate_9_zero_trust_architecture` (verify_ato_deployment_package.py:334) — (self) | branches:ifx2,tryx1 calls:exists,_record,load,ValueError,verify_zero_trust_assessment_signature raises:ValueError catches:Exception returns:3 — Verify DoD Mutual Authentication Strategy 2027 Target Level Capabilities (7 Pillars).
 #### `AODecisionEngine.evaluate_gate_10_oscal_sar_poam` (verify_ato_deployment_package.py:365) — (self) | branches:ifx5,tryx1 calls:exists,_record,load,ValueError,verify_oscal_sar_signature raises:ValueError catches:Exception returns:3 — Verify NIST OSCAL v1.1.0 SAR & POA&M (cATO Pillar 3: DevSecOps Compliance).
 #### `AODecisionEngine.evaluate_all_and_package_evidence` (verify_ato_deployment_package.py:401) — (self) | calls:evaluate_gate_1_oscal_ssp,evaluate_gate_2_acvp_validation,evaluate_gate_3_cbom_provenance,evaluate_gate_4_hardware_root,evaluate_gate_5_red_team_drill,evaluate_gate_6_conops_and_kmp,evaluate_gate_7_canary_pilot_iscm returns:1 — Evaluate all gates and write a SELF-ASSESSMENT evidence pack.
 
@@ -7683,7 +7683,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 
 ## `zero_trust_assessment.py`
 
-### class `DoDZeroTrustEvaluator` (zero_trust_assessment.py:110) methods:9 — Evaluates DoD Zero Trust Strategy 2027 Target Level Capabilities.
+### class `DoDZeroTrustEvaluator` (zero_trust_assessment.py:110) methods:9 — Evaluates DoD Mutual Authentication Strategy 2027 Target Level Capabilities.
 #### `DoDZeroTrustEvaluator.__init__` (zero_trust_assessment.py:113) — (self) | returns:0
 #### `DoDZeroTrustEvaluator.evaluate_pillar_1_user` (zero_trust_assessment.py:116) — (self) | calls:sum returns:1 — Pillar 1: User / Identity.
 #### `DoDZeroTrustEvaluator.evaluate_pillar_2_device` (zero_trust_assessment.py:133) — (self) | branches:ifx3,tryx1 calls:_windows_tbs_available,is_tpm_available,pop,exists,sum catches:Exception returns:1 — Pillar 2: Device / Endpoint Integrity.
@@ -7692,9 +7692,9 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `DoDZeroTrustEvaluator.evaluate_pillar_5_network` (zero_trust_assessment.py:208) — (self) | calls:sum returns:1 — Pillar 5: Network & Environment.
 #### `DoDZeroTrustEvaluator.evaluate_pillar_6_automation` (zero_trust_assessment.py:225) — (self) | calls:get_active_cyber_defense_engine,sum returns:1 — Pillar 6: Automation & Orchestration.
 #### `DoDZeroTrustEvaluator.evaluate_pillar_7_visibility` (zero_trust_assessment.py:245) — (self) | calls:sum returns:1 — Pillar 7: Visibility & Analytics.
-#### `DoDZeroTrustEvaluator.perform_full_assessment` (zero_trust_assessment.py:262) — (self) | branches:forx2 calls:evaluate_pillar_1_user,evaluate_pillar_2_device,evaluate_pillar_3_applications,evaluate_pillar_4_data,evaluate_pillar_5_network,evaluate_pillar_6_automation,evaluate_pillar_7_visibility returns:1 — Execute assessment across all 7 Zero Trust pillars.
-#### `sign_and_export_zero_trust_assessment` (zero_trust_assessment.py:306) — (output_dir) | calls:mkdir,DoDZeroTrustEvaluator,perform_full_assessment,dumps,write_bytes,LibOQS_MLDSA_87,keygen returns:1 — Generate, export, and sign DoD Zero Trust assessment with ML-DSA-87.
-#### `verify_zero_trust_assessment_signature` (zero_trust_assessment.py:331) — (report_path, sig_path, pub_path) | branches:ifx1,tryx1 calls:exists,read_bytes,LibOQS_MLDSA_87,verify,error catches:Exception returns:3 — Verify ML-DSA-87 digital signature over DoD Zero Trust assessment.
+#### `DoDZeroTrustEvaluator.perform_full_assessment` (zero_trust_assessment.py:262) — (self) | branches:forx2 calls:evaluate_pillar_1_user,evaluate_pillar_2_device,evaluate_pillar_3_applications,evaluate_pillar_4_data,evaluate_pillar_5_network,evaluate_pillar_6_automation,evaluate_pillar_7_visibility returns:1 — Execute assessment across all 7 Mutual Authentication pillars.
+#### `sign_and_export_zero_trust_assessment` (zero_trust_assessment.py:306) — (output_dir) | calls:mkdir,DoDZeroTrustEvaluator,perform_full_assessment,dumps,write_bytes,LibOQS_MLDSA_87,keygen returns:1 — Generate, export, and sign DoD Mutual Authentication assessment with ML-DSA-87.
+#### `verify_zero_trust_assessment_signature` (zero_trust_assessment.py:331) — (report_path, sig_path, pub_path) | branches:ifx1,tryx1 calls:exists,read_bytes,LibOQS_MLDSA_87,verify,error catches:Exception returns:3 — Verify ML-DSA-87 digital signature over DoD Mutual Authentication assessment.
 
 ## `zero_trust_engine.py`
 
@@ -7716,22 +7716,22 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `is_rbac_strict` (zero_trust_engine.py:131) — () | branches:ifx2 calls:is_env_true,_prod_strict_on,critical returns:2 — Return True when RBAC deny-by-default is active.
 #### `_normalize_minimal_role` (zero_trust_engine.py:150) — (role) | branches:ifx3,tryx2 calls:Role,lower catches:ValueError returns:6 — Normalize str/Role/SecurityRole-ish input to minimal Role (default VIEWER).
 
-### class `RBACPolicyEngine` (zero_trust_engine.py:167) methods:5 — Zero-Trust Role-Based Access Control (RBAC) Engine.
+### class `RBACPolicyEngine` (zero_trust_engine.py:167) methods:5 — Mutual Authentication Role-Based Access Control (RBAC) Engine.
 #### `RBACPolicyEngine.__init__` (zero_trust_engine.py:211) — (self) | returns:0
 #### `RBACPolicyEngine.assign_role` (zero_trust_engine.py:214) — (self, principal_id, role, custom_permissions, granted_by) | branches:ifx1 calls:update,RoleAssignment,info returns:1 — Assign role and permissions to a principal (peer_id or user_id).
 #### `RBACPolicyEngine.get_role` (zero_trust_engine.py:236) — (self, principal_id) | branches:ifx1 returns:2 — Get role of principal. Defaults to ANONYMOUS if unregistered.
 #### `RBACPolicyEngine.check_permission` (zero_trust_engine.py:243) — (self, principal_id, permission) | branches:ifx2 calls:timestamp,warning returns:3 — Constant-time check if principal holds permission (default-deny).
 #### `RBACPolicyEngine.enforce_permission` (zero_trust_engine.py:256) — (self, principal_id, permission, operation) | branches:ifx1 calls:check_permission,get_role,AuthorizationFailure raises:AuthorizationFailure returns:0 — Enforce permission or raise AuthorizationFailure (fail-closed).
 
-### class `SessionState` (zero_trust_engine.py:265) bases:Enum methods:0 — Session states for zero-trust authentication
+### class `SessionState` (zero_trust_engine.py:265) bases:Enum methods:0 — Session states for mutual authentication authentication
 
 ### class `PeerIdentity` (zero_trust_engine.py:276) methods:1 — Peer identity with cryptographic credentials
 #### `PeerIdentity.__post_init__` (zero_trust_engine.py:289) — (self) | branches:ifx1 calls:ValueError raises:ValueError returns:0
 
 ### class `AuthenticationEvent` (zero_trust_engine.py:295) methods:0 — Authentication event for audit logging
 
-### class `ZeroTrustEngine` (zero_trust_engine.py:304) methods:21 — Zero-Trust Authentication Engine with Strict Verification
-#### `ZeroTrustEngine.__init__` (zero_trust_engine.py:318) — (self, identity_key, signing_key) | branches:ifx1,tryx2 calls:LibOQS_MLDSA_87,info,critical,ImportError,is_env_true,get_audit_logger,AuthenticationFailure raises:ImportError,AuthenticationFailure catches:ImportError returns:0 — Initialize Zero-Trust Engine.
+### class `ZeroTrustEngine` (zero_trust_engine.py:304) methods:21 — Mutual Authentication Authentication Engine with Strict Verification
+#### `ZeroTrustEngine.__init__` (zero_trust_engine.py:318) — (self, identity_key, signing_key) | branches:ifx1,tryx2 calls:LibOQS_MLDSA_87,info,critical,ImportError,is_env_true,get_audit_logger,AuthenticationFailure raises:ImportError,AuthenticationFailure catches:ImportError returns:0 — Initialize Mutual Authentication Engine.
 #### `ZeroTrustEngine._log_event` (zero_trust_engine.py:367) — (self, peer_id, operation, result, details) | branches:ifx1,tryx1 calls:sha3_256,strftime,gmtime,AuthenticationEvent,log,log_event,warning catches:Exception returns:0 — Log authentication event for audit trail.
 #### `ZeroTrustEngine.authenticate_peer` (zero_trust_engine.py:416) — (self, peer_id, peer_public_key, peer_signature, challenge) | branches:ifx3,tryx1 calls:_verify_signature,_terminate_session,SignatureVerificationFailure,_compute_certificate_fingerprint,_verify_pinned_certificate,CertificatePinningFailure,PeerIdentity raises:SignatureVerificationFailure,CertificatePinningFailure,AuthenticationFailure catches:Exception returns:1 — Authenticate a peer with mutual ML-DSA-87 verification.
 #### `ZeroTrustEngine.verify_message_signature` (zero_trust_engine.py:488) — (self, peer_id, message, signature) | branches:ifx3 calls:SessionTerminated,_terminate_session,AuthenticationFailure,_verify_signature,_log_event,SignatureVerificationFailure raises:SessionTerminated,AuthenticationFailure,SignatureVerificationFailure returns:1 — Verify signature on a message from a peer.
@@ -7871,7 +7871,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `SecureP2PChat._handle_connection_failure` (core/orchestrator.py:784) — async (self, peer_id) | branches:tryx1 calls:handle_connection_failure,error catches:Exception returns:0 — Handle connection failure - delegates to network module.
 #### `SecureP2PChat._disconnect_peer` (core/orchestrator.py:792) — async (self, peer_id) | branches:tryx1 calls:disconnect_peer,error catches:Exception returns:0 — Disconnect peer - delegates to network module.
 #### `SecureP2PChat._initialize_security_hardening_manager` (core/orchestrator.py:802) — (self) | branches:tryx1 calls:initialize_security_hardening_manager,error catches:Exception returns:0 — Initialize security hardening - delegates to security module.
-#### `SecureP2PChat._enforce_maximum_security` (core/orchestrator.py:810) — (self) | branches:tryx1 calls:enforce_maximum_security,error catches:Exception returns:0 — Enforce maximum security - delegates to security module.
+#### `SecureP2PChat._enforce_maximum_security` (core/orchestrator.py:810) — (self) | branches:tryx1 calls:enforce_maximum_security,error catches:Exception returns:0 — Enforce strict profile - delegates to security module.
 #### `SecureP2PChat._enable_anti_debugging` (core/orchestrator.py:818) — (self) | branches:tryx1 calls:enable_anti_debugging,error catches:Exception returns:1 — Enable anti-debugging - delegates to security module.
 #### `SecureP2PChat._start_debugger_detection_thread` (core/orchestrator.py:826) — (self) | branches:tryx1 calls:start_debugger_detection_thread,error catches:Exception returns:0 — Start debugger detection - delegates to security module.
 #### `SecureP2PChat._check_memory_integrity` (core/orchestrator.py:834) — (self) | branches:tryx1 calls:check_memory_integrity,error catches:Exception returns:1 — Check memory integrity - delegates to security module.
@@ -8294,8 +8294,8 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `osv_query` (scripts/cve_scan.py:169) — (name, version, timeout) | calls:dumps,Request,create_default_context,urlopen,loads,read returns:1 — Query OSV, return list of vuln IDs. Raises on transport/parse error.
 #### `main` (scripts/cve_scan.py:185) — (argv) | branches:ifx7,forx3,tryx1 calls:_parse_args,Path,is_file,parse_requirements,_warn,bool,osv_query catches:Exception returns:3
 
-## `scripts/generate_sovereign_pki.py`
-#### `main` (scripts/generate_sovereign_pki.py:38) — () | branches:forx1 calls:mkdir,LibOQS_MLDSA_87,PQCertificateAuthority,generate_private_key,SECP521R1,public_bytes,public_key returns:0
+## `scripts/generate_operator-controlled_pki.py`
+#### `main` (scripts/generate_operator-controlled_pki.py:38) — () | branches:forx1 calls:mkdir,LibOQS_MLDSA_87,PQCertificateAuthority,generate_private_key,SECP521R1,public_bytes,public_key returns:0
 
 ## `scripts/sign_boot_config.py`
 #### `main` (scripts/sign_boot_config.py:22) — () | branches:ifx3 calls:ArgumentParser,add_argument,parse_args,read,LibOQS_MLDSA_87,exists,keygen returns:2
@@ -8373,7 +8373,7 @@ quorum, TUF dual-sign and anti-rollback. Find each by name in Part 1.
 #### `SecurityHardening.__init__` (security/hardening.py:58) — (self, orchestrator) | calls:getLogger returns:0 — Initialize SecurityHardening with optional orchestrator reference
 #### `SecurityHardening.initialize_security_hardening_manager` (security/hardening.py:69) — (self) | branches:ifx6,forx1,tryx1 calls:SecurityHardeningManager,info,MonitoringConfig,ProcessMonitorManager,start_monitoring,debug,getpid raises:SecurityError catches:ImportError,Exception returns:3 — Initialize the SecurityHardeningManager for coordinated security management.
 #### `SecurityHardening._initialize_fallback_security_components` (security/hardening.py:172) — (self) | branches:ifx1,tryx2 calls:_is_production,SecurityError,warning,SecurityHardeningManager,info,error raises:SecurityError catches:ImportError,Exception returns:2 — Initialize fallback security components when enhanced components are not available.
-#### `SecurityHardening.enforce_maximum_security` (security/hardening.py:212) — (self) | branches:tryx1 calls:info,enforce_maximum_security_or_fail,critical,SecurityError raises:SecurityError catches:SystemExit,ImportError,Exception returns:1 — Enforce maximum security requirements with no fallbacks.
+#### `SecurityHardening.enforce_maximum_security` (security/hardening.py:212) — (self) | branches:tryx1 calls:info,enforce_maximum_security_or_fail,critical,SecurityError raises:SecurityError catches:SystemExit,ImportError,Exception returns:1 — Enforce strict profile requirements with no fallbacks.
 #### `SecurityHardening.enable_anti_debugging` (security/hardening.py:252) — (self) | branches:ifx5,tryx1 calls:lower,_is_production,SecurityError,info,detect_debugger,critical,_emergency_wipe raises:SecurityError catches:Exception returns:3 — Enable anti-debugging protection using ptrace detection to prevent reverse engineering
 #### `SecurityHardening._start_debugger_detection_thread` (security/hardening.py:301) — (self) | branches:ifx6,whilex1,tryx2 calls:lower,_is_production,SecurityError,info,warning,randbelow,detect_debugger raises:SecurityError catches:Exception returns:2 — Start a background thread that periodically checks for debuggers.
 #### `SecurityHardening._emergency_wipe` (security/hardening.py:360) — (self) | branches:ifx5,forx1,tryx3 calls:critical,cleanup,setattr,error,emergency_wipe,clear catches:Exception returns:0 — Perform emergency wipe of sensitive data before termination.
@@ -9375,7 +9375,7 @@ with tree-hash confirmation.
 | `P2P_NC3_WAR_KEY` | `secure_p2.py` | `_get_or_derive_nc3_war_key` | `default ''` |
 | `P2P_NC3_WAR_KEY` | `secure_p2p.py` | `_read_war_key` | `default ''` |
 | `P2P_NC3_WAR_KEY` | `secure_p2p.py` | `_get_or_derive_nc3_war_key` | `default ''` |
-| `P2P_NODE_ID` | `remote_siem_forwarder.py` | `__init__` | `default 'sovereign-node-01'` |
+| `P2P_NODE_ID` | `remote_siem_forwarder.py` | `__init__` | `default 'operator-controlled-node-01'` |
 | `P2P_NO_PERSISTENT_SEEDS` | `secure_enclave_key_storage.py` | `_derive_master_key` | `default ''` |
 | `P2P_NO_PERSISTENT_SEEDS` | `test_defensive_nc3_audit.py` | `test_enclave_kek_seed_never_persisted_in_strict_mode` | `default -` |
 | `P2P_OAUTH_CLIENT_ID` | `secure_p2.py` | `_initialize_configuration` | `default None` |
@@ -9903,8 +9903,8 @@ with tree-hash confirmation.
 ### `AuthenticationError` ×5
 - `tls_channel_manager.py` `_hardened_https_post_json` — `f'Refusing non-HTTPS OAuth URL: {url!r}'`
 - `tls_channel_manager.py` `_hardened_https_post_json` — `'OAuth response exceeds 1 MB cap'`
-- `tls_channel_manager.py` `__init__` — `f"Public cloud OAuth provider '{self.provider_name}' prohibited in sovereign production mode. Mutual ML-DSA-87`
-- `tls_channel_manager.py` `start_device_flow` — `f"OAuth device flow for '{self.provider_name}' is blocked in sovereign production mode."`
+- `tls_channel_manager.py` `__init__` — `f"Public cloud OAuth provider '{self.provider_name}' prohibited in operator-controlled production mode. Mutual ML-DSA-87`
+- `tls_channel_manager.py` `start_device_flow` — `f"OAuth device flow for '{self.provider_name}' is blocked in operator-controlled production mode."`
 - `tls_channel_manager.py` `start_device_flow` — `'OAuth client ID is required. Commercial OAuth disabled by default; mutual ML-DSA-87 certificates required.'`
 
 ### `AuthenticationFailure` ×3
@@ -10954,7 +10954,7 @@ with tree-hash confirmation.
 - `nc3_nuclear_command.py` `to_dict` — `'MILITARY FATAL: Serialization of NC3 secret signing keys to dictionaries/JSON is strictly prohibited in produ`
 - `nc3_nuclear_command.py` `create_nuclear_eam` — `f'EAM validity window {validity_window_seconds}s exceeds strict maximum ceiling of 120.0s or is non-positive (`
 - `nc3_nuclear_command.py` `verify_and_decrypt_nuclear_eam` — `'EAM rejected: sender peer identity is not verified.'`
-- `nc3_nuclear_command.py` `verify_and_decrypt_nuclear_eam` — `f"EAM rejected: sender peer identity is in unverified state '{clean_state}' under military zero-trust policy. `
+- `nc3_nuclear_command.py` `verify_and_decrypt_nuclear_eam` — `f"EAM rejected: sender peer identity is in unverified state '{clean_state}' under military mutual authentication policy. `
 - `nc3_nuclear_command.py` `verify_and_decrypt_nuclear_eam` — `f'EAM validity window {raw_window}s exceeds strict maximum ceiling of 120.0s or is non-positive (fail-closed u`
 - `nc3_nuclear_command.py` `verify_and_decrypt_nuclear_eam` — `'EAM canonical digest mismatch: payload has been tampered with.'`
 - `nc3_nuclear_command.py` `verify_and_decrypt_nuclear_eam` — `'Officer 1 signature verification FAILED.'`
@@ -11938,7 +11938,7 @@ is written to a tamper-evident audit log.
   designated laboratories (HUMAN).
 - Not a replacement for physical security: it cannot detect someone standing
   behind the operator, a camera over the keyboard, or a modified computer.
-- Not quantum-proof in any absolute sense: it is resistant under stated,
+- Not post-quantum in any absolute sense: it is resistant under stated,
   published hardness assumptions (Part 2). If those assumptions fall, the
   audit log tells you exactly what was recorded under them.
 
