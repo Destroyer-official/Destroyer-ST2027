@@ -203,7 +203,7 @@ def _tls_verify_ocsp_der_local(ocsp_der: bytes) -> bool:
     except Exception:
         return False
 
-# Import comprehensive error handling system
+# Import cryptographic error handling classes
 from cryptographic_errors import (
     CryptographicError,
     KeyGenerationError,
@@ -434,7 +434,7 @@ class TlsChannelException(CryptographicError):
 class PostQuantumCrypto:
     """Post-quantum cryptography provider for TLS secure channels.
 
-    This class implements a comprehensive post-quantum cryptography suite
+    This class implements post-quantum key encapsulation and signature interfaces
     for securing TLS communications against quantum computer attacks.
     It integrates multiple NIST-standardized algorithms with enhanced
     security hardening:
@@ -523,9 +523,9 @@ class PostQuantumCrypto:
             algorithms. They should only be used with the corresponding
             encapsulate/decapsulate methods in this class.
         """
-        # Prefer the full hybrid KEx for maximum security
+        # Prefer hybrid KEx when initialized
         if hasattr(self, 'hybrid_kex') and self.hybrid_kex is not None:
-            log.info("Using hybrid KEx for maximum quantum resistance")
+            log.info("Using hybrid KEx combining classical and post-quantum algorithms")
             return self.hybrid_kex.keygen()
         else:
             raise RuntimeError("FAIL-CLOSED: Hybrid KEx not available for key generation")
@@ -540,7 +540,7 @@ class PostQuantumCrypto:
         2. Secondary: HQC-256 encapsulation (when using hybrid keys)
         3. Combined shared secret derivation with domain separation
 
-        The implementation includes comprehensive protections:
+        The implementation includes the following protections:
         - Side-channel resistance through constant-time operations
         - Fault attack detection with redundant computation
         - Secure error handling to prevent oracle attacks
@@ -557,7 +557,7 @@ class PostQuantumCrypto:
             The shared secret should be passed through a key derivation function
             before use in symmetric encryption.
         """
-        # Prefer the full hybrid KEx for maximum security
+        # Prefer hybrid KEx when initialized
         if hasattr(self, 'hybrid_kex') and self.hybrid_kex is not None:
             if public_key.startswith(b"HYBRIDPK"):
                 return self.hybrid_kex.encaps(public_key)
@@ -576,7 +576,7 @@ class PostQuantumCrypto:
         2. Secondary: HQC-256 decapsulation (when using hybrid keys)
         3. Combined shared secret recovery with domain separation
 
-        The implementation includes comprehensive protections:
+        The implementation includes the following protections:
         - Side-channel resistance through constant-time operations
         - Implicit rejection of invalid ciphertexts
         - Secure error handling to prevent oracle attacks
@@ -594,7 +594,7 @@ class PostQuantumCrypto:
             even for invalid ciphertexts (implicit rejection), but the resulting
             shared secret will not match the encapsulator's value.
         """
-        # Prefer the full hybrid KEx for maximum security
+        # Prefer hybrid KEx when initialized
         if hasattr(self, 'hybrid_kex') and self.hybrid_kex is not None:
             if private_key.startswith(b"HYBRIDSK"):
                 return self.hybrid_kex.decaps(private_key, ciphertext)
@@ -1207,12 +1207,12 @@ class OAuth2DeviceFlowAuth:
         """
         self.provider_name = provider.lower()
 
-        # Enforce sovereign isolation in production mode
+        # Enforce local PKI isolation in production mode
         prod_mode = _tls_is_production()
         if prod_mode and self.provider_name in ('google', 'microsoft', 'github'):
-            log.error(f"MILITARY FATAL: Public cloud OAuth provider '{self.provider_name}' is forbidden in sovereign production mode.")
+            log.error(f"FATAL: Public cloud OAuth provider '{self.provider_name}' is forbidden in isolated production mode.")
             raise AuthenticationError(
-                f"Public cloud OAuth provider '{self.provider_name}' prohibited in sovereign production mode. "
+                f"Public cloud OAuth provider '{self.provider_name}' prohibited in isolated production mode. "
                 "Mutual ML-DSA-87 / SLH-DSA-256f cryptographic certificates required."
             )
 
@@ -1256,7 +1256,7 @@ class OAuth2DeviceFlowAuth:
         prod_mode = _tls_is_production()
         if prod_mode and self.provider_name in ('google', 'microsoft', 'github'):
             raise AuthenticationError(
-                f"OAuth device flow for '{self.provider_name}' is blocked in sovereign production mode."
+                f"OAuth device flow for '{self.provider_name}' is blocked in isolated production mode."
             )
 
         if not self.client_id:
@@ -1486,7 +1486,7 @@ class OAuth2DeviceFlowAuth:
         """
         Validate an OAuth bearer token received from a peer against the identity provider.
 
-        CNSA 2.0 / Zero-Trust Requirement:
+        CNSA 2.0 / Mutual Authentication Policy:
         All received credentials must be validated via cryptographically authenticated
         TLS connections to the authoritative identity provider (or local IdP in custom mode).
         Blind acceptance of unverified tokens is strictly forbidden.
@@ -1497,9 +1497,9 @@ class OAuth2DeviceFlowAuth:
         Returns:
             Tuple of (is_valid: bool, user_info: Optional[Dict], identity_or_error: str)
         """
-        # Block public cloud OAuth in sovereign production mode
+        # Block public cloud OAuth in isolated production mode
         if _tls_is_production() and self.provider_name in ('google', 'microsoft', 'github'):
-            msg = f"Public OAuth validation for '{self.provider_name}' prohibited in sovereign production mode"
+            msg = f"Public OAuth validation for '{self.provider_name}' prohibited in isolated production mode"
             log.error(msg)
             return False, None, msg
 
@@ -2110,7 +2110,7 @@ class TLSSecureChannel:
             except Exception as e:
                 log.warning(f"Could not initialize hardware security: {e}")
 
-        # Set up OAuth authentication if explicitly enabled (Disabled by default for sovereign mode)
+        # Set up OAuth authentication if explicitly enabled (Disabled by default in production mode)
         self.enable_oauth = is_env_true('P2P_ENABLE_OAUTH')
         if self.enable_oauth and self.require_authentication and self.oauth_client_id:
             try:
@@ -2448,7 +2448,7 @@ class TLSSecureChannel:
             security_status["security_score"] += 10
             security_status["info"].append({
                 "component": "post_quantum",
-                "message": "BONUS: Successfully using post-quantum ciphers for maximum security"
+                "message": "Post-quantum hybrid cipher suite active"
             })
 
         # Bonus points for using HSM/secure enclave
@@ -2887,7 +2887,7 @@ class TLSSecureChannel:
             if self.enable_pq_kem and hasattr(self, 'hybrid_kex') and not hasattr(self, 'pq_shared_secret'):
                 try:
                     log.info("Generating hybrid post-quantum shared secret using HybridKEX")
-                    # Use the hybrid KEM from pqc_algorithms for maximum security
+                    # Use the hybrid KEM from pqc_algorithms
                     _, ct = self.hybrid_kex.encaps(self.pq_public_key)
                     self.pq_shared_secret = self.hybrid_kex.decaps(self.pq_private_key, ct)
                     log.info("Successfully generated hybrid post-quantum shared secret")
@@ -2941,7 +2941,7 @@ class TLSSecureChannel:
             # Derive a strong key from the combined secret using SHA3-384 for quantum resistance
             hkdf = HKDF(
                 algorithm=hashes.SHA3_512(),
-                length=64,  # 64 bytes for maximum security
+                length=64,  # 64-byte key material
                 salt=secrets.token_bytes(64),
                 info=b"TLS-MultiCipher-Hybrid-PQ-Key-Derivation"
             )
@@ -3046,7 +3046,7 @@ class TLSSecureChannel:
     def cleanup(self):
         """Securely clean up all resources and cryptographic material.
 
-        Performs comprehensive cleanup of the TLS channel:
+        Performs cleanup and resource release of the TLS channel:
         1. Securely erases all cryptographic keys and secrets
         2. Closes all network connections
         3. Releases hardware security module resources
@@ -3345,7 +3345,7 @@ class TLSSecureChannel:
         Get detailed information about the current TLS session with NIST SP 800-52 Rev. 2 compliance details.
 
         Returns:
-            Dictionary containing comprehensive session information
+            Dictionary containing TLS session configuration and state parameters
         """
         if not self.ssl_socket:
             return {"status": "not connected"}
@@ -3775,7 +3775,7 @@ class TLSSecureChannel:
             # This will be checked after handshake
             log.info("Certificate pinning enabled for client context")
 
-        # For maximum security, always enable certificate verification by default
+        # Enable peer certificate verification by default
         context.check_hostname = True
         context.verify_mode = ssl.CERT_REQUIRED
 
@@ -3784,7 +3784,7 @@ class TLSSecureChannel:
             context.load_verify_locations(self.ca_path)
             log.info("Certificate verification enabled with custom CA")
         else:
-            # Fall back to system CA store for maximum security
+            # Load system default CA trust store
             try:
                 context.load_default_certs()
                 log.info("Certificate verification enabled with system CA store")
@@ -3834,8 +3834,8 @@ class TLSSecureChannel:
                 if self.pq_crypto is None:
                     raise RuntimeError("PostQuantumCrypto unavailable")
 
-                # ONLY use the enhanced hybrid key exchange for maximum security
-                log.info("Using EXCLUSIVELY enhanced hybrid key exchange with multiple post-quantum algorithms")
+                # Use enhanced hybrid key exchange when post-quantum is configured
+                log.info("Using hybrid key exchange with post-quantum algorithms")
                 # HybridKEX per pqc_algorithms (ML-KEM-1024 + HQC-256 + Falcon-1024
                 # combiner where the host DLL provides all three; raises otherwise
                 # and is caught below into classical-only mode).
@@ -4077,7 +4077,7 @@ class TLSSecureChannel:
                     # signatures are neither issued nor trusted here --
                     # legacy Falcon peer material verifies only via the
                     # quarantined legacy path (lab), never in strict/prod.
-                    # Authentication ultimately rests on the standard TLS
+                    # Authentication is anchored in standard TLS
                     # handshake + DANE + pinning/TOFU below regardless.
                     bundle_data = str(our_bundle).encode()
                     our_bundle['signed_data'] = bundle_data
@@ -4551,7 +4551,7 @@ class TLSSecureChannel:
                 log.info("Server Context: strict X.509 verification enabled for client certificates")
         else:
             log.critical("SECURITY VIOLATION: Disabling client certificate verification on mTLS server is prohibited.")
-            raise SecurityError("Disabling client certificate verification (CERT_NONE) on TLS server is strictly prohibited under tactical mTLS policy.")
+            raise SecurityError("Disabling client certificate verification (CERT_NONE) on TLS server is strictly prohibited under mTLS policy.")
 
         # Set security options
         if not (hasattr(context, 'minimum_version') and hasattr(ssl, 'TLSVersion')):
@@ -4582,7 +4582,7 @@ class TLSSecureChannel:
                     # Different OpenSSL/Python SSL versions might accept different formats
                     try:
                         tls_groups.extend([
-                            # Maximum security: Only allow strongest post-quantum and modern groups, no legacy curves.
+                            # Configured groups: Allow post-quantum hybrid and standard modern groups, reject legacy curves.
                             # Prefer explicit PQ hybrid groups, no fallback to legacy
                             "SecP384r1MLKEM1024",
                             "X25519MLKEM768",
@@ -5376,7 +5376,7 @@ class CustomCipherSuite:
         # Derive keys for each cipher using NIST SP 800-56C Rev. 2 HKDF-SHA3_512
         salt = secrets.token_bytes(64)  # 64-byte random salt for enhanced security
         hkdf = HKDF(
-            algorithm=hashes.SHA3_512(),  # Use SHA3_512 for maximum security
+            algorithm=hashes.SHA3_512(),  # Use SHA3-512 per NIST SP 800-56C
             length=160,  # 32 bytes for AES, 32 bytes for ChaCha20, 96 bytes for Krypton
             salt=salt,
             info=b"CustomCipherSuite NIST-SP-800-56C-Rev2 Key Derivation"
@@ -6359,7 +6359,7 @@ class SocketSelector:
                 log.info("Strict X.509 verification enabled for client certificates")
         else:
             log.critical("SECURITY VIOLATION: Disabling client certificate verification on mTLS server is prohibited.")
-            raise SecurityError("Disabling client certificate verification (CERT_NONE) on TLS server is strictly prohibited under tactical mTLS policy.")
+            raise SecurityError("Disabling client certificate verification (CERT_NONE) on TLS server is strictly prohibited under mTLS policy.")
 
         # Enable OCSP Must-Staple for server
         if self.ocsp_stapling:
@@ -6833,7 +6833,7 @@ class EndpointAuthenticationManager:
     """
     Endpoint Authentication Manager for TLS connections.
 
-    This class provides comprehensive endpoint authentication and verification
+    This class provides endpoint authentication and certificate verification
     capabilities for secure TLS communications, including mutual authentication,
     certificate validation, and identity verification.
     """
