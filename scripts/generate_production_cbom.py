@@ -238,8 +238,8 @@ def generate_cbom_data() -> dict:
         },
         {
             "type": "cryptographic-asset",
-            "name": "Mutual TLS 1.3 with Sovereign ML-DSA-87 Certificates",
-            "version": "RFC 8446 Strict Sovereign Profile",
+            "name": "Mutual TLS 1.3 with ML-DSA-87 Certificates",
+            "version": "RFC 8446 Strict Profile",
             "description": "Zero-Plaintext, mutual certificate-authenticated channel with PQC identity validation",
             "cryptoProperties": {
                 "assetType": "protocol",
@@ -302,15 +302,15 @@ def generate_cbom_data() -> dict:
                 "components": [
                     {
                         "type": "application",
-                        "name": "Sovereign Military Defense P2P Platform",
+                        "name": "Secure Post-Quantum P2P Platform",
                         "version": "2028.1.0-DEFENSE",
-                        "description": "NSA CNSA 2.0 & FIPS 140-3 Sovereign Tactical Communications Asset"
+                        "description": "NSA CNSA 2.0 & FIPS 140-3 Aligned Communications Asset"
                     }
                 ]
             },
             "authors": [
                 {
-                    "name": "Sovereign Defense Architecture Directorate",
+                    "name": "Communications Security Architecture Directorate",
                     "role": "Cryptographic Engineering & National Security Compliance"
                 }
             ],
