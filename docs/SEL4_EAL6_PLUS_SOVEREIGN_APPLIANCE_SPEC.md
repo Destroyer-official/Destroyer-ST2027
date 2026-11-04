@@ -1,7 +1,7 @@
-# Sovereign Transmit 2027 (ST2027): EAL6+ seL4 Sovereign Hardware Appliance Specification & Master Implementation Plan
+# Secure Transmit 2027 (ST2027): seL4 Architecture Specification & Implementation Plan (Pre-Evaluation Research Baseline)
 
 **Target Security Standard:** Common Criteria EAL6+ / EAL7 Equivalent (Formal Binary Verification), NSA CNSA Suite 2.0, FIPS 140-3 Level 4, DARPA PROVERS Baseline  
-**Classification Target:** TOP SECRET / SCI / NC3 Strategic Communications  
+**Policy Target:** Strict Profile / Dual-Authorization Architecture (Self-Assessed Research Baseline)  
 **Kernel Baseline:** seL4 Microkernel 16.0.0+ (AArch64 / RISC-V Verified Configurations)  
 **Component Execution Framework:** seL4 Microkit 2.3+ with `no_std` Ferrocene-Qualified Rust Protection Domains  
 **Date:** October 2026  
@@ -73,7 +73,7 @@ Meeting EAL6+ criteria alone does not prevent all modern real-world attacks. We 
 
 ```
 +---------------------------+---------------------------------------+----------------------------------------------+
-| Attack Vector             | Traditional EAL6+ Gap                 | ST2027 Sovereign Countermeasure              |
+| Attack Vector             | Traditional EAL6+ Gap                 | ST2027 Countermeasure              |
 +---------------------------+---------------------------------------+----------------------------------------------+
 | 1. Microarchitectural     | Abstract proofs assume idealized CPU; | Cache partitioning (cache coloring), memory  |
 |    Covert Channels        | ignore Spectre, Meltdown, cache line  | flushing on domain switch, deterministic     |
@@ -120,7 +120,7 @@ The appliance is divided into three strictly isolated protection domains managed
 |               ▼                                            ▼                                           |
 |   +--------------------------------------------------------------------+                               |
 |   |                           CRYPTO DOMAIN                            |                               |
-|   |                    (The Sovereign Native Core)                     |                               |
+|   |                    (The Native Core)                     |                               |
 |   |                                                                    |                               |
 |   | - FIPS 203 (ML-KEM-1024) + FIPS 204 (ML-DSA-87) Engine             |                               |
 |   | - RFC 10024 Triple-Hybrid Combiner (HKDF-SHA384)                   |                               |
@@ -171,7 +171,7 @@ The appliance is divided into three strictly isolated protection domains managed
         <map mr="red_crypto_ring" vaddr="0x10000000" perms="rw" cached="true" />
     </protection_domain>
 
-    <!-- 2. CRYPTO Protection Domain: The Sovereign Cryptographic Engine -->
+    <!-- 2. CRYPTO Protection Domain: Cryptographic Engine -->
     <protection_domain name="crypto_domain" priority="120">
         <program_image path="crypto_domain.elf" />
         <map mr="red_crypto_ring" vaddr="0x10000000" perms="rw" cached="true" />
