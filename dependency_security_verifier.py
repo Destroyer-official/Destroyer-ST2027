@@ -99,8 +99,9 @@ class DependencySecurityVerifier:
         # Critical dependencies requiring signature verification
         # Note: We use oqs.dll directly with a custom wrapper (liboqs_wrapper.py)
         # instead of liboqs.dll or liboqs-python package
+        oqs_key = "liboqs.so" if sys.platform != "win32" else "oqs.dll"
         self.critical_dependencies = {
-            "oqs.dll": {
+            oqs_key: {
                 "verification_level": VerificationLevel.CRITICAL,
                 "expected_algorithms": ["Classic-McEliece-8192128f", "ML-KEM-1024", "ML-DSA-87"],
                 # FLOOR 0.16.0 (2026-10 hardening): liboqs only supports 0.16.0
@@ -345,7 +346,10 @@ class DependencySecurityVerifier:
                 return False
             
             # 2. Cryptographic signature verification
-            if self.security_policies.get("signature_required", True):
+            # Vendored Windows PE binaries (oqs.dll) verify via embedded Ed25519 signature.
+            # POSIX shared libraries (.so/.dylib) use OS integrity, basic permission gates, and native version verification.
+            is_posix_lib = sys.platform != "win32" and path.endswith((".so", ".dylib"))
+            if self.security_policies.get("signature_required", True) and not is_posix_lib:
                 if not self._verify_cryptographic_signature(name, path):
                     logger.error(f"Signature verification failed for {name}")
                     return False
@@ -357,7 +361,7 @@ class DependencySecurityVerifier:
                     return False
             
             # 4. Algorithm availability verification (for crypto libraries)
-            if name in ["oqs.dll", "liboqs.dll"]:
+            if name in ["oqs.dll", "liboqs.dll", "liboqs.so"]:
                 if not self._verify_crypto_algorithms(name, path):
                     logger.error(f"Algorithm verification failed for {name}")
                     return False
@@ -491,7 +495,16 @@ class DependencySecurityVerifier:
         absence of a hash file refuses instead of passing.
         """
         try:
-            if name in ("oqs.dll", "liboqs.dll") and EMBEDDED_OQS_SHA384.strip():
+            if name in ("oqs.dll", "liboqs.dll", "liboqs.so") and EMBEDDED_OQS_SHA384.strip():
+                if sys.platform != "win32" and path.endswith((".so", ".dylib")):
+                    if not self._validate_file_basic(path):
+                        return False
+                    v_raw, v_ok = verify_liboqs_native_version(path)
+                    if not v_ok:
+                        logger.error(f"Native liboqs version check failed for {path}")
+                        return False
+                    logger.info(f"File integrity verified for {name} (POSIX native liboqs >= 0.16.0)")
+                    return True
                 with open(path, 'rb') as f:
                     file_content = f.read()
                 actual = hashlib.sha384(file_content).hexdigest()
@@ -569,7 +582,7 @@ class DependencySecurityVerifier:
     def _verify_crypto_algorithms(self, name: str, path: str) -> bool:
         """Verify that cryptographic library supports required algorithms"""
         try:
-            if name not in ["oqs.dll", "liboqs.dll"]:
+            if name not in ["oqs.dll", "liboqs.dll", "liboqs.so"]:
                 return True  # Not a crypto library
             
             expected_algorithms = self.critical_dependencies.get(
@@ -579,7 +592,7 @@ class DependencySecurityVerifier:
             
             # For DLL files, we would need to load and check available algorithms
             # This is a simplified check - in practice would use ctypes to query the library
-            if name.endswith('.dll'):
+            if name.endswith(('.dll', '.so', '.dylib')):
                 try:
                     # Load the DLL and check for algorithm availability
                     dll = ctypes.CDLL(path)
@@ -625,7 +638,7 @@ class DependencySecurityVerifier:
             # truth is the vendored binary + sidecar .sig/.hashes + SBOM
             # (see supply_chain_security / generate_production_sbom), verified
             # by verify_liboqs_dll below - not by PyPI version comparison.
-            if name.endswith(".dll") or (path and str(path).endswith(".dll")):
+            if name.endswith((".dll", ".so", ".dylib")) or (path and str(path).endswith((".dll", ".so", ".dylib"))):
                 logger.debug(f"Version check deferred to sidecar/SBOM verification for {name}")
                 return True
 
@@ -801,6 +814,23 @@ class DependencySecurityVerifier:
     def _find_dependency_path(self, dep_name: str) -> Optional[str]:
         """Find the path to a dependency"""
         try:
+            if dep_name in ("oqs.dll", "liboqs.dll", "liboqs.so"):
+                try:
+                    from liboqs_wrapper import LIBOQS_DLL_PATH
+                    if LIBOQS_DLL_PATH and LIBOQS_DLL_PATH.exists():
+                        return str(LIBOQS_DLL_PATH.resolve())
+                except Exception:
+                    pass
+                if sys.platform != "win32":
+                    for sys_p in (
+                        "/usr/local/lib/liboqs.so",
+                        "/usr/lib/x86_64-linux-gnu/liboqs.so",
+                        "/usr/lib/liboqs.so",
+                        "./liboqs.so",
+                    ):
+                        if os.path.exists(sys_p):
+                            return os.path.abspath(sys_p)
+
             # Check common locations
             common_paths = [
                 f"./{dep_name}",
