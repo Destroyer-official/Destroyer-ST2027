@@ -1,4 +1,4 @@
-# System Architecture — Sovereign Post-Quantum Direct P2P Messaging
+# System Architecture — Operator-Controlled Post-Quantum Direct P2P Messaging
 
 ## 1. Thesis
 
@@ -28,11 +28,11 @@ and recovery.
 
 ## 3. Protocol Stacks
 
-### A. 2027 Sovereign Top-Secret Pipeline (`secure_transmit_2027.py`)
+### A. 2027 Strict Post-Quantum Pipeline (`secure_transmit_2027.py`)
 This is the formal, fail-closed production target conforming to CNSA Suite 2.0 and RFC 10024 Level 5:
 
 ```
-[0] Anonymity Overlay (Tor v3 SOCKS5 / Sovereign APN / WireGuard) ... transport_anonymity.py
+[0] Anonymity Overlay (Tor v3 SOCKS5 / Dedicated APN / WireGuard) ... transport_anonymity.py
 [1] Constant-Rate Traffic Shaping (50ms tick, 1232B uniform cells) ... transport_anonymity.py
 [2] Stream Whitening (AES-256-CTR cryptographic uniform noise) ...... transport_anonymity.py
 [3] Outer TLS 1.3 Transport (TLS_AES_256_GCM_SHA384 only) ........... secure_transmit_2027.py
@@ -68,7 +68,7 @@ Binds independent cryptographic barriers into an atomic, fail-closed multi-layer
 ```
 Payload → DPO 2-Person Approval → Fragment into 1205B Chunks
 → Authenticated 1232B Cell (AES-256-GCM) → AES-256-CTR Whitening
-→ Constant-Rate Scheduler (50ms / 20 cells/sec) → SOCKS5 Tor / Sovereign Tunnel
+→ Constant-Rate Scheduler (50ms / 20 cells/sec) → SOCKS5 Tor / Dedicated Tunnel
 → Outer TLS 1.3 Session → Wire
 ```
 
@@ -88,7 +88,7 @@ Payload → DPO 2-Person Approval → Fragment into 1205B Chunks
 | **Hardware Custody** | Windows CNG / PKCS#11 v3.2 | FIPS 140-3 Level 3/4 Physical Enclosure |
 | **Facility Shielding** | TEMPEST Accreditation Registry | NATO SDIP-27/3, SDIP-28/3, SDIP-29 |
 | **Unidirectional Boundary** | Hardware Optical Diode Gate | Common Criteria ISO/IEC 15408 EAL4+/EAL7+ |
-| **Anonymity Overlay** | Tor v3 SOCKS5 / Sovereign APN | RFC 1928, Loopix / Sphinx Packet Design |
+| **Anonymity Overlay** | Tor v3 SOCKS5 / Dedicated APN | RFC 1928, Loopix / Sphinx Packet Design |
 
 ## 6. Security Properties (Formally Verified)
 
