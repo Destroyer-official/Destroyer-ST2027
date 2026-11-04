@@ -2,12 +2,12 @@
 
 ## 1. Research & Evaluation Scope
 
-**Sovereign Transmit 2027 (ST2027)** is an open reference implementation, mathematical specification, and automated verification testbed for post-quantum defense communication protocols.
+**Secure Transmit 2027 (ST2027)** is an open reference implementation, mathematical specification, and automated verification testbed for post-quantum defense communication protocols.
 
 ### Evaluation Boundaries & Non-Claims
 - **No Third-Party Government Accreditation:** Automated tests, OSCAL documents, and SSDF attestations are self-attestations and reference testbeds. They do **not** constitute an official government Authority to Operate (ATO), Common Criteria EAL4+ certificate, or NIST CMVP FIPS 140-3 laboratory validation.
 - **Physical vs. Software Gatekeeper:** User-space software acts as an algorithmic enforcement engine and fail-closed gatekeeper. Physical FIPS 140-3 Level 3/4 enclosures, TEMPEST SDIP-27/28 attenuation, and physical optical data diodes require certified hardware.
-- **Synthetic Test Fixtures:** All cryptographic keys, certificates, nodes, and military message schemas (e.g., CoT, TPI, EAM) in this repository are **100% synthetic, unclassified, and executed in local test harnesses**.
+- **Synthetic Test Fixtures:** All cryptographic keys, certificates, nodes, and operational message schemas (e.g., Cursor-on-Target XML, dual authorization, emergency action directives) in this repository are **100% synthetic, unclassified, and executed in local test harnesses**.
 
 ---
 
