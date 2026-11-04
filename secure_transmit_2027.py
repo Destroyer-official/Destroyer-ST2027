@@ -209,11 +209,12 @@ def _secure_atomic_write(dest: Path | str, blob: bytes) -> Path:
     fsyncs to persistent storage, and performs an atomic replace into dest.
     """
     dest = Path(dest)
+    curr = dest
+    while curr is not None and curr != curr.parent:
+        if curr.is_symlink():
+            raise SecurityError("symlink target refused")
+        curr = curr.parent
     parent = dest.parent.resolve()
-    if dest.is_symlink() or parent.is_symlink():
-        raise SecurityError("symlink target refused")
-    if dest.exists() and dest.is_symlink():
-        raise SecurityError("symlink target refused")
 
     tmp_path = parent / f".st2027_recv_{secrets.token_hex(16)}.tmp"
 
@@ -369,7 +370,7 @@ def hybrid_combine(ecdhe_secret: bytes, mlkem_secret: bytes) -> bytes:
     P-384 shares, sigs, timestamps), IKM = this 80B) then HKDF-Expand(info).
     That matches the dualPRF[KEM1,KEM2] shape of Bindel et al. (PQCrypto'19:
     dPRF = extract, PRF = expand with CIPHERTEXTS bound in the label — here
-    via the transcript salt), whose robustness needs a dual-PRF. HKDF-as-
+    via the transcript salt), whose security needs a dual-PRF. HKDF-as-
     dual-PRF is an ASSUMPTION shared with TLS 1.3/MLS/Noise-PQ (not a
     theorem: eprint 2022/065; sufficient fixed-length-input conditions in
     the HMAC dual-PRF analysis). Stated as assumption, not fact.
