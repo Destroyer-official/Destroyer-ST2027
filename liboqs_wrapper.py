@@ -170,47 +170,6 @@ from typing import Tuple, Optional
 import platform
 from ctypes.util import find_library
 
-def _find_liboqs_path() -> Path:
-    repo_dir = Path(__file__).resolve().parent
-    candidates = []
-    if platform.system() == "Windows":
-        # Strictly anchor to the audited repository directory to defeat DLL hijacking / CWD planting
-        candidates = [
-            repo_dir / "oqs.dll",
-            repo_dir / "liboqs.dll"
-        ]
-    elif platform.system() == "Linux":
-        candidates.extend([
-            repo_dir / "liboqs.so",
-            Path("/usr/local/lib/liboqs.so"),
-            Path("/usr/lib/liboqs.so"),
-            Path("/usr/lib/x86_64-linux-gnu/liboqs.so"),
-            Path("/usr/lib/aarch64-linux-gnu/liboqs.so")
-        ])
-        sys_path = find_library("oqs")
-        if sys_path:
-            if os.path.isabs(sys_path):
-                candidates.append(Path(sys_path))
-            else:
-                for sys_dir in ("/usr/lib", "/usr/local/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"):
-                    cand = Path(sys_dir) / sys_path
-                    candidates.append(cand)
-    else:  # Darwin / macOS
-        candidates.extend([
-            repo_dir / "liboqs.dylib",
-            Path("/usr/local/lib/liboqs.dylib"),
-            Path("/opt/homebrew/lib/liboqs.dylib")
-        ])
-        sys_path = find_library("oqs")
-        if sys_path:
-            if os.path.isabs(sys_path):
-                candidates.append(Path(sys_path))
-            else:
-                for sys_dir in ("/usr/local/lib", "/opt/homebrew/lib", "/usr/lib"):
-                    cand = Path(sys_dir) / sys_path
-                    candidates.append(cand)
-
-
 def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
     """Ensure pinned liboqs (0.16.0) is available on Linux CI/host environments."""
     if platform.system() != "Linux":
@@ -264,6 +223,47 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
         if p.exists() and p.is_file():
             return p.resolve()
     return None
+
+
+def _find_liboqs_path() -> Path:
+    repo_dir = Path(__file__).resolve().parent
+    candidates = []
+    if platform.system() == "Windows":
+        # Strictly anchor to the audited repository directory to defeat DLL hijacking / CWD planting
+        candidates = [
+            repo_dir / "oqs.dll",
+            repo_dir / "liboqs.dll"
+        ]
+    elif platform.system() == "Linux":
+        candidates.extend([
+            repo_dir / "liboqs.so",
+            Path("/usr/local/lib/liboqs.so"),
+            Path("/usr/lib/liboqs.so"),
+            Path("/usr/lib/x86_64-linux-gnu/liboqs.so"),
+            Path("/usr/lib/aarch64-linux-gnu/liboqs.so")
+        ])
+        sys_path = find_library("oqs")
+        if sys_path:
+            if os.path.isabs(sys_path):
+                candidates.append(Path(sys_path))
+            else:
+                for sys_dir in ("/usr/lib", "/usr/local/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"):
+                    cand = Path(sys_dir) / sys_path
+                    candidates.append(cand)
+    else:  # Darwin / macOS
+        candidates.extend([
+            repo_dir / "liboqs.dylib",
+            Path("/usr/local/lib/liboqs.dylib"),
+            Path("/opt/homebrew/lib/liboqs.dylib")
+        ])
+        sys_path = find_library("oqs")
+        if sys_path:
+            if os.path.isabs(sys_path):
+                candidates.append(Path(sys_path))
+            else:
+                for sys_dir in ("/usr/local/lib", "/opt/homebrew/lib", "/usr/lib"):
+                    cand = Path(sys_dir) / sys_path
+                    candidates.append(cand)
 
     for cand in candidates:
         try:
