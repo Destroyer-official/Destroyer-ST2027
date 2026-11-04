@@ -20,6 +20,10 @@ import subprocess  # nosec: B404
 from pathlib import Path
 from datetime import datetime
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 class ProductionDeployer:
     """Handles production deployment preparation and validation."""
@@ -283,8 +287,9 @@ class ProductionDeployer:
         """Verify all Python dependencies are installed."""
         required_packages = [
             'cryptography',
-            'aiohttp',
             'psutil',
+            'Crypto',
+            'yaml',
         ]
         
         all_installed = True

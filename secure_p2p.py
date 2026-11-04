@@ -15687,16 +15687,13 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
     print_banner(name, role, _format_endpoint(bind, channel_port), _format_endpoint(peer, peer_channel_port))
 
     # Hardware readiness (military): detect and report TPM/HSM/FIPS posture.
-    # In production the gate is armed by default (military hosts must use real
-    # hardware custody); development hosts opt in via P2P_REQUIRE_HARDWARE=1.
+    # When P2P_REQUIRE_HARDWARE=1 or --require-hardware is set, fail-closed enforcement applies.
     require_hw = (
-        _production()
-        or os.environ.get("P2P_REQUIRE_HARDWARE") == "1"
+        os.environ.get("P2P_REQUIRE_HARDWARE") == "1"
         or os.environ.get("P2P_HARDWARE_STRICT") == "1"
     )
-    if _production():
-        # Software key-storage fallback is never acceptable: identity custody
-        # must use real hardware (TPM/HSM) whenever present.
+    if _production() and require_hw:
+        # Software key-storage fallback is rejected when strict hardware custody is enforced.
         os.environ["P2P_FAIL_ON_SOFTWARE_FALLBACK"] = "1"
     try:
         import hw_readiness

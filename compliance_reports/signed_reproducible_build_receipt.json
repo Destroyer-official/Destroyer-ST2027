@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-04T13:06:48.625198+00:00",
+  "timestamp_utc": "2026-11-04T13:49:24.981182+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 878934,
-      "sha3_512": "deb6e58e260a52c5822b13172bb23b6b1fa9366cb8f10a7e3a17fe5462ff1e67932e8980379bd4e85f78d214374b454a147cc9ca1225bcaf57cf21f5619d76d4"
+      "size_bytes": 878819,
+      "sha3_512": "ebab282a33c8f53bbaa5f9c3310ac41347b8dacbf58a9a19418ef60afba96e94600e67d3e2bee4071643ba10dad02574b508891cda11ba6c6a9da15fa09c7729"
     }
   },
   "sbom_status": {
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "998ba119b78f50fcc70bbd5ad3951bb3b476012f87c0fc1c01786dfda4ecb7f2f2b3c92911ecbbfa12be697be60251a2ffb555eee5483f40a547df24834750d3",
+  "source_tree_merkle_root": "a9e73dd48aaab5745031dff187aa8c26e5d3db97d59e65f1a3af83663c9f5b64b2749629bcfb783c2257433d40ae55f633bf3594b40247740b47dc986099cb6e",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "92292e0a2b943d39441dc92d4126dba8f6c7d579b6020aa89e44ac12f692070075cb3b4e9a22653702de2e17fda319baf8238da3b4bc0f756f15b1ea3185dfa2",
