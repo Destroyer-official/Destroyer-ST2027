@@ -122,6 +122,38 @@ def load_native() -> ctypes.CDLL:
             return _native_lib
         path = _lib_path()
         if not path.exists():
+            # Try to build with cargo if available on this system
+            import shutil, subprocess
+            cargo = shutil.which("cargo")
+            if not cargo:
+                cand_cargo = Path.home() / ".cargo" / "bin" / ("cargo.exe" if os.name == "nt" else "cargo")
+                if cand_cargo.exists():
+                    cargo = str(cand_cargo)
+            for manifest_cand in (
+                _REPO_ROOT / "ts_rt" / "Cargo.toml",
+                Path(__file__).resolve().parent / "ts_rt" / "Cargo.toml",
+                Path.cwd() / "ts_rt" / "Cargo.toml",
+            ):
+                if manifest_cand.exists():
+                    if cargo:
+                        try:
+                            subprocess.run([cargo, "build", "--manifest-path", str(manifest_cand), "--release"],
+                                           check=True, timeout=90, capture_output=True)
+                        except Exception:
+                            pass
+                    break
+            # Check alternative search candidates
+            for cand in (
+                _REPO_ROOT / "ts_rt" / "target" / "release" / ("ts_rt.dll" if os.name == "nt" else "libts_rt.so"),
+                _REPO_ROOT.parent / "ts_rt" / "target" / "release" / ("ts_rt.dll" if os.name == "nt" else "libts_rt.so"),
+                Path(__file__).resolve().parent / "ts_rt" / "target" / "release" / ("ts_rt.dll" if os.name == "nt" else "libts_rt.so"),
+                Path.cwd() / "ts_rt" / "target" / "release" / ("ts_rt.dll" if os.name == "nt" else "libts_rt.so"),
+            ):
+                if cand.exists():
+                    path = cand
+                    break
+
+        if not path.exists():
             raise TSRequiredError(
                 f"deterministic native core missing at {path} — build ts_rt "
                 f"(cargo build --release --offline); CPython fallback refused in TS mode")
@@ -783,7 +815,14 @@ def enumerate_external_dma() -> Dict[str, Any]:
                             "-Command", ps],
                            capture_output=True, text=True, timeout=60)
         if p.returncode != 0 or not p.stdout.strip():
-            return {"devices": found, "scan_ok": False}
+            ps_cim = ("Get-CimInstance Win32_PnPEntity | "
+                      "Select-Object @{n='FriendlyName';e={$_.Name}},Status,@{n='Class';e={$_.PNPClass}},DeviceID | "
+                      "ConvertTo-Json -Compress -Depth 2")
+            p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive",
+                                "-Command", ps_cim],
+                               capture_output=True, text=True, timeout=60)
+            if p.returncode != 0 or not p.stdout.strip():
+                return {"devices": found, "scan_ok": False}
         devs = json.loads(p.stdout)
         if isinstance(devs, dict):
             devs = [devs]
