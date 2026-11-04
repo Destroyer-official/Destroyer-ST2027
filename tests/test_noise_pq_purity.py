@@ -231,3 +231,27 @@ def test_noise_session_transport_keys_scrubbed():
     assert all(b == 0 for b in ref_send)
     assert all(b == 0 for b in ref_recv)
 
+def test_f03_noise_session_sig_sk_and_epriv_destroyed():
+    """F-03: Verifies that NoiseSession destroy() and quarantine() scrub sig_sk and _e_priv."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    sk_buf = bytearray(b"B" * 4896)
+    sess = npq.NoiseSession(is_initiator=True, sig_pk=b"A" * 2592, sig_sk=sk_buf)
+    sess._e_priv = ec.generate_private_key(ec.SECP384R1())
+
+    sess.destroy()
+
+    assert sess.sig_sk is None
+    assert sess._e_priv is None
+    assert all(b == 0 for b in sk_buf), "Mutable sig_sk must be zeroized in-place"
+
+    # Also verify quarantine triggers full destroy and freezes public metadata
+    sk_buf2 = bytearray(b"X" * 4896)
+    sess2 = npq.NoiseSession(is_initiator=False, sig_pk=b"A" * 2592, sig_sk=sk_buf2)
+    sess2._e_priv = ec.generate_private_key(ec.SECP384R1())
+    sess2.quarantine("test fault")
+    assert sess2._quarantined is True
+    assert sess2.sig_sk is None
+    assert sess2._e_priv is None
+    assert sess2.sig_pk is None
+    assert all(b == 0 for b in sk_buf2), "Quarantine must zeroize mutable sig_sk"
+

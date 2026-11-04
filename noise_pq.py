@@ -114,7 +114,7 @@ import secrets
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 PROTOCOL_NAME = b"Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384"
 PROTOCOL_NAME_PSK2 = b"Noise_XXhfs_psk2_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384"
@@ -358,8 +358,8 @@ def _verify(pk: bytes, msg: bytes, sig: bytes, *, is_initiator: bool = False) ->
 @dataclass
 class NoiseSession:
     is_initiator: bool
-    sig_pk: bytes
-    sig_sk: bytes = field(repr=False)
+    sig_pk: Optional[bytes]
+    sig_sk: Optional[Union[bytes, bytearray]] = field(default=None, repr=False)
     psk: Optional[bytes] = field(default=None, repr=False)
     sym: Optional[SymmetricState] = field(default=None, repr=False)
     _e_priv: Optional[object] = field(default=None, repr=False)
@@ -419,6 +419,14 @@ class NoiseSession:
                 _unlock_buffer(self.psk)
                 _zero(self.psk)
             self.psk = None
+        # F-03: Zeroize and release long-term signing key and ephemeral DH secrets
+        if self.sig_sk is not None:
+            if isinstance(self.sig_sk, bytearray):
+                _unlock_buffer(self.sig_sk)
+                _zero(self.sig_sk)
+            self.sig_sk = None
+        if self._e_priv is not None:
+            self._e_priv = None
         if self.sym is not None:
             self.sym.destroy()
             self.sym = None
@@ -427,6 +435,10 @@ class NoiseSession:
         """Irreversible latching quarantine: zeroize all key buffers and freeze state."""
         self.destroy()
         self._quarantined = True
+        self.handshake_hash = None
+        self.sig_pk = None
+        self._e_pub = None
+        self._peer_sig_pk = None
 
 
 def _take_ephemeral(sess: NoiseSession) -> bytes:

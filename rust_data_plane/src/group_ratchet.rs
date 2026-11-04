@@ -393,7 +393,7 @@ impl SovereignGroupRatchet {
 
         // 1. Check if frame matches a previously skipped message key
         let lookup_key = (sender_id.to_string(), epoch, seq);
-        if let Some(skipped_msg_key) = self.skipped_message_keys.remove(&lookup_key) {
+        if let Some(skipped_msg_key) = self.skipped_message_keys.get(&lookup_key).cloned() {
             let aad = message_aad(&self.group_id, self.epoch, sender_id, seq)?;
             let mut nb = [0u8; 12];
             nb.copy_from_slice(nonce_bytes);
@@ -409,6 +409,8 @@ impl SovereignGroupRatchet {
                     },
                 )
                 .map_err(|_| GroupError::AuthenticationFailed)?;
+            // Atomic commit: remove cached skipped key only AFTER authentication succeeds
+            self.skipped_message_keys.remove(&lookup_key);
             return Ok(plaintext);
         }
 
@@ -630,6 +632,48 @@ mod tests {
             bravo.decrypt_group_message("ALPHA", &frame0),
             Err(GroupError::SequenceMismatch)
         );
+    }
+
+    #[test]
+    fn test_f02_skipped_message_key_survives_forged_auth_failure() {
+        let epoch_secret = [0x55u8; 48];
+        let mut alpha =
+            SovereignGroupRatchet::new("DEFCON-1".into(), "ALPHA".into(), epoch_secret).unwrap();
+        let mut bravo =
+            SovereignGroupRatchet::new("DEFCON-1".into(), "BRAVO".into(), epoch_secret).unwrap();
+
+        let alpha_init_chain =
+            SovereignGroupRatchet::derive_sender_chain(&alpha.epoch_secret, "ALPHA", 0).unwrap();
+        let bravo_init_chain =
+            SovereignGroupRatchet::derive_sender_chain(&bravo.epoch_secret, "BRAVO", 0).unwrap();
+        alpha.add_member("BRAVO".into(), bravo_init_chain);
+        bravo.add_member("ALPHA".into(), alpha_init_chain);
+
+        // Alpha sends 2 messages: seq 0 and seq 1
+        let frame0 = alpha.encrypt_group_message(b"GENUINE-MSG-0").unwrap();
+        let frame1 = alpha.encrypt_group_message(b"GENUINE-MSG-1").unwrap();
+
+        // Frame 1 arrives first; seq 0 is skipped and cached
+        let dec1 = bravo.decrypt_group_message("ALPHA", &frame1).unwrap();
+        assert_eq!(dec1, b"GENUINE-MSG-1");
+        assert_eq!(bravo.skipped_message_keys.len(), 1);
+
+        // Attacker creates a forged frame for seq 0 with corrupted AEAD tag
+        let mut forged_frame = frame0.clone();
+        let last_idx = forged_frame.len() - 1;
+        forged_frame[last_idx] ^= 0xff;
+
+        // Bravo attempts decryption of forged frame: MUST fail with AuthenticationFailed
+        let res = bravo.decrypt_group_message("ALPHA", &forged_frame);
+        assert_eq!(res, Err(GroupError::AuthenticationFailed));
+
+        // CRITICAL (F-02): Skipped message key MUST NOT be destroyed by unauthenticated forged frame
+        assert_eq!(bravo.skipped_message_keys.len(), 1);
+
+        // When the legitimate frame 0 arrives, it MUST decrypt successfully
+        let dec0 = bravo.decrypt_group_message("ALPHA", &frame0).unwrap();
+        assert_eq!(dec0, b"GENUINE-MSG-0");
+        assert_eq!(bravo.skipped_message_keys.len(), 0);
     }
 
     #[test]

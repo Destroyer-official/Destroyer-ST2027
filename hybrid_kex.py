@@ -56,9 +56,17 @@ def _hkdf_sha384(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> byte
 class HybridKeyExchange2027:
     """Modern hybrid KEX: P-384 + ML-KEM-1024 (+ optional HQC-256) + PSK."""
 
-    def __init__(self, psk: Optional[bytes] = None, enable_hqc: bool = False):
+    def __init__(self, psk: Optional[bytes] = None, enable_hqc: bool = False, authorized_peer_fingerprints: Optional[Any] = None):
         self._psk = psk if psk is not None else b""
         self._enable_hqc = enable_hqc
+        self.authorized_peer_fingerprints = None
+        if authorized_peer_fingerprints is not None:
+            if isinstance(authorized_peer_fingerprints, (list, tuple, set)):
+                self.authorized_peer_fingerprints = {
+                    fp.strip().lower() for fp in authorized_peer_fingerprints if isinstance(fp, str)
+                }
+            elif isinstance(authorized_peer_fingerprints, str):
+                self.authorized_peer_fingerprints = {authorized_peer_fingerprints.strip().lower()}
 
         # P-384 long-term/ephemeral key
         self._p384_private = ec.generate_private_key(ec.SECP384R1())

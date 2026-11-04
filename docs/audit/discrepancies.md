@@ -71,3 +71,19 @@ The audit confirmed several blocks of dormant, quarantined, or disabled code wit
 3. **Continuous Forward Secrecy:**
    - *Claim:* Documentation claims "healing after physical memory capture."
    - *Reality:* Confirmed via Continuous Epoch Ratchet (CER) in `unified_secure_pipeline.py:57` and `secure_transmit_2027.py:14`. Every 128 messages, a fresh ephemeral key exchange is injected into the ratchet chain, achieving post-compromise security (PCS) healing.
+
+---
+
+## 6. Forensic Security Audit Findings & Remediations (2026-11-04)
+
+1. **F-01: First-Contact Identity Anchoring in Python KEX:**
+   - *Previous Gap:* `HybridKeyExchange.__init__` omitted initializing `authorized_peer_fingerprints`. In `verify_public_bundle`, un-enrolled peers returning `'new'` were accepted in production mode without requiring whitelist authorization or establishing an explicit trust anchor.
+   - *Remediation:* Initialized `authorized_peer_fingerprints: Optional[Set[str]]` in `__init__`. In `verify_public_bundle`, enforced strict fail-closed rejection for unknown peer identities under production posture (`is_production()` or `P2P_STRICT_SECURITY=1`) unless explicitly present in the whitelist. Separated in-memory vs persistent pin store scopes and implemented atomic commit of pins only after all bundle signatures pass verification. Verified by `tests/test_f01_identity_anchor.py`.
+
+2. **F-02: State-Destructive Skipped-Key Deletion in Rust Group Ratchet:**
+   - *Previous Gap:* In `rust_data_plane/src/group_ratchet.rs`, `decrypt_group_message()` called `.remove(&lookup_key)` on the skipped-key hashmap before AEAD ciphertext authentication. An attacker sending a corrupted frame with a skipped sequence caused premature key destruction, permanently preventing decryption of genuine out-of-order messages.
+   - *Remediation:* Changed `.remove(&lookup_key)` to `.get(&lookup_key).cloned()` before AES-GCM tag verification. Key eviction executes strictly after decryption succeeds (`self.skipped_message_keys.remove(&lookup_key)`). Verified by `test_f02_skipped_message_key_survives_forged_auth_failure` in cargo test suite.
+
+3. **F-03: Incomplete Secret Lifecycle Cleanup in Python Noise Sessions:**
+   - *Previous Gap:* In `noise_pq.py`, `NoiseSession.destroy()` and `quarantine()` cleaned up ephemeral KEM and transport buffers but left `self.sig_sk` (ML-DSA private signing key) and `self._e_priv` (P-384 ephemeral private key object) retained on the session instance.
+   - *Remediation:* Updated `destroy()` to zeroize mutable `sig_sk` buffers, clear `self.sig_sk = None`, and clear `self._e_priv = None`. Updated `quarantine()` to invoke `destroy()`, purge public metadata references, and latch shut. Verified by `test_f03_noise_session_sig_sk_and_epriv_destroyed` in `tests/test_noise_pq_purity.py`.

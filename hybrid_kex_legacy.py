@@ -65,6 +65,7 @@ import collections
 import string
 import secrets
 import hashlib
+import hmac
 from typing import Tuple, Dict, Optional, Union, Any, List
 import math
 import ctypes
@@ -754,7 +755,8 @@ class HybridKeyExchange:
 
     def __init__(self, identity: str = "user", keys_dir: Optional[str] = None,
                  ephemeral: bool = True, key_lifetime: int = MIN_KEY_LIFETIME,
-                 in_memory_only: bool = True):
+                 in_memory_only: bool = True,
+                 authorized_peer_fingerprints: Optional[Any] = None):
         """
         Initialize a hybrid key exchange instance with NIST Level-5 security.
 
@@ -782,6 +784,17 @@ class HybridKeyExchange:
         self.keys = {}
         self.peer_keys = {}
         self.handshake_states = {}
+
+        # F-01: Initialize authorized peer fingerprints anchor and in-memory pin tracking
+        self._in_memory_pins: Dict[str, str] = {}
+        self.authorized_peer_fingerprints: Optional[Set[str]] = None
+        if authorized_peer_fingerprints is not None:
+            if isinstance(authorized_peer_fingerprints, (list, tuple, set)):
+                self.authorized_peer_fingerprints = {
+                    fp.strip().lower() for fp in authorized_peer_fingerprints if isinstance(fp, str)
+                }
+            elif isinstance(authorized_peer_fingerprints, str):
+                self.authorized_peer_fingerprints = {authorized_peer_fingerprints.strip().lower()}
 
         # Initialize quantum resistance module with NIST Level-5 algorithms
         try:
@@ -1754,25 +1767,67 @@ class HybridKeyExchange:
             if not peer_id or not str(peer_id).strip() or str(peer_id).strip().lower() == 'unknown':
                 hybrid_kex_logger.error("SECURITY ALERT: Peer bundle carries no verifiable identity; rejecting.")
                 return False
+            should_store_pin = False
+            fingerprint = None
             try:
-                from ui.safety_numbers import check_pin
                 fp_fields = {k: str(bundle.get(k, '')) for k in (
                     'identity', 'static_key', 'signing_key', 'signed_prekey',
                     'prekey_signature', 'kem_public_key', 'falcon_public_key')}
                 fingerprint = hashlib.sha3_512(
                     json.dumps(fp_fields, sort_keys=True).encode('utf-8')).hexdigest()
-                pin_status = check_pin(peer_id, fingerprint)
+
+                if not hasattr(self, '_in_memory_pins'):
+                    self._in_memory_pins = {}
+
+                if getattr(self, 'in_memory_only', True):
+                    if peer_id in self._in_memory_pins:
+                        stored_fp = self._in_memory_pins[peer_id]
+                        pin_status = 'match' if hmac.compare_digest(stored_fp, fingerprint) else 'CHANGED'
+                    else:
+                        from ui.safety_numbers import is_unpinnable_target
+                        pin_status = 'unpinnable' if is_unpinnable_target(peer_id) else 'new'
+                else:
+                    from ui.safety_numbers import check_pin
+                    pin_status = check_pin(peer_id, fingerprint)
                 if pin_status == 'CHANGED':
                     hybrid_kex_logger.critical(f"SECURITY ALERT: Key bundle failed TOFU pin continuity for peer '{peer_id}'! Identity key changed!")
                     return False
-                if pin_status == 'new':
+                if pin_status in ('new', 'unpinnable'):
                     from production_gate import is_production as _gate_prod
                     _prod_pin = _gate_prod()
-                    if _prod_pin or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on"):
-                        auth_fps = getattr(self, 'authorized_peer_fingerprints', None)
-                        if auth_fps is not None and fingerprint not in auth_fps:
-                            hybrid_kex_logger.critical(f"FAIL-CLOSED: Peer '{peer_id}' is unknown and not in authorized whitelist under production policy.")
-                            return False
+                    is_strict = _prod_pin or os.environ.get("P2P_STRICT_SECURITY", "").strip().lower() in ("1", "true", "yes", "on")
+
+                    auth_fps = set(getattr(self, 'authorized_peer_fingerprints', None) or set())
+                    if getattr(self, 'authorized_peer_fingerprint', None):
+                        auth_fps.add(self.authorized_peer_fingerprint)
+                    env_fp = os.environ.get("P2P_AUTHORIZED_PEER_FINGERPRINT")
+                    if env_fp:
+                        auth_fps.add(env_fp)
+
+                    clean_fp = fingerprint.lower()
+                    is_auth = False
+                    for af in auth_fps:
+                        if isinstance(af, str):
+                            caf = af.strip().lower()
+                            if (len(caf) == len(clean_fp) and hmac.compare_digest(clean_fp, caf)) or \
+                               (len(caf) == 32 and hmac.compare_digest(clean_fp[:32], caf)):
+                                is_auth = True
+                                break
+
+                    if is_strict and not is_auth:
+                        hybrid_kex_logger.critical(
+                            f"FAIL-CLOSED: Peer '{peer_id}' (status={pin_status}) is not anchored by authorized whitelist under production policy."
+                        )
+                        return False
+                    elif auth_fps and not is_auth:
+                        hybrid_kex_logger.critical(
+                            f"FAIL-CLOSED: Peer '{peer_id}' is not in configured authorized whitelist."
+                        )
+                        return False
+
+                    # Atomic commit: stage pin storage ONLY after full cryptographic verification passes
+                    if pin_status == 'new':
+                        should_store_pin = True
             except Exception as e_pin:
                 hybrid_kex_logger.error(f"FAIL-CLOSED: TOFU pin continuity check failed for peer '{peer_id}': {e_pin}")
                 from production_gate import is_production as _gate_prod
@@ -1871,6 +1926,14 @@ class HybridKeyExchange:
                     # bool contract (False = reject) for bundle verification.
                     hybrid_kex_logger.error(f"SECURITY ALERT: {str(e)}")
                     return False
+
+            # Atomic commit: anchor TOFU pin only after all signatures and components verified
+            if should_store_pin and fingerprint:
+                if getattr(self, 'in_memory_only', True):
+                    self._in_memory_pins[peer_id] = fingerprint
+                else:
+                    from ui.safety_numbers import store_pin
+                    store_pin(peer_id, fingerprint)
 
             return True
 
