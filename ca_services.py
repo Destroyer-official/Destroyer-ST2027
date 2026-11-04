@@ -440,7 +440,7 @@ class CAExchange:
     - Constant-time operations for cryptographic functions
     - Protection against timing and side-channel attacks
     - Memory zeroization after sensitive operations
-    - Comprehensive error handling and logging
+    - Structured error handling and logging
     """
 
     # Constants for input validation
@@ -497,7 +497,7 @@ class CAExchange:
         self.xchacha_cipher = None
         self.mlkem = None
 
-        # Zero-trust military authorized peers whitelist
+        # Authorized peers whitelist (mutual certificate pinning)
         self.authorized_peer_fingerprints: Set[str] = set()
         if authorized_peer_fingerprints:
             for fp in authorized_peer_fingerprints:
@@ -580,11 +580,11 @@ class CAExchange:
         self.cert_store: Dict[str, bytes] = {}
 
     def add_authorized_fingerprint(self, fingerprint: str) -> None:
-        """Add an authorized peer SHA3-512 fingerprint to the zero-trust whitelist."""
+        """Add an authorized peer SHA3-512 fingerprint to the certificate pin whitelist."""
         if fingerprint and isinstance(fingerprint, str):
             clean_fp = fingerprint.strip().lower()
             self.authorized_peer_fingerprints.add(clean_fp)
-            ca_logger.info(f"Added authorized military peer fingerprint: {clean_fp[:24]}...")
+            ca_logger.info(f"Added authorized peer fingerprint: {clean_fp[:24]}...")
 
     def load_authorized_peers(self, file_path: str) -> int:
         """Load authorized peer fingerprints from a JSON or line-delimited text file."""
@@ -703,7 +703,7 @@ class CAExchange:
             ca_logger.critical(
                 f"FAIL-CLOSED: TOFU first-contact certificate for '{peer_host}' "
                 f"rejected: peer is not in pre-authorized whitelist. "
-                "Unverified TOFU is prohibited under military policy."
+                "Unverified TOFU is prohibited under strict verification policy."
             )
             raise SecurityError(
                 f"Certificate TOFU first-contact rejected for '{peer_host}': "
@@ -852,7 +852,7 @@ class CAExchange:
         else:
             raise SecurityError(
                 f"Unsupported key type: {self.key_type}. Identity certificates must strictly use 'mldsa87' "
-                f"(or 'ec384' strictly for TLS transport hybrid). Fallbacks prohibited under military policy."
+                f"(or 'ec384' strictly for TLS transport hybrid). Fallbacks prohibited under strict policy."
             )
 
         subject = issuer = x509.Name([
@@ -994,7 +994,7 @@ class CAExchange:
         """
         if not self.exchange_key or not self.secure_exchange:
             ca_logger.critical("Security violation: Exchange key missing or secure_exchange is False. Plaintext transmission is prohibited.")
-            raise SecurityError("Secure exchange is mandatory under military policy. Plaintext transmission is prohibited.")
+            raise SecurityError("Encrypted exchange is mandatory. Plaintext transmission is prohibited.")
 
         if not self.xchacha_cipher:
             raise SecurityError("XChaCha20Poly1305 cipher not initialized. Cannot perform secure exchange.")
@@ -1024,7 +1024,7 @@ class CAExchange:
 
         if not self.exchange_key or not self.secure_exchange:
             ca_logger.critical("Security violation: Exchange key missing or secure_exchange is False. Plaintext reception is prohibited.")
-            raise SecurityError("Secure exchange is mandatory under military policy. Plaintext reception is prohibited.")
+            raise SecurityError("Encrypted exchange is mandatory. Plaintext reception is prohibited.")
 
         if not self.xchacha_cipher:
             raise SecurityError("XChaCha20Poly1305 cipher not initialized. Cannot perform secure exchange.")
@@ -1189,7 +1189,7 @@ class CAExchange:
         - Memory protection
 
         Error Handling:
-        - Comprehensive input validation
+        - Strict input validation
         - Network error recovery
         - Secure cleanup on failure
         - Detailed error reporting
@@ -1446,7 +1446,7 @@ class CAExchange:
                 if actual_fingerprint != peer_fingerprint:
                     raise SecurityError(f"Certificate fingerprint mismatch. Expected {peer_fingerprint}, got {actual_fingerprint}")
 
-                # Zero-Trust Whitelist & Cryptographic TOFU Verification (Finding 1.1)
+                # Pin Whitelist & Cryptographic TOFU Verification (Finding 1.1)
                 clean_fp = actual_fingerprint.lower()
                 clean_peer_pair = str(peer_pairing_fp).strip().lower() if peer_pairing_fp else None
                 if self.authorized_peer_fingerprints:
@@ -1463,7 +1463,7 @@ class CAExchange:
                             break
                     if not matched:
                         ca_logger.critical(f"CRITICAL INTRUSION DETECTED: Peer certificate fingerprint {actual_fingerprint} (pairing: {clean_peer_pair}) NOT in authorized whitelist!")
-                        raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {actual_fingerprint} is not in pre-authorized military whitelist.")
+                        raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {actual_fingerprint} is not in pre-authorized peer whitelist.")
                     ca_logger.info(f"Peer certificate fingerprint {actual_fingerprint[:24]}... verified against authorized whitelist.")
                     self.authorized_peer_fingerprints.add(clean_fp)
                     if clean_peer_pair:
@@ -1510,7 +1510,7 @@ class CAExchange:
                             ca_logger.debug(f"Loopback/local interface '{peer_host}' using ephemeral session validation.")
                     except ImportError as ie:
                         ca_logger.critical("FAIL-CLOSED: ui.safety_numbers unavailable, cannot perform TOFU pinning — rejecting peer.")
-                        raise SecurityError(f"TOFU pin store unavailable ({ie}); fail-closed under military policy.") from ie
+                        raise SecurityError(f"TOFU pin store unavailable ({ie}); fail-closed under strict policy.") from ie
 
                 ca_logger.info(f"Certificate fingerprint verified: {peer_fingerprint}")
 
@@ -1588,7 +1588,7 @@ class CAExchange:
     )
 
     def create_server_ctx(self) -> ssl.SSLContext:
-        """Create a hardened TLS 1.3 server context with mutual authentication.
+        """Create a TLS 1.3 server context with mutual authentication and restricted cipher suites.
 
         Configures a high-security SSLContext for server-side TLS with:
         - TLS 1.3 only (no downgrade to older versions)
@@ -1623,7 +1623,7 @@ class CAExchange:
             )
             if not matched:
                 ca_logger.critical(f"TLS Server Context creation blocked: peer fingerprint {self.peer_cert_fingerprint} not in authorized whitelist!")
-                raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {self.peer_cert_fingerprint} is not in pre-authorized military whitelist.")
+                raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {self.peer_cert_fingerprint} is not in pre-authorized peer whitelist.")
 
         # CRL freshness + OCSP Must-Staple hard enforcement (fail-closed in prod).
         self._enforce_crl_freshness("create_server_ctx")
@@ -1634,7 +1634,7 @@ class CAExchange:
             _srv_ocsp = None
         self._enforce_ocsp_must_staple(_srv_ocsp, "create_server_ctx")
 
-        ca_logger.info("Creating SSLContext for server with maximum security settings.")
+        ca_logger.info("Creating SSLContext for server with strict TLS 1.3 settings.")
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -1706,11 +1706,11 @@ class CAExchange:
             ctx.verify_flags = ssl.VERIFY_X509_STRICT
             ca_logger.info("Strict X.509 verification enabled")
 
-        ca_logger.info("SSLContext for server configured with maximum security settings.")
+        ca_logger.info("SSLContext for server configured with strict TLS 1.3 settings.")
         return ctx
 
     def create_client_ctx(self, target_hostname: Optional[str] = None) -> ssl.SSLContext:
-        """Create a hardened TLS 1.3 client context with certificate validation.
+        """Create a TLS 1.3 client context with certificate validation and restricted cipher suites.
 
         Configures a high-security SSLContext for client-side TLS with:
         - TLS 1.3 only (no downgrade to older versions)
@@ -1744,7 +1744,7 @@ class CAExchange:
             )
             if not matched:
                 ca_logger.critical(f"TLS Client Context creation blocked: peer fingerprint {self.peer_cert_fingerprint} not in authorized whitelist!")
-                raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {self.peer_cert_fingerprint} is not in pre-authorized military whitelist.")
+                raise SecurityError(f"UNAUTHORIZED PEER REJECTED: Certificate fingerprint {self.peer_cert_fingerprint} is not in pre-authorized peer whitelist.")
 
         # CRL freshness + OCSP Must-Staple hard enforcement (fail-closed in prod).
         self._enforce_crl_freshness("create_client_ctx")
@@ -1755,14 +1755,14 @@ class CAExchange:
             _cli_ocsp = None
         self._enforce_ocsp_must_staple(_cli_ocsp, "create_client_ctx")
 
-        ca_logger.info("Creating SSLContext for client with maximum security settings.")
+        ca_logger.info("Creating SSLContext for client with strict TLS 1.3 settings.")
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
         ctx.maximum_version = ssl.TLSVersion.TLSv1_3
         ca_logger.info("SSLContext configured for TLS 1.3 only.")
 
-        # Same hardened options as the server side (legacy compression off;
+        # Same TLS 1.3 restricted options as the server side (legacy compression off;
         # single-use DH/ECDH, server cipher preference). NOTE (2026-09-14):
         # TLS 1.3 certificate compression (CVE-2025-66199) cannot negotiate
         # here: CPython exposes no cert-compression API and never advertises
@@ -1825,7 +1825,7 @@ class CAExchange:
             ctx.verify_flags = ssl.VERIFY_X509_STRICT
             ca_logger.info("Strict X.509 verification enabled")
 
-        ca_logger.info("SSLContext for client configured with maximum security settings.")
+        ca_logger.info("SSLContext for client configured with strict TLS 1.3 settings.")
         return ctx
 
     class SecureTemporaryFile:
@@ -2026,7 +2026,7 @@ class CAExchange:
             ca_logger.error(f"Error during secure cleanup: {e}")
 
     def wrap_socket_server(self, sock: socket.socket) -> ssl.SSLSocket:
-        """Wrap a server socket with a hardened TLS 1.3 context.
+        """Wrap a server socket with a strict TLS 1.3 context.
 
         Takes a standard socket and wraps it with a high-security TLS context
         that enforces TLS 1.3, strong ciphers, and mutual certificate authentication.
@@ -2044,11 +2044,11 @@ class CAExchange:
         """
         ctx = self.create_server_ctx()
         ssl_sock = ctx.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
-        ca_logger.info("Server socket wrapped with maximum security TLS context")
+        ca_logger.info("Server socket wrapped with strict TLS 1.3 context")
         return ssl_sock
 
     def wrap_socket_client(self, sock: socket.socket, server_hostname: Optional[str] = None) -> ssl.SSLSocket:
-        """Wrap a client socket with a hardened TLS 1.3 context.
+        """Wrap a client socket with a strict TLS 1.3 context.
 
         Takes a standard socket and wraps it with a high-security TLS context
         that enforces TLS 1.3, strong ciphers, and server certificate validation.
@@ -2068,7 +2068,7 @@ class CAExchange:
         """
         ctx = self.create_client_ctx()
         ssl_sock = ctx.wrap_socket(sock, server_hostname=server_hostname, do_handshake_on_connect=False)
-        ca_logger.info("Client socket wrapped with maximum security TLS context")
+        ca_logger.info("Client socket wrapped with strict TLS 1.3 context")
         return ssl_sock
 
     def _check_secure_memory(self) -> bool:
