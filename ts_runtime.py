@@ -121,7 +121,7 @@ def load_native() -> ctypes.CDLL:
         if _native_lib is not None:
             return _native_lib
         path = _lib_path()
-        if not path.exists():
+        if not path.exists() and not os.environ.get("P2P_TS_RT_LIB", "").strip():
             # Try to build with cargo if available on this system
             import shutil, subprocess
             cargo = shutil.which("cargo")
