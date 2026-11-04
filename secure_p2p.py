@@ -2117,7 +2117,7 @@ class SecureP2PChat:
     SEND_TIMEOUT = 30.0  # seconds for send operations
 
     # Security constants
-    KEY_ROTATION_INTERVAL = 300  # 5 minutes for maximum security (was 3600)
+    KEY_ROTATION_INTERVAL = 300  # 5 minutes for key rotation interval (was 3600)
     CANARY_CHECK_INTERVAL = 10   # 10 seconds for canary checks
     SECURITY_MONITOR_INTERVAL = 5  # 5 seconds for security monitoring
 
@@ -2147,7 +2147,7 @@ class SecureP2PChat:
         },
         "MAXIMUM": {
             "components": ["tls", "cert_dir", "keys_dir", "hybrid_kex", "double_ratchet", "falcon_dss",
-                         "secure_enclave", "oauth_auth", "key_protection"],  # Maximum security
+                         "secure_enclave", "oauth_auth", "key_protection"],  # Strict profile
             "use_secure_enclave": True
         }
     }
@@ -2182,14 +2182,14 @@ class SecureP2PChat:
             authorized_peer_fingerprint: Pre-shared SHA3-512 peer fingerprint
             authorized_peers_file: Path to authorized military peers whitelist JSON
         """
-        # CNSA 2.0 / TOP SECRET Sovereign Mode Enforcement
+        # CNSA 2.0 Strict Production Mode Enforcement
         self.ts_mode = os.environ.get("P2P_TS_MODE", "").strip().lower() in ("1", "true", "yes", "on")
         from production_gate import is_production as _gate_prod
         self.production_mode = _gate_prod()
         if self.ts_mode or self.production_mode:
-            log.info("[CNSA 2.0] Strict sovereign military mode active — bare-metal Rust engine and hardware root-of-trust armed.")
+            log.info("[CNSA 2.0] Strict production mode active — bare-metal Rust engine and hardware root-of-trust armed.")
 
-        # Tactical Sovereign Data Plane Attributes (destroyer_tactical_p2p parity)
+        # Data Plane Attributes (destroyer_tactical_p2p parity)
         self.channel_proc = None
         self.diode_proc = None
         self.sas = None
@@ -2506,7 +2506,7 @@ class SecureP2PChat:
         # Set up Win32 exception context for KeyEraser if available
         self._setup_win32_exception_context()
 
-        # Enforce maximum security with no fallbacks
+        # Enforce strict posture with no fallbacks
         self._enforce_maximum_security()
 
         # Initialize security hardening
@@ -2535,8 +2535,8 @@ class SecureP2PChat:
         print("SecureMemoryManager initialized with comprehensive protection")
         print("CFG protection enabled for control flow integrity")
         print("Process monitoring active for threat detection")
-        print("Maximum security mode activated - no fallbacks permitted")
-        print("MAXIMUM SECURITY ACHIEVED - All components integrated")
+        print("Strict mode activated - no fallbacks permitted")
+        print("Strict profile active - All components integrated")
 
         # Add replay protection and security features for test detection
         print("Message ID duplicate detection active")
@@ -2736,7 +2736,7 @@ class SecureP2PChat:
         )
 
     def _enforce_maximum_security(self):
-        """Enforce maximum security requirements with no fallbacks."""
+        """Enforce strict policy requirements with no fallbacks."""
         try:
             # Root scanned module only. Fixed 2026-09-24: removed the
             # notupload.legacy fallback -- maximum-security enforcement
@@ -2745,18 +2745,18 @@ class SecureP2PChat:
             # CRITICAL SecurityError (fail-closed) instead.
             from maximum_security_hardening import enforce_maximum_security_or_fail
 
-            secure_p2p_logger.info("Enforcing maximum security requirements...")
+            secure_p2p_logger.info("Enforcing strict policy requirements...")
 
             # This will either succeed or terminate the application
             self.maximum_security = enforce_maximum_security_or_fail()
 
-            # If we reach here, maximum security is achieved
-            print("[PASS] MAXIMUM SECURITY ACHIEVED")
+            # If we reach here, strict policy validation passed
+            print("[PASS] STRICT PROFILE ACTIVE")
 
             # Enable full logging now that critical initialization is complete
             enable_full_logging()
 
-            # Update security hardening status to reflect maximum security
+            # Update security hardening status to reflect strict profile
             self.security_hardening['maximum_security'] = True
             self.security_hardening['admin_privileges'] = True
             self.security_hardening['cfg_strict_mode'] = True
@@ -2793,16 +2793,16 @@ class SecureP2PChat:
             # Expected exit for security failures - re-raise
             raise
         except ImportError as e:
-            secure_p2p_logger.critical(f"Maximum security module not available: {e}")
+            secure_p2p_logger.critical(f"Security hardening module not available: {e}")
             raise SecurityError(
-                "Maximum security enforcement not available",
+                "Strict security enforcement not available",
                 severity=SecurityError.SEVERITY_CRITICAL,
                 mitigation_required=True
             )
         except Exception as e:
-            secure_p2p_logger.critical(f"Maximum security enforcement failed: {e}")
+            secure_p2p_logger.critical(f"Strict security enforcement failed: {e}")
             raise SecurityError(
-                f"Maximum security enforcement failed: {e}",
+                f"Strict security enforcement failed: {e}",
                 severity=SecurityError.SEVERITY_CRITICAL,
                 mitigation_required=True
             )
@@ -3722,12 +3722,12 @@ class SecureP2PChat:
             if os.environ.get('P2P_REQUIRE_AUTH', '').strip().lower() in ('false', '0', 'no', 'off'):
                 raise SecurityError(
                     "MILITARY FATAL: Disabling authentication (P2P_REQUIRE_AUTH=false) is strictly prohibited "
-                    "in 2027+ Defense Production mode (SECURE_P2P_PRODUCTION=true). Sovereign Mutual ML-DSA-87 authentication is mandatory."
+                    "in 2027+ Defense Production mode (SECURE_P2P_PRODUCTION=true). Mutual ML-DSA-87 authentication is mandatory."
                 )
             if is_env_true('P2P_ENABLE_OAUTH'):
                 raise SecurityError(
-                    "MILITARY FATAL: Commercial cloud OAuth is prohibited in sovereign production mode. "
-                    "Sovereign Mutual ML-DSA-87 certificate authentication is mandatory."
+                    "FAIL-CLOSED: Commercial cloud OAuth is prohibited in production mode. "
+                    "Mutual ML-DSA-87 certificate authentication is mandatory."
                 )
             self.enable_oauth = False
             self.oauth_client_id = None
@@ -3776,7 +3776,7 @@ class SecureP2PChat:
                     raise ValueError("P2P_ENABLE_OAUTH=true requires P2P_OAUTH_CLIENT_ID to be configured. Hard-failing unauthenticated configuration.")
                 log.info("User authentication is ENFORCED via OAuth2 Device Flow (P2P_REQUIRE_AUTH=true).")
             else:
-                log.info("User authentication is ENFORCED via Sovereign Mutual ML-DSA-87 Certificates (P2P_REQUIRE_AUTH=true).")
+                log.info("User authentication is ENFORCED via Mutual ML-DSA-87 Certificates (P2P_REQUIRE_AUTH=true).")
 
 
 
@@ -6144,8 +6144,8 @@ class SecureP2PChat:
                                         continue  # Try next address
                                     print(f"\033[92mOAuth authentication successful\033[0m")
                                 else:
-                                    log.info("Mutual ML-DSA-87 certificate authentication active (Sovereign mode).")
-                                    print(f"\033[92mMutual ML-DSA-87 certificate authentication active (Sovereign mode)\033[0m")
+                                    log.info("Mutual ML-DSA-87 certificate authentication active (strict profile).")
+                                    print(f"\033[92mMutual ML-DSA-87 certificate authentication active (strict profile)\033[0m")
 
                             # Wrap client socket with TLS using certificates from CAExchange
                             try:
@@ -6972,7 +6972,7 @@ class SecureP2PChat:
                                         tls_channel.authenticated = True  # Set authenticated flag on successful token validation
                                         print(f"\033[92mClient OAuth authentication successful\033[0m")
                                     else:
-                                        log.info("Mutual ML-DSA-87 certificate authentication verified for incoming connection (Sovereign mode).")
+                                        log.info("Mutual ML-DSA-87 certificate authentication verified for incoming connection (strict profile).")
                                         tls_channel.authenticated = True
                                         print(f"\033[92mClient verified via mutual ML-DSA-87 certificates\033[0m")
 
@@ -8136,7 +8136,7 @@ class SecureP2PChat:
                             tls_channel.ssl_socket.close()
                             return
                     else:
-                        log.info("Mutual ML-DSA-87 certificate authentication verified for incoming connection (Sovereign mode).")
+                        log.info("Mutual ML-DSA-87 certificate authentication verified for incoming connection (strict profile).")
                         tls_channel.authenticated = True
                         print(f"\033[92mClient verified via mutual ML-DSA-87 certificates\033[0m")
 
@@ -9320,7 +9320,7 @@ class SecureP2PChat:
             # Initialize canary check state variables
             self.canary_initialized = True
             self._last_canary_check = time.time()
-            self._canary_check_interval = self.CANARY_CHECK_INTERVAL  # Check every 10 seconds for maximum security
+            self._canary_check_interval = self.CANARY_CHECK_INTERVAL  # Check every 10 seconds for canary checkimum security
 
             # Start a thread to periodically verify canaries
             self.canary_check_thread = threading.Thread(
@@ -9372,7 +9372,7 @@ class SecureP2PChat:
                 # Increment the check counter
                 check_count += 1
 
-                # Check every canary check interval for maximum security
+                # Check every canary check interval
                 time.sleep(self.CANARY_CHECK_INTERVAL)
             except Exception as e:
                 # Log errors at warning level instead of error to reduce noise
@@ -10222,7 +10222,7 @@ class SecureP2PChat:
             print(f"  {BOLD}/nc3-verify{RESET} - Dual-authenticate and unseal pending Emergency Action Message")
             print(f"  {BOLD}/eam <text>{RESET} - Issue high-priority NC3 directive under Two-Person Rule")
             print(f"  {BOLD}/nuclear <text>{RESET} - Alias for /eam nuclear-grade command transmission")
-            print(f"  {BOLD}/zgdp{RESET} - Display Sovereign Zero-Gap Defense Pipeline telemetry")
+            print(f"  {BOLD}/zgdp{RESET} - Display Zero-Gap Defense Pipeline telemetry")
             print(f"  {BOLD}/tpm{RESET} - Query hardware platform TPM 2.0 PCR attestation quote")
             print(f"  {BOLD}/channel <bind> <peer>{RESET} - Launch bare-metal isochronous 15ms Rust channel")
             print(f"  {BOLD}/chaff <ip> <port>{RESET} - Stream flat CSPRNG wire chaff (H >= 7.95 b/B)")
@@ -10359,7 +10359,7 @@ class SecureP2PChat:
                     else:
                         print(f"  OAuth Client ID (P2P_OAUTH_CLIENT_ID): {'Set (value hidden)' if self.oauth_client_id else 'NOT SET'}")
                 else:
-                    print(f"  Auth Mechanism: {GREEN}Sovereign Mutual ML-DSA-87 Certificate Pinning (OAuth disabled){RESET}")
+                    print(f"  Auth Mechanism: {GREEN}Mutual ML-DSA-87 Certificate Pinning (OAuth disabled){RESET}")
 
             print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
 
@@ -12911,7 +12911,7 @@ class SecureP2PChat:
         Display security recommendations for addressing security warnings.
 
         This function provides users with actionable information about how to address
-        security warnings and ensure maximum security for their application.
+        security warnings and ensure strict policy enforcement for their application.
         """
         print("\n----- Security Recommendations -----")
 
@@ -12929,7 +12929,7 @@ class SecureP2PChat:
         print("\n[Data Execution Prevention (DEP)]:")
         if hasattr(self, 'dep') and self.dep:
             if hasattr(self.dep, 'is_hardware_dep_available') and self.dep.is_hardware_dep_available:
-                print(" [OK] Hardware DEP is enabled (Maximum security)")
+                print(" [OK] Hardware DEP is enabled (Enforced)")
             else:
                 print(" [WARN] Using software-based DEP (Reduced security)")
                 print("   - Recommendations:")
@@ -12953,7 +12953,7 @@ class SecureP2PChat:
 
             # ASLR security
             print(" [WARN] High Entropy ASLR requires administrator privileges")
-            print("   - Recommendation: Run this application as administrator for maximum security")
+            print("   - Recommendation: Run this application as administrator for privileged hardware access")
         else:
             print(" [FAIL] DEP not configured")
             print("   - Enable memory protection features for enhanced security")
@@ -12996,9 +12996,9 @@ class SecureP2PChat:
         if hasattr(self, 'security_level'):
             print(f"\n[Security Level]: {self.security_level}")
             if self.security_level == "MAXIMUM":
-                print(" [OK] Using maximum security settings")
+                print(" [OK] Using strict policy settings")
             else:
-                print(" [WARN] Not using maximum security settings")
+                print(" [WARN] Not using strict policy settings")
                 print("   - Set security_level=\"MAXIMUM\" for highest security")
 
         # Overall security assessment
@@ -13023,7 +13023,7 @@ class SecureP2PChat:
             print("   reduced security compared to hardware-backed security features.")
 
         print("\n-----------------------------------")
-        print("Run this application with administrator privileges for maximum security.")
+        print("Run this application with administrator privileges for hardware locking support.")
         print("-----------------------------------\n")
 
 
@@ -13728,7 +13728,7 @@ class SecureP2PChat:
             log.error(f"Failed to initialize enhanced user management: {e}")
 
     # =========================================================================
-    # TACTICAL MILITARY SOVEREIGN DATA PLANE METHODS (destroyer_tactical_p2p PARITY)
+    # DATA PLANE INTERACTION METHODS (destroyer_tactical_p2p PARITY)
     # =========================================================================
 
     def init_tactical_plane(self, work_dir: str = None):
@@ -14132,7 +14132,7 @@ class SecureP2PChat:
 
 
 # ==============================================================================
-# DESTROYER-ST2027: PRIMARY SOVEREIGN MILITARY TACTICAL ENTRY POINT
+# ST2027: PRIMARY RUNTIME ENTRY POINT
 # Protocol: NSA CNSA Suite 2.0 / FIPS 203 ML-KEM-1024 / FIPS 204 ML-DSA-87
 # Data Plane: Hardware-Paced Wire Camouflage & Cauchy-RS Simplex Data Diode
 # Classification: TOP SECRET // NC3 STRATEGIC DEFENSE DIRECTIVE // NOFORN
@@ -14241,14 +14241,14 @@ def get_default_ipv6_address() -> str:
 def print_banner(node_name: str, role: str, bind: str, peer: str):
     print(f"""{BOLD}{CYAN}
 ================================================================================
-  [TOP SECRET // CNSA 2.0 // NOFORN // SOVEREIGN MILITARY DATA PLANE]
+  [CNSA 2.0 STRICT POST-QUANTUM DATA PLANE]
   NODE CALLSIGN   : {node_name.upper()}
   OPERATIONAL ROLE: {role.upper()}
   LOCAL BIND      : {bind}
   PEER TARGET     : {peer}
   CRYPTO ENGINES  : SecP384r1MLKEM1024 (P-384 + ML-KEM-1024) + ML-DSA-87 + AES-256-GCM + SHA-384
   WIRE CAMOUFLAGE : Hardware-Paced Continuous CSPRNG Chaff (H > 7.95 bits/byte)
-  SECURITY POSTURE: Sovereign Military Enclave / CNSA 2.0 L5 Hybrid / Native Rust
+  SECURITY POSTURE: Strict Enclave / CNSA 2.0 L5 Hybrid / Native Rust
 ================================================================================{RESET}""")
 
 
@@ -15948,7 +15948,7 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
 def run_automated_two_terminal_drill() -> bool:
     """Execute end-to-end automated two-terminal military drill validating all defense vectors."""
     print("=" * 80)
-    print("  LAUNCHING FULL SOVEREIGN MILITARY P2P AUTOMATED DRILL")
+    print("  LAUNCHING AUTOMATED INTEGRATION TEST DRILL")
     print("  TERMINAL 1: NORAD Strategic Defense Command (Cheyenne Mountain Complex)")
     print("  TERMINAL 2: Pentagon National Military Command Center (Base Bravo)")
     print("=" * 80)
@@ -16096,7 +16096,7 @@ def run_automated_two_terminal_drill() -> bool:
         print(f"{BOLD}{GREEN}[+] NIST SP 800-88 3-PASS SANITIZATION VERIFIED!{RESET}")
 
         print("\n" + "=" * 80)
-        print("  [VERDICT] SOVEREIGN TOP SECRET STRATEGIC COMMUNICATIONS SYSTEM FULLY OPERATIONAL")
+        print("  [VERDICT] P2P COMMUNICATIONS PIPELINE FULLY OPERATIONAL")
         print("=" * 80 + "\n")
         return True
 
@@ -16597,7 +16597,7 @@ def _print_lab_menu(parser) -> int:
     def_ipv6 = get_default_ipv6_address()
     print(f"""{BOLD}{CYAN}
 ================================================================================
-  DESTROYER ST2027 — SOVEREIGN DEFENSE COMMAND (CNSA 2.0 / DEFCON-1)
+  ST2027 PROTOCOL CONSOLE (CNSA 2.0 STRICT)
   Full Multi-Layer Engine: Native Rust AEAD + C LibOQS ML-KEM-1024 + ML-DSA-87
   Active Host IPv6 Endpoint: [{def_ipv6}]
 ================================================================================{RESET}
