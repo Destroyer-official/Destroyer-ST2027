@@ -942,13 +942,28 @@ class XChaCha20Poly1305:
         s = get_libsodium()
         sodium = s[2] if isinstance(s, tuple) and len(s) > 2 else s
         if sodium and hasattr(sodium, 'crypto_aead_xchacha20poly1305_ietf_encrypt'):
+            try:
+                sodium.crypto_aead_xchacha20poly1305_ietf_encrypt.argtypes = [
+                    ctypes.c_char_p,
+                    ctypes.POINTER(ctypes.c_ulonglong),
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p
+                ]
+                sodium.crypto_aead_xchacha20poly1305_ietf_encrypt.restype = ctypes.c_int
+            except Exception:
+                pass
             out_ct = ctypes.create_string_buffer(len(data) + 16)
             clen = ctypes.c_ulonglong()
             aad = associated_data or b""
             res = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
                 out_ct, ctypes.byref(clen),
-                data, len(data),
-                aad, len(aad),
+                data, ctypes.c_ulonglong(len(data)),
+                aad, ctypes.c_ulonglong(len(aad)),
                 None, nonce, self.key
             )
             if res != 0:
@@ -982,14 +997,29 @@ class XChaCha20Poly1305:
         s = get_libsodium()
         sodium = s[2] if isinstance(s, tuple) and len(s) > 2 else s
         if sodium and hasattr(sodium, 'crypto_aead_xchacha20poly1305_ietf_decrypt'):
+            try:
+                sodium.crypto_aead_xchacha20poly1305_ietf_decrypt.argtypes = [
+                    ctypes.c_char_p,
+                    ctypes.POINTER(ctypes.c_ulonglong),
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p
+                ]
+                sodium.crypto_aead_xchacha20poly1305_ietf_decrypt.restype = ctypes.c_int
+            except Exception:
+                pass
             out_pt = ctypes.create_string_buffer(len(ciphertext) - 16)
             mlen = ctypes.c_ulonglong()
             aad = associated_data or b""
             res = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
                 out_pt, ctypes.byref(mlen),
                 None,
-                ciphertext, len(ciphertext),
-                aad, len(aad),
+                ciphertext, ctypes.c_ulonglong(len(ciphertext)),
+                aad, ctypes.c_ulonglong(len(aad)),
                 nonce, self.key
             )
             if res != 0:

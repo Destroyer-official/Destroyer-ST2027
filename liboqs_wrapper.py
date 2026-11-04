@@ -209,7 +209,7 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
             if res.stdout.strip() == pin_sha:
                 cmake_b = build_dir / "build"
                 # Minimal fast build for CNSA 2.0 / ST2027: ML-KEM-1024, ML-DSA-87, Falcon-1024, SPHINCS+
-                min_build = "-DOQS_MINIMAL_BUILD=KEM_ml_kem_1024;SIG_ml_dsa_87;SIG_falcon_1024;SIG_sphincs_shake_256f_simple"
+                min_build = "-DOQS_MINIMAL_BUILD=KEM_ML_KEM;KEM_CLASSIC_MCELIECE;KEM_HQC;SIG_ML_DSA;SIG_SLH_DSA;SIG_FALCON"
                 subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", min_build, "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
                 nproc = str(os.cpu_count() or 2)
                 subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=180)  # nosec: B603, B607
@@ -681,6 +681,12 @@ class LibOQS_SLH_DSA_256f:
         # Use the exact C string identifier for the FAST variant
         self.alg_name = b"SLH_DSA_PURE_SHAKE_256F"
         self.sig = liboqs.OQS_SIG_new(self.alg_name)
+        if not self.sig:
+            for alt in (b"SLH-DSA-SHAKE-256f", b"SPHINCS+-SHAKE-256f-simple", b"sphincs-shake-256f-simple"):
+                self.sig = liboqs.OQS_SIG_new(alt)
+                if self.sig:
+                    self.alg_name = alt
+                    break
         if not self.sig: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
         self.pk_size = self.sig.contents.length_public_key
         self.sk_size = self.sig.contents.length_secret_key

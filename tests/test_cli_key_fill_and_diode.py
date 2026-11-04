@@ -74,7 +74,7 @@ def test_cli_key_fill_import_success(ceremony_keys, workdir, monkeypatch):
         monkeypatch.setenv("P2P_KEY_FILL_OFFICER2", "ADM_BRAVO")
         monkeypatch.setenv("P2P_KEY_FILL_PW2", "bravo-pass-456")
 
-        cmd = f"/key-fill-import {fill_path} {ceremony_pub_path}"
+        cmd = f'/key-fill-import "{fill_path}" "{ceremony_pub_path}"'
         await chat._handle_command(cmd)
 
         assert hasattr(chat, "imported_key_fill")  # nosec: B101
@@ -127,7 +127,7 @@ def test_cli_key_fill_import_replay_fails_closed(ceremony_keys, workdir, monkeyp
         monkeypatch.setenv("P2P_KEY_FILL_PW2", "passphrase-2-bravo")
 
         # First import: success
-        cmd = f"/key-fill-import {fill_path} {ceremony_pub_path}"
+        cmd = f'/key-fill-import "{fill_path}" "{ceremony_pub_path}"'
         await chat._handle_command(cmd)
         assert chat.imported_key_fill["fill_id"] == "KMI-FILL-TEST-REPLAY"  # nosec: B101
 

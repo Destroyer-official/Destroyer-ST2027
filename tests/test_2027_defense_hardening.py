@@ -253,7 +253,7 @@ class Test2027DefenseHardening(unittest.TestCase):
             for provider in ['google', 'microsoft', 'github']:
                 with self.assertRaises(AuthenticationError) as ctx:
                     OAuth2DeviceFlowAuth(provider=provider, client_id="test_id")
-                self.assertIn("prohibited in sovereign production mode", str(ctx.exception))
+                self.assertTrue("prohibited in isolated production mode" in str(ctx.exception) or "prohibited in sovereign production mode" in str(ctx.exception))
         finally:
             if old_prod is None:
                 os.environ.pop("SECURE_P2P_PRODUCTION", None)

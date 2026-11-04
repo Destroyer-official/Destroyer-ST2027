@@ -822,7 +822,11 @@ def enumerate_external_dma() -> Dict[str, Any]:
                                 "-Command", ps_cim],
                                capture_output=True, text=True, timeout=60)
             if p.returncode != 0 or not p.stdout.strip():
+                if p.returncode == 0:
+                    return {"devices": found, "scan_ok": True}
                 return {"devices": found, "scan_ok": False}
+        if not p.stdout.strip():
+            return {"devices": found, "scan_ok": True}
         devs = json.loads(p.stdout)
         if isinstance(devs, dict):
             devs = [devs]

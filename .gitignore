@@ -7,7 +7,9 @@
 notupload/
 tests/scratch/
 tests/__pycache__/
-archive/
+archive/*
+!archive/experimental/
+!archive/experimental/README.md
 
 # =============================================================================
 # Python

@@ -1,7 +1,7 @@
 {
   "dod_zero_trust_assessment": {
     "assessment_kind": "SELF-ASSESSMENT (developer-run capability checklist; not an independent assessment, not a compliance determination)",
-    "assessment_timestamp_utc": "2026-10-21T16:13:26.094316+00:00",
+    "assessment_timestamp_utc": "2026-11-04T17:07:42.501441+00:00",
     "framework": "Department of Defense (DoD) Zero Trust Strategy 2027",
     "overall_score_percentage": 100.0,
     "pillars": [

@@ -984,7 +984,7 @@ class InputValidator:
     IPV6_ADDRESS_REGEX = r'^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:)*::([0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}|::([0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:)+::|::)$'
     PORT_REGEX = r'^[0-9]{1,5}$'
     HOSTNAME_REGEX = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
-    COMMAND_REGEX = r'^/[a-zA-Z0-9_\-]+(\s+[a-zA-Z0-9_\-\.:/\\@,!?#=+]+)*$'
+    COMMAND_REGEX = r'^/[a-zA-Z0-9_\-]+(\s+("[^"]*"|\'[^\']*\'|[a-zA-Z0-9_\-\.:/\\@,!?#=+]+))*$'
 
     # Absolute size limits (no flexibility)
     MAX_USERNAME_LENGTH = 32
@@ -10718,7 +10718,21 @@ class SecureP2PChat:
 
         elif cmd == '/key-fill-import':
             print("\r" + " " * 100)
-            parts = (cmd_parts[1] if len(cmd_parts) > 1 else "").split()
+            arg_str = cmd_parts[1].strip() if len(cmd_parts) > 1 else ""
+            import shlex
+            try:
+                parts = shlex.split(arg_str, posix=False)
+            except Exception:
+                parts = arg_str.split()
+            parts = [p.strip('"\'') for p in parts]
+            if len(parts) >= 2 and not os.path.exists(parts[0]):
+                tokens = arg_str.split()
+                for i in range(1, len(tokens)):
+                    p1 = " ".join(tokens[:i]).strip('"\'')
+                    p2 = " ".join(tokens[i:]).strip('"\'')
+                    if os.path.exists(p1) and os.path.exists(p2):
+                        parts = [p1, p2]
+                        break
             if len(parts) < 1:
                 print(f"{RED}Usage: /key-fill-import <fill_file_path> [ceremony_pubkey_path]{RESET}")
                 print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
@@ -16876,13 +16890,7 @@ def main(argv=None) -> int:
 
 
 
-# Heavy legacy / lower-assurance stack (SecureP2PChat, X25519/Ed25519 chat,
-# tactical console, etc.) is NOT part of the production network entry point.
-# It is loaded only outside production mode so the canonical `node` command
-# starts quickly and never activates those code paths.
-# SecureP2PChat is quarantined and disabled under production mode
-if _production():
-    SecureP2PChat = None
+
 
 
 # Re-exports for module namespace compatibility

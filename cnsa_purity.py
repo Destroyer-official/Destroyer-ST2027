@@ -138,9 +138,21 @@ def _string_value(tok_string: str) -> Optional[str]:
     import ast
     try:
         val = ast.literal_eval(tok_string)
+        if isinstance(val, str):
+            return val
     except Exception:
-        return None
-    return val if isinstance(val, str) else None
+        pass
+    s = tok_string
+    while s and s[0].lower() in ('f', 'r', 'u', 'b'):
+        s = s[1:]
+    if s.startswith(('"""', "'''")):
+        s = s[3:-3] if s.endswith(s[:3]) and len(s) >= 6 else s[3:]
+        return s
+    elif s.startswith(('"', "'")):
+        q = s[0]
+        s = s[1:-1] if s.endswith(q) and len(s) >= 2 else s[1:]
+        return s
+    return None
 
 
 def scan_file(path: Path) -> List[str]:
