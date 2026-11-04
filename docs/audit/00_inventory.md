@@ -1,6 +1,6 @@
 # Phase 0 - In-Scope File Inventory
 
-Scope is `git ls-files` at audit time: 692 tracked files. Untracked, ignored, build-output, cache, and secret files are excluded.
+Scope is `git ls-files` at audit time: 719 tracked files. Untracked, ignored, build-output, cache, and secret files are excluded.
 
 Line counts are computed from the tracked bytes; a file without a trailing newline counts its final partial line. Purposes for source files are taken from the module docstring or leading comment, not inferred from the filename. Restricted or promotional terms inside quoted purposes are replaced with `[restricted-term]`; terms inside tracked file paths are left unchanged and cataloged in `discrepancies.md`.
 
@@ -13,6 +13,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `.gitignore` | Other | 222 | Git ignore patterns for build output, caches, keys, and local files. | `utilities_support` |
 | `LICENSE` | Other | 21 | License text: MIT License | `utilities_support` |
 | `README.md` | Markdown | 890 | [restricted-term] Post-Quantum Communications Architecture (ST2027) | `documentation` |
+| `REVIEW_REPORT.md` | Markdown | 75 | Security posture and remediation audit review report | `documentation` |
 | `SECURITY.md` | Markdown | 51 | Security Policy & Vulnerability Disclosure | `documentation` |
 | `active_cyber_defense.py` | Python | 570 | active_cyber_defense.py | `audit_threat_monitoring` |
 | `acvp_validation_harness.py` | Python | 538 | FIPS 140-3 ACVP / CAVP Cryptographic Algorithm Validation Harness | `verification_evidence` |
@@ -33,7 +34,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `certs/node_alpha.json` | JSON | 24 | JSON object; top-level keys: certificate_type, tbs_data, signature_algorithm, signature_hex | `key_management_pki` |
 | `certs/node_bravo.json` | JSON | 24 | JSON object; top-level keys: certificate_type, tbs_data, signature_algorithm, signature_hex | `key_management_pki` |
 | `certs/pki_manifest.json` | JSON | 34 | JSON object; top-level keys: pki_version, generation_timestamp, standard_compliance, root_authority, merkle_root, artifacts | `key_management_pki` |
-| `certs/sbom_mldsa87_signer.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `key_management_pki` |
+| `certs/sbom_mldsa87_signer.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `key_management_pki` |
 | `certs/sovereign_root_ca.json` | JSON | 22 | JSON object; top-level keys: certificate_type, subject, issuer, serial_number, not_before, not_after, signature_algorithm, classical_anchor | `key_management_pki` |
 | `certs/sovereign_sub_ca.json` | JSON | 20 | JSON object; top-level keys: certificate_type, subject, issuer, serial_number, not_before, not_after, signature_algorithm, public_key_hex | `key_management_pki` |
 | `cjadc2_allied_gateway.py` | Python | 863 | cjadc2_allied_gateway.py | `tactical_command_cjadc2` |
@@ -44,91 +45,91 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `cnsa2_policy_engine.py` | Python | 687 | CNSA 2.0 Policy Engine - Strict Enforcement | `crypto_pqc` |
 | `cnsa_purity.py` | Python | 261 | cnsa_purity.py — CNSA 2.0 strictness enforcement for the [restricted-term] path. | `crypto_pqc` |
 | `compliance_reports/active_cyber_defense_report.json` | JSON | 62 | JSON object; top-level keys: active_cyber_defense_assessment | `compliance_artifacts` |
-| `compliance_reports/active_cyber_defense_report.json.mldsa87.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
-| `compliance_reports/active_cyber_defense_report.json.mldsa87.sig` | Binary | 20 | Binary file (4627 bytes, SHA-256 125064a1b15c3449...). | `compliance_artifacts` |
+| `compliance_reports/active_cyber_defense_report.json.mldsa87.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
+| `compliance_reports/active_cyber_defense_report.json.mldsa87.sig` | Binary | 32 | Binary file (4627 bytes, SHA-256 125064a1b15c3449...). | `compliance_artifacts` |
 | `compliance_reports/acvp_cavp_validation_report.json` | JSON | 167 | JSON object; top-level keys: metadata, summary, algorithms_validated, results | `compliance_artifacts` |
-| `compliance_reports/acvp_cavp_validation_report.json.mldsa87.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
-| `compliance_reports/acvp_cavp_validation_report.json.mldsa87.sig` | Binary | 16 | Binary file (4627 bytes, SHA-256 447d97971632b73e...). | `compliance_artifacts` |
+| `compliance_reports/acvp_cavp_validation_report.json.mldsa87.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
+| `compliance_reports/acvp_cavp_validation_report.json.mldsa87.sig` | Binary | 43 | Binary file (4627 bytes, SHA-256 447d97971632b73e...). | `compliance_artifacts` |
 | `compliance_reports/ato_authorization_decision.json` | JSON | 98 | JSON object; top-level keys: assessment_kind, metadata, evaluation_summary, gate_evaluations, authorization_decision | `compliance_artifacts` |
 | `compliance_reports/byzantine_consensus_receipt.json` | JSON | 24 | JSON object; top-level keys: byzantine_consensus_attestation | `compliance_artifacts` |
-| `compliance_reports/byzantine_consensus_receipt.json.mldsa87.pub` | Binary | 14 | Binary file (2592 bytes, SHA-256 e43cd1dabca8a9c9...). | `compliance_artifacts` |
-| `compliance_reports/byzantine_consensus_receipt.json.mldsa87.sig` | Binary | 21 | Binary file (4627 bytes, SHA-256 534fbbbf921e2d48...). | `compliance_artifacts` |
+| `compliance_reports/byzantine_consensus_receipt.json.mldsa87.pub` | Binary | 24 | Binary file (2592 bytes, SHA-256 e43cd1dabca8a9c9...). | `compliance_artifacts` |
+| `compliance_reports/byzantine_consensus_receipt.json.mldsa87.sig` | Binary | 42 | Binary file (4627 bytes, SHA-256 534fbbbf921e2d48...). | `compliance_artifacts` |
 | `compliance_reports/canary_pilot_telemetry.json` | JSON | 51 | JSON object; top-level keys: deployment_id, standards, timestamp_utc, nodes, probes, overall_status, summary | `compliance_artifacts` |
 | `compliance_reports/cavp_validation_report.json` | JSON | 147 | JSON object; top-level keys: validation_program, module_name, module_version, target_security_level, evaluation_timestamp, operational_environment, tests_executed, tests_passed | `compliance_artifacts` |
 | `compliance_reports/cbom.json` | JSON | 196 | JSON object; top-level keys: cbom_version, generated_utc, policy_basis, components, live_verification | `compliance_artifacts` |
-| `compliance_reports/cbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/cbom.json.mldsa87.sig` | Binary | 25 | Binary file (4627 bytes, SHA-256 65699fe923428c51...). | `compliance_artifacts` |
+| `compliance_reports/cbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/cbom.json.mldsa87.sig` | Binary | 46 | Binary file (4627 bytes, SHA-256 65699fe923428c51...). | `compliance_artifacts` |
 | `compliance_reports/cjadc2_allied_gateway_report.json` | JSON | 79 | JSON object; top-level keys: content_disarm_reconstruction_profile, gateway_id, report_id, standard, statistics, supported_alliances, supported_partners, timestamp | `compliance_artifacts` |
-| `compliance_reports/cjadc2_allied_gateway_report.json.mldsa87.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
-| `compliance_reports/cjadc2_allied_gateway_report.json.mldsa87.sig` | Binary | 27 | Binary file (4627 bytes, SHA-256 9c443621cb4fcd3c...). | `compliance_artifacts` |
+| `compliance_reports/cjadc2_allied_gateway_report.json.mldsa87.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
+| `compliance_reports/cjadc2_allied_gateway_report.json.mldsa87.sig` | Binary | 40 | Binary file (4627 bytes, SHA-256 9c443621cb4fcd3c...). | `compliance_artifacts` |
 | `compliance_reports/cjadc2_cross_domain_audit.json` | JSON | 41 | JSON object; top-level keys: cjadc2_cross_domain_security_audit | `compliance_artifacts` |
-| `compliance_reports/cjadc2_cross_domain_audit.json.mldsa87.pub` | Binary | 15 | Binary file (2592 bytes, SHA-256 69bcd2435816109d...). | `compliance_artifacts` |
-| `compliance_reports/cjadc2_cross_domain_audit.json.mldsa87.sig` | Binary | 21 | Binary file (4627 bytes, SHA-256 bb5d7a5d7c4d2338...). | `compliance_artifacts` |
+| `compliance_reports/cjadc2_cross_domain_audit.json.mldsa87.pub` | Binary | 29 | Binary file (2592 bytes, SHA-256 69bcd2435816109d...). | `compliance_artifacts` |
+| `compliance_reports/cjadc2_cross_domain_audit.json.mldsa87.sig` | Binary | 39 | Binary file (4627 bytes, SHA-256 bb5d7a5d7c4d2338...). | `compliance_artifacts` |
 | `compliance_reports/cjadc2_data_fabric_drill_report.json` | JSON | 94 | JSON object; top-level keys: drill_id, timestamp_utc, standard_framework, lifecycle_phase, probes, overall_status, signature_metadata, summary | `compliance_artifacts` |
-| `compliance_reports/cjadc2_data_fabric_drill_report.json.mldsa87.pub` | Binary | 6 | Binary file (2592 bytes, SHA-256 d60510f38428b1c7...). | `compliance_artifacts` |
-| `compliance_reports/cjadc2_data_fabric_drill_report.json.mldsa87.sig` | Binary | 21 | Binary file (4627 bytes, SHA-256 a748261f05d56193...). | `compliance_artifacts` |
+| `compliance_reports/cjadc2_data_fabric_drill_report.json.mldsa87.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 d60510f38428b1c7...). | `compliance_artifacts` |
+| `compliance_reports/cjadc2_data_fabric_drill_report.json.mldsa87.sig` | Binary | 36 | Binary file (4627 bytes, SHA-256 a748261f05d56193...). | `compliance_artifacts` |
 | `compliance_reports/cmvp_fips140_3_submittal.json` | JSON | 62 | JSON object; top-level keys: document_kind, revision_note_20260921, cmvp_submittal_metadata, fips_140_3_security_levels_by_section, cryptographic_boundary, roles_and_services, cavp_validation_refer... | `compliance_artifacts` |
-| `compliance_reports/cmvp_fips140_3_submittal.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/cmvp_fips140_3_submittal.json.mldsa87.sig` | Binary | 18 | Binary file (4627 bytes, SHA-256 c3d00f7864d4b413...). | `compliance_artifacts` |
+| `compliance_reports/cmvp_fips140_3_submittal.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/cmvp_fips140_3_submittal.json.mldsa87.sig` | Binary | 38 | Binary file (4627 bytes, SHA-256 c3d00f7864d4b413...). | `compliance_artifacts` |
 | `compliance_reports/conops_operational_profile.json` | JSON | 99 | JSON object; top-level keys: $schema, conops_metadata, operational_environments, operational_roles, operational_modes | `compliance_artifacts` |
 | `compliance_reports/crypto_agility_audit.json` | JSON | 53 | JSON object; top-level keys: crypto_agility_maturity_audit | `compliance_artifacts` |
-| `compliance_reports/crypto_agility_audit.json.mldsa87.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 9bdb17282d72b87d...). | `compliance_artifacts` |
-| `compliance_reports/crypto_agility_audit.json.mldsa87.sig` | Binary | 17 | Binary file (4627 bytes, SHA-256 27dfcb183d6ed7e9...). | `compliance_artifacts` |
+| `compliance_reports/crypto_agility_audit.json.mldsa87.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 9bdb17282d72b87d...). | `compliance_artifacts` |
+| `compliance_reports/crypto_agility_audit.json.mldsa87.sig` | Binary | 42 | Binary file (4627 bytes, SHA-256 27dfcb183d6ed7e9...). | `compliance_artifacts` |
 | `compliance_reports/csrmc_operations_report.json` | JSON | 59 | JSON object; top-level keys: csrmc_operations_phase_telemetry | `compliance_artifacts` |
-| `compliance_reports/csrmc_operations_report.json.mldsa87.pub` | Binary | 11 | Binary file (2592 bytes, SHA-256 dbc824f5a783d26b...). | `compliance_artifacts` |
-| `compliance_reports/csrmc_operations_report.json.mldsa87.sig` | Binary | 20 | Binary file (4627 bytes, SHA-256 8bf3feff8abe95d8...). | `compliance_artifacts` |
+| `compliance_reports/csrmc_operations_report.json.mldsa87.pub` | Binary | 23 | Binary file (2592 bytes, SHA-256 dbc824f5a783d26b...). | `compliance_artifacts` |
+| `compliance_reports/csrmc_operations_report.json.mldsa87.sig` | Binary | 39 | Binary file (4627 bytes, SHA-256 8bf3feff8abe95d8...). | `compliance_artifacts` |
 | `compliance_reports/csrmc_phase5_drill_report.json` | JSON | 90 | JSON object; top-level keys: drill_id, timestamp_utc, standard_framework, lifecycle_phase, probes, overall_status, signature_metadata, summary | `compliance_artifacts` |
-| `compliance_reports/csrmc_phase5_drill_report.json.mldsa87.pub` | Binary | 12 | Binary file (2592 bytes, SHA-256 750894936f94716d...). | `compliance_artifacts` |
-| `compliance_reports/csrmc_phase5_drill_report.json.mldsa87.sig` | Binary | 20 | Binary file (4627 bytes, SHA-256 e6c52dd173ead8e4...). | `compliance_artifacts` |
+| `compliance_reports/csrmc_phase5_drill_report.json.mldsa87.pub` | Binary | 28 | Binary file (2592 bytes, SHA-256 750894936f94716d...). | `compliance_artifacts` |
+| `compliance_reports/csrmc_phase5_drill_report.json.mldsa87.sig` | Binary | 41 | Binary file (4627 bytes, SHA-256 e6c52dd173ead8e4...). | `compliance_artifacts` |
 | `compliance_reports/cve_scan_offline.json` | JSON | 34 | JSON document. | `compliance_artifacts` |
 | `compliance_reports/cyclonedx_cbom.json` | JSON | 323 | JSON object; top-level keys: $schema, bomFormat, specVersion, serialNumber, version, metadata, components | `compliance_artifacts` |
-| `compliance_reports/cyclonedx_cbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 86b234cb7a92c7a6...). | `compliance_artifacts` |
-| `compliance_reports/cyclonedx_cbom.json.mldsa87.sig` | Binary | 19 | Binary file (4627 bytes, SHA-256 9abf8b7898dffb60...). | `compliance_artifacts` |
+| `compliance_reports/cyclonedx_cbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 86b234cb7a92c7a6...). | `compliance_artifacts` |
+| `compliance_reports/cyclonedx_cbom.json.mldsa87.sig` | Binary | 38 | Binary file (4627 bytes, SHA-256 9abf8b7898dffb60...). | `compliance_artifacts` |
 | `compliance_reports/cyclonedx_sbom.json` | JSON | 233 | JSON object; top-level keys: bomFormat, specVersion, serialNumber, version, metadata, components | `compliance_artifacts` |
-| `compliance_reports/cyclonedx_sbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/cyclonedx_sbom.json.mldsa87.sig` | Binary | 23 | Binary file (4627 bytes, SHA-256 069c4959b7d63ded...). | `compliance_artifacts` |
+| `compliance_reports/cyclonedx_sbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/cyclonedx_sbom.json.mldsa87.sig` | Binary | 44 | Binary file (4627 bytes, SHA-256 069c4959b7d63ded...). | `compliance_artifacts` |
 | `compliance_reports/defense_master_audit_receipt.json` | JSON | 73 | JSON object; top-level keys: timestamp_utc, commit, audit_version, overall_status, score, gates, signer_pk_sha3_256 | `compliance_artifacts` |
-| `compliance_reports/defense_master_audit_receipt.json.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
-| `compliance_reports/defense_master_audit_receipt.json.sig` | Binary | 20 | Binary file (4627 bytes, SHA-256 3ee59f710e482810...). | `compliance_artifacts` |
+| `compliance_reports/defense_master_audit_receipt.json.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
+| `compliance_reports/defense_master_audit_receipt.json.sig` | Binary | 44 | Binary file (4627 bytes, SHA-256 3ee59f710e482810...). | `compliance_artifacts` |
 | `compliance_reports/dod_zero_trust_assessment.json` | JSON | 370 | JSON object; top-level keys: dod_zero_trust_assessment | `compliance_artifacts` |
-| `compliance_reports/dod_zero_trust_assessment.json.mldsa87.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
-| `compliance_reports/dod_zero_trust_assessment.json.mldsa87.sig` | Binary | 16 | Binary file (4627 bytes, SHA-256 a2157973f1bf6a51...). | `compliance_artifacts` |
+| `compliance_reports/dod_zero_trust_assessment.json.mldsa87.pub` | Binary | 22 | Binary file (2592 bytes, SHA-256 cebea62be9370fa7...). | `compliance_artifacts` |
+| `compliance_reports/dod_zero_trust_assessment.json.mldsa87.sig` | Binary | 26 | Binary file (4627 bytes, SHA-256 a2157973f1bf6a51...). | `compliance_artifacts` |
 | `compliance_reports/emergency_zeroization_audit.json` | JSON | 22 | JSON object; top-level keys: emergency_zeroization_audit | `compliance_artifacts` |
-| `compliance_reports/emergency_zeroization_audit.json.mldsa87.pub` | Binary | 11 | Binary file (2592 bytes, SHA-256 42d276abc3abba12...). | `compliance_artifacts` |
-| `compliance_reports/emergency_zeroization_audit.json.mldsa87.sig` | Binary | 18 | Binary file (4627 bytes, SHA-256 20a47e73279d55be...). | `compliance_artifacts` |
+| `compliance_reports/emergency_zeroization_audit.json.mldsa87.pub` | Binary | 21 | Binary file (2592 bytes, SHA-256 42d276abc3abba12...). | `compliance_artifacts` |
+| `compliance_reports/emergency_zeroization_audit.json.mldsa87.sig` | Binary | 33 | Binary file (4627 bytes, SHA-256 20a47e73279d55be...). | `compliance_artifacts` |
 | `compliance_reports/independent_redteam_assessment.json` | JSON | 122 | JSON object; top-level keys: assessment_kind, revision_note_20260921, handling, assessment_metadata, executive_summary, adversarial_test_vectors, dod_zero_trust_7_pillars_evaluation, adversary_cost... | `compliance_artifacts` |
-| `compliance_reports/independent_redteam_assessment.json.mldsa87.pub` | Binary | 10 | Binary file (2592 bytes, SHA-256 026729a4fbfe2153...). | `compliance_artifacts` |
-| `compliance_reports/independent_redteam_assessment.json.mldsa87.sig` | Binary | 22 | Binary file (4627 bytes, SHA-256 ec828825973dc00f...). | `compliance_artifacts` |
+| `compliance_reports/independent_redteam_assessment.json.mldsa87.pub` | Binary | 23 | Binary file (2592 bytes, SHA-256 026729a4fbfe2153...). | `compliance_artifacts` |
+| `compliance_reports/independent_redteam_assessment.json.mldsa87.sig` | Binary | 39 | Binary file (4627 bytes, SHA-256 ec828825973dc00f...). | `compliance_artifacts` |
 | `compliance_reports/key_management_plan.json` | JSON | 61 | JSON object; top-level keys: $schema, kmp_metadata, key_inventory, lifecycle_rules | `compliance_artifacts` |
 | `compliance_reports/niap_common_criteria_matrix.json` | JSON | 110 | JSON object; top-level keys: matrix_metadata, security_functional_requirements, security_assurance_requirements | `compliance_artifacts` |
-| `compliance_reports/niap_common_criteria_matrix.json.mldsa87.pub` | Binary | 9 | Binary file (2592 bytes, SHA-256 84e1600f87087a6f...). | `compliance_artifacts` |
-| `compliance_reports/niap_common_criteria_matrix.json.mldsa87.sig` | Binary | 23 | Binary file (4627 bytes, SHA-256 89eb01243ede41ec...). | `compliance_artifacts` |
+| `compliance_reports/niap_common_criteria_matrix.json.mldsa87.pub` | Binary | 23 | Binary file (2592 bytes, SHA-256 84e1600f87087a6f...). | `compliance_artifacts` |
+| `compliance_reports/niap_common_criteria_matrix.json.mldsa87.sig` | Binary | 45 | Binary file (4627 bytes, SHA-256 89eb01243ede41ec...). | `compliance_artifacts` |
 | `compliance_reports/oscal_sar_cato.json` | JSON | 281 | JSON object; top-level keys: assessment-results | `compliance_artifacts` |
-| `compliance_reports/oscal_sar_cato.json.mldsa87.pub` | Binary | 11 | Binary file (2592 bytes, SHA-256 2a7f7d5c28dfaa7b...). | `compliance_artifacts` |
-| `compliance_reports/oscal_sar_cato.json.mldsa87.sig` | Binary | 27 | Binary file (4627 bytes, SHA-256 1103319df38539ed...). | `compliance_artifacts` |
+| `compliance_reports/oscal_sar_cato.json.mldsa87.pub` | Binary | 19 | Binary file (2592 bytes, SHA-256 2a7f7d5c28dfaa7b...). | `compliance_artifacts` |
+| `compliance_reports/oscal_sar_cato.json.mldsa87.sig` | Binary | 46 | Binary file (4627 bytes, SHA-256 1103319df38539ed...). | `compliance_artifacts` |
 | `compliance_reports/oscal_ssp_cnsa2.json` | JSON | 255 | JSON object; top-level keys: system-security-plan | `compliance_artifacts` |
-| `compliance_reports/oscal_ssp_cnsa2.json.mldsa87.pub` | Binary | 11 | Binary file (2592 bytes, SHA-256 e5c1debabab5679b...). | `compliance_artifacts` |
-| `compliance_reports/oscal_ssp_cnsa2.json.mldsa87.sig` | Binary | 21 | Binary file (4627 bytes, SHA-256 016cf4a27510fe1c...). | `compliance_artifacts` |
+| `compliance_reports/oscal_ssp_cnsa2.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 e5c1debabab5679b...). | `compliance_artifacts` |
+| `compliance_reports/oscal_ssp_cnsa2.json.mldsa87.sig` | Binary | 32 | Binary file (4627 bytes, SHA-256 016cf4a27510fe1c...). | `compliance_artifacts` |
 | `compliance_reports/provenance.intoto.jsonl` | JSON Lines | 1 | JSON object; top-level keys: _type, subject, predicateType, predicate, _note | `compliance_artifacts` |
 | `compliance_reports/red_team_drill_report.json` | JSON | 53 | JSON object; top-level keys: metadata, summary, drill_results | `compliance_artifacts` |
 | `compliance_reports/sbom/cbom.json` | JSON | 196 | JSON object; top-level keys: cbom_version, generated_utc, policy_basis, components, live_verification | `compliance_artifacts` |
-| `compliance_reports/sbom/cbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/sbom/cbom.json.mldsa87.sig` | Binary | 19 | Binary file (4627 bytes, SHA-256 ce99cb0c23575ae6...). | `compliance_artifacts` |
+| `compliance_reports/sbom/cbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/sbom/cbom.json.mldsa87.sig` | Binary | 32 | Binary file (4627 bytes, SHA-256 ce99cb0c23575ae6...). | `compliance_artifacts` |
 | `compliance_reports/sbom/cyclonedx_sbom.json` | JSON | 271 | JSON object; top-level keys: bomFormat, specVersion, serialNumber, version, metadata, components | `compliance_artifacts` |
-| `compliance_reports/sbom/cyclonedx_sbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/sbom/cyclonedx_sbom.json.mldsa87.sig` | Binary | 23 | Binary file (4627 bytes, SHA-256 5d1915926d502bee...). | `compliance_artifacts` |
+| `compliance_reports/sbom/cyclonedx_sbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/sbom/cyclonedx_sbom.json.mldsa87.sig` | Binary | 43 | Binary file (4627 bytes, SHA-256 5d1915926d502bee...). | `compliance_artifacts` |
 | `compliance_reports/sbom/spdx_sbom.json` | JSON | 391 | secure_p2p-sbom | `compliance_artifacts` |
-| `compliance_reports/sbom/spdx_sbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/sbom/spdx_sbom.json.mldsa87.sig` | Binary | 23 | Binary file (4627 bytes, SHA-256 55f830773e8f90ed...). | `compliance_artifacts` |
+| `compliance_reports/sbom/spdx_sbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/sbom/spdx_sbom.json.mldsa87.sig` | Binary | 42 | Binary file (4627 bytes, SHA-256 55f830773e8f90ed...). | `compliance_artifacts` |
 | `compliance_reports/signed_reproducible_build_receipt.json` | JSON | 91 | JSON object; top-level keys: timestamp_utc, verification_standard, binaries, core_modules, sbom_status, overall_status, source_tree_merkle_root, critical_modules_manifest | `compliance_artifacts` |
-| `compliance_reports/signed_reproducible_build_receipt.json.sig` | Binary | 18 | Binary file (4627 bytes, SHA-256 b0c55f2d4f86cbcb...). | `compliance_artifacts` |
+| `compliance_reports/signed_reproducible_build_receipt.json.sig` | Binary | 38 | Binary file (4627 bytes, SHA-256 b0c55f2d4f86cbcb...). | `compliance_artifacts` |
 | `compliance_reports/spdx_sbom.json` | JSON | 344 | secure_p2p-sbom | `compliance_artifacts` |
-| `compliance_reports/spdx_sbom.json.mldsa87.pub` | Binary | 8 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
-| `compliance_reports/spdx_sbom.json.mldsa87.sig` | Binary | 16 | Binary file (4627 bytes, SHA-256 a8d8cae6de12eb0b...). | `compliance_artifacts` |
+| `compliance_reports/spdx_sbom.json.mldsa87.pub` | Binary | 20 | Binary file (2592 bytes, SHA-256 0b1c503c08e27085...). | `compliance_artifacts` |
+| `compliance_reports/spdx_sbom.json.mldsa87.sig` | Binary | 27 | Binary file (4627 bytes, SHA-256 a8d8cae6de12eb0b...). | `compliance_artifacts` |
 | `compliance_reports/ssdf_self_attestation.json` | JSON | 171 | JSON object; top-level keys: attestation_kind, cisa_common_form_note, eo_reference, framework, generated_utc, practices, producer, product | `compliance_artifacts` |
-| `compliance_reports/ssdf_self_attestation.json.mldsa87.pub` | Binary | 11 | Binary file (2592 bytes, SHA-256 12203d47aeecf19a...). | `compliance_artifacts` |
-| `compliance_reports/ssdf_self_attestation.json.mldsa87.sig` | Binary | 22 | Binary file (4627 bytes, SHA-256 72e71c2d07d1f525...). | `compliance_artifacts` |
-| `config.json.sig` | Binary | 3 | Binary file (64 bytes, SHA-256 9446dede49e472be...). | `utilities_support` |
+| `compliance_reports/ssdf_self_attestation.json.mldsa87.pub` | Binary | 18 | Binary file (2592 bytes, SHA-256 12203d47aeecf19a...). | `compliance_artifacts` |
+| `compliance_reports/ssdf_self_attestation.json.mldsa87.sig` | Binary | 32 | Binary file (4627 bytes, SHA-256 72e71c2d07d1f525...). | `compliance_artifacts` |
+| `config.json.sig` | Binary | 5 | Binary file (64 bytes, SHA-256 9446dede49e472be...). | `utilities_support` |
 | `config.py` | Python | 760 | Configuration management for the P2P system. | `utilities_support` |
 | `config_production.json` | JSON | 95 | JSON object; top-level keys: _comment, _version, _classification, security_level, key_lifetime, enable_hsm, audit_logging, network | `utilities_support` |
 | `config_production.json.sig` | Signature | 1 | Detached signature file (64 bytes). | `utilities_support` |
@@ -147,6 +148,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `crypto/operations.py` | Python | 54 | Crypto operations coordinator. | `crypto_pqc` |
 | `crypto/padding.py` | Python | 184 | secure padding operations. | `crypto_pqc` |
 | `crypto/signatures.py` | Python | 259 | Signature operations (ML-DSA-87, SLH-DSA-256f). | `crypto_pqc` |
+| `crypto_agility_2027.py` | Python | 103 | Cryptographic agility state machine and transitions | `crypto_pqc` |
 | `crypto_selftest.py` | Python | 325 | crypto_selftest.py — FIPS 140-3-style power-up self-tests + conditional | `crypto_pqc` |
 | `cryptographic_agility.py` | Python | 1310 | Cryptographic Agility Framework - [restricted-term] 2026 Production Security | `orchestrator_application` |
 | `cryptographic_errors.py` | Python | 768 | Cryptographic Error Hierarchy and Secure Error Reporting System | `orchestrator_application` |
@@ -159,9 +161,9 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `data_models.py` | Python | 308 | Data models for the P2P system. | `orchestrator_application` |
 | `decentralized_architecture.py` | Python | 3307 | Decentralized Distributed Hash Table (DHT) and Mesh Routing Subsystem | `transport_anonymity` |
 | `dep_impl.py` | Python | 4437 | Data Execution Prevention (DEP) Implementation Module with NIST Level-5 Security | `orchestrator_application` |
-| `dependency_security_verifier.py` | Python | 1023 | Dependency Integrity and Native Cryptographic Binary Verifier | `system_hardening_integrity` |
+| `dependency_security_verifier.py` | Python | 1054 | Dependency Integrity and Native Cryptographic Binary Verifier | `system_hardening_integrity` |
 | `deploy/openssl_cnsa.cnf` | Other | 39 | Other file. | `tls_channel` |
-| `destroyer.py` | Python | 501 | DESTROYER ST2027 — [restricted-term] DEFENSE COMMAND CENTER | `orchestrator_application` |
+| `destroyer.py` | Python | 504 | DESTROYER ST2027 — [restricted-term] DEFENSE COMMAND CENTER | `orchestrator_application` |
 | `destroyer_node.py` | Python | 562 | DestroyerNode — Rust data-plane wrapper (opt-in, staging integration). | `orchestrator_application` |
 | `destroyer_tactical_p2p.py` | Python | 37 | DESTROYER STRATEGIC P2P: [restricted-term] [restricted-term] COMMUNICATIONS NODE | `orchestrator_application` |
 | `docs/ARCHITECTURE.md` | Markdown | 100 | System Architecture — [restricted-term] Post-Quantum Direct P2P Messaging | `documentation` |
@@ -192,7 +194,9 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `docs/SEL4_EAL6_PLUS_SOVEREIGN_APPLIANCE_SPEC.md` | Markdown | 222 | [restricted-term] Transmit 2027 (ST2027): EAL6+ seL4 [restricted-term] Hardware Appliance Specification & Master Implementation Plan | `documentation` |
 | `docs/SOP.md` | Markdown | 75 | Program SOP — [restricted-term] Secure P2P Operations | `documentation` |
 | `docs/SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md` | Markdown | 183 | [restricted-term] Transmit 2027 (ST2027) — [restricted-term] High-Assurance Specification & Implementation Plan | `documentation` |
+| `docs/ST2027_HARDENING_ROADMAP.md` | Markdown | 37 | Post-quantum protocol roadmap and timeline | `documentation` |
 | `docs/ST2027_IMPLEMENTATION_PLAN.md` | Markdown | 112 | ST2027 Zero-Gap Implementation Plan — Maximum Cost-to-Break Doctrine | `documentation` |
+| `docs/ST2027_MUTUAL_AUTH_HARDENING.md` | Markdown | 216 | Mutual authentication protocol hardening specification | `documentation` |
 | `docs/ST2027_RESEARCH_SOURCES_2026-09-30.md` | Markdown | 218 | ST2027 research source register | `documentation` |
 | `docs/ST2027_SPEC.md` | Markdown | 283 | [restricted-term] Transmit 2027 (ST2027) — [restricted-term] High-Assurance Specification & Implementation Plan | `documentation` |
 | `docs/ST2027_SPECIFICATION.md` | Markdown | 175 | Destroyer-ST2027 Protocol Specification: High-Assurance Post-Quantum Communications Architecture | `documentation` |
@@ -207,9 +211,10 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `docs/audit/DOCUMENTATION_DISCREPANCIES.md` | Markdown | 27 | Documentation Discrepancies Register | `documentation` |
 | `docs/audit/FINDINGS.md` | Markdown | 80 | Audit Findings Register | `documentation` |
 | `docs/audit/KNOWN_LIMITATIONS.md` | Markdown | 40 | Known Technical Limitations & Operational Boundaries | `documentation` |
-| `docs/audit/PROGRESS.md` | Markdown | 52 | Audit Execution Progress | `documentation` |
+| `docs/audit/PROGRESS.md` | Markdown | 102 | Audit Execution Progress | `documentation` |
 | `docs/audit/SECURITY_REVIEW.md` | Markdown | 65 | System Security Review & Cryptographic Architecture Assessment | `documentation` |
 | `docs/audit/WORKSPACE_INVENTORY.md` | Markdown | 94 | Workspace Inventory | `documentation` |
+| `docs/audit/ci_workflow_patch.diff` | Diff | 115 | Patch diff for CI workflow hardening | `operational_scripts` |
 | `docs/audit/claims/audit_threat_monitoring_claims.md` | Markdown | 19 | Module Claims Register: audit_threat_monitoring | `documentation` |
 | `docs/audit/claims/crypto_pqc_claims.md` | Markdown | 16 | Claims Register: crypto_pqc | `documentation` |
 | `docs/audit/claims/host_runtime_attestation_claims.md` | Markdown | 13 | Claims Register: Host Runtime and Platform Attestation Subsystem (`host_runtime_attestation`) | `documentation` |
@@ -230,7 +235,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `docs/audit/claims/utilities_support_claims.md` | Markdown | 22 | Module Claims Register: utilities_support | `documentation` |
 | `docs/audit/command_log.md` | Markdown | 72 | Audit Command Execution Log | `documentation` |
 | `docs/audit/compliance_artifacts_audit.md` | Markdown | 91 | Compliance Artifacts & Cryptographic Attestation Audit | `documentation` |
-| `docs/audit/discrepancies.md` | Markdown | 73 | Audit Discrepancies Register | `documentation` |
+| `docs/audit/discrepancies.md` | Markdown | 89 | Audit Discrepancies Register | `documentation` |
 | `docs/audit/documentation_claims_matrix.md` | Markdown | 47 | Documentation Truth-in-Claims Matrix | `documentation` |
 | `docs/audit/findings/DEF-01.md` | Markdown | 45 | Finding Report: DEF-01 — Allied Gateway Quarantine NameError | `documentation` |
 | `docs/audit/findings/DEF-02.md` | Markdown | 39 | Finding Report: DEF-02 — Hardware CPU RNG Direct Bus Sampling | `documentation` |
@@ -238,28 +243,31 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `docs/audit/findings/DEF-04.md` | Markdown | 36 | Finding Report: DEF-04 — Offline Vulnerability Scanning | `documentation` |
 | `docs/audit/findings/DEF-05.md` | Markdown | 60 | Finding Report: DEF-05 — Coarse Timestamp LRU Eviction Bug | `documentation` |
 | `docs/audit/findings/DEF-06.md` | Markdown | 36 | Finding Report: DEF-06 — Production Gate Test Latch Cross-Contamination | `documentation` |
+| `docs/audit/findings/F-01_to_F-04.md` | Markdown | 103 | Security review findings F-01 through F-04 | `documentation` |
+| `docs/audit/findings/F-05_to_F-10.md` | Markdown | 155 | Security review findings F-05 through F-10 | `documentation` |
 | `docs/audit/findings/NOM-01_to_NOM-10.md` | Markdown | 37 | Finding Report: NOM-01 to NOM-10 — Promotional Terminology & Identifier Deprecation | `documentation` |
 | `docs/audit/findings/SEC-01.md` | Markdown | 35 | Finding Report: SEC-01 — Upstream HQC-256 CVE Quarantine & Hash-Based Signature Safeguards | `documentation` |
 | `docs/audit/index.md` | Markdown | 86 | Codebase Audit Index & Master Documentation | `documentation` |
-| `docs/audit/modules/audit_threat_monitoring.md` | Markdown | 122 | Module Audit: audit_threat_monitoring | `documentation` |
+| `docs/audit/modules/audit_threat_monitoring.md` | Markdown | 95 | Module Audit: audit_threat_monitoring | `documentation` |
+| `docs/audit/modules/authority_boundary.md` | Markdown | 69 | Control plane vs data plane authority boundary specification | `authority_boundary` |
 | `docs/audit/modules/crypto_pqc.md` | Markdown | 137 | Module Documentation: crypto_pqc | `documentation` |
 | `docs/audit/modules/host_runtime_attestation.md` | Markdown | 228 | Module Documentation: Host Runtime and Platform Attestation Subsystem (`host_runtime_attestation`) | `documentation` |
 | `docs/audit/modules/key_management_pki.md` | Markdown | 398 | Module Documentation: Key Management and PKI Subsystem (`key_management_pki`) | `documentation` |
-| `docs/audit/modules/memory_security.md` | Markdown | 142 | Module Audit: memory_security | `documentation` |
+| `docs/audit/modules/memory_security.md` | Markdown | 102 | Module Audit: memory_security | `documentation` |
 | `docs/audit/modules/mesh_ddil_networking.md` | Markdown | 236 | Module Documentation: Mesh and DDIL Networking Subsystem (`mesh_ddil_networking`) | `documentation` |
-| `docs/audit/modules/messaging_file_transfer.md` | Markdown | 157 | Module Audit: messaging_file_transfer | `documentation` |
-| `docs/audit/modules/operational_scripts.md` | Markdown | 165 | Module Documentation: operational_scripts | `documentation` |
-| `docs/audit/modules/orchestrator_application.md` | Markdown | 182 | Module Documentation: orchestrator_application | `documentation` |
+| `docs/audit/modules/messaging_file_transfer.md` | Markdown | 95 | Module Audit: messaging_file_transfer | `documentation` |
+| `docs/audit/modules/operational_scripts.md` | Markdown | 86 | Module Documentation: operational_scripts | `documentation` |
+| `docs/audit/modules/orchestrator_application.md` | Markdown | 104 | Module Documentation: orchestrator_application | `documentation` |
 | `docs/audit/modules/ratchet_kex_protocol.md` | Markdown | 300 | Module Documentation: Ratchet and Key Exchange Protocol Subsystem (`ratchet_kex_protocol`) | `documentation` |
 | `docs/audit/modules/rust_data_plane.md` | Markdown | 215 | Module Documentation: Native Rust Data Plane Subsystem (`rust_data_plane`) | `documentation` |
-| `docs/audit/modules/security_framework.md` | Markdown | 134 | Module Audit: security_framework | `documentation` |
-| `docs/audit/modules/system_hardening_integrity.md` | Markdown | 140 | Module Audit: system_hardening_integrity | `documentation` |
-| `docs/audit/modules/tactical_command_cjadc2.md` | Markdown | 123 | Module Audit: tactical_command_cjadc2 | `documentation` |
+| `docs/audit/modules/security_framework.md` | Markdown | 76 | Module Audit: security_framework | `documentation` |
+| `docs/audit/modules/system_hardening_integrity.md` | Markdown | 97 | Module Audit: system_hardening_integrity | `documentation` |
+| `docs/audit/modules/tactical_command_cjadc2.md` | Markdown | 93 | Module Audit: tactical_command_cjadc2 | `documentation` |
 | `docs/audit/modules/tls_channel.md` | Markdown | 214 | Module Documentation: TLS Channel Subsystem (`tls_channel`) | `documentation` |
 | `docs/audit/modules/transport_anonymity.md` | Markdown | 271 | Module Documentation: Transport Anonymity and Traffic Shaping Subsystem (`transport_anonymity`) | `documentation` |
-| `docs/audit/modules/ui_presentation.md` | Markdown | 139 | Module Documentation: ui_presentation | `documentation` |
-| `docs/audit/modules/utilities_support.md` | Markdown | 143 | Module Documentation: utilities_support | `documentation` |
-| `docs/audit/open_questions.md` | Markdown | 80 | Audit Open Questions & Architectural Decisions | `documentation` |
+| `docs/audit/modules/ui_presentation.md` | Markdown | 79 | Module Documentation: ui_presentation | `documentation` |
+| `docs/audit/modules/utilities_support.md` | Markdown | 82 | Module Documentation: utilities_support | `documentation` |
+| `docs/audit/open_questions.md` | Markdown | 78 | Audit Open Questions & Architectural Decisions | `documentation` |
 | `docs/audit/proposals.md` | Markdown | 59 | Audit Architectural & Protocol Proposals | `documentation` |
 | `docs/audit/release/PUBLICATION_MANIFEST.md` | Markdown | 54 | Release Publication Manifest | `documentation` |
 | `docs/audit/release/RELEASE_CANDIDATE.md` | Markdown | 45 | Release Candidate Specification: Destroyer-ST2027 Verified Fixes | `documentation` |
@@ -282,7 +290,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `docs/modules/anonymity_decentral.md` | Markdown | 34 | Network-anonymity + decentralization modules (verified maps, honest scope) | `documentation` |
 | `docs/modules/audit_threat_supply.md` | Markdown | 25 | Audit, threat, supply chain (verified maps) | `documentation` |
 | `docs/modules/ca_services.md` | Markdown | 30 | Module: `ca_services.py` (~1983 lines) — private CA + mTLS contexts | `documentation` |
-| `docs/modules/critical_release.md` | Markdown | 27 | Module: `critical_release.py` + `SecureP2PChat.send_critical` | `documentation` |
+| `docs/modules/critical_release.md` | Markdown | 27 | Module: `critical_release.py` + `SecureP2PChat.send_critical | `documentation` |
 | `docs/modules/destroyer_node.md` | Markdown | 34 | Module: `destroyer_node.py` (109→162 lines) | `documentation` |
 | `docs/modules/double_ratchet.md` | Markdown | 37 | Module: `double_ratchet.py` (~4100 lines) — ratchet + guards | `documentation` |
 | `docs/modules/entropy_sidechannel.md` | Markdown | 23 | Entropy, randomness, side-channels (verified class maps) | `documentation` |
@@ -295,11 +303,11 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `docs/modules/p2p_core.md` | Markdown | 35 | Module: `p2p_core.py` (2343 lines) — transport + connection lifecycle | `documentation` |
 | `docs/modules/pqc_algorithms.md` | Markdown | 37 | Module: `pqc_algorithms.py` (~6500 lines) — PQ algorithm surfaces | `documentation` |
 | `docs/modules/root_files.md` | Markdown | 32 | Remaining root files (verified one-line charters + key facts) | `documentation` |
-| `docs/modules/rust_data_plane.md` | Markdown | 50 | `rust_data_plane/` — native data plane (all code read + tested) | `documentation` |
-| `docs/modules/safety_numbers.md` | Markdown | 29 | Module: `ui/safety_numbers.py` | `documentation` |
+| `docs/modules/rust_data_plane.md` | Markdown | 50 | rust_data_plane/` — native data plane (all code read + tested) | `documentation` |
+| `docs/modules/safety_numbers.md` | Markdown | 29 | Module: `ui/safety_numbers.py | `documentation` |
 | `docs/modules/secure_p2p.md` | Markdown | 73 | Module: `secure_p2p.py` (~11,400 lines) — application orchestrator | `documentation` |
 | `docs/modules/subsystems_core.md` | Markdown | 16 | Subsystem mirrors: `core/ crypto/ data/ keys/` (verified maps) | `documentation` |
-| `docs/modules/subsystems_support.md` | Markdown | 32 | Subsystem mirrors: `messaging/ network/ security/ ui/ utils/` | `documentation` |
+| `docs/modules/subsystems_support.md` | Markdown | 32 | Subsystem mirrors: `messaging/ network/ security/ ui/ utils/ | `documentation` |
 | `docs/modules/tls_channel_manager.md` | Markdown | 38 | Module: `tls_channel_manager.py` (~5700 lines) — TLS + channel crypto | `documentation` |
 | `docs/modules/transport_anonymity.md` | Markdown | 68 | Module: `transport_anonymity.py` & `spo_dpo.py` — Network Anonymity & Shaping | `documentation` |
 | `docs/modules/trust_anchor.md` | Markdown | 59 | Module: `trust_anchor.py` — Trust Anchor & Post-Quantum PKI | `documentation` |
@@ -320,7 +328,8 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `group_key_manager.py` | Python | 1741 | group_key_manager.py | `ratchet_kex_protocol` |
 | `hsm_integration.py` | Python | 247 | HSM/TPM integration operations. | `key_management_pki` |
 | `hw_readiness.py` | Python | 423 | Hardware readiness + administrator elevation for the 2027 pipeline. | `host_runtime_attestation` |
-| `hybrid_kex.py` | Python | 161 | Hybrid post-quantum key exchange (2027 research-backed profile). | `ratchet_kex_protocol` |
+| `hybrid_kex.py` | Python | 169 | Hybrid post-quantum key exchange (2027 research-backed profile). | `ratchet_kex_protocol` |
+| `hybrid_kex_legacy.py` | Python | 3530 | Legacy hybrid key exchange backward compatibility layer | `ratchet_kex_protocol` |
 | `key_fill_import.py` | Python | 352 | Offline dual-officer key-fill import (KMI fill-device equivalent in software). | `key_management_pki` |
 | `keys/__init__.py` | Python | 9 | Key management module. | `key_management_pki` |
 | `keys/generation.py` | Python | 171 | Key generation operations. | `key_management_pki` |
@@ -331,13 +340,13 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `launch_tactical_terminals.bat` | Batch | 14 | Batch script. | `tactical_command_cjadc2` |
 | `launch_tactical_web.bat` | Batch | 11 | Batch script. | `tactical_command_cjadc2` |
 | `liboqs_wrapper.py` | Python | 1304 | LibOQS Python Wrapper - Hybrid Post-Quantum Cryptography Implementation | `crypto_pqc` |
-| `libsodium.dll` | Binary | 735 | Binary file (346624 bytes, SHA-256 5cfdc4bf7628777d...). | `system_hardening_integrity` |
+| `libsodium.dll` | Binary | 1334 | Binary file (346624 bytes, SHA-256 5cfdc4bf7628777d...). | `system_hardening_integrity` |
 | `libsodium.dll.hashes` | Other | 5 | Other file. | `system_hardening_integrity` |
 | `libsodium.dll.pub` | Public key | 3 | Public key file (116 bytes). | `system_hardening_integrity` |
 | `libsodium.dll.sig` | Signature | 1 | Detached signature file (64 bytes). | `system_hardening_integrity` |
 | `libsodium_manager.py` | Python | 1582 | Python source module with no module docstring. | `crypto_pqc` |
 | `logging_config.py` | Python | 199 | High-Performance Logging Configuration for Secure P2P | `audit_threat_monitoring` |
-| `maximum_security_hardening.py` | Python | 677 | Maximum Security Hardening Module | `security_framework` |
+| `maximum_security_hardening.py` | Python | 677 | [restricted-term] Hardening Module | `security_framework` |
 | `memory_manager.py` | Python | 1699 | Secure Memory Management System - DoD 5220.22-M Compliant | `memory_security` |
 | `memory_protection_engine.py` | Python | 1072 | ST2027 MEMORY PROTECTION & CORRUPTION MITIGATION ENGINE | `memory_security` |
 | `messaging/__init__.py` | Python | 9 | Message handling module. | `messaging_file_transfer` |
@@ -357,17 +366,17 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `network/io.py` | Python | 349 | Network I/O operations. | `mesh_ddil_networking` |
 | `network/manager.py` | Python | 54 | Network operations coordinator. | `mesh_ddil_networking` |
 | `network/monitoring.py` | Python | 365 | Connection health monitoring. | `mesh_ddil_networking` |
-| `network/session_manager.py` | Python | 1435 | Session Manager with Security Context | `mesh_ddil_networking` |
+| `network/session_manager.py` | Python | 1437 | Session Manager with Security Context | `mesh_ddil_networking` |
 | `network_adversary_resistance.py` | Python | 1621 | Network Adversary Resistance and Onion-Encrypted Multi-Hop Routing Subsystem | `transport_anonymity` |
 | `network_endpoint_discovery.py` | Python | 540 | High-Assurance Network Endpoint Discovery Engine (IPv6 / IPv4 / LAN) | `transport_anonymity` |
 | `nist_level5_policy_engine.py` | Python | 484 | NIST Level 5+ Policy Engine | `crypto_pqc` |
-| `noise_pq.py` | Python | 987 | noise_pq.py — Noise_XXhfs-style post-quantum handshake with ML-KEM-1024. | `ratchet_kex_protocol` |
+| `noise_pq.py` | Python | 1013 | noise_pq.py — Noise_XXhfs-style post-quantum handshake with ML-KEM-1024. | `ratchet_kex_protocol` |
 | `openssl_cnsa2_posture.cnf` | Other | 35 | Other file. | `tls_channel` |
 | `operational_security.py` | Python | 1072 | Operational Security (OPSEC) and Ephemeral Lifecycle Management Subsystem | `system_hardening_integrity` |
-| `oqs.dll` | Binary | 11701 | Binary file (4355072 bytes, SHA-256 ab1c1373a464a4ed...). | `system_hardening_integrity` |
+| `oqs.dll` | Binary | 23862 | Binary file (4355072 bytes, SHA-256 ab1c1373a464a4ed...). | `system_hardening_integrity` |
 | `oqs.dll.hashes` | Other | 5 | Other file. | `system_hardening_integrity` |
 | `oqs.dll.pub` | Public key | 3 | Public key file (116 bytes). | `system_hardening_integrity` |
-| `oqs.dll.sig` | Signature | 1 | Detached signature file (64 bytes). | `system_hardening_integrity` |
+| `oqs.dll.sig` | Signature | 2 | Detached signature file (64 bytes). | `system_hardening_integrity` |
 | `p2p_core.py` | Python | 2664 | Python source module with no module docstring. | `mesh_ddil_networking` |
 | `paced_socket_wrapper.py` | Python | 328 | paced_socket_wrapper.py -- Hardware-Paced Wire Camouflage for Interactive Chat | `transport_anonymity` |
 | `platform_hsm_interface.py` | Python | 11646 | Python source module with no module docstring. | `key_management_pki` |
@@ -392,6 +401,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `rust_data_plane/.gitignore` | Other | 5 | Git ignore patterns for build output, caches, keys, and local files. | `rust_data_plane` |
 | `rust_data_plane/Cargo.lock` | Lockfile | 1030 | Dependency lockfile. | `rust_data_plane` |
 | `rust_data_plane/Cargo.toml` | TOML | 55 | rlib lets the standalone binary link the same tested modules; | `rust_data_plane` |
+| `rust_data_plane/deny.toml` | TOML | 40 | Cargo deny security and license policy configuration | `rust_data_plane` |
 | `rust_data_plane/pyproject.toml` | TOML | 15 | TOML configuration. | `rust_data_plane` |
 | `rust_data_plane/python/destroyer_core/__init__.py` | Python | 62 | destroyer_core — Rust secure core & data plane (PyO3 native extension). | `rust_data_plane` |
 | `rust_data_plane/src/acd.rs` | Rust | 343 | Active Cyber Defense (ACD) Autonomous Threat Mitigation & Response Engine. | `rust_data_plane` |
@@ -400,11 +410,14 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `rust_data_plane/src/auth.rs` | Rust | 179 | Native ML-DSA-87 authentication (FIPS 204, CNSA 2.0). | `rust_data_plane` |
 | `rust_data_plane/src/chaff.rs` | Rust | 5 | Chaff frame typing. Chaff is authenticated like any frame, absorbed on | `rust_data_plane` |
 | `rust_data_plane/src/cookie.rs` | Rust | 435 | Stateless Anti-Amplification & Anti-DoS Cookie Gate (RFC 9000 / WireGuard style). | `rust_data_plane` |
+| `rust_data_plane/src/cot.rs` | Rust | 277 | Cursor-on-Target tactical data message serialization | `rust_data_plane` |
 | `rust_data_plane/src/ct.rs` | Rust | 78 | Constant-time comparison and selection primitives. | `rust_data_plane` |
+| `rust_data_plane/src/doc_transfer.rs` | Rust | 179 | Secure document chunking and transfer pipeline | `rust_data_plane` |
 | `rust_data_plane/src/fec.rs` | Rust | 428 | fec.rs — Cauchy-Reed-Solomon Forward Error Correction (FEC) over GF(2^8). | `rust_data_plane` |
 | `rust_data_plane/src/ffi.rs` | Rust | 1432 | Thin PyO3 control-plane bindings for the Rust secure core. | `rust_data_plane` |
+| `rust_data_plane/src/fragment.rs` | Rust | 422 | Packet fragmentation and reassembly engine | `rust_data_plane` |
 | `rust_data_plane/src/frame.rs` | Rust | 86 | Authenticated frame layout (all multi-byte fields big-endian): | `rust_data_plane` |
-| `rust_data_plane/src/group_ratchet.rs` | Rust | 836 | [restricted-term] Sender-Key Group Ratchet Engine, wire profile v2. | `rust_data_plane` |
+| `rust_data_plane/src/group_ratchet.rs` | Rust | 960 | [restricted-term] Sender-Key Group Ratchet Engine, wire profile v2. | `rust_data_plane` |
 | `rust_data_plane/src/handshake.rs` | Rust | 829 | Noise_XXhfs handshake in Rust (CNSA L5 production path). | `rust_data_plane` |
 | `rust_data_plane/src/kem.rs` | Rust | 335 | Hybrid key exchange: SecP384r1 + ML-KEM-1024 (RFC 10024 / CNSA 2.0 L5). | `rust_data_plane` |
 | `rust_data_plane/src/kex_auth.rs` | Rust | 363 | Authenticated hybrid KEX session (Rust secure core). | `rust_data_plane` |
@@ -413,12 +426,16 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `rust_data_plane/src/main.rs` | Rust | 2859 | secure-transmit — standalone post-quantum secure core & data-plane executor. | `rust_data_plane` |
 | `rust_data_plane/src/memlock.rs` | Rust | 173 | OS page-locking for secret buffers (VirtualLock / mlock). | `rust_data_plane` |
 | `rust_data_plane/src/memory_guard.rs` | Rust | 166 | Hardware & Memory Protection Engine (Stack Canaries & Secure Guard Buffers). | `rust_data_plane` |
+| `rust_data_plane/src/mmhs.rs` | Rust | 382 | Military Message Handling System message parser | `rust_data_plane` |
+| `rust_data_plane/src/nc3.rs` | Rust | 294 | Dual-officer two-person integrity verification logic | `rust_data_plane` |
 | `rust_data_plane/src/net.rs` | Rust | 493 | Silent-drop UDP transport (dual-stack IPv6/IPv4). | `rust_data_plane` |
 | `rust_data_plane/src/nostd_microcore.rs` | Rust | 430 | High-Assurance #![no_std] Cryptographic Micro-Core | `rust_data_plane` |
 | `rust_data_plane/src/pacing.rs` | Rust | 219 | pacing — constant-rate traffic invariance and synthetic chaff engine. | `rust_data_plane` |
 | `rust_data_plane/src/pad.rs` | Rust | 12 | Padding budgets (re-exported from frame quanta) and chaff policy. | `rust_data_plane` |
+| `rust_data_plane/src/pipeline.rs` | Rust | 427 | Packet processing pipeline stage dispatcher | `rust_data_plane` |
 | `rust_data_plane/src/pki.rs` | Rust | 448 | 3-of-5 threshold ML-DSA-87 PKI verification (Rust secure core). | `rust_data_plane` |
 | `rust_data_plane/src/policy.rs` | Rust | 161 | Secure-core policy: single source of fail-closed truth. | `rust_data_plane` |
+| `rust_data_plane/src/ptt.rs` | Rust | 145 | Push-to-talk encrypted voice packet stream processor | `rust_data_plane` |
 | `rust_data_plane/src/purge.rs` | Rust | 127 | Cryptographic media sanitization & emergency zeroization (NIST SP 800-88 Rev 1 / DoD 5220.22-M). | `rust_data_plane` |
 | `rust_data_plane/src/ratchet.rs` | Rust | 301 | Project-specific fresh-KEM ratchet inspired by SPQR/Triple Ratchet. | `rust_data_plane` |
 | `rust_data_plane/src/replay.rs` | Rust | 361 | 1024-packet sequence sliding window per RFC 6479 (Decoupled IPsec/WireGuard mechanism). | `rust_data_plane` |
@@ -431,7 +448,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `scripts/crl_bundle.py` | Python | 295 | Offline CRL bundle CLI for air-gapped operation (no network). | `operational_scripts` |
 | `scripts/cve_scan.py` | Python | 266 | Offline-first CVE scan over pinned requirements (additive, non-breaking). | `operational_scripts` |
 | `scripts/deploy_canary_pilot.py` | Python | 261 | Canary Pilot Deployment & Continuous Monitoring (ISCM / cATO) Telemetry Harness | `operational_scripts` |
-| `scripts/deploy_production.py` | Python | 404 | Production Deployment Script for [restricted-term] P2P System | `operational_scripts` |
+| `scripts/deploy_production.py` | Python | 409 | Production Deployment Script for [restricted-term] P2P System | `operational_scripts` |
 | `scripts/generate_oscal_sar.py` | Python | 295 | generate_oscal_sar.py | `operational_scripts` |
 | `scripts/generate_oscal_ssp.py` | Python | 347 | generate_oscal_ssp.py | `operational_scripts` |
 | `scripts/generate_pqc_pki.py` | Python | 18 | scripts/generate_pqc_pki.py | `operational_scripts` |
@@ -439,6 +456,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `scripts/generate_production_sbom.py` | Python | 713 | Generate Official Software Bill of Materials (SBOM) for 2027+ Defense Authorization | `operational_scripts` |
 | `scripts/generate_sovereign_pki.py` | Python | 203 | scripts/generate_[restricted-term]_pki.py | `operational_scripts` |
 | `scripts/package_deployment.py` | Python | 172 | Build a clean [restricted-term] deployment tree. | `operational_scripts` |
+| `scripts/production_cleanup_utils.py` | Python | 145 | Pre-deployment environment cleanup utilities | `operational_scripts` |
 | `scripts/run_defense_audit.py` | Python | 267 | [restricted-term] Transmit 2027 (ST2027) — Master Defense Audit Harness | `operational_scripts` |
 | `scripts/run_phase5_csrmc_operations_drill.py` | Python | 496 | run_phase5_csrmc_operations_drill.py | `operational_scripts` |
 | `scripts/run_phase6_cjadc2_data_fabric_drill.py` | Python | 470 | run_phase6_cjadc2_data_fabric_drill.py | `operational_scripts` |
@@ -456,7 +474,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `scripts/verify_hardware_security.py` | Python | 48 | Python source module with no module docstring. | `operational_scripts` |
 | `scripts/verify_host_hardening.py` | Python | 416 | scripts/verify_host_hardening.py | `operational_scripts` |
 | `scripts/verify_ratchet_performance.py` | Python | 20 | scripts/verify_ratchet_performance.py | `operational_scripts` |
-| `scripts/verify_reproducible_build.py` | Python | 295 | Signed Reproducible Build Verification Script | `operational_scripts` |
+| `scripts/verify_reproducible_build.py` | Python | 298 | Signed Reproducible Build Verification Script | `operational_scripts` |
 | `scripts/wireguard/wg-ts0.conf.template` | Other | 30 | Other file. | `operational_scripts` |
 | `scripts/witnessed_key_ceremony.py` | Python | 495 | Witnessed Key Ceremony Harness - NIST SP 800-57 / FIPS 140-3 Level 4 Compliant | `operational_scripts` |
 | `secure_enclave_key_storage.py` | Python | 2096 | secure_enclave_key_storage.py | `memory_security` |
@@ -466,8 +484,8 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `secure_key_provider.py` | Python | 617 | secure_key_provider.py | `key_management_pki` |
 | `secure_memory_wiper.py` | Python | 610 | Secure Memory Wiper - DoD 5220.22-M Compliant Memory Sanitization | `memory_security` |
 | `secure_message_serializer.py` | Python | 680 | Secure Message Serializer - MAC-First Verification | `messaging_file_transfer` |
-| `secure_p2p.py` | Python | 16874 | Secure P2P Chat Implementation | `orchestrator_application` |
-| `secure_transmit_2027.py` | Python | 2394 | secure_transmit_2027.py — Most-secure practical transmission over the public internet (2027). | `orchestrator_application` |
+| `secure_p2p.py` | Python | 16913 | Secure P2P Chat Implementation | `orchestrator_application` |
+| `secure_transmit_2027.py` | Python | 2444 | secure_transmit_2027.py — Most-secure practical transmission over the public internet (2027). | `orchestrator_application` |
 | `security/__init__.py` | Python | 24 | Security operations module. | `security_framework` |
 | `security/graceful_degradation.py` | Python | 342 | Security Degradation Enforcement Module | `security_framework` |
 | `security/hardening.py` | Python | 445 | Security hardening module for secure protection. | `security_framework` |
@@ -502,8 +520,8 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `sovereign_sel4_appliance.py` | Python | 115 | [restricted-term]_sel4_appliance.py — Unified seL4 [restricted-term] Hardware Appliance Runtime | `host_runtime_attestation` |
 | `spo_dpo.py` | Python | 738 | spo_dpo.py — Single-Person vs Dual-Person Operation enforcement for [restricted-term] | `transport_anonymity` |
 | `ssdf_attestation.py` | Python | 261 | SSDF self-attestation evidence (NIST SP 800-218 v1.1 / EO 14028). | `system_hardening_integrity` |
-| `start_tactical_alpha.bat` | Batch | 6 | Batch script. | `tactical_command_cjadc2` |
-| `start_tactical_bravo.bat` | Batch | 6 | Batch script. | `tactical_command_cjadc2` |
+| `start_tactical_alpha.bat` | Batch | 9 | Batch script. | `tactical_command_cjadc2` |
+| `start_tactical_bravo.bat` | Batch | 9 | Batch script. | `tactical_command_cjadc2` |
 | `stateful_artifact_signing.py` | Python | 628 | stateful_artifact_signing.py | `system_hardening_integrity` |
 | `storage.py` | Python | 114 | Secure key storage operations. Provides encrypted key storage and retrieval with security. | `orchestrator_application` |
 | `supply_chain_security.py` | Python | 2948 | Software Supply Chain Integrity and Provenance Verification Engine | `system_hardening_integrity` |
@@ -518,6 +536,8 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tactical_web_console.py` | Python | 678 | tactical_web_console.py — LOCAL DEMONSTRATION & TELEMETRY LAB CONSOLE | `tactical_command_cjadc2` |
 | `tee_manager.py` | Python | 1459 | tee_manager.py | `host_runtime_attestation` |
 | `test-results/TEST_AND_BUILD_REPORT.md` | Markdown | 85 | Test and Build Verification Report | `documentation` |
+| `test_real_uses_dual_terminal.py` | Python | 228 | Live dual terminal loopback communications test | `tests` |
+| `test_real_uses_dual_terminal_ipv6.py` | Python | 200 | Live dual terminal IPv6 communications test | `tests` |
 | `tests/conftest.py` | Python | 59 | Shared pytest fixtures. | `tests` |
 | `tests/test_2027_defense_hardening.py` | Python | 551 | 2027+ Defense-Grade [restricted-term] Security Hardening Verification Suite | `tests` |
 | `tests/test_2028_national_security_remediations.py` | Python | 540 | Test Suite: 2028+ National-Security Level Hardening & Remediation Battery | `tests` |
@@ -554,6 +574,10 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tests/test_docs_truth_in_claims.py` | Python | 160 | Truth-in-claims gates (Phase 4): documentation is audited like code. | `tests` |
 | `tests/test_exploit_nonce_state.py` | Python | 173 | Nonce state-attack consequences — supplement to test_exploit_regressions.py. | `tests` |
 | `tests/test_exploit_regressions.py` | Python | 457 | Active exploit regression battery — permanent automated defenses. | `tests` |
+| `tests/test_f01_identity_anchor.py` | Python | 129 | Tests for F-01 identity anchor and whitelist enforcement | `tests` |
+| `tests/test_f06_symlink_atomic_write.py` | Python | 69 | Tests for F-06 atomic write and symlink traversal prevention | `tests` |
+| `tests/test_f08_f09_tactical_and_inner_ratchet.py` | Python | 131 | Tests for F-08 dual authorization and F-09 inner ratchet | `tests` |
+| `tests/test_f10_fips_reporting.py` | Python | 20 | Tests for F-10 FIPS/CMVP validation status reporting | `tests` |
 | `tests/test_falcon_bundle_mode_consistency.py` | Python | 138 | FALCON/hybrid bundle serialization consistency (A-14, 2026-10-16). | `tests` |
 | `tests/test_file_receive_traversal_guard.py` | Python | 255 | Fail-closed file-receive filename guard (found 2026-09-24). | `tests` |
 | `tests/test_formal_proverif_models.py` | Python | 98 | Test Suite: Formal ProVerif Models Structural & Mathematical Validation | `tests` |
@@ -572,6 +596,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tests/test_liboqs_version_floor_gate.py` | Python | 217 | liboqs runtime version-floor gate — behavioral proofs (docs/liboqs_pin.md). | `tests` |
 | `tests/test_military_adversarial_suite.py` | Python | 626 | ================================================================================ | `tests` |
 | `tests/test_military_bases_two_terminal_live_drill.py` | Python | 116 | Test [restricted-term] Bases Two-Terminal Live Post-Quantum Operational Drill | `verification_evidence` |
+| `tests/test_military_five_pillars_operational.py` | Python | 304 | Integration tests for operational security pillars | `tests` |
 | `tests/test_mls_framing.py` | Python | 166 | Gates for mls_framing.py: roundtrips, transcript chain, tamper rejection. | `tests` |
 | `tests/test_native_ctypes_bounds.py` | Python | 76 | Native FFI input bounds (audit 6.2 / ctypes hardening). | `tests` |
 | `tests/test_nc3_cnsa_cipher.py` | Python | 119 | NC3 PAL bulk cipher: AES-256-GCM seals, legacy ChaCha verifies, tamper fails. | `tests` |
@@ -581,11 +606,11 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tests/test_nc3_two_terminal_live_transfer.py` | Python | 399 | NC3 TWO-TERMINAL LIVE INTEGRATION TEST (SECURE_P2.PY) | `tests` |
 | `tests/test_neon_auth_hmac.py` | Python | 128 | Behavioral tests for Neon PostgreSQL security and HMAC authentication. | `tests` |
 | `tests/test_network_endpoint_discovery.py` | Python | 303 | Test Suite: [restricted-term] Network Endpoint Discovery Engine | `tests` |
-| `tests/test_no_emoji_property.py` | Python | 196 | Property-Based Test for No Emoji in Production Code | `tests` |
+| `tests/test_no_emoji_property.py` | Python | 200 | Property-Based Test for No Emoji in Production Code | `tests` |
 | `tests/test_no_gap_military_audit.py` | Python | 348 | ================================================================================ | `tests` |
-| `tests/test_no_marketing_buzzwords_property.py` | Python | 219 | Property-Based Test for No Marketing Buzzwords | `tests` |
+| `tests/test_no_marketing_buzzwords_property.py` | Python | 223 | Property-Based Test for No Marketing Buzzwords | `tests` |
 | `tests/test_noise_pq_hardened.py` | Python | 480 | tests/test_noise_pq_hardened.py | `tests` |
-| `tests/test_noise_pq_purity.py` | Python | 233 | Production tests: Noise_XXhfs+ML-KEM-1024 handshake (REAL primitives) | `tests` |
+| `tests/test_noise_pq_purity.py` | Python | 257 | Production tests: Noise_XXhfs+ML-KEM-1024 handshake (REAL primitives) | `tests` |
 | `tests/test_nonce_hardening.py` | Python | 135 | Regression tests for the audit nonce-management finding (2026-10-14). | `tests` |
 | `tests/test_notupload_security.py` | Python | 76 | Static and architectural security regression tests for notupload/ components. | `tests` |
 | `tests/test_oauth_token_validation_p0.py` | Python | 157 | Tests for Fix #1 (P0 CRITICAL): OAuth Token Validation Bypass Remediation. | `tests` |
@@ -627,6 +652,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tests/test_rust_standalone_binary.py` | Python | 801 | Standalone Rust binary (Task-1): secure-transmit builds and transfers. | `tests` |
 | `tests/test_sbom_signer_custody.py` | Python | 90 | SBOM signer custody resolution (F-04/A-01) — fail-closed anchor protection. | `tests` |
 | `tests/test_second_audit_regressions.py` | Python | 76 | Second-audit regression battery (F-01..F-06). | `tests` |
+| `tests/test_secure_p2p_military_entrypoint.py` | Python | 156 | Entrypoint tests for secure P2P launch modes | `tests` |
 | `tests/test_secure_transmit_2027.py` | Python | 844 | Production tests for secure_transmit_2027 — all REAL primitives, no mocks of crypto. | `tests` |
 | `tests/test_security_audit_remediations.py` | Python | 404 | Automated Verification Test Suite: Remediated Findings from security_audit_report.md | `tests` |
 | `tests/test_security_diagnostics.py` | Python | 54 | Pytest wrapper for the full-project security diagnostics sweep. | `tests` |
@@ -636,6 +662,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tests/test_sovereign_group_ratchet.py` | Python | 139 | Test suite for [restricted-term]GroupRatchet (CNSA Suite 2.0 / RFC 9420 MLS Aligned). | `tests` |
 | `tests/test_spo_dpo.py` | Python | 206 | Production tests for spo_dpo — all REAL ML-DSA-87, no mocks of crypto. | `tests` |
 | `tests/test_stateful_artifact_signing.py` | Python | 342 | SP 800-208 stateful artifact-signing hook — behavioral proofs. | `tests` |
+| `tests/test_tactical_acd_and_rekey.py` | Python | 356 | Tests for active cyber defense and rekeying | `tests` |
 | `tests/test_tactical_data_diode.py` | Python | 277 | Test Suite: Simplex Tactical Data Diode & Forward Error Correction | `tests` |
 | `tests/test_tactical_operations_suite.py` | Python | 154 | Unit and Integration Test Suite for Real [restricted-term] Tactical C4ISR Operations. | `tests` |
 | `tests/test_tactical_replay.py` | Python | 78 | Behavioral tests for tactical message anti-replay protection. | `tests` |
@@ -664,7 +691,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `tls_channel_manager.py` | Python | 7197 | TLS Channel Manager - Quantum-Resistant Secure Communication | `tls_channel` |
 | `tls_pq_policy.py` | Python | 94 | TLS 1.3 post-quantum policy probe (shared, stdlib-only). | `tls_channel` |
 | `tpm_quote.py` | Python | 1325 | TPM remote-attestation quote skeleton (additive, non-breaking). | `key_management_pki` |
-| `transport_anonymity.py` | Python | 1124 | transport_anonymity.py — Network transport and anonymity for [restricted-term] | `transport_anonymity` |
+| `transport_anonymity.py` | Python | 1126 | transport_anonymity.py — Network transport and anonymity for [restricted-term] | `transport_anonymity` |
 | `treekem.py` | Python | 362 | treekem.py — ratchet-tree STRUCTURE skeleton (TreeKEM foundation, T3-J). | `ratchet_kex_protocol` |
 | `triple_hybrid_kem.py` | Python | 1321 | Triple-Hybrid Key Encapsulation Mechanism - [restricted-term] 2026 Production Security | `ratchet_kex_protocol` |
 | `trust_anchor.py` | Python | 614 | trust_anchor.py — Trust infrastructure and operational key management for | `key_management_pki` |

@@ -14,6 +14,7 @@ The following defects were verified through code analysis and test execution:
 | DEF-02 | Hardware Entropy Delegation | `entropy_manager.py:270` | `HardwareRNGSource` lacked direct native CPU instruction execution. | **REMEDIATED & VERIFIED:** Implemented native CPU `RDRAND`/`RDSEED` bus execution via x86_64 machine code and ctypes; verified 32B hardware entropy extraction. |
 | DEF-03 | TPM Endorsement Key Roots | `tpm_quote.py:38-42` | Root certificate table required external provisioning out-of-band. | **REMEDIATED & VERIFIED:** Added directory-based certificate loader (`certs/ek_roots` / `P2P_TPM_EK_DIR`) parsing X.509 certificates and SHA-256 fingerprints automatically. |
 | DEF-04 | Offline Dependency Verification | `scripts/audit_pins.py:25-45` | Dependency scanner lacked offline mirror execution in air-gapped field deployments. | **REMEDIATED & VERIFIED:** Added `--offline` and `--mirror` arguments with verified local JSON vulnerability database fallback; 14 packages pass offline. |
+| DEF-05 | liboqs DLL Path Resolver Scope Defect | `liboqs_wrapper.py:214-266` | Function `_ensure_liboqs_linux` was inserted inside `_find_liboqs_path()` with unindented `return None` at line 266, rendering candidate discovery unreachable and causing `LIBOQS_DLL_PATH` to evaluate to `None` on Windows (`AttributeError: 'NoneType' object has no attribute 'exists'`). | **IDENTIFIED BY AUDIT:** Remediation pending branch creation in Stage B. Move `_ensure_liboqs_linux` to module level before `_find_liboqs_path`. |
 
 ---
 

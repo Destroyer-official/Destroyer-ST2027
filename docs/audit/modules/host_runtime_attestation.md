@@ -168,7 +168,7 @@
 | `P2P_RED_BIND` | `ts_hw_layer.py:110` | `127.0.0.1:5001` | IP address and port binding for isolated Plaintext Red domain. |
 | `P2P_BLACK_BIND` | `ts_hw_layer.py:115` | `0.0.0.0:5002` | IP address and port binding for Ciphertext Black network domain. |
 | `P2P_FIPS_RECORD` | `ts_hw_layer.py:215` | None | Filepath to CMVP validation metadata JSON file. |
-| `P2P_TEMPEST_REGISTRY` | `ts_hw_layer.py:250` | None | Filepath to TEMPEST shielding compliance registry. |
+| `P2P_TEMPEST_REGISTRY` | `ts_hw_layer.py:250` | None | Filepath to records of emissions-security accreditation supplied by the operator; this software does not measure or provide emissions security. |
 | `P2P_TS_CLASS` | `ts_hw_layer.py:95` | None | Classification string to enforce during session startup. |
 | `P2P_TS_ZONE` | `ts_hw_layer.py:100` | None | TEMPEST zone containment string. |
 | `P2P_PLATFORM_WAIVER` | `ts_runtime.py:140` | None | Cryptographic operator waiver string overriding missing hardware gates. |
