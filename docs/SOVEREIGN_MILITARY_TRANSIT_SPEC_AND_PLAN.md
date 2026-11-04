@@ -1,7 +1,7 @@
-# Sovereign Transmit 2027 (ST2027) — Military High-Assurance Specification & Implementation Plan
-## High-Assurance Sovereign Information Exchange Architecture for Classified & Tactical Operations
+# Secure Transmit 2027 (ST2027) — High-Assurance Specification & Implementation Plan
+## High-Assurance Information Exchange Architecture for Isolated & Tactical Operations
 
-**Author:** Sovereign Defense Communications Group  
+**Author:** ST2027 Research & Engineering Working Group  
 **Target Standard:** NSA CNSA Suite 2.0 (January 1, 2027 NSS Procurement Gate)  
 **Security Baseline:** NIST FIPS 203 (ML-KEM-1024), NIST FIPS 204 (ML-DSA-87), IETF RFC 10024, seL4 Microkernel Enforced Execution  
 **Document Revision:** 2.0 (Post-Audit Hardened Baseline)
@@ -14,42 +14,42 @@ Consumer end-to-end encrypted (E2EE) messaging systems such as **Signal** and **
 
 ```
 +========================================================================================================+
-|                       CIVILIAN DESIGN FLAW vs. SOVEREIGN MILITARY DEFENSE                              |
+|                       COMMERCIAL MESSAGING COMPARISON vs. ST2027 HIGH-ASSURANCE PROTOCOL                              |
 +========================================================================================================+
 | 1. Centralized Cloud Infrastructure:                                                                  |
 |    - Civilian: Relies on Amazon AWS, Microsoft Azure, or Meta servers. Single point of kinetic/cyber   |
 |      failure; vulnerable to national-level IP blocking, server seizures, and lawful intercept.        |
-|    - ST2027 Sovereign: Zero central servers. Pure point-to-point (P2P), tactical radio links, dark     |
+|    - ST2027: Zero central servers. Pure point-to-point (P2P), tactical radio links, dark     |
 |      fiber, or decentralized Tor v3 onion services.                                                   |
 +--------------------------------------------------------------------------------------------------------+
 | 2. Identity & Subscriber Metadata (E.164 Phone Numbers):                                              |
 |    - Civilian: Mandatory phone numbers / SMS activation. Vulnerable to SS7 telecom interception,       |
 |      IMSI catchers, base station spoofing, and carrier subscriber records.                            |
-|    - ST2027 Sovereign: Zero phone numbers, zero user accounts. Identities are non-exportable hardware-  |
+|    - ST2027: Zero phone numbers, zero user accounts. Identities are non-exportable hardware-  |
 |      bound ML-DSA-87 cryptographic tokens sealed in TPM 2.0 silicon.                                  |
 +--------------------------------------------------------------------------------------------------------+
 | 3. Traffic Analysis & Flow Correlation (The SIGINT Threat):                                           |
 |    - Civilian: Variable packet sizes and transmission bursts correlate directly with human typing and  |
 |      message timing. A Global Passive Adversary (GPA) watching internet exchanges identifies who is    |
 |      communicating with whom without breaking encryption.                                             |
-|    - ST2027 Sovereign: Strict 50.0 ms (20 Hz) constant-rate clock emitting uniform 1232-byte cells.    |
+|    - ST2027: Strict 50.0 ms (20 Hz) constant-rate clock emitting uniform 1232-byte cells.    |
 |      Continuous cryptographically indistinguishable chaff cells. The wire profile is 100% flat.        |
 +--------------------------------------------------------------------------------------------------------+
 | 4. Endpoint Platform Seizure & Mobile OS Forensics:                                                   |
 |    - Civilian: Keys stored in iOS/Android software keystores; vulnerable to forensic kits (Cellebrite,  |
 |      GrayKey, Pegasus) and cold-boot physical RAM dumps.                                              |
-|    - ST2027 Sovereign: OS-level non-pageable memory locking (VirtualLock/mlock), TPM PCR state drift   |
+|    - ST2027: OS-level non-pageable memory locking (VirtualLock/mlock), TPM PCR state drift   |
 |      sealing, active anti-DMA bus scanning, and multi-trigger volatile zeroization.                   |
 +--------------------------------------------------------------------------------------------------------+
 | 5. Single-Operator Coercion:                                                                          |
 |    - Civilian: Any individual who unlocks the handset can transmit unauthorized messages.             |
-|    - ST2027 Sovereign: Dual-Person Authorization (DPA / Two-Person Rule) requiring cryptographic      |
+|    - ST2027: Dual-Person Authorization (DPA / Two-Person Rule) requiring cryptographic      |
 |      co-signing with two independent physical ML-DSA-87 tokens before transmission.                   |
 +--------------------------------------------------------------------------------------------------------+
 | 6. Bi-Directional Network Infiltration:                                                               |
 |    - Civilian: Bi-directional TCP/IP requiring the receiver to acknowledge packets, allowing reverse   |
 |      penetration into secure enclaves.                                                                |
-|    - ST2027 Sovereign: Hardware Simplex Optical Data Diode support. Photons physically travel in only  |
+|    - ST2027: Hardware Simplex Optical Data Diode support. Photons physically travel in only  |
 |      one direction; Forward Error Correction (FEC) allows reliable transfer with zero return signal.  |
 +========================================================================================================+
 ```
@@ -74,10 +74,10 @@ The ST2027 architecture is directly derived from peer-reviewed cryptographic and
 
 ```
 +========================================================================================================+
-|                             SOVEREIGN TRANSMIT 2027 DEFENSE ARCHITECTURE                               |
+|                             SECURE TRANSMIT 2027 ARCHITECTURE                               |
 +========================================================================================================+
 |  [PILLAR 5] TRUST INFRASTRUCTURE & DUAL-PERSON AUTHORIZATION                                          |
-|    - ML-DSA-87 Sovereign Root CA & Offline Key Ceremony (scripts/witnessed_key_ceremony.py)          |
+|    - ML-DSA-87 Local Root CA & Offline Key Ceremony (scripts/witnessed_key_ceremony.py)          |
 |    - Cryptographic Dual-Person Authorization (DPA co-signing, spo_dpo.py)                              |
 |    - Fail-Closed Certificate Revocation Lists (CRL) with monotonic epoch stamps                        |
 +--------------------------------------------------------------------------------------------------------+
@@ -114,7 +114,7 @@ The ST2027 architecture is directly derived from peer-reviewed cryptographic and
 
 ## 4. Master Implementation Roadmap: Elevating to 50X Military Superiority
 
-To achieve absolute sovereign security and eliminate any possible audit critique, we execute this 5-phase engineering plan:
+To achieve high-assurance security and address audit findings, we execute this 5-phase engineering plan:
 
 ### Phase 1: The "Iron Core" Consolidation (Eliminate Python from Secret Path)
 * **Objective:** All secret key handling, cryptographic operations, state persistence, and network transmission run strictly in native, memory-locked Rust (`rust_data_plane`). Python is retained exclusively as an optional CLI wrapper/orchestrator.
@@ -157,7 +157,7 @@ To achieve absolute sovereign security and eliminate any possible audit critique
 * **Tasks:**
   - **Task 5.1:** Require high-consequence messages to contain an enveloped DPA manifest co-signed by two distinct ML-DSA-87 public keys registered in the sovereign authorization directory.
   - **Task 5.2:** Enforce maximum time delta between signatures (configurable operational window).
-  - **Task 5.3:** Receiver station verifies both signatures against the sovereign root anchor before releasing payload to disk.
+  - **Task 5.3:** Receiver station verifies both signatures against the root trust anchor before releasing payload to disk.
 * **Verification Gate:** 	est_spo_dpo.py validates that single-signed messages are dropped silently.
 
 ---
@@ -176,7 +176,7 @@ To achieve absolute sovereign security and eliminate any possible audit critique
 
 ---
 
-## 6. Conclusion: From Commercial Chat to Sovereign Defense
+## 6. Conclusion: Commercial Messaging vs. High-Assurance Protocol
 
 Consumer chat applications are fundamentally optimized for ease of use, app store distribution, and smartphone battery efficiency. 
 
