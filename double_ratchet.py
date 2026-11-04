@@ -85,7 +85,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.exceptions import InvalidTag, InvalidKey
 
-# Import comprehensive error handling system
+# Import structured error handling system
 from cryptographic_errors import (
     CryptographicError,
     KeyGenerationError,
@@ -1139,7 +1139,7 @@ class EntropyVerifier:
         zeros = byte_counts[0]      # 0x00 bytes
         ones = byte_counts[255]     # 0xFF bytes
 
-        # MILITARY SECURITY FIX: Improved pattern detection for hybrid cryptographic keys
+        # Security fix: Improved pattern detection for hybrid cryptographic keys
         # McEliece and other post-quantum algorithms may have legitimate structured regions
         # Only flag patterns that are truly suspicious (not legitimate cryptographic structure)
         
@@ -1201,7 +1201,7 @@ class EntropyVerifier:
     @classmethod
     def verify_entropy(cls, data: bytes, description: str = "data") -> Tuple[bool, float, List[str]]:
         """
-        Perform comprehensive cryptographic quality verification.
+        Perform cryptographic quality verification.
 
         This method performs a multi-faceted analysis of cryptographic material
         to verify it meets security requirements. The verification includes:
@@ -1228,7 +1228,7 @@ class EntropyVerifier:
         # Try to use enhanced implementation if available
         if cls._HAVE_ENHANCED_SECURITY_TEST:
             try:
-                # Use the enhanced SecurityTest implementation for comprehensive security verification
+                # Use the enhanced SecurityTest implementation for security verification
                 passed, entropy, issues = SecurityTest.verify_cryptographic_quality(data)
                 # Log detailed report for debugging
                 ratchet_logger.debug(f"Enhanced entropy verification for {description}: " +
@@ -1285,7 +1285,7 @@ def verify_key_material(key_material,
     3. Non-emptiness validation
     4. Basic entropy check (must not be all same byte)
 
-    For more comprehensive entropy verification, use EntropyVerifier.verify_entropy().
+    For full entropy verification, use EntropyVerifier.verify_entropy().
 
     Args:
         key_material: The cryptographic key material to verify (bytes or dict for hybrid)
@@ -1337,7 +1337,7 @@ def verify_key_material(key_material,
         raise ValueError(f"Security violation: {description} is empty")
 
     # Basic entropy check - detect obviously weak keys (all same byte)
-    # This is a minimal check; use EntropyVerifier for comprehensive analysis
+    # This is a minimal check; use EntropyVerifier for detailed analysis
     if all(b == key_material[0] for b in key_material):
         ratchet_logger.error(f"SECURITY ALERT: {description} has zero entropy (all bytes identical)")
         raise ValueError(f"Security violation: {description} has zero entropy")
@@ -1374,7 +1374,7 @@ def verify_key_material(key_material,
             # This is likely legitimate McEliece key structure - downgrade to debug
             logger.debug(f"Hybrid key structure note: {description} has expected cryptographic patterns: {len([i for i in issues if 'detected_pattern_00000000' in str(i)])} zero-padding regions detected")
         
-        # MILITARY SECURITY FIX: Handle ML-DSA signature patterns (legitimate cryptographic structure)
+        # Security fix: Handle ML-DSA signature patterns (legitimate cryptographic structure)
         elif "ML-DSA" in description and any("detected_pattern_00000000" in str(issue) for issue in issues):
             # ML-DSA signatures may have legitimate structured regions due to the algorithm design
             logger.debug(f"ML-DSA signature structure note: {description} has expected signature patterns: {len([i for i in issues if 'detected_pattern_00000000' in str(i)])} structured regions detected")
@@ -1447,7 +1447,7 @@ def secure_erase(key_material: Optional[Union[bytes, bytearray, str]]) -> None:
     Security notes:
     - For immutable types (bytes, str), the original object may persist in memory
     - Python's garbage collector may leave traces in memory
-    - For maximum security, use bytearray for sensitive data storage
+    - For in-place memory wiping, use bytearray for sensitive data storage
     """
     if key_material is None:
         return
@@ -2114,7 +2114,7 @@ class DoubleRatchet:
         from production_gate import is_production as _gate_prod
         _prod = _gate_prod()
         if not enable_pq and _prod and _os.environ.get("P2P_ALLOW_CLASSICAL", "0") != "1":
-            raise SecurityError("MILITARY FATAL: enable_pq=False refused in production (classical-only, no PQ PCS)")
+            raise SecurityError("FATAL: enable_pq=False refused in production (classical-only, no PQ PCS)")
         if not enable_pq:
             import logging as _logging
             _logging.getLogger(__name__).warning("Classical-only DoubleRatchet (enable_pq=False) - lab only, no PQ PCS")
@@ -2125,8 +2125,8 @@ class DoubleRatchet:
         # skip per-message DSS signatures: authenticity comes ONLY from the
         # shared chain key (repudiable), NOT from a third-party-verifiable
         # signature (RFC 9881 non-repudiation). Fail-closed: refused when
-        # TOP SECRET or non-repudiation is strictly required (P2P_TS_MODE=1 or
-        # P2P_REQUIRE_NON_REPUDIATION=1); never usable for TOP SECRET / DPO payloads.
+        # Strict profile or non-repudiation is strictly required (P2P_TS_MODE=1 or
+        # P2P_REQUIRE_NON_REPUDIATION=1); never usable for strict profile / DPO payloads.
         _ts = _os.environ.get("P2P_TS_MODE", "0").strip().lower() in ("1", "true", "yes", "on")
         _require_nr = _os.environ.get("P2P_REQUIRE_NON_REPUDIATION", "0").strip().lower() in ("1", "true", "yes", "on")
         if not deniable and (_os.environ.get("P2P_DENIABLE_MESSAGING", "0").strip().lower() in ("1", "true", "yes", "on") or
@@ -2139,7 +2139,7 @@ class DoubleRatchet:
             import logging as _logging
             _logging.getLogger(__name__).warning(
                 "Deniable DoubleRatchet session: per-message signatures DISABLED "
-                "(AEAD-only repudiable auth; NOT for TOP SECRET/DPO use)")
+                "(AEAD-only repudiable auth; NOT for strict profile/DPO use)")
 
         # Braid-lite PQ ratchet negotiation (versioned, non-breaking).
         # 1 = legacy: reuse _synchronized_kem_secret across DH steps (v1 wire
@@ -2165,7 +2165,7 @@ class DoubleRatchet:
         self._strict_ratchet = _strict_ratchet
         if _strict_ratchet and self.protocol_version < 2:
             raise SecurityError(
-                "MILITARY FATAL: PQ ratchet v1 (legacy KEM reuse) refused in "
+                "FATAL: PQ ratchet v1 (legacy KEM reuse) refused in "
                 "production/TS mode — fresh-KEM v2 required for PQ PCS "
                 "(protocol_version>=2)")
         if pq_ratchet_version is not None:
@@ -2175,7 +2175,7 @@ class DoubleRatchet:
                 raise SecurityError("pq_ratchet_version unparseable (fail-closed)")
             if _strict_ratchet and _req < 2:
                 raise SecurityError(
-                    "MILITARY FATAL: pq_ratchet_version=1 refused in "
+                    "FATAL: pq_ratchet_version=1 refused in "
                     "production/TS mode — v2 fresh-KEM required")
         if pq_ratchet_version is None:
             self.pq_ratchet_version = (
@@ -2234,7 +2234,7 @@ class DoubleRatchet:
             _req = self.MAX_SKIP_MESSAGE_KEYS
         self.max_skipped_message_keys = max(1, min(_req, self.MAX_SKIP_MESSAGE_KEYS))
 
-        # Enhanced security options - force to maximum security
+        # Enhanced security options - force to strict security level
         self.security_level = "MAXIMUM"
         self.threshold_security = threshold_security
         self.hardware_binding = hardware_binding
@@ -2851,7 +2851,7 @@ class DoubleRatchet:
         )
         if is_strict and negotiated < 2:
             raise SecurityError(
-                "MILITARY FATAL: Downgrade to PQ ratchet v1 (legacy KEM reuse) refused "
+                "FATAL: Downgrade to PQ ratchet v1 (legacy KEM reuse) refused "
                 "in production/strict mode — fresh-KEM v2 required for PQ PCS."
             )
         self.pq_ratchet_version = (
@@ -3373,7 +3373,7 @@ class DoubleRatchet:
           extract a high-entropy pseudorandom key and then expand it to the
           desired length.
         - **Post-Quantum Resistance**: While HKDF-SHA3_512 is a classical KDF,
-          it is considered robust and is a core component in hybrid post-quantum
+          it is standard and is a core component in hybrid post-quantum
           key exchange protocols.
 
         Args:
@@ -3591,7 +3591,7 @@ class DoubleRatchet:
             # Handle hybrid signature format (dict with 'mldsa' and 'slhdsa' components)
             if isinstance(raw_signature, dict):
                 # For hybrid signatures, use the ML-DSA component (faster, used in 'fast' mode)
-                # or combine both for maximum security
+                # or combine both for strict verification
                 if 'mldsa' in raw_signature:
                     signature = raw_signature['mldsa']
                     logger.debug(f"Using ML-DSA signature component ({len(signature)} bytes)")
@@ -3847,7 +3847,7 @@ class DoubleRatchet:
     def decrypt(self, message: bytes) -> bytes:
         """Decrypt a message using the Double Ratchet protocol.
 
-        Performs secure message decryption with comprehensive security checks:
+        Performs secure message decryption with verification checks:
 
         1. Message structure validation and parsing
         2. Replay attack detection using unique message IDs
@@ -4671,7 +4671,7 @@ class DoubleRatchet:
     def secure_cleanup(self) -> None:
         """Securely erase all cryptographic material from memory.
 
-        Performs comprehensive cleanup of all sensitive key material:
+        Performs zeroization cleanup of all sensitive key material:
         1. Securely erases all private keys and chain keys
         2. Clears all skipped message keys
         3. Resets the replay protection cache
@@ -5004,7 +5004,7 @@ class DoubleRatchet:
         beyond the MAX_SKIP_MESSAGE_KEYS limit, which could weaken forward secrecy.
 
         Raises:
-            SecurityError: Always raises this error to maintain maximum security
+            SecurityError: Always raises this error to enforce strict profile
         """
         logger.error("SECURITY ALERT: Extreme out-of-order message recovery is disabled for security reasons")
         raise SecurityError("Extreme out-of-order message recovery is disabled to preserve forward secrecy")
@@ -5039,7 +5039,7 @@ class DoubleRatchetDefaults:
     def get_defaults(cls, security_level="MAXIMUM") -> dict:
         """Get NIST Level-5 security configuration.
 
-        This method always returns the MAXIMUM security level settings,
+        This method always returns the STRICT security level settings,
         regardless of the input parameter, to enforce NIST Level-5 security.
 
         Args:
@@ -5048,7 +5048,7 @@ class DoubleRatchetDefaults:
         Returns:
             Dict containing security configuration parameters
         """
-        # Always use MAXIMUM security level regardless of input parameter
+        # Always use STRICT security level regardless of input parameter
         config = cls.SECURITY_LEVELS["MAXIMUM"].copy()
 
         # Check for hardware availability and adjust hardware_binding setting only
@@ -5296,7 +5296,7 @@ class DuplicateDetectionManager:
     """
     Duplicate Detection Manager for preventing replay attacks.
 
-    This class implements comprehensive duplicate detection mechanisms
+    This class implements duplicate detection mechanisms
     to prevent replay attacks and ensure message uniqueness.
     """
 
@@ -5378,7 +5378,7 @@ class DuplicateDetectionManager:
 
 class AntiReplayMechanisms:
     """
-    Anti-Replay Mechanisms for comprehensive replay attack prevention.
+    Anti-Replay Mechanisms for sliding-window replay attack prevention.
 
     This class implements multiple layers of anti-replay protection
     including timestamps, nonces, and sequence validation.
