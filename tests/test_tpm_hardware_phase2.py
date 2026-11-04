@@ -44,6 +44,7 @@ def _enable_native_tpm(monkeypatch):
     yield
 
 
+@pytest.mark.live
 @pytest.mark.skipif(platform.system() != "Windows", reason="Windows TBS requires Windows platform")
 def test_windows_tbs_available_and_device_info():
     """Verify that native Windows TBS is accessible without admin privileges."""
@@ -56,6 +57,7 @@ def test_windows_tbs_available_and_device_info():
     assert dev_info.get("interface_type") in ("CRB", "FIFO", "TIS")  # nosec: B101
 
 
+@pytest.mark.live
 @pytest.mark.skipif(platform.system() != "Windows", reason="Windows TBS requires Windows platform")
 def test_windows_tbs_physical_pcr_read():
     """Verify raw TPM2_PCR_Read reads physical PCR registers 0, 1, 2, 7."""
@@ -78,6 +80,7 @@ def test_windows_tbs_physical_pcr_read():
     assert any(b != 0 for b in pcr7_bytes), "PCR 7 should not be all-zero"  # nosec: B101
 
 
+@pytest.mark.live
 @pytest.mark.skipif(platform.system() != "Windows", reason="Windows TPM probe requires Windows")
 def test_check_windows_pqc_tpm_support_non_admin():
     """Verify physical TPM readiness check succeeds without admin privilege."""
@@ -85,11 +88,13 @@ def test_check_windows_pqc_tpm_support_non_admin():
     assert support is True  # nosec: B101
 
 
+@pytest.mark.live
 def test_tpm_availability_with_native_allowed():
     """Verify is_tpm_available returns True on host machine with TPM 2.0."""
     assert phi.is_tpm_available() is True  # nosec: B101
 
 
+@pytest.mark.live
 def test_tpm_remote_attestation_hardware_enforced():
     """Verify TPMRemoteAttestation produces HARDWARE_ROOT_ENFORCED with physical PCRs."""
     att_service = phi.TPMRemoteAttestation()
@@ -112,6 +117,7 @@ def test_tpm_remote_attestation_hardware_enforced():
     assert len(att.get("quote")) == 128  # SHA3-512 hex string  # nosec: B101
 
 
+@pytest.mark.live
 def test_tpm_attestation_verification_valid_and_tamper():
     """Verify attestation quote verification and anti-tampering."""
     att_service = phi.TPMRemoteAttestation()
@@ -134,6 +140,7 @@ def test_tpm_attestation_verification_valid_and_tamper():
     assert att_service.verify_attestation(tampered_att, expected_nonce=test_nonce) is False  # nosec: B101
 
 
+@pytest.mark.live
 def test_get_tpm_attestation_top_level_api():
     """Verify top-level get_tpm_attestation API returns genuine hardware quote."""
     test_nonce = secrets.token_bytes(32)
@@ -144,6 +151,7 @@ def test_get_tpm_attestation_top_level_api():
     assert len(att.get("pcr_values", {})) >= 4  # nosec: B101
 
 
+@pytest.mark.live
 def test_secure_p2p_and_display_tpm_status():
     """Verify UI and Chat Node display routines report hardware TPM status."""
     from ui.display import DisplayManager

@@ -242,6 +242,8 @@ def test_outer_group_live_rung_is_recorded():
     hybrid). The TS posture gate therefore keys off the linked version,
     which passes here; session PQ rides the inner Noise_XXhfs envelope."""
     import ssl as _ssl
+    if tuple(_ssl.OPENSSL_VERSION_INFO[:2]) < (3, 5):
+        pytest.skip(f"Test requires OpenSSL >= 3.5 with native hybrid TLS 1.3 groups (host linked {_ssl.OPENSSL_VERSION})")
     assert _ssl.OPENSSL_VERSION_INFO[:2] >= (3, 5)
     assert st._require_ts_outer_posture() is None
     ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)

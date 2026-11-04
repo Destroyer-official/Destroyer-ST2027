@@ -57,3 +57,57 @@ def _isolate_production_gate():
             os.environ[_k] = _v
     if production_gate is not None:
         production_gate.reset_for_tests()
+
+
+import os
+import sys
+import shutil
+import subprocess
+from pathlib import Path
+
+
+def pytest_sessionstart(session):
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # 1. Add rust_data_plane/python to sys.path so destroyer_core package is importable
+    rdp_py = str(repo_root / "rust_data_plane" / "python")
+    if rdp_py not in sys.path:
+        sys.path.insert(0, rdp_py)
+
+    # 2. Locate cargo
+    cargo = shutil.which("cargo")
+    if not cargo:
+        cand = Path.home() / ".cargo" / "bin" / ("cargo.exe" if os.name == "nt" else "cargo")
+        if cand.exists():
+            cargo = str(cand)
+            os.environ["PATH"] = str(cand.parent) + os.pathsep + os.environ.get("PATH", "")
+
+    if cargo:
+        # 3. Build ts_rt
+        ts_rt_bin = repo_root / "ts_rt" / "target" / "release" / ("ts_rt.dll" if os.name == "nt" else "libts_rt.so")
+        if not ts_rt_bin.exists():
+            try:
+                subprocess.run([cargo, "build", "--manifest-path", str(repo_root / "ts_rt" / "Cargo.toml"), "--release"],
+                               check=True, timeout=90, capture_output=True)
+            except Exception:
+                pass
+
+        # 4. Build rust_data_plane (secure-transmit and cdylib)
+        data_plane_debug = repo_root / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+        if not data_plane_debug.exists():
+            try:
+                subprocess.run([cargo, "build", "--manifest-path", str(repo_root / "rust_data_plane" / "Cargo.toml")],
+                               check=True, timeout=120, capture_output=True)
+            except Exception:
+                pass
+
+        # 5. Provide _native extension for destroyer_core package
+        native_ext = repo_root / "rust_data_plane" / "python" / "destroyer_core" / ("_native.pyd" if os.name == "nt" else "_native.so")
+        if not native_ext.exists():
+            cdylib = repo_root / "rust_data_plane" / "target" / "debug" / ("destroyer_core.dll" if os.name == "nt" else "libdestroyer_core.so")
+            if cdylib.exists():
+                try:
+                    native_ext.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(cdylib, native_ext)
+                except Exception:
+                    pass

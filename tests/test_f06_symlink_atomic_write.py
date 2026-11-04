@@ -36,6 +36,16 @@ def test_atomic_write_refuses_symlink_mocked():
                 _secure_atomic_write(dest, b"MALICIOUS")
 
 
+def test_atomic_write_refuses_symlink_parent_mocked():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dest = Path(tmpdir) / "parent_sym" / "output.bin"
+        def _mock_is_symlink(self):
+            return self.name == "parent_sym"
+        with patch.object(Path, "is_symlink", _mock_is_symlink):
+            with pytest.raises(SecurityError, match="symlink target refused"):
+                _secure_atomic_write(dest, b"MALICIOUS")
+
+
 def test_atomic_write_refuses_symlink_destination():
     with tempfile.TemporaryDirectory() as tmpdir:
         target = Path(tmpdir) / "sensitive_target.txt"

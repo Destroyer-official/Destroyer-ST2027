@@ -1747,6 +1747,9 @@ class SecureEnclaveKeyStorage:
             require_attestation = self._require_attestation
         
         with self._op_lock:
+            if getattr(self, 'fail_on_software_fallback', False) or os.environ.get("P2P_FAIL_ON_SOFTWARE_FALLBACK", "0") == "1":
+                if not getattr(self, 'enclave_available', True) or not getattr(self._active_backend, 'is_hardware_bound', False):
+                    raise EnclaveSecurityError("Hardware backend unavailable and software fallback is disallowed")
             # Try active backend, fall back to software if hardware fails
             used_backend = self._active_backend_type
             used_hardware = getattr(self._active_backend, 'is_hardware_bound', False)
@@ -1795,6 +1798,9 @@ class SecureEnclaveKeyStorage:
                 "Refusing to store a hardware handle token as key material: "
                 "handles are opaque references, not keys.")
         with self._op_lock:
+            if getattr(self, 'fail_on_software_fallback', False) or os.environ.get("P2P_FAIL_ON_SOFTWARE_FALLBACK", "0") == "1":
+                if not getattr(self, 'enclave_available', True) or not getattr(self._active_backend, 'is_hardware_bound', False):
+                    raise EnclaveSecurityError("Hardware backend unavailable and software fallback is disallowed")
             # Try active backend, fall back to software if hardware fails
             used_backend = self._active_backend_type
             used_hardware = getattr(self._active_backend, 'is_hardware_bound', False)
