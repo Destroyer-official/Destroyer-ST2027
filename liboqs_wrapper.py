@@ -176,6 +176,7 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
         return None
     import subprocess  # nosec: B404
     import shutil
+    import tempfile
 
     # Fast check: package manager
     if shutil.which("apt-get") and shutil.which("sudo"):
@@ -189,7 +190,7 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
         Path("/usr/local/lib/liboqs.so"),
         Path("/usr/lib/x86_64-linux-gnu/liboqs.so"),
         Path("/usr/lib/liboqs.so"),
-        Path("/tmp/liboqs/build/lib/liboqs.so"),
+        Path(tempfile.gettempdir()) / "liboqs_src" / "build" / "lib" / "liboqs.so",  # nosec: B108
         repo_dir / "liboqs.so"
     ]
     for p in check_paths:
@@ -1362,7 +1363,5 @@ if __name__ == '__main__':
     print("\nPASS Summary:")
     print("  * Hybrid KEM: ML-KEM-1024 + McEliece-8192128f with HKDF-SHA384")
     print("  * Hybrid Signatures: ML-DSA-87 (fast) + SLH-DSA-256f (secure)")
-    print("  * Maximum security: Attacker must break multiple algorithm families")
+    print("  * Cryptographic diversity: Security relies on multiple distinct hardness assumptions")
     print("="*80)
-
-
