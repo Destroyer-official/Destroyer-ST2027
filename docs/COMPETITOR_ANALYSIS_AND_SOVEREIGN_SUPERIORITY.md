@@ -1,4 +1,4 @@
-# ST2027: Architectural Comparison & Sovereign Enclave Analysis
+# ST2027: Architectural Comparison & Enclave Analysis
 
 **Classification:** UNCLASSIFIED // TECHNICAL WHITE PAPER & ARCHITECTURAL COMPARISON  
 **Standard Compliance:** NSA CNSA Suite 2.0, NIST SP 800-208, IETF RFC 10024, IETF RFC 6479, FIPS 140-3 Level 3/4 Design Targets  
@@ -10,7 +10,7 @@
 
 Consumer messaging applications (such as Signal and WhatsApp) are engineered for consumer convenience, asynchronous delivery across mobile cellular networks, and smartphone battery conservation. Signal is the gold standard for personal and commercial end-to-end encrypted messaging, backed by extensive public peer review, formal verification of PQXDH, and modern post-quantum post-compromise security via the Sparse Post-Quantum Ratchet (SPQR) and Triple Ratchet designs. For general mobile messaging, Signal is explicitly recommended.
 
-However, high-consequence sovereign military command-and-control (C2), tactical enclaves, and Top Secret cross-domain intelligence dissemination operate under fundamentally different operational constraints and threat models:
+However, high-consequence command-and-control (C2), isolated tactical enclaves, and strict profile cross-domain intelligence dissemination operate under fundamentally different operational constraints and threat models:
 
 1. **Unidirectional Simplex Optical Transit:** Consumer protocols require bidirectional TCP/IP sessions, acknowledgments, and push signaling. In contrast, cross-domain security boundaries require physical one-way air gaps. ST2027 implements **Simplex Optical Data Diode Transit** backed by Galois Field $GF(2^8)$ Cauchy-Reed-Solomon Forward Error Correction (FEC), allowing zero-return-channel file transfer across physical diodes.
 2. **Traffic Analysis & Flow Shaping:** Consumer apps generate burst traffic proportional to message activity, leaking conversation timing and participant activity to passive observers. ST2027 deploys a **Hardware-Paced Constant-Rate Wire Clock** with synthetic chaff cells (`0xFF`), providing statistical timing resistance against localized packet sniffers.
@@ -21,7 +21,7 @@ However, high-consequence sovereign military command-and-control (C2), tactical 
 
 ## 2. Comprehensive Competitor Comparison Matrix
 
-| Security Dimension | Signal (Open Whisper Systems) | WhatsApp (Meta) | Telegram | Commercial CDS Diodes (Owl, Advenica) | **ST2027 Sovereign Enclave** |
+| Security Dimension | Signal (Open Whisper Systems) | WhatsApp (Meta) | Telegram | Commercial CDS Diodes (Owl, Advenica) | **ST2027 Enclave Profile** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Physical Air-Gap & Simplex Flow** | None (Requires bidirectional TCP socket) | None (Requires bidirectional TCP socket) | None (Requires bidirectional TCP socket) | Hardware-only; proprietary firmware; no open PQC | **Physical Simplex Optical Diode** with $GF(2^8)$ Cauchy-RS FEC (Zero reverse wire) |
 | **Reverse Channel Surface** | Standard inbound TCP state machine | Standard inbound TCP state machine | Cloud server controls session state | Simplex physical barrier | **Zero (Receiver has no physical optical emitter in diode mode)** |
@@ -38,7 +38,7 @@ However, high-consequence sovereign military command-and-control (C2), tactical 
 
 ---
 
-## 3. Deep Architectural Breakdown of the 7 Sovereign Pillars
+## 3. Deep Architectural Breakdown of the 7 Security Pillars
 
 ### Pillar 1: Unidirectional Simplex Optical Data Diode Transit
 * **The Operational Requirement:** Cross-domain security boundaries require moving files from lower-classification or external networks into secure enclaves without any reverse data path.
@@ -63,7 +63,7 @@ However, high-consequence sovereign military command-and-control (C2), tactical 
   - **Hashing & HKDF:** SHA-384 / HKDF-SHA384 (FIPS 180-4, RFC 5869).
   - **Transcript-Bound Key Confirmation:** Ephemeral key exchanges cryptographically bind the complete SHA-384 handshake transcript into session key derivation and exchange mutual HMAC-SHA384 confirmation tags (`ST2027-RESPONDER-CONFIRM` and `ST2027-INITIATOR-CONFIRM`).
   - **Out-of-Band SAS Verification:** Derives a 16-character Short Authentication String (SAS, e.g. `9F2A-4B81-C03D-7E15`) for voice/radio cross-verification between tactical operators.
-  - **Quantum-Safe PSK Option:** Supports pre-shared keys via `--psk-file` conforming to RFC 8773 (argv secrets strictly refused).
+  - **Post-Quantum PSK Option:** Supports pre-shared keys via `--psk-file` conforming to RFC 8773 (argv secrets strictly refused).
 
 ### Pillar 4: Native Rust Data-Plane, Memory Locking & Emergency Purge
 * **The Operational Requirement:** Ephemeral cryptographic secrets must be protected from memory paging, core dumps, and post-termination forensics:
@@ -84,7 +84,7 @@ However, high-consequence sovereign military command-and-control (C2), tactical 
   - A crash or unexpected reboot can skip sequence numbers, but can **NEVER** reuse a nonce (conforming strictly to NIST SP 800-38D).
 
 ### Pillar 6: Serverless Peer-to-Peer Topology
-* **The Operational Requirement:** Tactical and sovereign communications must function during WAN disruption, without third-party directory servers or cloud push services:
+* **The Operational Requirement:** Tactical and operator-controlled communications must function during WAN disruption, without third-party directory servers or cloud push services:
 * **The ST2027 Implementation:** ST2027 operates serverless and peer-to-peer over direct IPv6 or dedicated physical optical connections.
 
 ### Pillar 7: Formal Verification & Reproducible Supply Chain
