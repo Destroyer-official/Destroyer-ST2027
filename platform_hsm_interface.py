@@ -226,7 +226,7 @@ class HardwareSecurityRequirementError(SecurityError):
             # finding, so it is logged loudly here (was bare pass).
             try:
                 import logging as _logging
-                _logging.getLogger("nc3_security").error(
+                _logging.getLogger("dual_authorization_security").error(
                     "hardware-violation audit dispatch FAILED: %s", exc)
             except Exception:  # nosec: B110
                 # Logging itself failed (e.g. interpreter teardown): nothing
@@ -269,7 +269,7 @@ class HardwareSecurityRequirementError(SecurityError):
 """
 platform_hsm_interface.py
 
-A comprehensive, cross-platform Python module implementing hardware security module (HSM)
+A cross-platform Python module implementing hardware security module (HSM)
 integration with secure software fallbacks and hardware memory protection for Windows, Linux, and macOS.
 
 Cryptographic Features:
@@ -349,7 +349,7 @@ from ctypes import wintypes
 from ctypes.util import find_library
 from typing import Optional, Dict, Any, Union, List, Tuple, Callable
 
-# Import comprehensive error handling system
+# Import cryptographic error handling system
 from cryptographic_errors import (
     CryptographicError,
     KeyGenerationError,
@@ -594,7 +594,7 @@ class HardwareMemoryIsolator:
     Provides hardware-enforced memory isolation using platform-specific features.
 
     Utilizes hardware security features like Intel CET, ARM Pointer Authentication,
-    and memory protection extensions for maximum security isolation.
+    and memory protection extensions for process security isolation.
     """
 
     def __init__(self, security_level: MemorySecurityLevel = MemorySecurityLevel.MAXIMUM):
@@ -2308,7 +2308,7 @@ def init_hsm(lib_path: str = "", pin: str = "", token_label: str = "", slot_id: 
     Initialize hardware security module (HSM) with post-quantum cryptography.
 
     This function establishes a secure hardware-backed cryptographic environment
-    with comprehensive protection against both classical and quantum threats.
+    providing post-quantum key encapsulation and hybrid key exchange.
     It implements NIST-standardized post-quantum algorithms (ML-KEM-1024, ML-DSA-87)
     with side-channel attack protection and fault detection capabilities.
 
@@ -2344,7 +2344,7 @@ def init_hsm(lib_path: str = "", pin: str = "", token_label: str = "", slot_id: 
         force_software (bool, optional): Force software implementation even if hardware is available. Defaults to False.
         side_channel_protection (bool, optional): Enable side-channel attack protection. Defaults to True.
         enable_fault_detection (bool, optional): Enable fault detection and resilience. Defaults to True.
-        enhanced_security (bool, optional): Enable maximum security features including memory protection, integrity verification,
+        enhanced_security (bool, optional): Enable strict security features including memory protection, integrity verification,
                                           and runtime attestation. Defaults to True.
 
     Returns:
@@ -3156,7 +3156,7 @@ def sign_with_hsm_key(private_key_handle: Union[int, wintypes.HANDLE], data: byt
 
         # Determine mechanism if not provided
         if mechanism_type is None:
-            # A common default. A more robust solution would check the key type.
+            # A common default; explicit key type checking recommended.
             # Assuming RSA key for now.
             mechanism_type = CKM.sha3_512_RSA_PKCS_PSS
             logger.debug(
@@ -7562,7 +7562,7 @@ def read_ek_certificate_linux(indexes: tuple = ("0x01c00002", "0x01c0000a"),
 
     Tries `tpm2_nvread <index>` (raw NV bytes) for the RSA then ECC EK-cert
     indices, trims ASN.1 padding, parses X.509. No URL/portal path is ever
-    invoked, so this is air-gap safe by construction. Returns evidence dict
+    invoked, so this requires no external network connectivity. Returns evidence dict
     or None (tools absent / index empty / unparsable).
     """
     if not IS_LINUX:
@@ -7766,7 +7766,7 @@ def _get_windows_tpm_attestation(nonce: bytes = None, signer_callback=None) -> t
 
 def enhanced_tpm_detection() -> dict:
     """
-    Enhanced TPM detection with comprehensive diagnostics and fallback options.
+    Enhanced TPM detection with diagnostics and fallback options.
 
     This function performs a thorough check of TPM availability and capabilities,
     providing detailed diagnostics about why TPM might not be available and what
@@ -8014,7 +8014,7 @@ def enhanced_tpm_detection() -> dict:
 
 def enhanced_pkcs11_detection() -> dict:
     """
-    Enhanced check for PKCS#11 HSM support with comprehensive diagnostics.
+    Enhanced check for PKCS#11 HSM support with diagnostics.
 
     This function performs a thorough check of PKCS#11 libraries and tokens,
     providing detailed diagnostics about why tokens might not be available
@@ -8620,7 +8620,7 @@ def enhanced_secure_random(num_bytes: int = 32) -> dict:
 
 def enhanced_tls_pq_support() -> dict:
     """
-    Enhanced detection of post-quantum TLS support with comprehensive diagnostics.
+    Enhanced detection of post-quantum TLS support with diagnostics.
 
     This function performs a thorough check of post-quantum TLS support,
     testing multiple hybrid key exchange groups and providing detailed
@@ -9007,7 +9007,7 @@ def create_tls_context_with_pq_fallback(is_server: bool = False, fail_on_classic
     # Set verification mode - enforce mutual TLS with CERT_REQUIRED
     context.verify_mode = ssl.CERT_REQUIRED
     if is_server:
-        # IP-tactical-only: Server-side context does not check client hostname, but enforces mTLS CERT_REQUIRED
+        # Direct-IP transport: Server-side context does not check client hostname, but enforces mTLS CERT_REQUIRED
         # (B504: correct server-side pattern; client identity via pinned cert, not DNS.)
         context.check_hostname = False  # nosec B504 - server-side mTLS, CERT_REQUIRED enforced above
     else:
@@ -9040,10 +9040,10 @@ def create_tls_context_with_pq_fallback(is_server: bool = False, fail_on_classic
 
 def run_security_diagnostics():
     """
-    Run comprehensive security diagnostics and log results.
+    Run system security diagnostics and log results.
 
     Returns:
-        dict: Comprehensive security diagnostics
+        dict: System security diagnostics
     """
     results = {
         "tpm": enhanced_tpm_detection(),
@@ -9087,7 +9087,7 @@ def get_hsm_status():
     """
     Get the status of the HSM and verify if hardware security is actually active.
 
-    This function provides comprehensive information about the HSM status
+    This function provides status information about the HSM
     and performs real-time verification of hardware security capabilities.
 
     Returns:
@@ -10076,7 +10076,7 @@ def is_pqc_available() -> bool:
 
 def get_pqc_info() -> dict:
     """
-    Get comprehensive information about available post-quantum cryptography algorithms.
+    Get information about available post-quantum cryptography algorithms.
 
     This function provides detailed information about the NIST-standardized post-quantum
     cryptography capabilities available in the system. It includes
@@ -10966,7 +10966,7 @@ def verify_secure_memory_integrity(region_id: str) -> bool:
 
 def get_secure_memory_metrics() -> Dict[str, Any]:
     """
-    Get comprehensive metrics about secure memory usage and protection status.
+    Get metrics about secure memory usage and protection status.
 
     This function provides detailed information about the current state of secure
     memory protection, including hardware features, protected regions, and security
@@ -11022,14 +11022,14 @@ def get_secure_memory_metrics() -> Dict[str, Any]:
 
 def enable_full_hsm_storage() -> bool:
     """
-    Enable complete hardware storage functionality with comprehensive diagnostics.
+    Enable hardware storage functionality with diagnostic reporting.
 
     This function activates full HSM storage capabilities by:
     1. Verifying hardware security module availability
     2. Testing secure memory allocation capabilities
     3. Enabling hardware memory protection diagnostics
     4. Configuring complete hardware storage functionality
-    5. Running comprehensive hardware capability tests
+    5. Running hardware capability tests
 
     The function ensures that all HSM storage features are properly initialized
     and working correctly, setting the global _full_hsm_storage flag to True
@@ -11110,7 +11110,7 @@ def enable_full_hsm_storage() -> bool:
 
 def run_hardware_memory_diagnostics() -> Dict[str, Any]:
     """
-    Run comprehensive hardware memory protection diagnostics and testing.
+    Run hardware memory protection diagnostics and testing.
 
     This function performs detailed testing of hardware memory protection
     capabilities including:
@@ -11121,7 +11121,7 @@ def run_hardware_memory_diagnostics() -> Dict[str, Any]:
     - Cross-platform compatibility testing
 
     Returns:
-        Dict[str, Any]: Comprehensive diagnostic results including:
+        Dict[str, Any]: Diagnostic results including:
             - secure_memory_allocation: bool
             - memory_integrity_verification: bool
             - guard_page_protection: bool
@@ -11271,7 +11271,7 @@ def test_hardware_storage_capabilities() -> bool:
     """
     Test complete hardware storage functionality.
 
-    This function performs comprehensive testing of hardware storage capabilities
+    This function performs testing of hardware storage capabilities
     including key storage, retrieval, and secure memory operations to verify
     that full HSM storage functionality is working correctly.
 
@@ -11386,7 +11386,7 @@ def test_hardware_storage_capabilities() -> bool:
 
 def get_full_hsm_storage_status() -> Dict[str, Any]:
     """
-    Get comprehensive status of full HSM storage capabilities.
+    Get status of HSM storage capabilities.
 
     Returns:
         Dict[str, Any]: Status information including:
@@ -11447,7 +11447,7 @@ class TPMIntegrationManager:
     """
     TPM Integration Manager for hardware security module operations.
 
-    This class provides comprehensive TPM (Trusted Platform Module) integration
+    This class provides TPM (Trusted Platform Module) integration
     for hardware-backed security operations including key storage, attestation,
     and secure boot verification.
     """
