@@ -2,16 +2,16 @@
 """
 scripts/generate_sovereign_pki.py
 
-Generates the complete 2027+ Sovereign Post-Quantum PKI hierarchy for the
-DoD / Defense Agency ATO Pilot.
+Generates the local ML-DSA-87 and NIST P-521 Post-Quantum PKI hierarchy
+for deployment verification.
 
 Hierarchy:
-  1. Sovereign Root CA (Self-signed ML-DSA-87 + NIST P-521 anchor)
-  2. Sovereign Tactical Issuing CA (Sub CA signed by Root CA)
-  3. Tactical Node Alpha Identity Certificate (Signed by Sub CA)
-  4. Tactical Node Bravo Identity Certificate (Signed by Sub CA)
+  1. Local Root CA (Self-signed ML-DSA-87 + NIST P-521 anchor)
+  2. Subordinate Issuing CA (Sub CA signed by Root CA)
+  3. Node Alpha Identity Certificate (Signed by Sub CA)
+  4. Node Bravo Identity Certificate (Signed by Sub CA)
   5. Hash-Chained Certificate Revocation List (CRL)
-  6. PKI Manifest (Signed Merkle digest of all pilot certificates)
+  6. PKI Manifest (Signed Merkle digest of generated certificates)
 
 Artifacts written to: certs/
 """
@@ -38,12 +38,12 @@ from cryptography.hazmat.primitives import serialization, hashes
 def main():
     certs_dir = PROJECT_ROOT / "certs"
     certs_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[*] Generating Sovereign Post-Quantum PKI in: {certs_dir}")
+    print(f"[*] Generating Post-Quantum PKI in: {certs_dir}")
 
     mldsa = LibOQS_MLDSA_87()
 
-    # 1. Generate Sovereign Root CA
-    print("  -> Creating Sovereign Root CA (ML-DSA-87 + P-521)...")
+    # 1. Generate Local Root CA
+    print("  -> Creating Local Root CA (ML-DSA-87 + P-521)...")
     root_ca = PQCertificateAuthority(ca_name="Sovereign-Defense-Root-CA")
     root_cert = root_ca._root_cert
 
@@ -73,8 +73,8 @@ def main():
     with open(certs_dir / "sovereign_root_ca.json", "w", encoding="utf-8") as f:
         json.dump(root_cert_data, f, indent=2)
 
-    # 2. Generate Sovereign Subordinate / Tactical Issuing CA
-    print("  -> Creating Sovereign Subordinate Issuing CA...")
+    # 2. Generate Subordinate Issuing CA
+    print("  -> Creating Subordinate Issuing CA...")
     sub_pk, sub_sk = mldsa.keygen()
     sub_cert = root_ca.issue_certificate(
         subject="CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
@@ -101,7 +101,7 @@ def main():
         json.dump(sub_cert_data, f, indent=2)
 
     # 3. Issue Node Alpha Identity Certificate
-    print("  -> Issuing Tactical Node Alpha Certificate...")
+    print("  -> Issuing Node Alpha Certificate...")
     alpha_pk, alpha_sk = mldsa.keygen()
     tbs_alpha = {
         "serial_number": 1001,
@@ -125,7 +125,7 @@ def main():
         json.dump(alpha_cert_data, f, indent=2)
 
     # 4. Issue Node Bravo Identity Certificate
-    print("  -> Issuing Tactical Node Bravo Certificate...")
+    print("  -> Issuing Node Bravo Certificate...")
     bravo_pk, bravo_sk = mldsa.keygen()
     tbs_bravo = {
         "serial_number": 1002,
@@ -195,7 +195,7 @@ def main():
     with open(certs_dir / "pki_manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, indent=2)
 
-    print(f"[SUCCESS] Sovereign PKI generated successfully in {certs_dir}!")
+    print(f"[SUCCESS] Post-Quantum PKI generated successfully in {certs_dir}!")
     print(f"          PKI Merkle Root: {pki_merkle_root[:32]}...")
 
 
