@@ -1,16 +1,16 @@
-# Concept of Operations (CONOPS): Sovereign Military Tactical P2P Communications Mesh
+# Concept of Operations (CONOPS): Operator-Controlled P2P Communications Mesh
 
 ## 1. Document Control & Classification
 - **Document ID:** `CONOPS-TACTICAL-P2P-2028-V1`
-- **Classification:** UNCLASSIFIED // TECHNICAL CONOPS FOR SOVEREIGN DEFENSE SYSTEMS
+- **Classification:** UNCLASSIFIED TECHNICAL SPECIFICATION
 - **Compliance Standards:** DoD Risk Management Framework (RMF), NIST SP 800-53 Rev 5, CNSSI 1253, NSA CNSA Suite 2.0 Strict
 - **System Impact Level:** FIPS 199 High-High-High
-- **Operational Target:** Post-Quantum Zero-Trust Data Plane & Simplex Optical Cross-Domain Transit
+- **Operational Target:** Post-Quantum Authenticated Data Plane & Simplex Optical Cross-Domain Transit
 
 ---
 
 ## 2. Operational Mission & Purpose
-The Sovereign Military Tactical P2P Communications Mesh (`Destroyer-P2P` / `Destroyer-ST2027`) provides quantum-secure, decentralized, point-to-point tactical voice, messaging, telemetry, and file exchange without dependency on centralized infrastructure, cloud brokers, or unauthenticated third-party relays.
+The Secure P2P Communications Mesh (`ST2027`) provides quantum-secure, decentralized, point-to-point tactical voice, messaging, telemetry, and file exchange without dependency on centralized infrastructure, cloud brokers, or unauthenticated third-party relays.
 
 The system is engineered for high-consequence national security operations where communication links are subject to active Electronic Warfare (EW), pervasive Signals Intelligence (SIGINT), physical capture risks, and Harvest-Now-Decrypt-Later quantum collection.
 
@@ -23,7 +23,7 @@ The system is engineered for high-consequence national security operations where
 | **ENV-AIRGAP** | Strategic Command Post (C2) | Isolated Fiber / Air-gapped LAN | Tier-6 (Nation-State Strategic) | Strict HW TPM 2.0, Simplex Optical Diode, No Internet Gateways |
 | **ENV-EDGE** | Tactical Edge Mobile Relay | Private Cellular APN / UHF Mesh | Tier-5 (EW / SIGINT Intercept) | Tactical Cloak Active, Fixed Quantum Sizing, Constant-Rate Pacing |
 | **ENV-DDIL** | Disconnected / Reconnaissance | Peer-to-Peer Ad-Hoc Direct UDP | Tier-6 (Battlefield Physical Overrun) | Stealth Mode, Out-of-Band Safety Pins, Auto-Zeroize Mesh |
-| **ENV-CROSS-DOMAIN** | Classified Enclave Transfer | Simplex Single-Strand Optical Diode | Tier-6 (Multi-Enclave Boundary) | Unidirectional Cauchy-RS FEC, Zero Reverse Wire, Air-Gap Enforcement |
+| **ENV-CROSS-DOMAIN** | Isolated Enclave Transfer | Simplex Single-Strand Optical Diode | Tier-6 (Multi-Enclave Boundary) | Unidirectional Cauchy-RS FEC, Zero Reverse Wire, Air-Gap Enforcement |
 
 ---
 
@@ -100,7 +100,7 @@ The system is engineered for high-consequence national security operations where
 ### Topology A: Enclave-to-Enclave Simplex Cross-Domain Transfer
 ```
 +---------------------------+                      +---------------------------+
-| Classified Enclave (RED)  |                      | Deployed Receiver (BLACK) |
+| Isolated Enclave (RED)    |                      | Deployed Receiver (BLACK) |
 |                           |                      |                           |
 | [Tactical Workstation]    |                      | [Station Terminal]        |
 |            │              |                      |            ▲              |
@@ -187,7 +187,7 @@ Every operational node MUST initialize an atomic 48-byte state record (`STSTATE1
   --out /var/spool/incoming_intel.bin \
   --timeout-ms 30000
 
-# On the Transmitting Station (Classified Enclave):
+# On the Transmitting Station (Isolated Enclave):
 ./rust_data_plane/target/release/secure-transmit diode-send \
   --key-file /etc/st2027/node_session.key \
   --state /var/run/st2027/send.state \
@@ -262,7 +262,7 @@ Every operational node MUST initialize an atomic 48-byte state record (`STSTATE1
   --target /var/spool/classified_intel.bin
 ```
 
-### SOP-7: Deploying Unified Sovereign Command Center & Field Terminals
+### SOP-7: Deploying Unified Terminal Interface & Field Nodes
 ```bash
 # Automated Dual-Terminal Verification Drill:
 python destroyer_tactical_p2p.py demo
@@ -302,10 +302,10 @@ Accessible at `http://127.0.0.1:8443` featuring:
 - Real-time 50 Hz Hardware Wire Oscilloscope (20ms cadence, 1232B cell invariance)
 - Continuous Shannon Entropy Dial ($H \ge 7.95$ bits/byte)
 - Dual-Node Enclave Topography with Mutual SAS Code verification
-- In-Band Classified Tactical Comms & MIL-STD-6090 Cursor-on-Target dispatcher
+- In-Band Encrypted Communications & MIL-STD-6090 Cursor-on-Target dispatcher
 - Cauchy-Reed-Solomon $GF(2^8)$ Simplex Optical Data Diode matrix visualizer
 - Two-Person Integrity (TPI) Dual-Key Emergency Purge Station
-- 50X Sovereign Defense Superiority matrix comparison table
+- Architectural comparison matrix table
 - 100% Air-Gapped Operation with zero external CDNs or cloud dependencies
 
 ### SOP-9: Tactical C4ISR Operator Console & ATAK/WinTAK Multicast Gateway
@@ -348,7 +348,7 @@ The console integrates:
    - Any external bus attachment (Thunderbolt 3/4, USB4) without OS Kernel DMA Protection triggers immediate abort.
 
 2. **Physical RED/BLACK Network Separation**:
-   - RED interfaces (plaintext classified) and BLACK interfaces (encrypted ciphertext) MUST remain bound to physically distinct network interface controllers (NICs).
+   - RED interfaces (plaintext isolated) and BLACK interfaces (encrypted ciphertext) MUST remain bound to physically distinct network interface controllers (NICs).
    - No cross-binding or IP forwarding between RED and BLACK interfaces is permitted.
 
 3. **Non-Pageable Memory Locking**:
@@ -361,11 +361,11 @@ The console integrates:
 
 ---
 
-## 9. 50X Sovereign Defense Superiority & Assurance Metrics
+## 9. Architectural Comparison & Assurance Metrics
 
-The ST2027 sovereign military baseline is empirically benchmarked against consumer messaging standards (Signal, WhatsApp) across five verifiable physical and mathematical defense vectors:
+The ST2027 baseline is empirically benchmarked against consumer messaging standards (Signal, WhatsApp) across five verifiable physical and mathematical defense vectors:
 
-| Defense Vector | Consumer Messaging Standard | ST2027 Sovereign Baseline | Advantage Factor |
+| Defense Vector | Consumer Messaging Standard | ST2027 Baseline | Advantage Factor |
 | :--- | :--- | :--- | :--- |
 | **Traffic Flow & Metadata Camouflage** | Variable-length bursts emitted only during user activity; leaks keystroke timing and identity | Constant-rate hardware-paced scheduler emitting fixed-size wire cells (1232B) with continuous CSPRNG chaff ($H > 7.95$ bits/byte) | **>50X SNR Immunity** (Continuous thermodynamic wire camouflage) |
 | **Unidirectional Cross-Domain Transit** | Bidirectional TCP/TLS network stack vulnerable to reverse socket penetration | Physical simplex optical single-strand fiber with Cauchy-Reed-Solomon $GF(2^8)$ FEC; zero return wire | **Infinite** (Physical impossibility of reverse penetration) |
