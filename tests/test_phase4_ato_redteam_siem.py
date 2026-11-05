@@ -401,9 +401,10 @@ class TestAoDecisionEngineAndAto:
 
         assert decision["assessment_kind"].startswith("SELF-ASSESSMENT")  # nosec: B101
         summary = decision["evaluation_summary"]
-        assert summary["total_gates"] == 10  # nosec: B101
-        assert summary["passed_gates"] == 10  # nosec: B101
-        assert summary["all_gates_passed"] is True  # nosec: B101
+        failed = [g["gate_id"] for g in decision.get("gates", []) if g.get("status") != "PASS"]
+        assert summary["total_gates"] == 10, f"Expected 10 total gates, got {summary.get('total_gates')}"  # nosec: B101
+        assert summary["passed_gates"] == 10, f"Failed gates: {failed}"  # nosec: B101
+        assert summary["all_gates_passed"] is True, f"Gates failed: {failed}"  # nosec: B101
 
         auth = decision["authorization_decision"]
         assert auth["status"] == "SELF-ASSESS-PASS"  # nosec: B101
