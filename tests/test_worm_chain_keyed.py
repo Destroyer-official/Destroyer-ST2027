@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """WORM audit exports must use a keyed chain, not recomputable SHA3-512."""
 
+import os
 import json
 
 import audit_logging_system as audit
@@ -9,6 +10,7 @@ KEY = b"\x11" * 32
 
 
 def _make_logger(tmp_path):
+    os.environ.setdefault("P2P_AUDIT_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
     return audit.AuditLogger(db_path=str(tmp_path / "audit.db"))
 
 

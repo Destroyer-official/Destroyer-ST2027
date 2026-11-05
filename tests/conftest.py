@@ -69,6 +69,10 @@ from pathlib import Path
 def pytest_sessionstart(session):
     repo_root = Path(__file__).resolve().parent.parent
 
+    # Ensure default audit passphrase is set in non-Windows test environments
+    os.environ.setdefault("P2P_AUDIT_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
+    os.environ.setdefault("P2P_STORAGE_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
+
     # 1. Add rust_data_plane/python to sys.path so destroyer_core package is importable
     rdp_py = str(repo_root / "rust_data_plane" / "python")
     if rdp_py not in sys.path:
@@ -101,19 +105,13 @@ def pytest_sessionstart(session):
             except Exception:
                 pass
 
-        # 5. Build and install destroyer_core via maturin or provide _native extension
+        # 5. Build and install destroyer_core via pip/maturin or provide _native extension
         try:
             import destroyer_core  # noqa: F401
         except ImportError:
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "maturin"],
-                    check=False,
-                    timeout=60,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [sys.executable, "-m", "maturin", "develop", "-r", "-m", str(repo_root / "rust_data_plane" / "Cargo.toml")],
+                    [sys.executable, "-m", "pip", "install", str(repo_root / "rust_data_plane")],
                     check=False,
                     timeout=180,
                     capture_output=True,

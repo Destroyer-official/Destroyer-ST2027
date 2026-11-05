@@ -80,6 +80,16 @@ from typing import Optional, Tuple
 
 import noise_pq as _npq
 
+# Ensure CI runners recognize the hermetic Python environment for maturin/builds
+_gh_env_path = os.environ.get("GITHUB_ENV")
+if _gh_env_path and os.path.exists(_gh_env_path):
+    try:
+        import sys
+        with open(_gh_env_path, "a", encoding="utf-8") as _gh_env:
+            _gh_env.write(f"VIRTUAL_ENV={sys.prefix}\n")
+    except Exception:
+        pass
+
 log = logging.getLogger("secure_transmit_2027")
 
 # ---------------------------------------------------------------------------

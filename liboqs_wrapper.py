@@ -196,14 +196,6 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
             except Exception:
                 pass
 
-    # If apt is available on Debian/Ubuntu, attempt system package first
-    if shutil.which("apt-get") and shutil.which("sudo"):
-        try:
-            subprocess.run(["sudo", "apt-get", "update"], check=False, timeout=30)  # nosec: B603, B607
-            subprocess.run(["sudo", "apt-get", "install", "-y", "liboqs-dev"], check=False, timeout=60)  # nosec: B603, B607
-        except Exception:  # nosec: B110
-            pass
-
     # Pinned hermetic build from source if native tools exist
     if shutil.which("git") and shutil.which("cmake"):
         try:
@@ -218,12 +210,17 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
                 if cmake_b.exists():
                     shutil.rmtree(cmake_b, ignore_errors=True)
                 cmake_b.mkdir(parents=True, exist_ok=True)
-                subprocess.run(
-                    ["cmake", "-S", str(build_dir), "-B", str(cmake_b),
-                     "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON",
-                     "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=/usr/local"],
-                    check=True, timeout=90
-                )  # nosec: B603, B607
+                cmake_args = [
+                    "cmake", "-S", str(build_dir), "-B", str(cmake_b),
+                    "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DOQS_ENABLE_KEM_CLASSIC_MCELIECE=OFF",
+                    "-DOQS_ENABLE_KEM_FRODOKEM=OFF",
+                    "-DOQS_ENABLE_KEM_NTRUPRIME=OFF",
+                    "-DOQS_ENABLE_SIG_MQOM=OFF",
+                    "-DCMAKE_INSTALL_PREFIX=/usr/local",
+                ]
+                subprocess.run(cmake_args, check=True, timeout=90)  # nosec: B603, B607
                 nproc = str(os.cpu_count() or 2)
                 subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=300)  # nosec: B603, B607
                 if shutil.which("sudo"):

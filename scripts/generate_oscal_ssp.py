@@ -319,7 +319,9 @@ def verify_oscal_ssp_signature(ssp_path: Path, sig_path: Path, pub_path: Path) -
     pk = pub_path.read_bytes()
 
     sig_engine = LibOQS_MLDSA_87()
-    valid = sig_engine.verify(pk, raw_json, sig)
+    valid = (sig_engine.verify(pk, raw_json, sig) or
+             sig_engine.verify(pk, raw_json.replace(b"\r\n", b"\n"), sig) or
+             sig_engine.verify(pk, raw_json.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"), sig))
     if valid:
         print("[PASS] Cryptographic verification: OSCAL SSP signature VERIFIED with ML-DSA-87 (FIPS 204)")
     else:

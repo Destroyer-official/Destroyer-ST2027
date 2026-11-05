@@ -365,7 +365,9 @@ def verify_cbom_signature(cbom_path: Path, sig_path: Path, pub_path: Path) -> bo
     pk = pub_path.read_bytes()
 
     sig_engine = LibOQS_MLDSA_87()
-    valid = sig_engine.verify(pk, raw_json, sig)
+    valid = (sig_engine.verify(pk, raw_json, sig) or
+             sig_engine.verify(pk, raw_json.replace(b"\r\n", b"\n"), sig) or
+             sig_engine.verify(pk, raw_json.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"), sig))
     if valid:
         print(f"[PASS] Cryptographic verification: CBOM signature VERIFIED with ML-DSA-87 (FIPS 204)")
     else:

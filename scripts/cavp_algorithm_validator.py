@@ -30,6 +30,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Ensure CI runners recognize the hermetic Python environment for maturin/builds
+github_env = os.environ.get("GITHUB_ENV")
+if github_env and os.path.exists(github_env):
+    try:
+        with open(github_env, "a", encoding="utf-8") as _gh_env:
+            _gh_env.write(f"VIRTUAL_ENV={sys.prefix}\n")
+    except Exception:
+        pass
+
 from liboqs_wrapper import LibOQS_MLKEM_1024, LibOQS_MLDSA_87, LibOQS_SLH_DSA_256f
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF

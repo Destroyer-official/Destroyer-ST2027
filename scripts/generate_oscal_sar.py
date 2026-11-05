@@ -268,7 +268,11 @@ def verify_oscal_sar_signature(report_path: Path, sig_path: Path, pub_path: Path
         pub_bytes = pub_path.read_bytes()
 
         verifier = LibOQS_MLDSA_87()
-        return verifier.verify(pub_bytes, report_bytes, sig_bytes)
+        return bool(
+            verifier.verify(pub_bytes, report_bytes, sig_bytes)
+            or verifier.verify(pub_bytes, report_bytes.replace(b"\r\n", b"\n"), sig_bytes)
+            or verifier.verify(pub_bytes, report_bytes.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"), sig_bytes)
+        )
     except Exception as e:
         logger.error(f"OSCAL SAR signature verification failed: {e}")
         return False

@@ -32,35 +32,34 @@ class DestroyerNode:
         self.port = port
         try:
             from destroyer_core import SecureEngine
-        except ImportError as e:
-            import os
-            import shutil
-            import subprocess
+        except ImportError:
             import sys
-            import traceback
+            rdp = os.path.join(os.path.dirname(__file__), "rust_data_plane", "python")
+            if os.path.exists(rdp) and rdp not in sys.path:
+                sys.path.insert(0, rdp)
+            try:
+                from destroyer_core import SecureEngine
+            except ImportError as e:
+                import shutil
+                import subprocess
+                import traceback
 
-            built = False
-            if shutil.which("cargo"):
-                cargo_toml = os.path.join(os.path.dirname(__file__), "rust_data_plane", "Cargo.toml")
-                if os.path.exists(cargo_toml):
-                    try:
-                        subprocess.run(
-                            [sys.executable, "-m", "pip", "install", "maturin"],
-                            check=False,
-                            capture_output=True,
-                            timeout=60,
-                        )
-                        res = subprocess.run(
-                            [sys.executable, "-m", "maturin", "develop", "-r", "-m", cargo_toml],
-                            check=False,
-                            capture_output=True,
-                            timeout=180,
-                        )
-                        if res.returncode == 0:
-                            from destroyer_core import SecureEngine
-                            built = True
-                    except Exception:
-                        pass
+                built = False
+                if shutil.which("cargo"):
+                    cargo_toml = os.path.join(os.path.dirname(__file__), "rust_data_plane", "Cargo.toml")
+                    if os.path.exists(cargo_toml):
+                        try:
+                            res = subprocess.run(
+                                [sys.executable, "-m", "pip", "install", os.path.dirname(cargo_toml)],
+                                check=False,
+                                capture_output=True,
+                                timeout=180,
+                            )
+                            if res.returncode == 0:
+                                from destroyer_core import SecureEngine
+                                built = True
+                        except Exception:
+                            pass
             if not built:
                 raise DataPlaneUnavailable(
                     "destroyer_core native module not built. "

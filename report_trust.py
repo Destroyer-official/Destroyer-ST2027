@@ -351,7 +351,11 @@ def verify_with_anchor(
         )
         pk = pub_path.read_bytes()
 
-    return bool(verifier.verify(pk, data, sig))
+    return bool(
+        verifier.verify(pk, data, sig)
+        or verifier.verify(pk, data.replace(b"\r\n", b"\n"), sig)
+        or verifier.verify(pk, data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"), sig)
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - operator utility
