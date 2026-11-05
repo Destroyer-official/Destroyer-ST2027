@@ -101,13 +101,33 @@ def pytest_sessionstart(session):
             except Exception:
                 pass
 
-        # 5. Provide _native extension for destroyer_core package
-        native_ext = repo_root / "rust_data_plane" / "python" / "destroyer_core" / ("_native.pyd" if os.name == "nt" else "_native.so")
-        if not native_ext.exists():
-            cdylib = repo_root / "rust_data_plane" / "target" / "debug" / ("destroyer_core.dll" if os.name == "nt" else "libdestroyer_core.so")
-            if cdylib.exists():
-                try:
-                    native_ext.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(cdylib, native_ext)
-                except Exception:
-                    pass
+        # 5. Build and install destroyer_core via maturin or provide _native extension
+        try:
+            import destroyer_core  # noqa: F401
+        except ImportError:
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "maturin"],
+                    check=False,
+                    timeout=60,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [sys.executable, "-m", "maturin", "develop", "-r", "-m", str(repo_root / "rust_data_plane" / "Cargo.toml")],
+                    check=False,
+                    timeout=180,
+                    capture_output=True,
+                )
+            except Exception:
+                pass
+            native_ext = repo_root / "rust_data_plane" / "python" / "destroyer_core" / ("_native.pyd" if os.name == "nt" else "_native.so")
+            if not native_ext.exists():
+                for cand_dir in ("release", "debug"):
+                    cdylib = repo_root / "rust_data_plane" / "target" / cand_dir / ("destroyer_core.dll" if os.name == "nt" else "libdestroyer_core.so")
+                    if cdylib.exists():
+                        try:
+                            native_ext.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(cdylib, native_ext)
+                            break
+                        except Exception:
+                            pass
