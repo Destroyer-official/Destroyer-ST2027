@@ -70,6 +70,9 @@ class DestroyerNode:
                 ) from e
         self.engine = SecureEngine()
         try:
+            import destroyer_core
+            if not getattr(destroyer_core, "IS_NATIVE", False):
+                raise ImportError("destroyer_core native extension not active")
             from destroyer_core import CoreAcdEngine, CoreZeroTrustEngine
             self.acd_engine = CoreAcdEngine()
             self.zt_engine = CoreZeroTrustEngine()
@@ -464,6 +467,9 @@ class DestroyerNode:
         challenge unless require_cookie=False is passed explicitly.
         """
         try:
+            import destroyer_core
+            if not getattr(destroyer_core, "IS_NATIVE", False):
+                raise ImportError("destroyer_core native extension not active")
             from destroyer_core import CoreCookieGate
             self.cookie_gate = CoreCookieGate(rotation_interval=rotation_interval)
             self._using_native_cookie_gate = True

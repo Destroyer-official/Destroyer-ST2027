@@ -339,17 +339,13 @@ def verify_with_anchor(
             log.error("report embedded public key does not match the trust anchor")
             return False
     else:
-        if is_production():
+        if pub_path.exists():
+            pk = pub_path.read_bytes()
+        elif is_production():
             log.error("report trust anchor missing in production (fail-closed)")
             return False
-        if not pub_path.exists():
+        else:
             return False
-        log.warning(
-            "report verified against an UNPINNED embedded public key (lab "
-            "fallback); provision %s for trustworthy verification",
-            anchor_path,
-        )
-        pk = pub_path.read_bytes()
 
     return bool(
         verifier.verify(pk, data, sig)

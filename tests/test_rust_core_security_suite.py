@@ -17,7 +17,9 @@ import unittest
 import pytest
 
 try:
-    import destroyer_core._native
+    import destroyer_core
+    if not getattr(destroyer_core, "IS_NATIVE", False):
+        raise ImportError("destroyer_core native extension not active")
     from destroyer_core import (
         CoreCookieGate,
         CoreAcdEngine,

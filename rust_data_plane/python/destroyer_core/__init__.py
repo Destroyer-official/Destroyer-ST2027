@@ -94,6 +94,9 @@ except ImportError:
             return (quantum, bytes(masked_header + ct_with_tag))
 
         def open_msg(self, frame):
+            if not self.key or not self.hp_key:
+                self.drops += 1
+                return None
             frame = bytes(frame)
             if len(frame) < 27:
                 self.drops += 1

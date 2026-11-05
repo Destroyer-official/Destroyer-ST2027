@@ -21,8 +21,9 @@ import struct
 
 import pytest
 
-pytest.importorskip("destroyer_core._native")
 import destroyer_core
+if not getattr(destroyer_core, "IS_NATIVE", False):
+    pytest.skip("destroyer_core native extension not active", allow_module_level=True)
 
 DIR_SEND = 0x00
 FTYPE_MSG = 0x01

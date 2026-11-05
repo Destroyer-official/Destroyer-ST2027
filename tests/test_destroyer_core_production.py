@@ -20,7 +20,10 @@ import struct
 
 # Pre-import destroyer_core before any process mitigations
 try:
-    from destroyer_core._native import SecureEngine
+    import destroyer_core
+    if not getattr(destroyer_core, "IS_NATIVE", False):
+        raise ImportError("destroyer_core native extension not active")
+    from destroyer_core import SecureEngine
     DESTROYER_AVAILABLE = True
 except ImportError:
     DESTROYER_AVAILABLE = False

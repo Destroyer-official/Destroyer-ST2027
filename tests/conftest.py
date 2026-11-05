@@ -73,6 +73,12 @@ def pytest_sessionstart(session):
     os.environ.setdefault("P2P_AUDIT_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
     os.environ.setdefault("P2P_STORAGE_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
 
+    try:
+        import report_trust
+        report_trust.load_or_create_audit_signer()
+    except Exception:
+        pass
+
     # 1. Add rust_data_plane/python to sys.path so destroyer_core package is importable
     rdp_py = str(repo_root / "rust_data_plane" / "python")
     if rdp_py not in sys.path:
