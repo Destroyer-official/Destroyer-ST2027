@@ -1438,8 +1438,20 @@ def get_default_token_backend(pin: Optional[str] = None) -> Any:
     return SoftwareTokenBackend()
 
 
-# Global NC3 Controller Singleton
-nc3_controller = NC3CommandController()
+# Global NC3 Controller Singleton (lazy proxy to avoid import-time hardware/crypto initialization failure during test discovery)
+_global_nc3_controller = None
+
+def get_nc3_controller():
+    global _global_nc3_controller
+    if _global_nc3_controller is None:
+        _global_nc3_controller = NC3CommandController()
+    return _global_nc3_controller
+
+class _NC3ControllerProxy:
+    def __getattr__(self, name: str):
+        return getattr(get_nc3_controller(), name)
+
+nc3_controller = _NC3ControllerProxy()
 
 
 def get_or_create_tactical_officer(

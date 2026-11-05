@@ -196,6 +196,14 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
             except Exception:
                 pass
 
+    # If apt is available on Debian/Ubuntu, attempt system package first
+    if shutil.which("apt-get") and shutil.which("sudo"):
+        try:
+            subprocess.run(["sudo", "apt-get", "update"], check=False, timeout=30)  # nosec: B603, B607
+            subprocess.run(["sudo", "apt-get", "install", "-y", "liboqs-dev"], check=False, timeout=60)  # nosec: B603, B607
+        except Exception:  # nosec: B110
+            pass
+
     # Pinned hermetic build from source if native tools exist
     if shutil.which("git") and shutil.which("cmake"):
         try:
@@ -207,18 +215,15 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
             res = subprocess.run(["git", "-C", str(build_dir), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # nosec: B603, B607
             if res.stdout.strip() == pin_sha:
                 cmake_b = build_dir / "build"
-                # Minimal fast build for CNSA 2.0 / ST2027: ML-KEM-1024, ML-DSA-87, Falcon-1024, SPHINCS+
-                min_build = "-DOQS_MINIMAL_BUILD=KEM_ML_KEM;KEM_CLASSIC_MCELIECE;KEM_HQC;SIG_ML_DSA;SIG_SLH_DSA;SIG_FALCON"
-                subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", min_build, "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
+                subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
                 nproc = str(os.cpu_count() or 2)
                 subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=180)  # nosec: B603, B607
                 if shutil.which("sudo"):
                     subprocess.run(["sudo", "cmake", "--install", str(cmake_b)], check=True, timeout=30)  # nosec: B603, B607
                     subprocess.run(["sudo", "ldconfig"], check=True, timeout=10)  # nosec: B603, B607
-                else:
-                    target_so = cmake_b / "lib" / "liboqs.so"
-                    if target_so.exists():
-                        shutil.copy2(target_so, repo_dir / "liboqs.so")
+                target_so = cmake_b / "lib" / "liboqs.so"
+                if target_so.exists():
+                    shutil.copy2(target_so, repo_dir / "liboqs.so")
         except Exception:  # nosec: B110
             pass
 
@@ -428,6 +433,15 @@ liboqs.OQS_SIG_keypair.argtypes = [ctypes.POINTER(OQS_SIG), ctypes.POINTER(ctype
 liboqs.OQS_SIG_sign.argtypes = [ctypes.POINTER(OQS_SIG), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]; liboqs.OQS_SIG_sign.restype = ctypes.c_int
 liboqs.OQS_SIG_verify.argtypes = [ctypes.POINTER(OQS_SIG), ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint8)]; liboqs.OQS_SIG_verify.restype = ctypes.c_int
 liboqs.OQS_SIG_free.argtypes = [ctypes.POINTER(OQS_SIG)]; liboqs.OQS_SIG_free.restype = None
+try:
+    liboqs.OQS_KEM_alg_count.restype = ctypes.c_size_t
+    liboqs.OQS_KEM_alg_identifier.restype = ctypes.c_char_p
+    liboqs.OQS_KEM_alg_identifier.argtypes = [ctypes.c_size_t]
+    liboqs.OQS_SIG_alg_count.restype = ctypes.c_size_t
+    liboqs.OQS_SIG_alg_identifier.restype = ctypes.c_char_p
+    liboqs.OQS_SIG_alg_identifier.argtypes = [ctypes.c_size_t]
+except Exception:
+    pass
 
 # --- Python Classes for Algorithms ---
 
@@ -439,11 +453,25 @@ class LibOQS_MLKEM_1024:
         self.alg_name = b"ML-KEM-1024"
         self.kem = liboqs.OQS_KEM_new(self.alg_name)
         if not self.kem:
-            for alt in (b"ml-kem-1024", b"Kyber1024", b"KYBER1024", b"kyber1024"):
+            for alt in (b"ml-kem-1024", b"Kyber1024", b"KYBER1024", b"kyber1024", b"Kyber-1024", b"kyber-1024"):
                 self.kem = liboqs.OQS_KEM_new(alt)
                 if self.kem:
                     self.alg_name = alt
                     break
+        if not self.kem and hasattr(liboqs, "OQS_KEM_alg_count") and hasattr(liboqs, "OQS_KEM_alg_identifier"):
+            try:
+                count = liboqs.OQS_KEM_alg_count()
+                for i in range(count):
+                    id_name = liboqs.OQS_KEM_alg_identifier(i)
+                    if id_name:
+                        id_norm = id_name.lower().replace(b"-", b"").replace(b"_", b"")
+                        if b"mlkem1024" in id_norm or b"kyber1024" in id_norm:
+                            self.kem = liboqs.OQS_KEM_new(id_name)
+                            if self.kem:
+                                self.alg_name = id_name
+                                break
+            except Exception:
+                pass
         if not self.kem: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
         self.pk_size = self.kem.contents.length_public_key
         self.sk_size = self.kem.contents.length_secret_key
@@ -636,11 +664,25 @@ class LibOQS_MLDSA_87:
         self.alg_name = b"ML-DSA-87"
         self.sig = liboqs.OQS_SIG_new(self.alg_name)
         if not self.sig:
-            for alt in (b"ml-dsa-87", b"Dilithium5", b"DILITHIUM5", b"dilithium5"):
+            for alt in (b"ml-dsa-87", b"Dilithium5", b"DILITHIUM5", b"dilithium5", b"Dilithium-5", b"dilithium-5"):
                 self.sig = liboqs.OQS_SIG_new(alt)
                 if self.sig:
                     self.alg_name = alt
                     break
+        if not self.sig and hasattr(liboqs, "OQS_SIG_alg_count") and hasattr(liboqs, "OQS_SIG_alg_identifier"):
+            try:
+                count = liboqs.OQS_SIG_alg_count()
+                for i in range(count):
+                    id_name = liboqs.OQS_SIG_alg_identifier(i)
+                    if id_name:
+                        id_norm = id_name.lower().replace(b"-", b"").replace(b"_", b"")
+                        if b"mldsa87" in id_norm or b"dilithium5" in id_norm:
+                            self.sig = liboqs.OQS_SIG_new(id_name)
+                            if self.sig:
+                                self.alg_name = id_name
+                                break
+            except Exception:
+                pass
         if not self.sig: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
         self.pk_size = self.sig.contents.length_public_key
         self.sk_size = self.sig.contents.length_secret_key

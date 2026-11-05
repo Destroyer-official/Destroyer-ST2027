@@ -24,7 +24,7 @@ hmac = "0.13"
 ml-dsa = "0.1"
 ml-kem = { version = "0.3.2", features = ["zeroize", "getrandom"] }
 p384 = { version = "0.14", features = ["ecdh"] }
-pyo3 = { version = "0.29.2", features = ["extension-module"] }
+pyo3 = { version = "0.29.2" }
 sha2 = "0.11.0"
 subtle = "2.6"
 tokio = { version = "1.53.1", features = ["full"] }
@@ -36,6 +36,7 @@ zeroize = { version = "1.9.0", features = ["derive"] }
 
 [features]
 default = ["lab-surfaces"]
+extension-module = ["pyo3/extension-module"]
 # Simulated NC3/EAM/PTT/CoT lab surfaces. Production builds MUST disable
 # this feature (`--no-default-features`) so the simulated command surfaces
 # are absent from the binary at compile time rather than merely refused at
