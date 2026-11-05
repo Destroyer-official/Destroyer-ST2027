@@ -625,23 +625,61 @@ The session key is cryptographically bound to the hybrid KEM transcript, both ML
   --count 0
 ```
 
-### 10.8 Tactical C4ISR Field Console & Operations Telemetry
+### 10.8 Standalone Native Tactical Terminal Interface (`secure-transmit terminal`)
+
+High-assurance tactical deployments operate exclusively via the standalone native Rust terminal interface (`secure-transmit terminal`). Browser-based web consoles (`destroyer_tactical_p2p.py web`) and legacy Python chat scripts are strictly quarantined laboratory and development tools; they are blocked from production National Security Systems (NSS) environments due to browser/WebSocket attack surfaces and non-deterministic memory retention in the Python runtime.
+
+The native tactical terminal provides direct operator-to-operator text transit over constant-rate paced channels:
+
 ```bash
-# Launch interactive C4ISR operator workstation:
+# Receiving Station (Responder):
+./rust_data_plane/target/release/secure-transmit terminal \
+  --key-file keys/session.key \
+  --state keys/term_resp.state \
+  --bind 192.168.10.2:9999 \
+  --to 192.168.10.1:9999 \
+  --role responder \
+  --interval-ms 50 \
+  --quantum 1232 \
+  --callsign BRAVO-NMCC
+
+# Transmitting Station (Initiator):
+./rust_data_plane/target/release/secure-transmit terminal \
+  --key-file keys/session.key \
+  --state keys/term_init.state \
+  --bind 192.168.10.1:9999 \
+  --to 192.168.10.2:9999 \
+  --role initiator \
+  --interval-ms 50 \
+  --quantum 1232 \
+  --callsign ALPHA-NORAD
+```
+
+#### Terminal Defense Capabilities & Security Controls:
+1. **Keystroke Timing Decoupling (Song et al. Defense):**
+   Interactive keystrokes are ingested into an internal FIFO queue and decoupled from network transmission. Wire cells are emitted strictly at the constant configured interval (e.g., 50ms / 20 Hz) with uniform 1232-byte quantization (`FTYPE_CHAFF` emitted continuously when no keystrokes are pending). This defeats statistical packet-interarrival and keystroke-timing cryptanalysis (Song, Wagner, Tian, IEEE S&P 2001).
+2. **ANSI Anti-Forensics Screen Scrubbing:**
+   The terminal emits standard ANSI terminal erase sequence `\x1b[2J\x1b[3J\x1b[H` on `/clear`, `/quit`, and `/zeroize` commands, purging both the visible viewport and terminal scrollback history buffers to prevent shoulder surfing and screen recovery.
+3. **In-Band Operator Control Commands:**
+   - `/status`: Displays real-time link telemetry (send/recv sequence numbers, 512-packet reservation boundaries, emitted/received chaff and message counters, replay/auth drop metrics, and session uptime).
+   - `/clear`: Executes immediate ANSI terminal viewport and scrollback buffer purge.
+   - `/help`: Prints the tactical protocol command reference and security classifications.
+   - `/zeroize`: Drops active state file descriptors, performs a 3-pass NIST SP 800-88 cryptographic wipe on session key and state files (including `.seqlog` and `.nvck` sidecars), wipes screen, and terminates immediately with exit code 0.
+   - `/quit`: Flushes remaining queued outbound messages, wipes session memory, clears terminal display, and terminates cleanly.
+4. **Nuclear Command & Control (NC3) Safety Gate:**
+   Every outbound message is inspected by `check_nc3_safety_gate` prior to queueing. Unauthorized nuclear execution directives are blocked at the local interface.
+
+#### Laboratory Diagnostic Utilities (Quarantined / Non-Production):
+```bash
+# Launch interactive C4ISR operator workstation (Lab / Simulation):
 python tactical_operator_console.py
 
 # Launch automated non-interactive pre-deployment verification drill:
 python tactical_operator_console.py --drill
 
-# Launch Web Operations Telemetry Console:
+# Launch Web Operations Telemetry Console (Lab Only; Port 8443):
 python destroyer_tactical_p2p.py web --host 127.0.0.1 --port 8443
 ```
-
-Interactive console capabilities:
-- **Situational Awareness CoT Broadcast:** Emits Cursor-on-Target XML updates to the standard ATAK multicast group `239.2.3.1:6969` and unicast port 4242.
-- **Push-to-Talk (PTT) Simulation:** Simulates encrypted voice burst transmission with sequence monotonicity and replay protection.
-- **MIL-STD-6040 Message Engine:** Routes precedence-tagged tactical orders (`FLASH_OVERRIDE`, `FLASH`, `IMMEDIATE`, `PRIORITY`, `ROUTINE`).
-- **Two-Person Integrity Verification:** Enforces dual-officer co-signing before authorizing high-consequence directives.
 
 ---
 

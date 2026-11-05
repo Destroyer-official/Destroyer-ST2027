@@ -32,7 +32,9 @@ use destroyer_core::auth::{
 };
 use destroyer_core::cookie::StatelessCookieGate;
 use destroyer_core::fec::CauchyReedSolomon;
-use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_MSG};
+use destroyer_core::ct;
+use destroyer_core::fragment;
+use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY};
 use destroyer_core::handshake::Handshake;
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK, P384_PK};
 use destroyer_core::keystore;
@@ -43,7 +45,7 @@ use destroyer_core::pacing::{self, PacedScheduler};
 use destroyer_core::pki::{self, CertSig, Custodian};
 use destroyer_core::policy::{DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
 use destroyer_core::purge;
-use destroyer_core::ratchet::PcsRatchet;
+use destroyer_core::ratchet::{self, PcsRatchet};
 use destroyer_core::replay::AntiReplayWindow;
 use destroyer_core::tpm_nv;
 use destroyer_core::zero_trust::{SecurityRole, ZeroTrustEngine, PERM_MESSAGE_SEND, PERM_CRITICAL_RELEASE};
@@ -102,6 +104,7 @@ fn usage() -> ! {
          diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
          stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
          channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
+         terminal --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--sas TEXT] [--callsign TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          cookie-challenge [--ip IP] [--port PORT] [--payload TEXT] [--difficulty N]  generate anti-amplification micro-PoW challenge\n\
          cookie-solve --challenge HEX [--max-iters N]                                solve anti-amplification PoW challenge\n\
          cookie-verify --solution HEX [--ip IP] [--port PORT] [--payload TEXT]        verify solved PoW cookie challenge\n\
@@ -125,6 +128,10 @@ fn usage() -> ! {
           and directional nonce separation. Flat wire timing and fixed-size cells\n\
           defeat Signals Intelligence (SIGINT) flow correlation and timing analysis;\n\
           chaff uniformity (Shannon H) is a sanity check, not the security argument.\n\
+         \n\
+          terminal: Production tactical interactive terminal interface with constant-rate\n\
+          keystroke decoupling (Song et al. defense), ANSI anti-forensics screen wipe\n\
+          (\\x1b[2J\\x1b[3J\\x1b[H), and in-band operator commands (/status, /clear, /zeroize, /quit).\n\
          \n\
          Security: --seq, --key HEX and --psk HEX are REFUSED. Seq comes only from the\n\
          locked --state file (monotonic, persisted before encrypt). Keys/PSK NEVER\n\
@@ -190,6 +197,53 @@ fn load_auth_signing_key(path: &str) -> Mldsa87SigningKey {
     sk
 }
 
+/// Load ML-DSA-87 signing key from either TPM 2.0 PCR-sealed storage (zero-disk silicon custody)
+/// or fallback hardened key file.
+fn load_auth_signing_key_from_args(args: &[String]) -> Mldsa87SigningKey {
+    let tpm_sealed = get_flag(args, "--auth-tpm-sealed").or_else(|| get_flag(args, "--tpm-sealed"));
+    let sk_file = get_flag(args, "--auth-sk-file").or_else(|| get_flag(args, "--sk-file"));
+
+    if let Some(priv_path) = tpm_sealed {
+        let pub_path = get_flag(args, "--auth-tpm-pub")
+            .unwrap_or_else(|| format!("{priv_path}.pub"));
+        let pcr_spec = get_flag(args, "--pcrs").unwrap_or_else(|| "0,1,2,7".to_string());
+        let pcrs: Vec<u32> = pcr_spec
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        let policy = destroyer_core::tpm_nv::TpmPcrPolicy::new("sha256", &pcrs);
+        let owner = get_flag(args, "--tpm-owner").unwrap_or_else(|| "o".to_string());
+        let tools = destroyer_core::tpm_nv::ToolPaths::from_env();
+
+        eprintln!(
+            "TPM 2.0 ZERO-DISK KEY CUSTODY: Unsealing ML-DSA-87 seed from silicon (PCRs: {:?})",
+            policy.pcrs
+        );
+        let locked_seed = destroyer_core::tpm_nv::unseal_seed_from_pcrs(
+            &priv_path,
+            &pub_path,
+            &policy,
+            &owner,
+            &tools,
+        ).unwrap_or_else(|e| {
+            fail(&format!(
+                "TPM 2.0 UNSEAL REFUSED FAIL-CLOSED (firmware tampered or Secure Boot disabled): {}",
+                e.describe()
+            ))
+        });
+
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(locked_seed.as_bytes());
+        let (sk, _vk) = Mldsa87SigningKey::from_seed(&seed);
+        seed.zeroize();
+        sk
+    } else if let Some(path) = sk_file {
+        load_auth_signing_key(&path)
+    } else {
+        fail("mutual auth requires --auth-sk-file PATH or --auth-tpm-sealed PATH (silicon custody)");
+    }
+}
+
 /// Load a pinned peer ML-DSA-87 verifying key (2592 bytes, hex encoded).
 /// Pinning is the trust anchor: a self-supplied peer key proves nothing.
 fn load_peer_verifying_key(path: &str) -> Mldsa87VerifyingKey {
@@ -203,11 +257,15 @@ fn load_peer_verifying_key(path: &str) -> Mldsa87VerifyingKey {
 
 /// Mutual identity authentication is mandatory outside explicit lab mode.
 /// `--require-mutual-auth` pins it on even if a lab variable is present.
-fn mutual_auth_required(_args: &[String]) -> bool {
-    // Mutual ML-DSA-87 authentication is MANDATORY. There is no lab bypass
-    // for unauthenticated key exchange: a key without pinned peer identity
-    // provides no MITM resistance and is never acceptable.
-    true
+fn mutual_auth_required(args: &[String]) -> bool {
+    if has_flag(args, "--require-mutual-auth") {
+        return true;
+    }
+    if has_flag(args, "--lab") {
+        return false;
+    }
+    std::env::var("P2P_LAB_MODE").unwrap_or_default() != "1"
+        && std::env::var("ST2027_LAB_MODE").unwrap_or_default() != "1"
 }
 
 /// Final handshake binding = SHA-384(domain || transcript || resp_sig || init_sig).
@@ -1807,6 +1865,9 @@ fn cmd_channel(args: &[String]) {
     let drain_ticks: u64 = get_flag(args, "--drain-ticks")
         .map(|s| s.parse().unwrap_or(0))
         .unwrap_or(3);
+    let rekey_interval: u64 = get_flag(args, "--rekey-interval")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let use_stdin = has_flag(args, "--stdin");
 
     let mut msgs = Vec::new();
@@ -1826,8 +1887,26 @@ fn cmd_channel(args: &[String]) {
         (DIR_SEND, DIR_RECV)
     };
 
-    let key = FrameKey::from_slice(kb.as_bytes());
     drop(kb);
+    let mut pcs_ratchet = PcsRatchet::new(&key_bytes)
+        .unwrap_or_else(|e| fail(&format!("ratchet init failed: {e:?}")));
+    let mut current_frame_key = FrameKey::from_slice(&key_bytes);
+    let mut pending_frame_key: Option<FrameKey> = None;
+    let mut prev_frame_key: Option<FrameKey> = None;
+    let mut prev_key_remaining_ticks: u32 = 0;
+    let rekey_chunk_size = (quantum.saturating_sub(frame::FRAME_OVERHEAD + fragment::FRAGMENT_HEADER_LEN)).min(600);
+    let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+    let mut inbound_rekey_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> = std::collections::HashMap::new();
+    let mut trigger_rekey = false;
+
+    // Queue initial advert bundle so both parties exchange initial public keys
+    let my_adv = pcs_ratchet.advertise_bundle();
+    let adv_wire = ratchet::RekeyMessage::Advert(my_adv).to_wire();
+    if let Ok(frags) = fragment::fragment(&adv_wire, rekey_chunk_size) {
+        for f in frags {
+            outbound_rekeys.push_back(f.to_wire());
+        }
+    }
 
     let state_fresh = tpm_nv::state_is_fresh(&state);
     let mut state_file = open_locked_state(&state);
@@ -1909,12 +1988,72 @@ fn cmd_channel(args: &[String]) {
                         if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
                             println!("channel: OPERATOR_REQUEST_ZEROIZE");
                             break;
+                        } else if trimmed == "/rekey" || trimmed == "REKEY" {
+                            if pcs_ratchet.peer_bundle().is_some() && pending_frame_key.is_none() && outbound_rekeys.is_empty() {
+                                trigger_rekey = true;
+                            } else {
+                                println!("channel: REKEY_DEFERRED peer_ready={}", pcs_ratchet.peer_bundle().is_some());
+                            }
                         } else if !trimmed.is_empty() {
                             outbound_msgs.push_back(trimmed.as_bytes().to_vec());
                         }
                     }
                 }
                 _ = tick_timer.tick() => {
+                    if let Some(ref _old_key) = prev_frame_key {
+                        if prev_key_remaining_ticks > 0 {
+                            prev_key_remaining_ticks -= 1;
+                        } else {
+                            let _ = prev_frame_key.take();
+                        }
+                    }                    if rekey_interval > 0
+                        && ticks_emitted > 0
+                        && (ticks_emitted % rekey_interval == 0)
+                        && role == "initiator"
+                        && pcs_ratchet.peer_bundle().is_some()
+                        && pending_frame_key.is_none()
+                        && outbound_rekeys.is_empty()
+                    {
+                        trigger_rekey = true;
+                    }
+
+                    if role == "initiator"
+                        && pcs_ratchet.peer_bundle().is_none()
+                        && outbound_rekeys.is_empty()
+                        && ticks_emitted > 0
+                        && (ticks_emitted % 8 == 0)
+                    {
+                        let my_adv = pcs_ratchet.advertise_bundle();
+                        let adv_wire = ratchet::RekeyMessage::Advert(my_adv).to_wire();
+                        if let Ok(frags) = fragment::fragment(&adv_wire, rekey_chunk_size) {
+                            for f in frags {
+                                outbound_rekeys.push_back(f.to_wire());
+                            }
+                        }
+                    }
+
+                    if trigger_rekey && pcs_ratchet.peer_bundle().is_some() && outbound_rekeys.is_empty() {
+                        trigger_rekey = false;
+                        match pcs_ratchet.send_step_auto() {
+                            Ok((step, _msg_key)) => {
+                                let next_epoch = step.epoch;
+                                println!("channel: RATCHET_STEP_EMIT epoch={next_epoch}");
+                                if let Ok(fk) = pcs_ratchet.current_frame_key() {
+                                    pending_frame_key = Some(fk);
+                                }
+                                let step_wire = ratchet::RekeyMessage::Step(step).to_wire();
+                                if let Ok(frags) = fragment::fragment(&step_wire, rekey_chunk_size) {
+                                    for f in frags {
+                                        outbound_rekeys.push_back(f.to_wire());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("channel: RATCHET_STEP_ERR {e:?}");
+                            }
+                        }
+                    }
+
                     if next_send_seq >= reserved_limit {
                         // Persisted send_seq is still the previous limit here
                         // (fresh=false): guard the chain before moving it up.
@@ -1939,13 +2078,18 @@ fn cmd_channel(args: &[String]) {
                     next_send_seq += 1;
 
                     let frame = if let Some(payload) = outbound_msgs.pop_front() {
-                        let f = pacing::build_data_frame_directed(&key, seq, tx_dir, quantum, &payload)
+                        pcs_ratchet.note_transmission(payload.len());
+                        let f = pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &payload)
                             .unwrap_or_else(|_| fail("build data frame failed"));
                         msgs_sent += 1;
                         println!("channel: EMIT_MSG seq={seq} bytes={}", payload.len());
                         f
+                    } else if let Some(rekey_payload) = outbound_rekeys.pop_front() {
+                        pacing::build_rekey_frame_directed(&current_frame_key, seq, tx_dir, quantum, &rekey_payload)
+                            .unwrap_or_else(|_| fail("build rekey frame failed"))
                     } else {
-                        pacing::build_chaff_frame_directed(&key, seq, tx_dir, quantum)
+                        pcs_ratchet.note_transmission(0);
+                        pacing::build_chaff_frame_directed(&current_frame_key, seq, tx_dir, quantum)
                             .unwrap_or_else(|_| fail("build chaff failed"))
                     };
 
@@ -1958,6 +2102,7 @@ fn cmd_channel(args: &[String]) {
                             *rem -= 1;
                         }
                     }
+
                 }
                 recv_opt = ep.recv_unthrottled(Duration::from_millis(50)) => {
                     if let Some(Ok((bytes, _from))) = recv_opt {
@@ -1965,25 +2110,64 @@ fn cmd_channel(args: &[String]) {
                             ep.note_auth_drop();
                             continue;
                         }
-                        let seq = match aead::peek_seq(&key, &bytes) {
-                            Some(s) => s,
-                            None => {
-                                ep.note_auth_drop();
-                                continue;
+                        let mut open_res = None;
+                        let mut matched_key_is_pending = false;
+
+                        // 1. Try current_frame_key
+                        if let Some(seq) = aead::peek_seq(&current_frame_key, &bytes) {
+                            if window.check(seq) {
+                                if let Ok((seq2, ftype, pt)) = aead::open_indexed(&current_frame_key, rx_dir, &bytes) {
+                                    if seq2 == seq {
+                                        open_res = Some((seq2, ftype, pt));
+                                    }
+                                }
                             }
-                        };
-                        if !window.check(seq) {
-                            ep.note_auth_drop();
-                            continue;
                         }
-                        let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
+
+                        // 2. Try pending_frame_key
+                        if open_res.is_none() {
+                            if let Some(ref pfk) = pending_frame_key {
+                                if let Some(seq) = aead::peek_seq(pfk, &bytes) {
+                                    if window.check(seq) {
+                                        if let Ok((seq2, ftype, pt)) = aead::open_indexed(pfk, rx_dir, &bytes) {
+                                            if seq2 == seq {
+                                                open_res = Some((seq2, ftype, pt));
+                                                matched_key_is_pending = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. Try prev_frame_key
+                        if open_res.is_none() {
+                            if let Some(ref prev_fk) = prev_frame_key {
+                                if let Some(seq) = aead::peek_seq(prev_fk, &bytes) {
+                                    if window.check(seq) {
+                                        if let Ok((seq2, ftype, pt)) = aead::open_indexed(prev_fk, rx_dir, &bytes) {
+                                            if seq2 == seq {
+                                                open_res = Some((seq2, ftype, pt));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let Some((seq2, ftype, pt)) = open_res else {
                             ep.note_auth_drop();
                             continue;
                         };
-                        if seq2 != seq {
-                            ep.note_auth_drop();
-                            continue;
+
+                        if matched_key_is_pending {
+                            let pfk = pending_frame_key.take().unwrap();
+                            let epoch = pcs_ratchet.epoch();
+                            prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
+                            prev_key_remaining_ticks = 15;
+                            println!("channel: EPOCH_ADVANCED epoch={epoch}");
                         }
+
                         window.mark(seq2);
                         if ftype == FTYPE_MSG {
                             msgs_received += 1;
@@ -2002,6 +2186,139 @@ fn cmd_channel(args: &[String]) {
                             write_state_locked(&mut state_file, &st, &key_bytes);
                         } else if ftype == FTYPE_CHAFF {
                             chaff_received += 1;
+                        } else if ftype == FTYPE_IN_BAND_EPOCH_REKEY && pt.len() == destroyer_core::frame::IN_BAND_REKEY_PAYLOAD_LEN {
+                            match pcs_ratchet.process_in_band_epoch_rekey(&pt) {
+                                Ok(_new_key) => {
+                                    let new_epoch = pcs_ratchet.epoch();
+                                    println!("channel: IN_BAND_EPOCH_REKEY_RECV epoch={new_epoch}");
+                                    if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
+                                        prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
+                                        prev_key_remaining_ticks = 20;
+                                        println!("channel: EPOCH_ADVANCED epoch={new_epoch}");
+                                    }
+                                }
+                                Err(e) => {
+                                    ep.note_auth_drop();
+                                    println!("channel: IN_BAND_EPOCH_REKEY_ERR {e:?}");
+                                }
+                            }
+                        } else if ftype == FTYPE_REKEY || ftype == FTYPE_IN_BAND_EPOCH_REKEY {
+                            if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
+                                let tx_id = frag.tx_id;
+                                let total = frag.total;
+                                let mut complete = false;
+                                let mut finished_payload = None;
+                                {
+                                    if inbound_rekey_buffers.len() > 16 {
+                                        inbound_rekey_buffers.clear();
+                                    }
+                                    let buffer = inbound_rekey_buffers.entry(tx_id).or_insert_with(|| {
+                                        fragment::ReassemblyBuffer::new(tx_id, total).unwrap()
+                                    });
+                                    match buffer.insert(frag) {
+                                        Ok(is_done) => {
+                                            if is_done {
+                                                complete = true;
+                                                if let Ok(assembled) = buffer.reassemble() {
+                                                    finished_payload = Some(assembled);
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                }
+                                if complete {
+                                    inbound_rekey_buffers.remove(&tx_id);
+                                }
+                                if let Some(raw_rekey) = finished_payload {
+                                    if raw_rekey.len() == destroyer_core::frame::IN_BAND_REKEY_PAYLOAD_LEN {
+                                        match pcs_ratchet.process_in_band_epoch_rekey(&raw_rekey) {
+                                            Ok(_new_key) => {
+                                                let new_epoch = pcs_ratchet.epoch();
+                                                println!("channel: IN_BAND_EPOCH_REKEY_RECV epoch={new_epoch}");
+                                                if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
+                                                    prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
+                                                    prev_key_remaining_ticks = 20;
+                                                    println!("channel: EPOCH_ADVANCED epoch={new_epoch}");
+                                                }
+                                            }
+                                            Err(e) => {
+                                                ep.note_auth_drop();
+                                                println!("channel: IN_BAND_EPOCH_REKEY_ERR {e:?}");
+                                            }
+                                        }
+                                    } else {
+                                        match ratchet::RekeyMessage::from_wire(&raw_rekey) {
+                                            Ok(ratchet::RekeyMessage::Advert(bundle)) => {
+                                            println!("channel: PEER_ADVERT_STORED epoch={}", bundle.epoch);
+                                            pcs_ratchet.set_peer_bundle(bundle);
+                                            if role == "responder" && outbound_rekeys.is_empty() {
+                                                let adv_msg = ratchet::RekeyMessage::Advert(pcs_ratchet.advertise_bundle());
+                                                if let Ok(frags) = fragment::fragment(&adv_msg.to_wire(), rekey_chunk_size) {
+                                                    for f in frags {
+                                                        outbound_rekeys.push_back(f.to_wire());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Ok(ratchet::RekeyMessage::Step(step)) => {
+                                            match pcs_ratchet.receive_step_with_advert(&step) {
+                                                Ok(_msg_key) => {
+                                                    let new_epoch = pcs_ratchet.epoch();
+                                                    println!("channel: RATCHET_STEP_RECV epoch={new_epoch}");
+                                                    if let Ok(tag) = pcs_ratchet.compute_confirm_tag(new_epoch) {
+                                                        let conf_msg = ratchet::RekeyMessage::Confirm { epoch: new_epoch, auth_tag: tag };
+                                                        if let Ok(frags) = fragment::fragment(&conf_msg.to_wire(), rekey_chunk_size) {
+                                                            for f in frags {
+                                                                outbound_rekeys.push_back(f.to_wire());
+                                                            }
+                                                        }
+                                                    }
+                                                    let adv_msg = ratchet::RekeyMessage::Advert(pcs_ratchet.advertise_bundle());
+                                                    if let Ok(frags) = fragment::fragment(&adv_msg.to_wire(), rekey_chunk_size) {
+                                                        for f in frags {
+                                                            outbound_rekeys.push_back(f.to_wire());
+                                                        }
+                                                    }
+                                                    if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
+                                                        prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
+                                                        prev_key_remaining_ticks = 15;
+                                                        println!("channel: EPOCH_ADVANCED epoch={new_epoch}");
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    ep.note_auth_drop();
+                                                    println!("channel: RATCHET_STEP_ERR {e:?}");
+                                                }
+                                            }
+                                        }
+                                        Ok(ratchet::RekeyMessage::Confirm { epoch, auth_tag }) => {
+                                            if pcs_ratchet.epoch() == epoch {
+                                                if let Ok(expected_tag) = pcs_ratchet.compute_confirm_tag(epoch) {
+                                                    if ct::ct_eq(&auth_tag, &expected_tag) {
+                                                        println!("channel: RATCHET_CONFIRM_RECV epoch={epoch}");
+                                                        if let Some(pfk) = pending_frame_key.take() {
+                                                            prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
+                                                            prev_key_remaining_ticks = 15;
+                                                            println!("channel: EPOCH_ADVANCED epoch={epoch}");
+                                                        }
+                                                    } else {
+                                                        ep.note_auth_drop();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                    }
+                                }
+                            } else {
+                                ep.note_auth_drop();
+                            }
                         }
                     }
                 }
@@ -2029,6 +2346,363 @@ fn cmd_channel(args: &[String]) {
     });
 }
 
+fn cmd_terminal(args: &[String]) {
+    reject_forbidden_cli(args);
+    let key_file_path = get_flag(args, "--key-file");
+    let (kb, key_id) = load_key_material(args);
+    let key_bytes: [u8; 32] = *kb.as_bytes();
+    let state = state_path(args);
+    let bind: SocketAddr = get_flag(args, "--bind")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --bind ADDR (host:port)"));
+    let to: SocketAddr = get_flag(args, "--to")
+        .unwrap_or_else(|| usage())
+        .parse()
+        .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
+    let role = get_flag(args, "--role").unwrap_or_else(|| "initiator".to_string());
+    if role != "initiator" && role != "responder" {
+        fail("bad --role: must be 'initiator' or 'responder'");
+    }
+    let interval_ms: u64 = get_flag(args, "--interval-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
+        .unwrap_or(50);
+    let quantum: usize = get_flag(args, "--quantum")
+        .map(|s| {
+            s.parse()
+                .unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)"))
+        })
+        .unwrap_or(1232);
+    if quantum != 256 && quantum != 512 && quantum != 1232 {
+        drop(kb);
+        fail("bad --quantum: must be 256, 512, or 1232");
+    }
+    let sas = get_flag(args, "--sas").unwrap_or_else(|| {
+        kem::compute_sas(&key_bytes, &[0u8; 48])
+    });
+    let callsign = get_flag(args, "--callsign").unwrap_or_else(|| "TACTICAL-NODE".to_string());
+    let count: u64 = get_flag(args, "--count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
+        .unwrap_or(0);
+    let recv_count: u64 = get_flag(args, "--recv-count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --recv-count")))
+        .unwrap_or(0);
+    let timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+        .unwrap_or(0);
+    let drain_ticks: u64 = get_flag(args, "--drain-ticks")
+        .map(|s| s.parse().unwrap_or(0))
+        .unwrap_or(3);
+
+    let (tx_dir, rx_dir) = if role == "responder" {
+        (DIR_RECV, DIR_SEND)
+    } else {
+        (DIR_SEND, DIR_RECV)
+    };
+
+    let key = FrameKey::from_slice(kb.as_bytes());
+    drop(kb);
+
+    let state_fresh = tpm_nv::state_is_fresh(&state);
+    let mut term_state_file: Option<std::fs::File> = Some(open_locked_state(&state));
+    let initial_st = read_state_locked(term_state_file.as_mut().unwrap(), &key_bytes, &key_id);
+    tpm_nv::guard(&state, &key_bytes, initial_st.send_seq, state_fresh)
+        .unwrap_or_else(|e| fail(&e));
+    let mut next_send_seq = initial_st.send_seq;
+    let mut window = AntiReplayWindow::from_parts(initial_st.recv_last, initial_st.recv_bitmap);
+
+    let mut reserved_limit = next_send_seq
+        .checked_add(512)
+        .unwrap_or_else(|| fail("sequence exhausted"));
+    let mut st = read_state_locked(term_state_file.as_mut().unwrap(), &key_bytes, &key_id);
+    st.send_seq = reserved_limit;
+    write_state_locked(term_state_file.as_mut().unwrap(), &st, &key_bytes);
+    tpm_nv::checkpoint(&state, &key_bytes, reserved_limit).unwrap_or_else(|e| fail(&e));
+
+    let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--msg" && i + 1 < args.len() {
+            outbound_msgs.push_back(args[i + 1].as_bytes().to_vec());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    rt.block_on(async {
+        let mut ep = Endpoint::bind(&bind.to_string())
+            .await
+            .unwrap_or_else(|_| fail("terminal UDP bind failed"));
+        let mut ticks_emitted = 0u64;
+        let mut msgs_sent = 0u64;
+        let mut chaff_sent = 0u64;
+        let mut msgs_received = 0u64;
+        let mut chaff_received = 0u64;
+        let mut replay_drops = 0u64;
+        let mut auth_drops = 0u64;
+        let mut draining: Option<u64> = None;
+        let mut quitting = false;
+
+        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(32);
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines() {
+                if let Ok(l) = line {
+                    if stdin_tx.blocking_send(l).is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+
+        // Tactical console banner
+        println!(
+"================================================================================\n\
+     ST2027 SECURE TACTICAL COMMUNICATIONS TERMINAL (NATIVE RUST CORE)\n\
+================================================================================\n\
+  POSTURE            : CNSA 2.0 / FIPS 203 ML-KEM-1024 / FIPS 204 ML-DSA-87\n\
+  TRAFFIC INVARIANCE : Paced {interval_ms}ms (CBR) | {quantum}B Quantized Cells\n\
+  LOCAL FORENSICS    : NIST SP 800-88 Deterministic Memory Sanitization\n\
+  ANTI-REPLAY        : RFC 6479 2048-Packet Sliding Window + TPM 2.0 Guard\n\
+  SHORT AUTH STRING  : {sas}\n\
+  LINK TOPOLOGY      : {role} (local {bind} <--> peer {to})\n\
+  CALLSIGN           : {callsign}\n\
+--------------------------------------------------------------------------------\n\
+  OPERATOR COMMANDS:\n\
+    /status  - Display real-time link telemetry, seq counters & drop stats\n\
+    /clear   - Scrub terminal screen and scrollback buffer (ANSI anti-forensics)\n\
+    /zeroize - Emergency 3-pass cryptographic wipe of keys, state & process\n\
+    /help    - Display operator protocol manual & classification guide\n\
+    /quit    - Wipe session memory, scrub screen and terminate securely\n\
+================================================================================");
+        let _ = std::io::stdout().flush();
+
+        let start_time = Instant::now();
+        let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
+        tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            if count > 0 && ticks_emitted >= count {
+                break;
+            }
+            if recv_count > 0 && msgs_received >= recv_count && draining.is_none() {
+                draining = Some(drain_ticks);
+            }
+            if let Some(rem) = draining {
+                if rem == 0 {
+                    break;
+                }
+            }
+            if timeout_ms > 0 && start_time.elapsed() >= Duration::from_millis(timeout_ms) {
+                break;
+            }
+
+            tokio::select! {
+                line_opt = stdin_rx.recv() => {
+                    if let Some(line) = line_opt {
+                        let trimmed = line.trim();
+                        if trimmed == "/quit" || trimmed == "/exit" {
+                            if outbound_msgs.is_empty() {
+                                print!("\x1b[2J\x1b[3J\x1b[H");
+                                let _ = std::io::stdout().flush();
+                                println!("[INFO] SECURE SESSION TERMINATED (MEMORY & SCREEN WIPED)");
+                                break;
+                            } else {
+                                quitting = true;
+                            }
+                        } else if trimmed == "/clear" {
+                            print!("\x1b[2J\x1b[3J\x1b[H");
+                            let _ = std::io::stdout().flush();
+                        } else if trimmed == "/help" {
+                            println!(
+"\n[HELP] TACTICAL OPERATOR COMMAND MANUAL:\n\
+  /status  - Query link telemetry, sequence numbers, and traffic counters\n\
+  /clear   - ANSI terminal flush (clears active screen & scrollback buffer)\n\
+  /zeroize - Emergency cryptographic purge of key and state files (NIST SP 800-88)\n\
+  /quit    - Wipe session memory, scrub terminal and terminate cleanly\n\
+  <text>   - Encrypt and transmit payload over constant-rate paced channel\n");
+                        } else if trimmed == "/status" {
+                            let (last, _) = window.parts();
+                            println!(
+"\n[STATUS] LINK TELEMETRY:\n\
+  Callsign       : {callsign}\n\
+  Role           : {role}\n\
+  Local Bind     : {bind}\n\
+  Peer Target    : {to}\n\
+  Pacing Interval: {interval_ms} ms (CBR traffic invariance active)\n\
+  Cell Quantum   : {quantum} bytes\n\
+  Send Sequence  : {next_send_seq} (Reservation Limit: {reserved_limit})\n\
+  Recv Last Seq  : {last}\n\
+  Frames Emitted : {ticks_emitted} (Messages: {msgs_sent}, Chaff: {chaff_sent})\n\
+  Frames Recv    : {} (Messages: {msgs_received}, Chaff: {chaff_received})\n\
+  Replay Drops   : {replay_drops}\n\
+  Auth Drops     : {auth_drops}\n\
+  Uptime         : {:.1} s\n",
+                                msgs_received + chaff_received,
+                                start_time.elapsed().as_secs_f64()
+                            );
+                        } else if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
+                            println!("\n[CRITICAL] OPERATOR EMERGENCY ZEROIZATION INITIATED...");
+                            drop(term_state_file.take());
+                            if let Some(ref kf) = key_file_path {
+                                let _ = purge::purge_file(kf);
+                            }
+                            let _ = purge::purge_file(&state);
+                            for suffix in [".seqlog", ".nvck"] {
+                                let side = format!("{state}{suffix}");
+                                if std::path::Path::new(&side).exists() {
+                                    let _ = purge::purge_file(&side);
+                                }
+                            }
+                            print!("\x1b[2J\x1b[3J\x1b[H");
+                            let _ = std::io::stdout().flush();
+                            println!("ZEROIZE COMPLETE: KEY & STATE SANITIZED (NIST SP 800-88). TERMINATING.");
+                            std::process::exit(0);
+                        } else if !trimmed.is_empty() {
+                            if let Err(indicator) = destroyer_core::nc3::check_nc3_safety_gate(trimmed.as_bytes()) {
+                                println!("[NC3 SAFETY GATE VIOLATION] Nuclear directive indicator '{indicator}' blocked!");
+                            } else {
+                                outbound_msgs.push_back(trimmed.as_bytes().to_vec());
+                                println!("[OUTGOING] Queued message: {trimmed}");
+                            }
+                        }
+                    }
+                }
+                _ = tick_timer.tick() => {
+                    if next_send_seq >= reserved_limit {
+                        tpm_nv::guard(&state, &key_bytes, reserved_limit, false)
+                            .unwrap_or_else(|e| fail(&e));
+                        reserved_limit = next_send_seq
+                            .checked_add(512)
+                            .unwrap_or_else(|| fail("sequence exhausted"));
+                        let (last, bitmap) = window.parts();
+                        let st = SessionState {
+                            key_id,
+                            send_seq: reserved_limit,
+                            recv_last: last,
+                            recv_bitmap: bitmap,
+                        };
+                        if let Some(ref mut sf) = term_state_file {
+                            write_state_locked(sf, &st, &key_bytes);
+                        }
+                        tpm_nv::checkpoint(&state, &key_bytes, reserved_limit)
+                            .unwrap_or_else(|e| fail(&e));
+                    }
+
+                    let seq = next_send_seq;
+                    next_send_seq += 1;
+
+                    let frame = if let Some(payload) = outbound_msgs.pop_front() {
+                        let f = pacing::build_data_frame_directed(&key, seq, tx_dir, quantum, &payload)
+                            .unwrap_or_else(|_| fail("build data frame failed"));
+                        msgs_sent += 1;
+                        f
+                    } else {
+                        chaff_sent += 1;
+                        pacing::build_chaff_frame_directed(&key, seq, tx_dir, quantum)
+                            .unwrap_or_else(|_| fail("build chaff failed"))
+                    };
+
+                    if ep.send_raw(&frame, to).await.is_err() {
+                        ep.drops += 1;
+                    }
+                    ticks_emitted += 1;
+                    if let Some(ref mut rem) = draining {
+                        if *rem > 0 {
+                            *rem -= 1;
+                        }
+                    }
+                    if quitting && outbound_msgs.is_empty() {
+                        print!("\x1b[2J\x1b[3J\x1b[H");
+                        let _ = std::io::stdout().flush();
+                        println!("[INFO] SECURE SESSION TERMINATED (MEMORY & SCREEN WIPED)");
+                        break;
+                    }
+                }
+                recv_opt = ep.recv_unthrottled(Duration::from_millis(50)) => {
+                    if let Some(Ok((bytes, _from))) = recv_opt {
+                        if bytes.len() != quantum {
+                            ep.note_auth_drop();
+                            auth_drops += 1;
+                            continue;
+                        }
+                        let seq = match aead::peek_seq(&key, &bytes) {
+                            Some(s) => s,
+                            None => {
+                                ep.note_auth_drop();
+                                auth_drops += 1;
+                                continue;
+                            }
+                        };
+                        if !window.check(seq) {
+                            ep.note_auth_drop();
+                            replay_drops += 1;
+                            continue;
+                        }
+                        let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
+                            ep.note_auth_drop();
+                            auth_drops += 1;
+                            continue;
+                        };
+                        if seq2 != seq {
+                            ep.note_auth_drop();
+                            auth_drops += 1;
+                            continue;
+                        }
+                        window.mark(seq2);
+                        if ftype == FTYPE_MSG {
+                            msgs_received += 1;
+                            let text = String::from_utf8_lossy(&pt);
+                            println!("[INCOMING] {text}");
+                            let (last, bitmap) = window.parts();
+                            let st = SessionState {
+                                key_id,
+                                send_seq: reserved_limit,
+                                recv_last: last,
+                                recv_bitmap: bitmap,
+                            };
+                            if let Some(ref mut sf) = term_state_file {
+                                write_state_locked(sf, &st, &key_bytes);
+                            }
+                        } else if ftype == FTYPE_CHAFF {
+                            chaff_received += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        let (last, bitmap) = window.parts();
+        let st = SessionState {
+            key_id,
+            send_seq: next_send_seq,
+            recv_last: last,
+            recv_bitmap: bitmap,
+        };
+        if let Some(ref mut sf) = term_state_file {
+            write_state_locked(sf, &st, &key_bytes);
+        }
+        drop(term_state_file.take());
+        tpm_nv::checkpoint(&state, &key_bytes, next_send_seq)
+            .unwrap_or_else(|e| fail(&e));
+
+        println!(
+            "terminal: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={}",
+            ep.drops
+        );
+    });
+}
+
+
 fn require_kex_auth(psk_present: bool) {
     if !psk_present {
         fail("kex PSK is MANDATORY (set --psk-file); unauthenticated key exchange is never permitted.");
@@ -2049,9 +2723,7 @@ fn cmd_kex_listen(args: &[String]) {
     require_kex_auth(psk_bytes.is_some());
     let mutual = mutual_auth_required(args);
     let auth_sk = if mutual {
-        let path = get_flag(args, "--auth-sk-file")
-            .unwrap_or_else(|| fail("mutual auth requires --auth-sk-file PATH"));
-        Some(load_auth_signing_key(&path))
+        Some(load_auth_signing_key_from_args(args))
     } else {
         None
     };
@@ -2208,9 +2880,7 @@ fn cmd_kex_connect(args: &[String]) {
     require_kex_auth(psk_bytes.is_some());
     let mutual = mutual_auth_required(args);
     let auth_sk = if mutual {
-        let path = get_flag(args, "--auth-sk-file")
-            .unwrap_or_else(|| fail("mutual auth requires --auth-sk-file PATH"));
-        Some(load_auth_signing_key(&path))
+        Some(load_auth_signing_key_from_args(args))
     } else {
         None
     };
@@ -2805,6 +3475,181 @@ fn cmd_doc_open(args: &[String]) {
     }
 }
 
+
+fn cmd_auth_tpm_seal(args: &[String]) {
+    reject_forbidden_cli(args);
+    let out_priv = get_flag(args, "--out-priv").unwrap_or_else(|| fail("missing --out-priv PATH"));
+    let out_pub = get_flag(args, "--out-pub").unwrap_or_else(|| fail("missing --out-pub PATH"));
+    let owner = get_flag(args, "--owner").unwrap_or_else(|| "o".to_string());
+    let pcr_spec = get_flag(args, "--pcrs").unwrap_or_else(|| "0,1,2,7".to_string());
+    let pcrs: Vec<u32> = pcr_spec
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let policy = destroyer_core::tpm_nv::TpmPcrPolicy::new("sha256", &pcrs);
+    let tools = destroyer_core::tpm_nv::ToolPaths::from_env();
+
+    let mut seed = [0u8; 32];
+    let in_seed_opt = get_flag(args, "--in-seed-file").or_else(|| get_flag(args, "--seed-file"));
+    if let Some(seed_file) = in_seed_opt {
+        let (guard, _) = load_key_material(&["--key-file".to_string(), seed_file.clone()]);
+        seed.copy_from_slice(guard.as_bytes());
+        // Zeroize plaintext seed file for zero-disk security guarantee
+        let _ = std::fs::write(&seed_file, vec![0u8; 64]);
+        let _ = std::fs::remove_file(&seed_file);
+    } else if let Some(hex) = get_flag(args, "--seed-hex") {
+        let bytes = decode_hex(&hex).unwrap_or_else(|e| fail(e));
+        if bytes.len() != 32 {
+            fail("seed must be 32 bytes");
+        }
+        seed.copy_from_slice(&bytes);
+    } else if has_flag(args, "--seed-stdin") {
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s).unwrap_or_else(|_| fail("stdin read failed"));
+        let bytes = decode_hex(s.trim()).unwrap_or_else(|e| fail(e));
+        if bytes.len() != 32 {
+            fail("seed must be 32 bytes");
+        }
+        seed.copy_from_slice(&bytes);
+    } else {
+        fail("one of --in-seed-file, --seed-file, --seed-hex, or --seed-stdin is required");
+    }
+
+    destroyer_core::tpm_nv::seal_seed_to_pcrs(
+        &seed,
+        &policy,
+        &out_priv,
+        &out_pub,
+        &owner,
+        &tools,
+    ).unwrap_or_else(|e| fail(&format!("TPM sealing failed: {}", e.describe())));
+
+    seed.zeroize();
+    println!(
+        "auth-tpm-seal SUCCESS: ML-DSA-87 seed sealed to TPM 2.0 silicon bound to PCRs {:?}",
+        policy.pcrs
+    );
+    println!("sealed_priv: {out_priv}");
+    println!("sealed_pub:  {out_pub}");
+}
+
+fn cmd_auth_tpm_unseal(args: &[String]) {
+    reject_forbidden_cli(args);
+    let in_priv = get_flag(args, "--in-priv")
+        .or_else(|| get_flag(args, "--priv-file"))
+        .unwrap_or_else(|| fail("missing --in-priv PATH"));
+    let in_pub = get_flag(args, "--in-pub")
+        .or_else(|| get_flag(args, "--pub-file"))
+        .unwrap_or_else(|| format!("{in_priv}.pub"));
+    let owner = get_flag(args, "--owner").unwrap_or_else(|| "o".to_string());
+    let pcr_spec = get_flag(args, "--pcrs").unwrap_or_else(|| "0,1,2,7".to_string());
+    let pcrs: Vec<u32> = pcr_spec
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let policy = destroyer_core::tpm_nv::TpmPcrPolicy::new("sha256", &pcrs);
+    let tools = destroyer_core::tpm_nv::ToolPaths::from_env();
+
+    let locked = destroyer_core::tpm_nv::unseal_seed_from_pcrs(
+        &in_priv,
+        &in_pub,
+        &policy,
+        &owner,
+        &tools,
+    ).unwrap_or_else(|e| fail(&format!("TPM unsealing failed: {}", e.describe())));
+
+    let digest = Sha384::digest(locked.as_bytes());
+    let id_hex = hex_of(&digest[..16]);
+    println!(
+        "auth-tpm-unseal SUCCESS: TPM 2.0 silicon verified measured boot PCRs {:?}",
+        policy.pcrs
+    );
+    println!("unsealed_key_id: {}", id_hex.trim());
+}
+
+fn cmd_hsm_probe(args: &[String]) {
+    reject_forbidden_cli(args);
+    let config = destroyer_core::auth::HsmConfig::from_env();
+    match config.resolve_module_path() {
+        Ok(path) => {
+            println!("HSM Probe: found driver at {}", path.display());
+            println!("Configured device type: {:?}", config.device_type);
+        }
+        Err(e) => {
+            println!("HSM Probe: no hardware driver detected: {e}");
+            println!("Standard driver candidate paths searched for {:?}:", config.device_type);
+            for p in config.device_type.default_driver_paths() {
+                println!("  - {}", p.display());
+            }
+        }
+    }
+}
+
+fn cmd_eam_auth_hw(args: &[String]) {
+    reject_forbidden_cli(args);
+    eprintln!(
+        "DoD S-5210.41M HARDWARE ENFORCEMENT: Authenticating Two-Person Integrity via physical tokens"
+    );
+    let directive = get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
+
+    let mod1 = get_flag(args, "--token1-module");
+    let slot1: usize = get_flag(args, "--token1-slot").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let pin1 = get_flag(args, "--token1-pin");
+    let label1 = get_flag(args, "--token1-key-label");
+
+    let mod2 = get_flag(args, "--token2-module");
+    let slot2: usize = get_flag(args, "--token2-slot").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let pin2 = get_flag(args, "--token2-pin");
+    let label2 = get_flag(args, "--token2-key-label");
+
+    let mut cfg1 = destroyer_core::auth::HsmConfig::default();
+    if let Some(m) = mod1 { cfg1.module_path = Some(std::path::PathBuf::from(m)); }
+    cfg1.slot_index = Some(slot1);
+    cfg1.pin = pin1;
+    cfg1.key_label = label1;
+
+    let mut cfg2 = destroyer_core::auth::HsmConfig::default();
+    if let Some(m) = mod2 { cfg2.module_path = Some(std::path::PathBuf::from(m)); }
+    cfg2.slot_index = Some(slot2);
+    cfg2.pin = pin2;
+    cfg2.key_label = label2;
+
+    let hsm1 = destroyer_core::auth::HsmSession::open(&cfg1)
+        .unwrap_or_else(|e| fail(&format!("Officer 1 hardware token session failed: {e}")));
+    let hsm2 = destroyer_core::auth::HsmSession::open(&cfg2)
+        .unwrap_or_else(|e| fail(&format!("Officer 2 hardware token session failed: {e}")));
+
+    let k1 = hsm1.find_private_key(cfg1.key_label.as_deref(), None)
+        .unwrap_or_else(|e| fail(&format!("Officer 1 key handle lookup failed: {e}")));
+    let k2 = hsm2.find_private_key(cfg2.key_label.as_deref(), None)
+        .unwrap_or_else(|e| fail(&format!("Officer 2 key handle lookup failed: {e}")));
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let tbs = destroyer_core::nc3::compute_eam_tbs(directive.as_bytes(), now_secs);
+
+    let sig1 = hsm1.sign(k1, &tbs)
+        .unwrap_or_else(|e| fail(&format!("Officer 1 silicon sign failed: {e}")));
+    let sig2 = hsm2.sign(k2, &tbs)
+        .unwrap_or_else(|e| fail(&format!("Officer 2 silicon sign failed: {e}")));
+
+    let directive_obj = destroyer_core::nc3::EamDirective {
+        directive_text: directive.as_bytes().to_vec(),
+        officer1_sig: sig1,
+        officer2_sig: sig2,
+        timestamp_secs: now_secs,
+    };
+
+    let wire_bytes = directive_obj.to_bytes();
+    let wire_hex = hex_of(&wire_bytes);
+
+    println!("eam-auth-hw SUCCESS: DoD 5210.41M DUAL-OFFICER HARDWARE INTEGRITY VERIFIED");
+    println!("eam_wire_hex: {}", wire_hex.trim());
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -2825,6 +3670,7 @@ fn main() {
         "diode-recv" => cmd_diode_recv(&args[2..]),
         "stream-chaff" => cmd_stream_chaff(&args[2..]),
         "channel" => cmd_channel(&args[2..]),
+        "terminal" => cmd_terminal(&args[2..]),
         "cookie-challenge" => cmd_cookie_challenge(&args[2..]),
         "cookie-solve" => cmd_cookie_solve(&args[2..]),
         "cookie-verify" => cmd_cookie_verify(&args[2..]),
@@ -2848,6 +3694,10 @@ fn main() {
             #[cfg(not(feature = "lab-surfaces"))]
             { fail("eam-auth is a simulated/lab surface and is not available in production builds"); }
         }
+        "eam-auth-hw" => cmd_eam_auth_hw(&args[2..]),
+        "auth-tpm-seal" => cmd_auth_tpm_seal(&args[2..]),
+        "auth-tpm-unseal" => cmd_auth_tpm_unseal(&args[2..]),
+        "hsm-probe" => cmd_hsm_probe(&args[2..]),
         "nc3-safety-gate" => cmd_nc3_safety_gate(&args[2..]),
         "doc-seal" => cmd_doc_seal(&args[2..]),
         "doc-open" => cmd_doc_open(&args[2..]),

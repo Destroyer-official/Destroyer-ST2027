@@ -59,6 +59,10 @@ use sha2::Sha384;
 use std::fs::OpenOptions;
 use std::io::Write;
 
+use crate::ct::ct_eq;
+use crate::memlock::LockedKey32;
+use zeroize::Zeroize;
+
 type HmacSha384 = Hmac<Sha384>;
 
 /// Failure modes surfaced by an [`NvTransport`].
@@ -69,6 +73,9 @@ pub enum NvError {
     /// Defined but never incremented (TPM RC 0x14A, "used before being
     /// initialized") — counter chain not started yet.
     Uninitialized,
+    /// Policy failure / tamper detection: TPM silicon refused unseal because
+    /// live PCRs do not match the sealed measurement policy (TPM RC 0x99D / 0x17D / POLICY_FAIL).
+    PolicyFailure(String),
     /// Tool spawn/parse/TPM failure with no better classification.
     Tools(String),
 }
@@ -78,6 +85,7 @@ impl NvError {
         match self {
             NvError::NotDefined => "NV index not defined".to_string(),
             NvError::Uninitialized => "NV index not yet initialized".to_string(),
+            NvError::PolicyFailure(m) => format!("TPM PCR policy authorization failed: {m}"),
             NvError::Tools(m) => m.clone(),
         }
     }
@@ -101,6 +109,19 @@ pub struct ToolPaths {
     pub nvread: String,
     pub nvincrement: String,
     pub nvdefine: String,
+    pub pcrread: String,
+    pub createpolicy: String,
+    pub createprimary: String,
+    pub create: String,
+    pub load: String,
+    pub unseal: String,
+    pub flushcontext: String,
+}
+
+impl Default for ToolPaths {
+    fn default() -> Self {
+        Self::from_env()
+    }
 }
 
 impl ToolPaths {
@@ -111,6 +132,20 @@ impl ToolPaths {
                 .unwrap_or_else(|_| "tpm2_nvincrement".to_string()),
             nvdefine: std::env::var("P2P_TPM2_NVDEFINE")
                 .unwrap_or_else(|_| "tpm2_nvdefine".to_string()),
+            pcrread: std::env::var("P2P_TPM2_PCRREAD")
+                .unwrap_or_else(|_| "tpm2_pcrread".to_string()),
+            createpolicy: std::env::var("P2P_TPM2_CREATEPOLICY")
+                .unwrap_or_else(|_| "tpm2_createpolicy".to_string()),
+            createprimary: std::env::var("P2P_TPM2_CREATEPRIMARY")
+                .unwrap_or_else(|_| "tpm2_createprimary".to_string()),
+            create: std::env::var("P2P_TPM2_CREATE")
+                .unwrap_or_else(|_| "tpm2_create".to_string()),
+            load: std::env::var("P2P_TPM2_LOAD")
+                .unwrap_or_else(|_| "tpm2_load".to_string()),
+            unseal: std::env::var("P2P_TPM2_UNSEAL")
+                .unwrap_or_else(|_| "tpm2_unseal".to_string()),
+            flushcontext: std::env::var("P2P_TPM2_FLUSHCONTEXT")
+                .unwrap_or_else(|_| "tpm2_flushcontext".to_string()),
         }
     }
 }
@@ -227,6 +262,13 @@ pub fn classify_failure(blob: &str) -> NvError {
         || l.contains("not defined")
     {
         NvError::NotDefined
+    } else if l.contains("policy")
+        || l.contains("0x99d")
+        || l.contains("0x17d")
+        || l.contains("0x9a2")
+        || l.contains("hash of the policy does not match")
+    {
+        NvError::PolicyFailure(blob.trim().to_string())
     } else {
         NvError::Tools(blob.trim().to_string())
     }
@@ -491,6 +533,7 @@ fn counter_value(t: &dyn NvTransport) -> Result<Option<u64>, String> {
     match t.read() {
         Ok(v) => Ok(Some(v)),
         Err(NvError::NotDefined) | Err(NvError::Uninitialized) => Ok(None),
+        Err(NvError::PolicyFailure(m)) => Err(format!("TPM NV policy check failed: {m}")),
         Err(NvError::Tools(m)) => Err(format!("TPM NV read failed: {m}")),
     }
 }
@@ -598,6 +641,281 @@ fn sidecar_last(key: &[u8; 32], state_path: &str) -> Result<Option<(u64, u64)>, 
         ));
     }
     Ok(Some((gen, seq)))
+}
+
+
+/// Measured Boot PCR bank and registers policy for TPM 2.0 object sealing.
+/// Default configuration covers PCRs 0, 1, 2, and 7:
+/// - PCR 0: CRTM, BIOS / UEFI firmware code & embedded measurements
+/// - PCR 1: Host Platform Configuration & motherboard hardware
+/// - PCR 2: UEFI Option ROMs (PCIe devices, RAID, NIC firmware)
+/// - PCR 7: Secure Boot State, PK, KEK, db, dbx, and policy enforcement
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TpmPcrPolicy {
+    pub bank: String,
+    pub pcrs: Vec<u32>,
+}
+
+impl Default for TpmPcrPolicy {
+    fn default() -> Self {
+        Self {
+            bank: "sha256".to_string(),
+            pcrs: vec![0, 1, 2, 7],
+        }
+    }
+}
+
+impl TpmPcrPolicy {
+    pub fn new(bank: &str, pcrs: &[u32]) -> Self {
+        Self {
+            bank: bank.to_string(),
+            pcrs: pcrs.to_vec(),
+        }
+    }
+
+    pub fn pcr_spec(&self) -> String {
+        let list: Vec<String> = self.pcrs.iter().map(|p| p.to_string()).collect();
+        format!("{}:{}", self.bank, list.join(","))
+    }
+}
+
+/// Seal a 32-byte signing seed into TPM 2.0 silicon bound to measured boot PCRs (0, 1, 2, 7).
+pub fn seal_seed_to_pcrs(
+    seed: &[u8; 32],
+    policy: &TpmPcrPolicy,
+    out_priv: &str,
+    out_pub: &str,
+    owner: &str,
+    tools: &ToolPaths,
+) -> Result<(), NvError> {
+    let temp_dir = std::env::temp_dir().join(format!("tpm_seal_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).map_err(|e| NvError::Tools(format!("temp dir creation: {e}")))?;
+
+    let primary_ctx = temp_dir.join("primary.ctx");
+    let pcr_bin = temp_dir.join("pcr.bin");
+    let policy_file = temp_dir.join("pcr.policy");
+    let seed_file = temp_dir.join("seed.dat");
+
+    std::fs::write(&seed_file, seed).map_err(|e| NvError::Tools(format!("seed file write: {e}")))?;
+
+    let pcr_spec = policy.pcr_spec();
+    let primary_args = vec![
+        "-C".to_string(), owner.to_string(),
+        "-g".to_string(), "sha256".to_string(),
+        "-G".to_string(), "rsa".to_string(),
+        "-c".to_string(), primary_ctx.to_string_lossy().to_string(),
+    ];
+    if let Err(e) = run_tool(&tools.createprimary, &primary_args) {
+        let _ = purge_temp_dir(&temp_dir, &seed_file);
+        return Err(e);
+    }
+
+    let pcrread_args = vec![
+        "-l".to_string(), pcr_spec.clone(),
+        "-o".to_string(), pcr_bin.to_string_lossy().to_string(),
+    ];
+    if let Err(e) = run_tool(&tools.pcrread, &pcrread_args) {
+        let _ = purge_temp_dir(&temp_dir, &seed_file);
+        return Err(e);
+    }
+
+    let policy_args = vec![
+        "--policy-pcr".to_string(),
+        "-l".to_string(), pcr_spec,
+        "-f".to_string(), pcr_bin.to_string_lossy().to_string(),
+        "-L".to_string(), policy_file.to_string_lossy().to_string(),
+    ];
+    if let Err(e) = run_tool(&tools.createpolicy, &policy_args) {
+        let _ = purge_temp_dir(&temp_dir, &seed_file);
+        return Err(e);
+    }
+
+    let create_args = vec![
+        "-C".to_string(), primary_ctx.to_string_lossy().to_string(),
+        "-L".to_string(), policy_file.to_string_lossy().to_string(),
+        "-u".to_string(), out_pub.to_string(),
+        "-r".to_string(), out_priv.to_string(),
+        "-i".to_string(), seed_file.to_string_lossy().to_string(),
+    ];
+    let res = run_tool(&tools.create, &create_args);
+
+    let _ = run_tool(&tools.flushcontext, &[primary_ctx.to_string_lossy().to_string()]);
+    let _ = purge_temp_dir(&temp_dir, &seed_file);
+
+    res.map(|_| ())
+}
+
+/// Unseal a 32-byte signing seed from TPM 2.0 silicon.
+///
+/// Fails fail-closed if:
+/// - Firmware or BIOS is tampered with (PCR 0/1 changed)
+/// - Option ROMs / hardware cards altered (PCR 2 changed)
+/// - Secure Boot state or platform keys tampered/disabled (PCR 7 changed)
+pub fn unseal_seed_from_pcrs(
+    priv_path: &str,
+    pub_path: &str,
+    policy: &TpmPcrPolicy,
+    owner: &str,
+    tools: &ToolPaths,
+) -> Result<LockedKey32, NvError> {
+    let temp_dir = std::env::temp_dir().join(format!("tpm_unseal_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).map_err(|e| NvError::Tools(format!("temp dir creation: {e}")))?;
+
+    let primary_ctx = temp_dir.join("primary.ctx");
+    let seal_ctx = temp_dir.join("seal.ctx");
+    let pcr_spec = policy.pcr_spec();
+
+    let primary_args = vec![
+        "-C".to_string(), owner.to_string(),
+        "-g".to_string(), "sha256".to_string(),
+        "-G".to_string(), "rsa".to_string(),
+        "-c".to_string(), primary_ctx.to_string_lossy().to_string(),
+    ];
+    let p_res = run_tool(&tools.createprimary, &primary_args);
+    if let Err(e) = p_res {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(e);
+    }
+
+    let load_args = vec![
+        "-C".to_string(), primary_ctx.to_string_lossy().to_string(),
+        "-u".to_string(), pub_path.to_string(),
+        "-r".to_string(), priv_path.to_string(),
+        "-c".to_string(), seal_ctx.to_string_lossy().to_string(),
+    ];
+    let load_res = run_tool(&tools.load, &load_args);
+    if let Err(e) = load_res {
+        let _ = run_tool(&tools.flushcontext, &[primary_ctx.to_string_lossy().to_string()]);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(e);
+    }
+
+    let unseal_args = vec![
+        "-c".to_string(), seal_ctx.to_string_lossy().to_string(),
+        "-p".to_string(), format!("pcr:{}", pcr_spec),
+    ];
+    let unseal_res = run_tool_bytes(&tools.unseal, &unseal_args);
+
+    let _ = run_tool(&tools.flushcontext, &[seal_ctx.to_string_lossy().to_string()]);
+    let _ = run_tool(&tools.flushcontext, &[primary_ctx.to_string_lossy().to_string()]);
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let raw_bytes = unseal_res?;
+    if raw_bytes.len() < 32 {
+        return Err(NvError::PolicyFailure(format!(
+            "Unsealed payload size mismatch (expected 32 bytes, got {})",
+            raw_bytes.len()
+        )));
+    }
+
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&raw_bytes[..32]);
+    let locked = LockedKey32::new(seed);
+    seed.zeroize();
+
+    Ok(locked)
+}
+
+pub fn run_tool_bytes(prog: &str, argv: &[String]) -> Result<Vec<u8>, NvError> {
+    let out = std::process::Command::new(prog)
+        .args(argv)
+        .output()
+        .map_err(|e| NvError::Tools(format!("{prog}: {e}")))?;
+    if out.status.success() {
+        return Ok(out.stdout);
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Err(classify_failure(&format!("{stderr}{stdout}")))
+}
+
+fn purge_temp_dir(dir: &std::path::Path, seed_file: &std::path::Path) -> Result<(), NvError> {
+    if seed_file.exists() {
+        if let Ok(meta) = std::fs::metadata(seed_file) {
+            let zeros = vec![0u8; meta.len() as usize];
+            let _ = std::fs::write(seed_file, zeros);
+        }
+        let _ = std::fs::remove_file(seed_file);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// In-memory mock PCR policy simulator for unit tests and CI verification without hardware.
+#[derive(Debug, Clone)]
+pub struct MockTpmPcrSimulator {
+    pub pcr_0: [u8; 32], // CRTM / BIOS
+    pub pcr_1: [u8; 32], // Platform config
+    pub pcr_2: [u8; 32], // Option ROMs
+    pub pcr_7: [u8; 32], // Secure Boot state
+    sealed_policy_digest: Option<[u8; 32]>,
+    sealed_ciphertext: Option<Vec<u8>>,
+}
+
+impl MockTpmPcrSimulator {
+    pub fn new_clean_measured_boot() -> Self {
+        Self {
+            pcr_0: [0x11u8; 32], // Measured BIOS
+            pcr_1: [0x22u8; 32], // Measured Motherboard
+            pcr_2: [0x33u8; 32], // Measured Option ROM
+            pcr_7: [0x77u8; 32], // Secure Boot ENABLED + Valid PK/KEK
+            sealed_policy_digest: None,
+            sealed_ciphertext: None,
+        }
+    }
+
+    pub fn compute_composite_pcr_digest(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.pcr_0);
+        hasher.update(&self.pcr_1);
+        hasher.update(&self.pcr_2);
+        hasher.update(&self.pcr_7);
+        hasher.finalize().into()
+    }
+
+    pub fn seal(&mut self, seed: &[u8; 32]) {
+        let policy_digest = self.compute_composite_pcr_digest();
+        let mut ct = vec![0u8; 32];
+        for i in 0..32 {
+            ct[i] = seed[i] ^ policy_digest[i];
+        }
+        self.sealed_policy_digest = Some(policy_digest);
+        self.sealed_ciphertext = Some(ct);
+    }
+
+    pub fn unseal(&self) -> Result<LockedKey32, NvError> {
+        let current_policy_digest = self.compute_composite_pcr_digest();
+        let expected = self.sealed_policy_digest.ok_or(NvError::NotDefined)?;
+
+        if !ct_eq(&current_policy_digest, &expected) {
+            return Err(NvError::PolicyFailure(
+                "TPM_RC_POLICY_FAIL (0x99D): Platform Configuration Registers mismatch. Firmware tampered or Secure Boot disabled."
+                    .to_string(),
+            ));
+        }
+
+        let ct = self.sealed_ciphertext.as_ref().ok_or(NvError::Uninitialized)?;
+        let mut pt = [0u8; 32];
+        for i in 0..32 {
+            pt[i] = ct[i] ^ current_policy_digest[i];
+        }
+        let locked = LockedKey32::new(pt);
+        pt.zeroize();
+        Ok(locked)
+    }
+
+    pub fn tamper_firmware(&mut self) {
+        self.pcr_0[0] ^= 0xFF; // Modify BIOS measurement
+    }
+
+    pub fn disable_secure_boot(&mut self) {
+        self.pcr_7[0] ^= 0xAA; // Modify Secure Boot measurement
+    }
+
+    pub fn tamper_option_rom(&mut self) {
+        self.pcr_2[0] ^= 0x55; // Modify Option ROM measurement
+    }
 }
 
 #[cfg(test)]
@@ -723,6 +1041,69 @@ mod tests {
     }
 
     #[test]
+    fn pcr_policy_specification_format() {
+        let policy = TpmPcrPolicy::default();
+        assert_eq!(policy.pcr_spec(), "sha256:0,1,2,7");
+        let custom = TpmPcrPolicy::new("sha384", &[0, 7]);
+        assert_eq!(custom.pcr_spec(), "sha384:0,7");
+    }
+
+    #[test]
+    fn mock_tpm_pcr_sealing_unseal_roundtrip() {
+        let mut sim = MockTpmPcrSimulator::new_clean_measured_boot();
+        let seed = [0x42u8; 32];
+        sim.seal(&seed);
+        let unsealed = sim.unseal().expect("unseal on clean boot");
+        assert_eq!(unsealed.as_bytes(), &seed);
+    }
+
+    #[test]
+    fn mock_tpm_pcr_tamper_firmware_fails_closed() {
+        let mut sim = MockTpmPcrSimulator::new_clean_measured_boot();
+        let seed = [0x42u8; 32];
+        sim.seal(&seed);
+        sim.tamper_firmware();
+        let err = sim.unseal().unwrap_err();
+        match err {
+            NvError::PolicyFailure(msg) => {
+                assert!(msg.contains("TPM_RC_POLICY_FAIL") || msg.contains("mismatch"));
+            }
+            _ => panic!("Expected PolicyFailure, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn mock_tpm_pcr_disable_secure_boot_fails_closed() {
+        let mut sim = MockTpmPcrSimulator::new_clean_measured_boot();
+        let seed = [0x42u8; 32];
+        sim.seal(&seed);
+        sim.disable_secure_boot();
+        let err = sim.unseal().unwrap_err();
+        match err {
+            NvError::PolicyFailure(msg) => {
+                assert!(msg.contains("TPM_RC_POLICY_FAIL") || msg.contains("mismatch"));
+            }
+            _ => panic!("Expected PolicyFailure, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn mock_tpm_pcr_tamper_option_rom_fails_closed() {
+        let mut sim = MockTpmPcrSimulator::new_clean_measured_boot();
+        let seed = [0x42u8; 32];
+        sim.seal(&seed);
+        sim.tamper_option_rom();
+        let err = sim.unseal().unwrap_err();
+        match err {
+            NvError::PolicyFailure(msg) => {
+                assert!(msg.contains("TPM_RC_POLICY_FAIL") || msg.contains("mismatch"));
+            }
+            _ => panic!("Expected PolicyFailure, got {err:?}"),
+        }
+    }
+
+
+    #[test]
     fn tool_argv_construction() {
         let t = ToolsTransport::new(
             0x1500016,
@@ -731,6 +1112,7 @@ mod tests {
                 nvread: "tpm2_nvread".to_string(),
                 nvincrement: "tpm2_nvincrement".to_string(),
                 nvdefine: "tpm2_nvdefine".to_string(),
+                ..ToolPaths::default()
             },
         );
         let (p, a) = t.read_argv();

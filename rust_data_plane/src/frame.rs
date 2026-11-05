@@ -3,10 +3,70 @@
 //! The GHASH tag covers header + ciphertext. Anything failing the tag,
 //! arriving pre-handshake, or malformed is dropped before parsing — never answered.
 
+use crate::policy::CoreError;
+
 /// Frame type bytes on the wire.
 pub const FTYPE_MSG: u8 = 0x01;
+/// In-band Continuous Epoch Ratchet (CER) rekeying envelope (FTYPE_REKEY = 0x02).
+pub const FTYPE_REKEY: u8 = 0x02;
+/// In-band Continuous Epoch Ratchet (CER) key replenishment frame (FTYPE_IN_BAND_EPOCH_REKEY = 0x07).
+pub const FTYPE_IN_BAND_EPOCH_REKEY: u8 = 0x07;
+/// Alias matching specification name: IN_BAND_EPOCH_REKEY = 0x07.
+pub const IN_BAND_EPOCH_REKEY: u8 = 0x07;
 /// Chaff / heartbeat replacement. Never surfaces to the application.
 pub const FTYPE_CHAFF: u8 = 0xFF;
+
+/// In-Band Epoch Rekey payload format constants:
+/// Payload format: EpochIndex (u32) || Ephemeral_MLKEM_Ciphertext (1568 bytes) || AuthTag (16 bytes).
+pub const EPOCH_INDEX_LEN: usize = 4;
+pub const MLKEM1024_CT_LEN: usize = 1568;
+pub const AUTH_TAG_16_LEN: usize = 16;
+pub const IN_BAND_REKEY_PAYLOAD_LEN: usize =
+    EPOCH_INDEX_LEN + MLKEM1024_CT_LEN + AUTH_TAG_16_LEN; // 1588 bytes
+
+/// Wire representation of an In-Band Continuous Epoch Ratchet (CER) rekey payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InBandEpochRekeyPayload {
+    /// Monotonic epoch index (32-bit big-endian).
+    pub epoch: u32,
+    /// Fresh ephemeral ML-KEM-1024 ciphertext (1568 bytes, FIPS 203).
+    pub ct: [u8; MLKEM1024_CT_LEN],
+    /// 16-byte HMAC-SHA384 authentication tag covering (epoch || ct) under root key.
+    pub tag: [u8; AUTH_TAG_16_LEN],
+}
+
+impl InBandEpochRekeyPayload {
+    pub fn new(epoch: u32, ct: [u8; MLKEM1024_CT_LEN], tag: [u8; AUTH_TAG_16_LEN]) -> Self {
+        Self { epoch, ct, tag }
+    }
+
+    /// Serialize payload to contiguous 1588-byte buffer:
+    /// `EpochIndex (u32 BE) || Ephemeral_MLKEM_Ciphertext (1568B) || AuthTag (16B)`
+    pub fn to_bytes(&self) -> [u8; IN_BAND_REKEY_PAYLOAD_LEN] {
+        let mut out = [0u8; IN_BAND_REKEY_PAYLOAD_LEN];
+        out[..4].copy_from_slice(&self.epoch.to_be_bytes());
+        out[4..4 + MLKEM1024_CT_LEN].copy_from_slice(&self.ct);
+        out[4 + MLKEM1024_CT_LEN..].copy_from_slice(&self.tag);
+        out
+    }
+
+    /// Parse and validate payload from binary slice.
+    pub fn from_bytes(slice: &[u8]) -> Result<Self, CoreError> {
+        if slice.len() != IN_BAND_REKEY_PAYLOAD_LEN {
+            return Err(CoreError::Malformed);
+        }
+        let epoch = u32::from_be_bytes(
+            slice[..4]
+                .try_into()
+                .map_err(|_| CoreError::Malformed)?,
+        );
+        let mut ct = [0u8; MLKEM1024_CT_LEN];
+        ct.copy_from_slice(&slice[4..4 + MLKEM1024_CT_LEN]);
+        let mut tag = [0u8; AUTH_TAG_16_LEN];
+        tag.copy_from_slice(&slice[4 + MLKEM1024_CT_LEN..]);
+        Ok(Self { epoch, ct, tag })
+    }
+}
 
 /// Fixed framing quanta: TOTAL on-wire frame sizes in bytes (what an
 /// adversary observes). 1232 = 1280 (IPv6 minimum MTU) − 40 (IPv6) − 8 (UDP).
@@ -82,5 +142,30 @@ mod tests {
             joined.extend_from_slice(&c);
         }
         assert_eq!(joined, vec![3u8; 5000]);
+    }
+    #[test]
+    fn in_band_epoch_rekey_payload_roundtrip() {
+        let mut ct = [0u8; MLKEM1024_CT_LEN];
+        ct[0] = 0xAA;
+        ct[MLKEM1024_CT_LEN - 1] = 0x55;
+        let mut tag = [0u8; AUTH_TAG_16_LEN];
+        tag[0] = 0x12;
+        tag[AUTH_TAG_16_LEN - 1] = 0x34;
+
+        let payload = InBandEpochRekeyPayload::new(42, ct, tag);
+        let bytes = payload.to_bytes();
+        assert_eq!(bytes.len(), IN_BAND_REKEY_PAYLOAD_LEN);
+        assert_eq!(&bytes[..4], &42u32.to_be_bytes());
+        assert_eq!(&bytes[4..4 + MLKEM1024_CT_LEN], &ct);
+        assert_eq!(&bytes[4 + MLKEM1024_CT_LEN..], &tag);
+
+        let parsed = InBandEpochRekeyPayload::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed, payload);
+
+        // Malformed lengths fail-closed
+        assert_eq!(InBandEpochRekeyPayload::from_bytes(&bytes[..1000]), Err(CoreError::Malformed));
+        let mut oversize = bytes.to_vec();
+        oversize.push(0x00);
+        assert_eq!(InBandEpochRekeyPayload::from_bytes(&oversize), Err(CoreError::Malformed));
     }
 }

@@ -683,6 +683,10 @@ class TacticalConsoleStation:
             print(f"{RED}[NC3 VIOLATION]{RESET} Two-Person Rule requires two distinct authorized officers!")
             return {}
 
+        if _is_production() and kwargs.get("used_disk_signatures", False):
+            print(f"{RED}[CRITICAL TPI VIOLATION]{RESET} Disk-based synthetic JSON signatures are strictly prohibited in production. Physical split-knowledge hardware smartcard tokens required.")
+            return {}
+
         ts = time.time()
         nonce = secrets.token_hex(16)
         env_bytes = canonical_eam_bytes(directive, officer1, officer2, ts, nonce)
@@ -913,6 +917,10 @@ def main():
     parser.add_argument("--psk-file", default=os.environ.get("P2P_PSK_FILE"), help="Pre-shared key file")
     parser.add_argument("--auth-sk-file", default=os.environ.get("P2P_AUTH_SK_FILE"), help="Local ML-DSA-87 signing-key seed")
     parser.add_argument("--peer-auth-pk-file", default=os.environ.get("P2P_PEER_AUTH_PK_FILE"), help="Pinned peer ML-DSA-87 public key")
+    parser.add_argument("--auth-tpm-sealed", default=os.environ.get("P2P_AUTH_TPM_SEALED"), help="Path to TPM 2.0 PCR-sealed ML-DSA-87 seed object (zero-disk silicon custody)")
+    parser.add_argument("--auth-tpm-pub", default=os.environ.get("P2P_AUTH_TPM_PUB"), help="Path to TPM 2.0 sealed object public portion")
+    parser.add_argument("--pcrs", default=os.environ.get("P2P_TPM_PCRS"), help="Comma-separated PCR list for TPM measured boot policy")
+    parser.add_argument("--tpm-owner", default=os.environ.get("P2P_TPM_OWNER"), help="TPM owner authorization hierarchy or password")
     parser.add_argument("--require-mutual-auth", action="store_true", help="Require mutual ML-DSA-87 authentication")
     parser.add_argument("--lab", action="store_true", help="Explicit lab mode (lower assurance)")
     parser.add_argument("--drill", action="store_true", help="Run automated 2-base tactical battle drill")
@@ -941,6 +949,10 @@ def main():
             peer_auth_pk_file=args.peer_auth_pk_file,
             require_mutual_auth=(args.require_mutual_auth or None),
             lab_mode=(True if args.lab else None),
+            auth_tpm_sealed=args.auth_tpm_sealed,
+            auth_tpm_pub=args.auth_tpm_pub,
+            tpm_pcrs=args.pcrs,
+            tpm_owner=args.tpm_owner,
         )
         return
 

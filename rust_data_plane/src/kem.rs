@@ -152,6 +152,36 @@ impl EphemeralKeys {
         p_raw.zeroize();
         Ok(hybrid)
     }
+
+    /// Decapsulate an ML-KEM-1024 ciphertext with our decapsulation key.
+    pub fn decapsulate_mlkem(&self, ml_ct: &[u8]) -> Result<Zeroizing<[u8; MLKEM_SS]>, KemError> {
+        if ml_ct.len() != MLKEM_CT {
+            return Err(KemError::BadLength);
+        }
+        use ml_kem::Ciphertext;
+        let ct_arr: [u8; MLKEM_CT] = ml_ct.try_into().map_err(|_| KemError::BadLength)?;
+        let ct: Ciphertext<MlKem1024> = ct_arr.into();
+        let ml_ss: SharedKey<MlKem1024> = self.ml_dk.decapsulate(&ct);
+        let mut ss = Zeroizing::new([0u8; MLKEM_SS]);
+        ss.copy_from_slice(ml_ss.as_slice());
+        Ok(ss)
+    }
+}
+
+/// Encapsulate to a peer's ML-KEM-1024 public encapsulation key.
+/// Returns (ciphertext 1568 bytes, 32-byte shared secret).
+pub fn encapsulate_mlkem(peer_ml_ek: &[u8]) -> Result<(Vec<u8>, Zeroizing<[u8; MLKEM_SS]>), KemError> {
+    use ml_kem::Key;
+    if peer_ml_ek.len() != MLKEM_PK {
+        return Err(KemError::BadLength);
+    }
+    let ek_arr: [u8; MLKEM_PK] = peer_ml_ek.try_into().map_err(|_| KemError::BadLength)?;
+    let ek_key: Key<EncapsulationKey<MlKem1024>> = ek_arr.into();
+    let ek = EncapsulationKey::<MlKem1024>::new(&ek_key).map_err(|_| KemError::BadLength)?;
+    let (ct, ml_ss) = ek.encapsulate();
+    let mut ss = Zeroizing::new([0u8; MLKEM_SS]);
+    ss.copy_from_slice(ml_ss.as_slice());
+    Ok((ct.to_vec(), ss))
 }
 
 impl Drop for EphemeralKeys {
@@ -243,6 +273,22 @@ pub fn constant_time_eq_32(a: &[u8; 32], b: &[u8; 32]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mlkem_pure_encaps_decaps_roundtrip() {
+        let keys = EphemeralKeys::generate().unwrap();
+        let (ct, ss_enc) = encapsulate_mlkem(&keys.ml_ek).unwrap();
+        assert_eq!(ct.len(), MLKEM_CT);
+        assert_eq!(ss_enc.len(), MLKEM_SS);
+        let ss_dec = keys.decapsulate_mlkem(&ct).unwrap();
+        assert_eq!(ss_enc.as_slice(), ss_dec.as_slice());
+
+        // Incorrect ciphertext yields IND-CCA2 pseudorandom rejection (different secret)
+        let mut corrupted_ct = ct.clone();
+        corrupted_ct[0] ^= 0xFF;
+        let ss_corrupt = keys.decapsulate_mlkem(&corrupted_ct).unwrap();
+        assert_ne!(ss_enc.as_slice(), ss_corrupt.as_slice());
+    }
 
     #[test]
     fn cnsa_sizes_pinned() {

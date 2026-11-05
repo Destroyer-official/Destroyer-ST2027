@@ -25,6 +25,8 @@
 // Real sources, included by path (additive-only workaround for cdylib-only).
 #![allow(dead_code)]
 #![allow(clippy::all)]
+#[path = "../src/policy.rs"]
+pub mod policy;
 #[path = "../src/frame.rs"]
 mod frame;
 #[path = "../src/replay.rs"]

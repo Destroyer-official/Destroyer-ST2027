@@ -198,6 +198,36 @@ impl ZeroGapPipeline {
         Ok(self.current_epoch)
     }
 
+    /// Rotate Continuous Epoch Ratchet (CER) with fresh post-quantum KEM encapsulation (True PCS).
+    pub fn rotate_epoch_asymmetric(
+        &mut self,
+        ratchet: &mut PcsRatchet,
+        peer_p_pub: &[u8; crate::kem::P384_PK],
+        peer_ek: &[u8],
+    ) -> Result<(crate::ratchet::RatchetStep, u64), CoreError> {
+        let (step, msg_key) = ratchet.send_step(peer_p_pub, peer_ek)?;
+        self.current_epoch = self.current_epoch.checked_add(1).ok_or(CoreError::Oversize)?;
+        let next_fk = derive_frame_key_sha512(&msg_key)?;
+        self.frame_key = Some(FrameKey::from_bytes(next_fk));
+        self.epoch_root = Zeroizing::new(msg_key);
+        Ok((step, self.current_epoch))
+    }
+
+    /// Process peer's asymmetric ratchet step to advance epoch with True PCS.
+    pub fn receive_epoch_asymmetric(
+        &mut self,
+        ratchet: &mut PcsRatchet,
+        peer_eph_p_pub: &[u8; crate::kem::P384_PK],
+        peer_ml_ct: &[u8],
+    ) -> Result<u64, CoreError> {
+        let msg_key = ratchet.receive_step(peer_eph_p_pub, peer_ml_ct)?;
+        self.current_epoch = self.current_epoch.checked_add(1).ok_or(CoreError::Oversize)?;
+        let next_fk = derive_frame_key_sha512(&msg_key)?;
+        self.frame_key = Some(FrameKey::from_bytes(next_fk));
+        self.epoch_root = Zeroizing::new(msg_key);
+        Ok(self.current_epoch)
+    }
+
     /// Seal a message through all defense layers:
     /// Pre-flight -> Stealth Header Wrap -> Quantize Pad -> Ratchet Seal -> AEAD Frame
     pub fn seal(
@@ -424,4 +454,47 @@ mod tests {
         let res = p.seal(dirty, PIPELINE_TYPE_MSG, ClearanceLevel::TopSecret, &mut r, &x, &ek);
         assert_eq!(res.unwrap_err(), CoreError::ZeroTrustViolation);
     }
+
+    #[test]
+    fn pipeline_asymmetric_epoch_rekey_pcs() {
+        let root = [0x99u8; 32];
+        let mut p_send = ZeroGapPipeline::new(&root, true, true).expect("init send");
+        let mut p_recv = ZeroGapPipeline::new(&root, false, true).expect("init recv");
+
+        let mut r_send = PcsRatchet::new(&root).expect("ratchet send");
+        let mut r_recv = PcsRatchet::new(&root).expect("ratchet recv");
+
+        let (b_x, b_ek) = r_recv.advertise();
+
+        // 1. Asymmetric rekey from send -> recv
+        let (step, new_epoch_send) = p_send.rotate_epoch_asymmetric(&mut r_send, &b_x, &b_ek).unwrap();
+        let new_epoch_recv = p_recv.receive_epoch_asymmetric(&mut r_recv, &step.eph_p_pub, &step.ml_ct).unwrap();
+
+        assert_eq!(new_epoch_send, 1);
+        assert_eq!(new_epoch_recv, 1);
+        assert_eq!(p_send.current_epoch(), 1);
+        assert_eq!(p_recv.current_epoch(), 1);
+
+        // 2. Next message seals and opens under Epoch 1
+        let (b_x2, b_ek2) = r_recv.advertise();
+        let (step2, wire_frame) = p_send.seal(
+            b"EPOCH_1_TACTICAL_COMMAND",
+            PIPELINE_TYPE_MSG,
+            ClearanceLevel::TopSecret,
+            &mut r_send,
+            &b_x2,
+            &b_ek2,
+        ).unwrap();
+
+        let (mtype, opened) = p_recv.open(
+            &wire_frame,
+            &mut r_recv,
+            &step2.eph_p_pub,
+            &step2.ml_ct,
+        ).unwrap();
+
+        assert_eq!(mtype, PIPELINE_TYPE_MSG);
+        assert_eq!(opened, b"EPOCH_1_TACTICAL_COMMAND");
+    }
+
 }

@@ -176,6 +176,36 @@ impl CoreKexResponder {
             },
         )
     }
+
+    /// Complete with PSK plus mutual ML-DSA-87 signatures (highest assurance, CNSA 2.0).
+    pub fn complete_both(
+        &self,
+        ib: Vec<u8>,
+        psk: Vec<u8>,
+        r_vk: Vec<u8>,
+        r_sig: Vec<u8>,
+        i_vk: Vec<u8>,
+        i_sig: Vec<u8>,
+    ) -> PyResult<(Vec<u8>, Vec<u8>, String)> {
+        let p = psk32(psk)?;
+        let rv = Mldsa87VerifyingKey::from_bytes(&r_vk).map_err(err)?;
+        let iv = Mldsa87VerifyingKey::from_bytes(&i_vk).map_err(err)?;
+        let r = Self::finish_raw(
+            self,
+            ib,
+            &AuthMaterial::Both {
+                psk: &p,
+                responder_vk: &rv,
+                responder_sig: &r_sig,
+                initiator_vk: &iv,
+                initiator_sig: &i_sig,
+            },
+        );
+        let mut z = Zeroizing::new(p);
+        use zeroize::Zeroize;
+        z.zeroize();
+        r
+    }
 }
 
 /// KEX initiator phase-1 handle: holds `(rb, ib, hybrid)` in Rust between
@@ -257,6 +287,42 @@ impl CoreKexInitiator {
             },
         )
         .map_err(err)?;
+        Ok((
+            r.session_key().to_vec(),
+            r.transcript().to_vec(),
+            r.sas_string(),
+        ))
+    }
+
+    /// Finish with PSK plus mutual ML-DSA-87 signatures (highest assurance, CNSA 2.0).
+    pub fn finish_both(
+        &mut self,
+        psk: Vec<u8>,
+        r_vk: Vec<u8>,
+        r_sig: Vec<u8>,
+        i_vk: Vec<u8>,
+        i_sig: Vec<u8>,
+    ) -> PyResult<(Vec<u8>, Vec<u8>, String)> {
+        let p = psk32(psk)?;
+        let rv = Mldsa87VerifyingKey::from_bytes(&r_vk).map_err(err)?;
+        let iv = Mldsa87VerifyingKey::from_bytes(&i_vk).map_err(err)?;
+        let h = self.take_hybrid()?;
+        let r = initiator_finish(
+            &self.rb,
+            &self.ib,
+            &h,
+            &AuthMaterial::Both {
+                psk: &p,
+                responder_vk: &rv,
+                responder_sig: &r_sig,
+                initiator_vk: &iv,
+                initiator_sig: &i_sig,
+            },
+        )
+        .map_err(err)?;
+        let mut z = Zeroizing::new(p);
+        use zeroize::Zeroize;
+        z.zeroize();
         Ok((
             r.session_key().to_vec(),
             r.transcript().to_vec(),

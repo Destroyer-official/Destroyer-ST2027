@@ -14277,7 +14277,13 @@ class TacticalP2PNode:
                  auth_sk_file: str = None, peer_auth_pk_file: str = None,
                  require_mutual_auth: bool = None,
                  root_ca_file: str = None, node_cert_file: str = None,
-                 peer_cert_file: str = None, require_root_ca: bool = None):
+                 peer_cert_file: str = None, require_root_ca: bool = None,
+                 auth_tpm_sealed: str = None, auth_tpm_pub: str = None,
+                 tpm_pcrs: str = None, tpm_owner: str = None,
+                 token1_module: str = None, token1_slot: int = None,
+                 token1_pin: str = None, token1_key_label: str = None,
+                 token2_module: str = None, token2_slot: int = None,
+                 token2_pin: str = None, token2_key_label: str = None):
         self.name = name
         self.role = role.lower()  # "initiator" or "responder"
         self.bind_addr = bind_addr
@@ -14299,6 +14305,18 @@ class TacticalP2PNode:
         self.auth_sk_file = auth_sk_file or os.environ.get("P2P_AUTH_SK_FILE")
         self.peer_auth_pk_file = (peer_auth_pk_file
                                   or os.environ.get("P2P_PEER_AUTH_PK_FILE"))
+        self.auth_tpm_sealed = auth_tpm_sealed or os.environ.get("P2P_AUTH_TPM_SEALED")
+        self.auth_tpm_pub = auth_tpm_pub or os.environ.get("P2P_AUTH_TPM_PUB")
+        self.tpm_pcrs = tpm_pcrs or os.environ.get("P2P_TPM_PCRS")
+        self.tpm_owner = tpm_owner or os.environ.get("P2P_TPM_OWNER")
+        self.token1_module = token1_module or os.environ.get("P2P_TOKEN1_MODULE")
+        self.token1_slot = token1_slot if token1_slot is not None else (int(os.environ["P2P_TOKEN1_SLOT"]) if "P2P_TOKEN1_SLOT" in os.environ else None)
+        self.token1_pin = token1_pin or os.environ.get("P2P_TOKEN1_PIN")
+        self.token1_key_label = token1_key_label or os.environ.get("P2P_TOKEN1_KEY_LABEL")
+        self.token2_module = token2_module or os.environ.get("P2P_TOKEN2_MODULE")
+        self.token2_slot = token2_slot if token2_slot is not None else (int(os.environ["P2P_TOKEN2_SLOT"]) if "P2P_TOKEN2_SLOT" in os.environ else None)
+        self.token2_pin = token2_pin or os.environ.get("P2P_TOKEN2_PIN")
+        self.token2_key_label = token2_key_label or os.environ.get("P2P_TOKEN2_KEY_LABEL")
         if require_mutual_auth is None:
             require_mutual_auth = not self.lab_mode
         self.require_mutual_auth = bool(require_mutual_auth)
@@ -14322,8 +14340,12 @@ class TacticalP2PNode:
 
         self.crypto_posture = {
             "kex": "SecP384r1MLKEM1024 (P-384 + ML-KEM-1024, FIPS 203)",
-            "identity": ("ML-DSA-87 mutual + pinned peer key (FIPS 204)"
-                         if self.require_mutual_auth else "PSK-only (LAB)"),
+            "identity": ("ML-DSA-87 silicon-sealed (TPM 2.0 PCR 0,1,2,7) + pinned peer key (FIPS 204)"
+                         if self.auth_tpm_sealed else
+                         ("ML-DSA-87 mutual + pinned peer key (FIPS 204)"
+                          if self.require_mutual_auth else "PSK-only (LAB)")),
+            "hardware_key_containment": ("TPM 2.0 PCR-Sealed (Zero-Disk)" if self.auth_tpm_sealed else
+                                         ("Host Disk Seed (0600)" if self.auth_sk_file else "None")),
             "aead": "AES-256-GCM (FIPS 197/SP 800-38D)",
             "hash": "SHA-384 / HKDF-SHA384 (FIPS 180-4)",
             "psk": bool(self.psk_file),
@@ -14411,7 +14433,7 @@ class TacticalP2PNode:
         # production (and whenever explicitly requested); PSK-only is a lab
         # fallback. The pinned peer key is the trust anchor; the local seed
         # signs the hybrid transcript. Both are bound into the session key.
-        mutual = not self.lab_mode or bool(self.auth_sk_file and self.peer_auth_pk_file)
+        mutual = not self.lab_mode or bool((self.auth_sk_file or self.auth_tpm_sealed) and self.peer_auth_pk_file)
         if mutual:
             if self.require_root_ca:
                 if not self.root_ca_file or not os.path.exists(self.root_ca_file):
@@ -14437,19 +14459,41 @@ class TacticalP2PNode:
                         self.acd_engine.ingest_event("auth_fail", peer_id=self.peer_addr, source_ip=self.peer_addr, details={"reason": f"root_ca_reject:{ca_err}"})
                     return False
 
-            if not self.auth_sk_file or not self.peer_auth_pk_file:
+            if not (self.auth_sk_file or self.auth_tpm_sealed) or not self.peer_auth_pk_file:
                 print(f"{RED}[{self.name} ERROR] Mutual ML-DSA-87 material "
-                      f"missing (--auth-sk-file / --peer-auth-pk-file). "
+                      f"missing (--auth-tpm-sealed or --auth-sk-file / --peer-auth-pk-file). "
                       f"Refusing PSK-only KEX outside lab mode.{RESET}")
                 return False
-            for label, path in (("signing-key", self.auth_sk_file),
-                                ("peer public key", self.peer_auth_pk_file)):
-                if not os.path.exists(path):
-                    print(f"{RED}[{self.name} ERROR] ML-DSA-87 {label} file "
-                          f"not found: {path}{RESET}")
+
+            if self.auth_tpm_sealed:
+                if not os.path.exists(self.auth_tpm_sealed):
+                    print(f"{RED}[{self.name} ERROR] TPM 2.0 sealed seed object file "
+                          f"not found: {self.auth_tpm_sealed}{RESET}")
                     return False
+                extra_args.extend(["--auth-tpm-sealed", self.auth_tpm_sealed])
+                if self.auth_tpm_pub:
+                    if not os.path.exists(self.auth_tpm_pub):
+                        print(f"{RED}[{self.name} ERROR] TPM 2.0 sealed public key file "
+                              f"not found: {self.auth_tpm_pub}{RESET}")
+                        return False
+                    extra_args.extend(["--auth-tpm-pub", self.auth_tpm_pub])
+                if self.tpm_pcrs:
+                    extra_args.extend(["--pcrs", self.tpm_pcrs])
+                if self.tpm_owner:
+                    extra_args.extend(["--tpm-owner", self.tpm_owner])
+            else:
+                if not os.path.exists(self.auth_sk_file):
+                    print(f"{RED}[{self.name} ERROR] ML-DSA-87 signing-key file "
+                          f"not found: {self.auth_sk_file}{RESET}")
+                    return False
+                extra_args.extend(["--auth-sk-file", self.auth_sk_file])
+
+            if not os.path.exists(self.peer_auth_pk_file):
+                print(f"{RED}[{self.name} ERROR] ML-DSA-87 peer public key file "
+                          f"not found: {self.peer_auth_pk_file}{RESET}")
+                return False
+
             extra_args.extend([
-                "--auth-sk-file", self.auth_sk_file,
                 "--peer-auth-pk-file", self.peer_auth_pk_file,
                 "--require-mutual-auth",
             ])
@@ -15068,6 +15112,56 @@ class TacticalP2PNode:
             print(f"{RED}[{self.name} ZERO-GAP VIOLATION] EAM requires active multi-layer Zero-Gap pipeline.{RESET}")
             return False
 
+        # In production mode, enforce DoD 5210.41M split-knowledge doctrine:
+        # refuse synthetic disk-based signatures fail-closed and require physical tokens.
+        if not self.lab_mode:
+            has_hw_tokens = bool(self.token1_module or self.token2_module or os.environ.get("P2P_TOKEN1_MODULE"))
+            if not has_hw_tokens:
+                print(f"{RED}[{self.name} CRITICAL TPI VIOLATION] Disk-based synthetic JSON signatures are strictly prohibited in production. "
+                      f"DoD 5210.41M Two-Person Integrity requires physical hardware smartcard tokens (e.g. dual YubiKeys or HSM). "
+                      f"Configure --token1-module / --token2-module or P2P_TOKEN1_MODULE.{RESET}")
+                return False
+
+            try:
+                from unified_secure_pipeline import PIPELINE_TYPE_NC3
+                cmd = [
+                    str(NATIVE_BIN), "eam-auth-hw",
+                    "--directive", directive,
+                ]
+                if self.token1_module: cmd.extend(["--token1-module", self.token1_module])
+                if self.token1_slot is not None: cmd.extend(["--token1-slot", str(self.token1_slot)])
+                if self.token1_pin: cmd.extend(["--token1-pin", self.token1_pin])
+                if self.token1_key_label: cmd.extend(["--token1-key-label", self.token1_key_label])
+                if self.token2_module: cmd.extend(["--token2-module", self.token2_module])
+                if self.token2_slot is not None: cmd.extend(["--token2-slot", str(self.token2_slot)])
+                if self.token2_pin: cmd.extend(["--token2-pin", self.token2_pin])
+                if self.token2_key_label: cmd.extend(["--token2-key-label", self.token2_key_label])
+
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if res.returncode != 0:
+                    print(f"{RED}[{self.name} EAM HW ERROR] Hardware Two-Person Integrity co-signing failed:\n{res.stderr}{RESET}")
+                    return False
+
+                wire_hex = None
+                for line in res.stdout.splitlines():
+                    if line.startswith("eam_wire_hex:"):
+                        wire_hex = line.split(":", 1)[1].strip()
+                        break
+                if not wire_hex:
+                    print(f"{RED}[{self.name} EAM HW ERROR] Could not extract hardware wire hex from eam-auth-hw output.{RESET}")
+                    return False
+
+                wire_bytes = bytes.fromhex(wire_hex)
+                success = self.send_large_payload(wire_bytes, msg_type=PIPELINE_TYPE_NC3)
+                if success:
+                    print(f"{BOLD}{MAGENTA}[{self.name} NC3 EAM RELEASED] Dual-officer hardware token signed nuclear order queued into wire pacing.{RESET}")
+                    print(f"  • Directive: {directive}")
+                    print(f"  • Status   : DoD 5210.41M HARDWARE INTEGRITY VERIFIED")
+                return success
+            except Exception as hw_err:
+                print(f"{RED}[{self.name} EAM HW ERROR] Exception executing eam-auth-hw: {hw_err}{RESET}")
+                return False
+
         try:
             from nc3_nuclear_command import nc3_controller, serialize_eam_wire
             from unified_secure_pipeline import PIPELINE_TYPE_NC3
@@ -15389,9 +15483,9 @@ class TacticalP2PNode:
 
         Returns True on success.
         """
-        if not (self.auth_sk_file and self.peer_auth_pk_file and self.psk_file):
+        if not ((self.auth_sk_file or self.auth_tpm_sealed) and self.peer_auth_pk_file and self.psk_file):
             print(f"{RED}[{self.name} REKEY ERROR] Fresh-KEX rekey requires "
-                  f"--psk-file, --auth-sk-file and --peer-auth-pk-file.{RESET}")
+                  f"--psk-file, (--auth-tpm-sealed or --auth-sk-file) and --peer-auth-pk-file.{RESET}")
             return False
         # Stop the current channel so the port can be reused.
         if getattr(self, "channel_proc", None):
@@ -15632,7 +15726,19 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
                              root_ca_file: str = None,
                              node_cert_file: str = None,
                              peer_cert_file: str = None,
-                             require_root_ca: bool = None):
+                             require_root_ca: bool = None,
+                             auth_tpm_sealed: str = None,
+                             auth_tpm_pub: str = None,
+                             tpm_pcrs: str = None,
+                             tpm_owner: str = None,
+                             token1_module: str = None,
+                             token1_slot: int = None,
+                             token1_pin: str = None,
+                             token1_key_label: str = None,
+                             token2_module: str = None,
+                             token2_slot: int = None,
+                             token2_pin: str = None,
+                             token2_key_label: str = None):
     """Run an interactive military tactical terminal."""
     clean_bind = str(bind).strip("[]")
     clean_peer = str(peer).strip("[]")
@@ -15651,11 +15757,16 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
     # Fail closed before any network or key material is touched: the normal
     # production message path requires pinned mutual ML-DSA-87 identities.
     if require_mutual_auth:
-        if not auth_sk_file or not peer_auth_pk_file:
+        if not (auth_sk_file or auth_tpm_sealed) or not peer_auth_pk_file:
             print(f"{RED}[FATAL] Mutual ML-DSA-87 authentication material is "
-                  f"missing. Production refuses PSK-only KEX.{RESET}")
+                  f"missing. Provide --auth-tpm-sealed PATH or --auth-sk-file FILE, "
+                  f"and --peer-auth-pk-file FILE. Production refuses PSK-only KEX.{RESET}")
             sys.exit(2)
-        ok, reason = _validate_auth_material(auth_sk_file, peer_auth_pk_file)
+        ok, reason = _validate_auth_material(
+            auth_sk_file=auth_sk_file,
+            peer_pk_file=peer_auth_pk_file,
+            auth_tpm_sealed=auth_tpm_sealed,
+        )
         if not ok:
             print(f"{RED}[FATAL] Invalid authentication material: {reason}{RESET}")
             sys.exit(2)
@@ -15741,6 +15852,18 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
         node_cert_file=node_cert_file,
         peer_cert_file=peer_cert_file,
         require_root_ca=require_root_ca,
+        auth_tpm_sealed=auth_tpm_sealed,
+        auth_tpm_pub=auth_tpm_pub,
+        tpm_pcrs=tpm_pcrs,
+        tpm_owner=tpm_owner,
+        token1_module=token1_module,
+        token1_slot=token1_slot,
+        token1_pin=token1_pin,
+        token1_key_label=token1_key_label,
+        token2_module=token2_module,
+        token2_slot=token2_slot,
+        token2_pin=token2_pin,
+        token2_key_label=token2_key_label,
     )
 
     if not node.negotiate_hybrid_kex(timeout_sec=timeout_sec):
@@ -15916,14 +16039,19 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
                 print(f"{RED}[{name}] System Sanitized. Terminating.{RESET}")
                 sys.exit(0)
             elif msg.startswith("/eam ") or msg.startswith("/nuclear "):
-                if production_locked:
-                    _refuse_simulated("/eam")
-                else:
-                    parts = msg.split(" ", 1)
-                    if len(parts) > 1 and parts[1].strip():
-                        node.send_eam(parts[1].strip())
+                parts = msg.split(" ", 1)
+                if len(parts) > 1 and parts[1].strip():
+                    directive_text = parts[1].strip()
+                    if production_locked:
+                        has_tokens = bool(node.token1_module or node.token2_module or os.environ.get("P2P_TOKEN1_MODULE"))
+                        if not has_tokens:
+                            _refuse_simulated("/eam (requires physical split-knowledge smartcard tokens under DoD 5210.41M)")
+                        else:
+                            node.send_eam(directive_text)
                     else:
-                        print(f"{RED}Usage: /eam <directive text>{RESET}")
+                        node.send_eam(directive_text)
+                else:
+                    print(f"{RED}Usage: /eam <directive text>{RESET}")
             elif msg.startswith("/file ") or msg.startswith("/diode ") or msg.startswith("/sendfile "):
                 fpath = msg.split(" ", 1)[1].strip()
                 if os.path.exists(fpath):
@@ -16176,43 +16304,66 @@ def _production_crypto_violations():
     return hits
 
 
-def _validate_auth_material(auth_sk_file: str, peer_pk_file: str):
-    """Validate ML-DSA-87 key files without echoing secret material.
+def _validate_auth_material(auth_sk_file: str = None, peer_pk_file: str = None, auth_tpm_sealed: str = None):
+    """Validate ML-DSA-87 key material without echoing secret material.
 
-    Returns ``(ok, reason)``. The signing seed must be exactly 32 bytes of
-    hex (64 chars) and owner-only on POSIX. The pinned peer public key must
-    be exactly 2592 bytes of hex (5184 chars).
+    If auth_tpm_sealed is provided, validates that the TPM sealed private key
+    object exists on disk as a binary blob (zero-disk key containment).
+    Otherwise, the signing seed must be exactly 32 bytes of hex (64 chars)
+    and owner-only on POSIX.
+    The pinned peer public key must be exactly 2592 bytes of hex (5184 chars).
     """
     import stat as _stat
 
-    specs = (
-        (auth_sk_file, "ML-DSA-87 signing-key seed", 64, True),
-        (peer_pk_file, "pinned peer ML-DSA-87 public key", 5184, False),
-    )
-    for path, label, hex_len, secret in specs:
-        if not path or not os.path.exists(path):
-            return False, f"{label} file not found: {path!r}"
+    if not peer_pk_file or not os.path.exists(peer_pk_file):
+        return False, f"pinned peer ML-DSA-87 public key file not found: {peer_pk_file!r}"
+    try:
+        text = Path(peer_pk_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        return False, f"pinned peer ML-DSA-87 public key file unreadable: {exc}"
+    if len(text) != 5184:
+        return False, f"pinned peer ML-DSA-87 public key has {len(text)} hex chars; expected exactly 5184"
+    try:
+        raw_pk = bytes.fromhex(text)
+    except ValueError:
+        return False, "pinned peer ML-DSA-87 public key is not valid hexadecimal"
+    if len(raw_pk) != 2592:
+        return False, "pinned peer ML-DSA-87 public key has an invalid byte length"
+
+    if auth_tpm_sealed:
+        if not os.path.exists(auth_tpm_sealed):
+            return False, f"TPM 2.0 sealed seed object file not found: {auth_tpm_sealed!r}"
         try:
-            text = Path(path).read_text(encoding="utf-8").strip()
+            sz = os.path.getsize(auth_tpm_sealed)
         except OSError as exc:
-            return False, f"{label} file unreadable: {exc}"
-        if len(text) != hex_len:
-            return False, (f"{label} has {len(text)} hex chars; "
-                           f"expected exactly {hex_len}")
+            return False, f"TPM 2.0 sealed seed object unreadable: {exc}"
+        if sz == 0:
+            return False, f"TPM 2.0 sealed seed object file is empty: {auth_tpm_sealed!r}"
+        if os.path.abspath(auth_tpm_sealed) == os.path.abspath(peer_pk_file):
+            return False, "tpm-sealed object and peer-public-key files must be distinct"
+        return True, ""
+
+    if not auth_sk_file or not os.path.exists(auth_sk_file):
+        return False, f"ML-DSA-87 signing-key seed file not found: {auth_sk_file!r}"
+    try:
+        text = Path(auth_sk_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        return False, f"ML-DSA-87 signing-key seed file unreadable: {exc}"
+    if len(text) != 64:
+        return False, f"ML-DSA-87 signing-key seed has {len(text)} hex chars; expected exactly 64"
+    try:
+        raw_sk = bytes.fromhex(text)
+    except ValueError:
+        return False, "ML-DSA-87 signing-key seed is not valid hexadecimal"
+    if len(raw_sk) != 32:
+        return False, "ML-DSA-87 signing-key seed has an invalid byte length"
+    if os.name != "nt":
         try:
-            raw = bytes.fromhex(text)
-        except ValueError:
-            return False, f"{label} is not valid hexadecimal"
-        if len(raw) * 2 != hex_len:
-            return False, f"{label} has an invalid byte length"
-        if secret and os.name != "nt":
-            try:
-                mode = _stat.S_IMODE(os.stat(path).st_mode)
-            except OSError as exc:
-                return False, f"{label} cannot be stat'ed: {exc}"
-            if mode & 0o077:
-                return False, (f"{label} has mode {oct(mode)}; owner-only "
-                               f"0600/0400 is required")
+            mode = _stat.S_IMODE(os.stat(auth_sk_file).st_mode)
+        except OSError as exc:
+            return False, f"ML-DSA-87 signing-key seed cannot be stat'ed: {exc}"
+        if mode & 0o077:
+            return False, f"ML-DSA-87 signing-key seed has mode {oct(mode)}; owner-only 0600/0400 is required"
     if os.path.abspath(auth_sk_file) == os.path.abspath(peer_pk_file):
         return False, "signing-key and peer-public-key files must be distinct"
     return True, ""
@@ -16670,6 +16821,22 @@ def main(argv=None) -> int:
                         help="Local ML-DSA-87 signing-key seed file (32 bytes hex, 0600)")
     parser.add_argument("--peer-auth-pk-file", default=None,
                         help="Pinned peer ML-DSA-87 public-key file (2592 bytes hex)")
+    parser.add_argument("--auth-tpm-sealed", default=None,
+                        help="Path to TPM 2.0 PCR-sealed ML-DSA-87 seed object (zero-disk silicon custody)")
+    parser.add_argument("--auth-tpm-pub", default=None,
+                        help="Path to TPM 2.0 sealed object public portion")
+    parser.add_argument("--pcrs", default=None,
+                        help="Comma-separated PCR list for TPM measured boot policy (default: 0,1,2,7)")
+    parser.add_argument("--tpm-owner", default=None,
+                        help="TPM owner authorization hierarchy or password (default: o)")
+    parser.add_argument("--token1-module", default=None, help="Officer 1 PKCS#11 hardware token module driver path")
+    parser.add_argument("--token1-slot", type=int, default=None, help="Officer 1 PKCS#11 slot index (default: 0)")
+    parser.add_argument("--token1-pin", default=None, help="Officer 1 hardware token PIN")
+    parser.add_argument("--token1-key-label", default=None, help="Officer 1 hardware key label")
+    parser.add_argument("--token2-module", default=None, help="Officer 2 PKCS#11 hardware token module driver path")
+    parser.add_argument("--token2-slot", type=int, default=None, help="Officer 2 PKCS#11 slot index (default: 1)")
+    parser.add_argument("--token2-pin", default=None, help="Officer 2 hardware token PIN")
+    parser.add_argument("--token2-key-label", default=None, help="Officer 2 hardware key label")
     parser.add_argument("--require-mutual-auth", action="store_true",
                         help="Require pinned mutual ML-DSA-87 authentication (default in production)")
     parser.add_argument("--root-ca-file", default=None,
@@ -16700,9 +16867,25 @@ def main(argv=None) -> int:
     p_node.add_argument("--peer-diode-port", type=int, default=None, help="Peer simplex diode port")
     p_node.add_argument("--psk-file", default=None, help="Pre-shared key file (required in production)")
     p_node.add_argument("--auth-sk-file", default=None,
-                        help="Local ML-DSA-87 signing-key seed file (required in production)")
+                        help="Local ML-DSA-87 signing-key seed file (host disk mode)")
     p_node.add_argument("--peer-auth-pk-file", default=None,
                         help="Pinned peer ML-DSA-87 public-key file (required in production)")
+    p_node.add_argument("--auth-tpm-sealed", default=None,
+                        help="Path to TPM 2.0 PCR-sealed ML-DSA-87 seed object (zero-disk silicon custody)")
+    p_node.add_argument("--auth-tpm-pub", default=None,
+                        help="Path to TPM 2.0 sealed object public portion")
+    p_node.add_argument("--pcrs", default=None,
+                        help="Comma-separated PCR list for TPM measured boot policy (default: 0,1,2,7)")
+    p_node.add_argument("--tpm-owner", default=None,
+                        help="TPM owner authorization hierarchy or password (default: o)")
+    p_node.add_argument("--token1-module", default=None, help="Officer 1 PKCS#11 hardware token module driver path")
+    p_node.add_argument("--token1-slot", type=int, default=None, help="Officer 1 PKCS#11 slot index (default: 0)")
+    p_node.add_argument("--token1-pin", default=None, help="Officer 1 hardware token PIN")
+    p_node.add_argument("--token1-key-label", default=None, help="Officer 1 hardware key label")
+    p_node.add_argument("--token2-module", default=None, help="Officer 2 PKCS#11 hardware token module driver path")
+    p_node.add_argument("--token2-slot", type=int, default=None, help="Officer 2 PKCS#11 slot index (default: 1)")
+    p_node.add_argument("--token2-pin", default=None, help="Officer 2 hardware token PIN")
+    p_node.add_argument("--token2-key-label", default=None, help="Officer 2 hardware key label")
     p_node.add_argument("--require-mutual-auth", action="store_true",
                         help="Require pinned mutual ML-DSA-87 authentication (default in production)")
     p_node.add_argument("--root-ca-file", default=None,
@@ -16830,22 +17013,37 @@ def main(argv=None) -> int:
                           f"owner-only 0600/0400 is required.{RESET}")
                     return 2
 
+        auth_tpm_sealed = (getattr(args, "auth_tpm_sealed", None)
+                           or os.environ.get("P2P_AUTH_TPM_SEALED"))
+        auth_tpm_pub = (getattr(args, "auth_tpm_pub", None)
+                        or os.environ.get("P2P_AUTH_TPM_PUB"))
+        tpm_pcrs = getattr(args, "pcrs", None) or os.environ.get("P2P_TPM_PCRS")
+        tpm_owner = getattr(args, "tpm_owner", None) or os.environ.get("P2P_TPM_OWNER")
         auth_sk_file = (getattr(args, "auth_sk_file", None)
                         or os.environ.get("P2P_AUTH_SK_FILE"))
         peer_auth_pk_file = (getattr(args, "peer_auth_pk_file", None)
                              or os.environ.get("P2P_PEER_AUTH_PK_FILE"))
         require_mutual = bool(getattr(args, "require_mutual_auth", False)) or not lab_mode
         if require_mutual:
-            if not auth_sk_file or not peer_auth_pk_file:
+            if not (auth_sk_file or auth_tpm_sealed) or not peer_auth_pk_file:
                 print(f"{RED}[FATAL] Mutual ML-DSA-87 authentication is required. "
-                      f"Provide --auth-sk-file FILE and --peer-auth-pk-file FILE. "
+                      f"Provide --auth-tpm-sealed PATH (zero-disk custody) or --auth-sk-file FILE, "
+                      f"and --peer-auth-pk-file FILE. "
                       f"PSK-only KEX is refused outside explicit --lab mode.{RESET}")
                 return 2
-            ok, reason = _validate_auth_material(auth_sk_file, peer_auth_pk_file)
+            ok, reason = _validate_auth_material(
+                auth_sk_file=auth_sk_file,
+                peer_pk_file=peer_auth_pk_file,
+                auth_tpm_sealed=auth_tpm_sealed,
+            )
             if not ok:
                 print(f"{RED}[FATAL] Invalid authentication material: {reason}{RESET}")
                 return 2
-            print(f"{GREEN}[CRYPTO POLICY] Mutual ML-DSA-87 identity authentication ARMED "
+            if auth_tpm_sealed:
+                print(f"{GREEN}[CRYPTO POLICY] Mutual ML-DSA-87 identity authentication ARMED "
+                      f"(TPM 2.0 PCR-SEALED ZERO-DISK CUSTODY + pinned peer key + PSK).{RESET}")
+            else:
+                print(f"{GREEN}[CRYPTO POLICY] Mutual ML-DSA-87 identity authentication ARMED "
                   f"(pinned peer key + PSK).{RESET}")
 
         root_ca_file = getattr(args, "root_ca_file", None) or os.environ.get("P2P_ROOT_CA_FILE")
@@ -16874,6 +17072,18 @@ def main(argv=None) -> int:
             node_cert_file=node_cert_file,
             peer_cert_file=peer_cert_file,
             require_root_ca=require_root_ca,
+            auth_tpm_sealed=auth_tpm_sealed,
+            auth_tpm_pub=auth_tpm_pub,
+            tpm_pcrs=tpm_pcrs,
+            tpm_owner=tpm_owner,
+            token1_module=getattr(args, "token1_module", None),
+            token1_slot=getattr(args, "token1_slot", None),
+            token1_pin=getattr(args, "token1_pin", None),
+            token1_key_label=getattr(args, "token1_key_label", None),
+            token2_module=getattr(args, "token2_module", None),
+            token2_slot=getattr(args, "token2_slot", None),
+            token2_pin=getattr(args, "token2_pin", None),
+            token2_key_label=getattr(args, "token2_key_label", None),
         )
         return 0
 

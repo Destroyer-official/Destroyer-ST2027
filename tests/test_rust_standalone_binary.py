@@ -678,6 +678,58 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertFalse(os.path.exists(key_c))
             self.assertFalse(os.path.exists(key_d))
 
+    def test_kex_psk_only_refused_outside_lab_mode(self):
+        """Primary Security Gap Test: PSK-only KEX is lab-only; refused in production."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            key_out = os.path.join(tmp, "prod_refused.key")
+            psk_file = os.path.join(tmp, "shared.psk")
+            with open(psk_file, "w") as f:
+                f.write(("42" * 32) + "\n")
+            try:
+                os.chmod(psk_file, 0o600)
+            except OSError:
+                pass
+
+            # Production mode (no --lab, no P2P_LAB_MODE): PSK-only must fail closed
+            env_prod = {k: v for k, v in os.environ.items() if "LAB" not in k}
+            res = _run("kex-listen", "--bind", "127.0.0.1:0", "--out-key", key_out,
+                       "--psk-file", psk_file, env=env_prod)
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("mutual auth requires --auth-sk-file", res.stderr)
+            self.assertFalse(os.path.exists(key_out))
+
+            # Lab mode (--lab): PSK-only key establishment succeeds
+            port = _free_tcp_port()
+            key_a = os.path.join(tmp, "lab_resp.key")
+            key_b = os.path.join(tmp, "lab_init.key")
+            listener = subprocess.Popen(
+                [str(BIN), "kex-listen", "--bind", f"127.0.0.1:{port}",
+                 "--out-key", key_a, "--psk-file", psk_file,
+                 "--lab", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(CRATE))
+            try:
+                time.sleep(1.0)
+                connector = _run(
+                    "kex-connect", "--to", f"127.0.0.1:{port}",
+                    "--out-key", key_b, "--psk-file", psk_file,
+                    "--lab", "--timeout-ms", "8000")
+                self.assertEqual(connector.returncode, 0, connector.stderr[-500:])
+                out, err = listener.communicate(timeout=10)
+            finally:
+                if listener.poll() is None:
+                    listener.kill()
+                    listener.communicate()
+
+            self.assertEqual(listener.returncode, 0, f"lab kex-listen failed:\n{err[-500:]}")
+            self.assertTrue(os.path.exists(key_a))
+            self.assertTrue(os.path.exists(key_b))
+            with open(key_a, "r") as f:
+                hex_a = f.read().strip()
+            with open(key_b, "r") as f:
+                hex_b = f.read().strip()
+            self.assertEqual(hex_a, hex_b)
+
     def test_zeroize_cryptographic_media_purge(self):
         """NIST SP 800-88 Rev 1 / DoD 5220.22-M 3-pass emergency zeroization."""
         import tempfile
@@ -762,6 +814,113 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertEqual(os.path.getsize(state_init), 328)
             self.assertEqual(os.path.getsize(state_resp), 328)
 
+    def test_channel_in_band_pcs_ratchet_rekey(self):
+        """Continuous in-band line-rate PCS Ratchet rekeying (ML-KEM-1024 + P-384)."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port_init = _free_udp_port()
+            port_resp = _free_udp_port()
+            state_init = os.path.join(tmp, "init.state")
+            state_resp = os.path.join(tmp, "resp.state")
+
+            # Start responder on port_resp, pointing to port_init with --rekey-interval 8
+            resp_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                 "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
+                 "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
+                 "--rekey-interval", "8",
+                 "--reply", "CONFIRMED_PCS_RESPONSE",
+                 "--count", "45", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            time.sleep(0.15)
+
+            # Start initiator on port_init, pointing to port_resp with --rekey-interval 8
+            init_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                 "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
+                 "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
+                 "--rekey-interval", "8",
+                 "--msg", "TACTICAL_DATA_UNDER_PCS_RATCHET",
+                 "--count", "45", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+
+            init_out, init_err = init_proc.communicate(timeout=10)
+            resp_out, resp_err = resp_proc.communicate(timeout=10)
+
+            self.assertEqual(init_proc.returncode, 0, f"Initiator failed:\nOUT: {init_out}\nERR: {init_err}")
+            self.assertEqual(resp_proc.returncode, 0, f"Responder failed:\nOUT: {resp_out}\nERR: {resp_err}")
+
+            # Verify initial advert bundles exchanged
+            self.assertIn("PEER_ADVERT_STORED", init_out)
+            self.assertIn("PEER_ADVERT_STORED", resp_out)
+            self.assertIn("PEER_ADVERT_STORED", resp_out)
+
+            # Verify in-band hybrid ratchet steps executed
+            self.assertIn("RATCHET_STEP_EMIT", init_out)
+            self.assertIn("RATCHET_STEP_RECV", resp_out)
+            self.assertIn("EPOCH_ADVANCED", init_out)
+            self.assertIn("EPOCH_ADVANCED", resp_out)
+
+            # Verify message transit succeeded across ratchet epochs
+            self.assertIn("TACTICAL_DATA_UNDER_PCS_RATCHET", resp_out)
+            self.assertIn("CONFIRMED_PCS_RESPONSE", init_out)
+
+    def test_channel_interactive_operator_rekey(self):
+        """Interactive on-demand /rekey operator trigger over continuous paced channel."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port_init = _free_udp_port()
+            port_resp = _free_udp_port()
+            state_init = os.path.join(tmp, "init_interactive.state")
+            state_resp = os.path.join(tmp, "resp_interactive.state")
+
+            resp_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                 "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
+                 "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
+                 "--recv-count", "1", "--drain-ticks", "10", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            time.sleep(0.15)
+
+            init_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                 "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
+                 "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
+                 "--stdin", "--timeout-ms", "8000"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+
+            # Wait for initial advert exchange
+            time.sleep(0.5)
+
+            # Trigger interactive /rekey
+            init_proc.stdin.write("/rekey\n")
+            init_proc.stdin.flush()
+            time.sleep(0.4)
+
+            # Send post-rekey message
+            init_proc.stdin.write("POST_REKEY_CLASSIFIED_MESSAGE\n")
+            init_proc.stdin.flush()
+            time.sleep(0.3)
+
+            # Zeroize to terminate initiator
+            init_proc.stdin.write("/zeroize\n")
+            init_proc.stdin.flush()
+
+            init_out, init_err = init_proc.communicate(timeout=10)
+            resp_out, resp_err = resp_proc.communicate(timeout=10)
+
+            self.assertIn("RATCHET_STEP_EMIT", init_out)
+            self.assertIn("RATCHET_STEP_RECV", resp_out)
+            self.assertIn("EPOCH_ADVANCED", init_out)
+            self.assertIn("EPOCH_ADVANCED", resp_out)
+            self.assertIn("POST_REKEY_CLASSIFIED_MESSAGE", resp_out)
+
     def test_auth_keygen_sign_verify_cli(self):
         """Native pure-Rust ML-DSA-87 (FIPS 204) CLI keygen, sign, and verify."""
         import tempfile
@@ -805,6 +964,146 @@ class TestRustStandaloneBinary(unittest.TestCase):
             r_bad_pay = _run("auth-verify", "--pk-file", pk_path, "--domain", "TEST-DOMAIN",
                              "--in", in_path, "--sig-file", sig_path)
             self.assertNotEqual(r_bad_pay.returncode, 0)
+
+    def test_terminal_interactive_session(self):
+        """Production tactical interactive terminal: constant-rate pacing and commands."""
+        import tempfile
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, keyfile = _new_key_file(tmp)
+            state_init = os.path.join(tmp, "state_init.bin")
+            state_resp = os.path.join(tmp, "state_resp.bin")
+
+            port_init = _free_udp_port()
+            port_resp = _free_udp_port()
+
+            addr_init = f"127.0.0.1:{port_init}"
+            addr_resp = f"127.0.0.1:{port_resp}"
+
+            # Start responder
+            resp_proc = subprocess.Popen(
+                [
+                    str(BIN), "terminal",
+                    "--key-file", keyfile,
+                    "--state", state_resp,
+                    "--bind", addr_resp,
+                    "--to", addr_init,
+                    "--role", "responder",
+                    "--interval-ms", "25",
+                    "--quantum", "1232",
+                    "--sas", "TEST-SAS-9941",
+                    "--callsign", "BRAVO-NMCC",
+                    "--timeout-ms", "10000",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(CRATE),
+            )
+            _wait_udp_bound(port_resp, resp_proc)
+
+            # Start initiator
+            init_proc = subprocess.Popen(
+                [
+                    str(BIN), "terminal",
+                    "--key-file", keyfile,
+                    "--state", state_init,
+                    "--bind", addr_init,
+                    "--to", addr_resp,
+                    "--role", "initiator",
+                    "--interval-ms", "25",
+                    "--quantum", "1232",
+                    "--sas", "TEST-SAS-9941",
+                    "--callsign", "ALPHA-NORAD",
+                    "--timeout-ms", "10000",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(CRATE),
+            )
+            _wait_udp_bound(port_init, init_proc)
+
+            # Feed interactive commands into initiator: /status, message, /clear, /quit
+            init_stdin = (
+                "/status\n"
+                "/help\n"
+                "TACTICAL_ALERT_DEFCON1_REACHED\n"
+                "/clear\n"
+                "/quit\n"
+            )
+            init_out, init_err = init_proc.communicate(input=init_stdin, timeout=8)
+
+            time.sleep(0.3)
+
+            # Close responder
+            resp_stdin = "/quit\n"
+            resp_out, resp_err = resp_proc.communicate(input=resp_stdin, timeout=8)
+
+            self.assertEqual(init_proc.returncode, 0, f"Init error:\nOUT: {init_out}\nERR: {init_err}")
+            self.assertEqual(resp_proc.returncode, 0, f"Resp error:\nOUT: {resp_out}\nERR: {resp_err}")
+
+            # Verify banner rendered
+            self.assertIn("ST2027 SECURE TACTICAL COMMUNICATIONS TERMINAL", init_out)
+            self.assertIn("TEST-SAS-9941", init_out)
+            self.assertIn("ALPHA-NORAD", init_out)
+
+            # Verify /status output
+            self.assertIn("[STATUS] LINK TELEMETRY:", init_out)
+            self.assertIn("Pacing Interval: 25 ms", init_out)
+
+            # Verify /help output
+            self.assertIn("[HELP] TACTICAL OPERATOR COMMAND MANUAL:", init_out)
+
+            # Verify responder received the transmitted message
+            self.assertIn("[INCOMING] TACTICAL_ALERT_DEFCON1_REACHED", resp_out)
+
+            # Verify ANSI screen flush code was emitted on /clear or /quit
+            self.assertIn("\x1b[2J\x1b[3J\x1b[H", init_out)
+
+    def test_terminal_zeroize_command(self):
+        """Operator /zeroize command executes NIST SP 800-88 purge of key and state."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, keyfile = _new_key_file(tmp)
+            state_file = os.path.join(tmp, "zeroize_state.bin")
+            port = _free_udp_port()
+            peer_port = _free_udp_port()
+
+            proc = subprocess.Popen(
+                [
+                    str(BIN), "terminal",
+                    "--key-file", keyfile,
+                    "--state", state_file,
+                    "--bind", f"127.0.0.1:{port}",
+                    "--to", f"127.0.0.1:{peer_port}",
+                    "--role", "initiator",
+                    "--interval-ms", "30",
+                    "--timeout-ms", "5000",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(CRATE),
+            )
+            _wait_udp_bound(port, proc)
+
+            self.assertTrue(os.path.exists(keyfile))
+            self.assertTrue(os.path.exists(state_file))
+
+            # Send /zeroize
+            stdout, stderr = proc.communicate(input="/zeroize\n", timeout=5)
+            self.assertEqual(proc.returncode, 0, f"Zeroize failed:\nOUT: {stdout}\nERR: {stderr}")
+
+            self.assertIn("OPERATOR EMERGENCY ZEROIZATION INITIATED", stdout)
+            self.assertIn("ZEROIZE COMPLETE", stdout)
+
+            # Verify NIST SP 800-88 purge: files must be wiped and unlinked
+            self.assertFalse(os.path.exists(keyfile), "Keyfile must be purged from disk")
+            self.assertFalse(os.path.exists(state_file), "State file must be purged from disk")
 
 
 if __name__ == "__main__":

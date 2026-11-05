@@ -9,11 +9,20 @@
 //! peer or amplify work: over-budget datagrams are dropped before parsing.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 use tokio::{net::UdpSocket, time::timeout};
+
+use crate::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
+use crate::frame::{
+    FTYPE_IN_BAND_EPOCH_REKEY, IN_BAND_REKEY_PAYLOAD_LEN,
+};
+use crate::fragment::{fragment, Fragment, ReassemblyBuffer};
+use crate::policy::CoreError;
+use crate::ratchet::PcsRatchet;
+use crate::replay::AntiReplayWindow;
 
 /// Token-bucket budget per source address.
 const BUCKET_CAPACITY: f64 = 64.0;
@@ -170,6 +179,274 @@ impl Endpoint {
     /// Record an authentication/parse failure. Silent by construction.
     pub fn note_auth_drop(&mut self) {
         self.drops += 1;
+    }
+}
+
+/// Active sovereign UDP transmission loop connecting PcsRatchet to the network transport.
+///
+/// Enforces:
+/// 1. True Post-Compromise Security (PCS) via In-Band Continuous Epoch Ratchet (CER).
+/// 2. Automatic epoch rollover every N = 10,000 packets or M = 10 MB of transmitted data:
+///    `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ML-KEM-1024-Decaps(ct))`
+/// 3. Immediate volatile zeroization of old epoch keys.
+/// 4. Cryptographic framing, padding, and anti-replay defense.
+pub struct ActiveTransmissionLoop {
+    pub endpoint: Endpoint,
+    pub peer_addr: SocketAddr,
+    pub ratchet: PcsRatchet,
+    pub current_frame_key: FrameKey,
+    pub previous_frame_key: Option<FrameKey>,
+    pub send_dir: u8,
+    pub recv_dir: u8,
+    pub next_send_seq: u64,
+    pub replay_window: AntiReplayWindow,
+    pub quantum: usize,
+    pub outbound_rekey_frags: VecDeque<Vec<u8>>,
+    pub active_reassembly: Option<ReassemblyBuffer>,
+}
+
+impl ActiveTransmissionLoop {
+    /// Initialize a new active transmission loop with initial session key, role, and wire quantum.
+    pub fn new(
+        endpoint: Endpoint,
+        peer_addr: SocketAddr,
+        initial_key: &[u8; 32],
+        role: &str,
+        quantum: usize,
+    ) -> Result<Self, CoreError> {
+        let (send_dir, recv_dir) = if role == "responder" {
+            (DIR_RECV, DIR_SEND)
+        } else {
+            (DIR_SEND, DIR_RECV)
+        };
+        let ratchet = PcsRatchet::new(initial_key)?;
+        let current_frame_key = ratchet.current_frame_key()?;
+        Ok(Self {
+            endpoint,
+            peer_addr,
+            ratchet,
+            current_frame_key,
+            previous_frame_key: None,
+            send_dir,
+            recv_dir,
+            next_send_seq: 1,
+            replay_window: AntiReplayWindow::new(),
+            quantum,
+            outbound_rekey_frags: VecDeque::new(),
+            active_reassembly: None,
+        })
+    }
+
+    /// Set peer's advertised bundle (used for autonomous ML-KEM-1024 encapsulation).
+    pub fn set_peer_bundle(&mut self, bundle: crate::ratchet::AdvertBundle) {
+        self.ratchet.set_peer_bundle(bundle);
+    }
+
+    /// Trigger in-band continuous epoch rollover:
+    /// - Generates fresh Frame Type 0x07 payload (1588 bytes):
+    ///   `EpochIndex (u32) || Ephemeral_MLKEM_Ciphertext (1568 bytes) || AuthTag (16 bytes)`.
+    /// - Evolves root key: `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ML-KEM-1024-Decaps(ct))`.
+    /// - Volatile-zeroizes old root, old chain, decapsulation key, and shared secrets immediately.
+    /// - Advances active FrameKey and queues rekey fragments or direct frame.
+    pub async fn trigger_in_band_epoch_rollover(&mut self) -> Result<u64, CoreError> {
+        let payload = self.ratchet.build_in_band_epoch_rekey_auto()?;
+        let next_key = self.ratchet.current_frame_key()?;
+        self.previous_frame_key = Some(self.current_frame_key.clone());
+        self.current_frame_key = next_key;
+
+        if self.quantum >= 1615 {
+            // Direct unfragmented mode (jumbo / enclave)
+            let seq = self.next_send_seq;
+            self.next_send_seq = self.next_send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
+            let frame = crate::pacing::build_epoch_rekey_frame_directed(
+                self.previous_frame_key.as_ref().unwrap(),
+                seq,
+                self.send_dir,
+                self.quantum,
+                &payload,
+            ).map_err(|_| CoreError::Malformed)?;
+            self.endpoint.send_raw(&frame, self.peer_addr).await.map_err(|_| CoreError::Malformed)?;
+        } else {
+            // Quantum-sliced fragment mode (standard IPv6 1232B quantum)
+            let chunk_size = if self.quantum >= 1232 { 600 } else if self.quantum >= 512 { 200 } else { 120 };
+            if let Ok(frags) = fragment(&payload, chunk_size) {
+                for f in frags {
+                    self.outbound_rekey_frags.push_back(f.to_wire());
+                }
+            }
+        }
+        Ok(self.ratchet.epoch())
+    }
+
+    /// Flush any pending outbound rekey fragments into on-wire frames under transition key.
+    pub async fn flush_rekey_fragments(&mut self) -> Result<usize, CoreError> {
+        let mut sent = 0;
+        let active_key = if let Some(ref prev) = self.previous_frame_key {
+            prev
+        } else {
+            &self.current_frame_key
+        };
+
+        while let Some(frag_wire) = self.outbound_rekey_frags.pop_front() {
+            let seq = self.next_send_seq;
+            self.next_send_seq = self.next_send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
+            let frame = crate::pacing::build_epoch_rekey_frame_directed(
+                active_key,
+                seq,
+                self.send_dir,
+                self.quantum,
+                &frag_wire,
+            ).map_err(|_| CoreError::Malformed)?;
+            self.endpoint.send_raw(&frame, self.peer_addr).await.map_err(|_| CoreError::Malformed)?;
+            sent += 1;
+        }
+        Ok(sent)
+    }
+
+    /// Send an application data packet under the active session key.
+    /// Automatically checks if N = 10,000 packets or M = 10 MB has been reached;
+    /// triggers automatic continuous epoch rollover and immediate zeroization of old keys.
+    pub async fn send_msg(&mut self, payload: &[u8]) -> Result<u64, CoreError> {
+        self.ratchet.note_transmission(payload.len());
+
+        // Automatic rollover check: N = 10,000 packets or M = 10 MB
+        if self.ratchet.needs_rollover() && self.ratchet.peer_bundle().is_some() {
+            self.trigger_in_band_epoch_rollover().await?;
+        }
+
+        // Flush any pending rekey fragments first
+        self.flush_rekey_fragments().await?;
+
+        let seq = self.next_send_seq;
+        self.next_send_seq = self.next_send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
+        let frame = crate::pacing::build_data_frame_directed(
+            &self.current_frame_key,
+            seq,
+            self.send_dir,
+            self.quantum,
+            payload,
+        ).map_err(|_| CoreError::Malformed)?;
+
+        self.endpoint.send_raw(&frame, self.peer_addr).await.map_err(|_| CoreError::Malformed)?;
+        Ok(seq)
+    }
+
+    /// Send a constant-rate synthetic chaff frame under the active session key.
+    pub async fn send_chaff(&mut self) -> Result<u64, CoreError> {
+        self.ratchet.note_transmission(0);
+
+        if self.ratchet.needs_rollover() && self.ratchet.peer_bundle().is_some() {
+            self.trigger_in_band_epoch_rollover().await?;
+        }
+        self.flush_rekey_fragments().await?;
+
+        let seq = self.next_send_seq;
+        self.next_send_seq = self.next_send_seq.checked_add(1).ok_or(CoreError::Oversize)?;
+        let frame = crate::pacing::build_chaff_frame_directed(
+            &self.current_frame_key,
+            seq,
+            self.send_dir,
+            self.quantum,
+        ).map_err(|_| CoreError::Malformed)?;
+
+        self.endpoint.send_raw(&frame, self.peer_addr).await.map_err(|_| CoreError::Malformed)?;
+        Ok(seq)
+    }
+
+    /// Receive and process an incoming datagram:
+    /// - Checks anti-replay window.
+    /// - Unmasks header and verifies AEAD authentication.
+    /// - Handles Frame Type 0x07 IN_BAND_EPOCH_REKEY:
+    ///   Reassembles fragments, verifies 16-byte AuthTag, decapsulates ML-KEM-1024 ciphertext,
+    ///   evolves root: `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, Decaps(ct))`,
+    ///   volatile-zeroizes old root, old chain, decapsulation key immediately.
+    /// - Returns `(seq, ftype, payload)`.
+    pub async fn recv_packet(&mut self, wait: Duration) -> Result<Option<(u64, u8, Vec<u8>)>, CoreError> {
+        let Some(res) = self.endpoint.recv_unthrottled(wait).await else {
+            return Ok(None);
+        };
+        let (bytes, _from) = res.map_err(|_| CoreError::Malformed)?;
+        if bytes.len() != self.quantum {
+            self.endpoint.note_auth_drop();
+            return Ok(None);
+        }
+
+        // Try unmasking seq with current key, fallback to previous key during transition grace
+        let (seq, use_prev) = match aead::peek_seq(&self.current_frame_key, &bytes) {
+            Some(s) => (s, false),
+            None => {
+                if let Some(ref prev) = self.previous_frame_key {
+                    match aead::peek_seq(prev, &bytes) {
+                        Some(s) => (s, true),
+                        None => {
+                            self.endpoint.note_auth_drop();
+                            return Ok(None);
+                        }
+                    }
+                } else {
+                    self.endpoint.note_auth_drop();
+                    return Ok(None);
+                }
+            }
+        };
+
+        if !self.replay_window.check(seq) {
+            self.endpoint.note_auth_drop();
+            return Ok(None);
+        }
+
+        let open_res = if use_prev {
+            aead::open_indexed(self.previous_frame_key.as_ref().unwrap(), self.recv_dir, &bytes)
+        } else {
+            aead::open_indexed(&self.current_frame_key, self.recv_dir, &bytes)
+        };
+
+        let Ok((seq2, ftype, pt)) = open_res else {
+            self.endpoint.note_auth_drop();
+            return Ok(None);
+        };
+
+        if seq2 != seq {
+            self.endpoint.note_auth_drop();
+            return Ok(None);
+        }
+
+        self.replay_window.mark(seq2);
+
+        if ftype == FTYPE_IN_BAND_EPOCH_REKEY {
+            // Process rekey payload (either direct 1588 bytes or fragmented)
+            if pt.len() == IN_BAND_REKEY_PAYLOAD_LEN {
+                self.ratchet.process_in_band_epoch_rekey(&pt)?;
+                self.previous_frame_key = Some(self.current_frame_key.clone());
+                self.current_frame_key = self.ratchet.current_frame_key()?;
+            } else if let Ok(frag) = Fragment::from_wire(&pt) {
+                let should_assemble = match self.active_reassembly {
+                    Some(ref mut r) if r.tx_id() == frag.tx_id => r.insert(frag).unwrap_or(false),
+                    _ => {
+                        if let Ok(mut r) = ReassemblyBuffer::new(frag.tx_id, frag.total) {
+                            let done = r.insert(frag).unwrap_or(false);
+                            self.active_reassembly = Some(r);
+                            done
+                        } else {
+                            false
+                        }
+                    }
+                };
+                if should_assemble {
+                    if let Some(r) = self.active_reassembly.take() {
+                        if let Ok(full_bytes) = r.reassemble() {
+                            if full_bytes.len() == IN_BAND_REKEY_PAYLOAD_LEN {
+                                self.ratchet.process_in_band_epoch_rekey(&full_bytes)?;
+                                self.previous_frame_key = Some(self.current_frame_key.clone());
+                                self.current_frame_key = self.ratchet.current_frame_key()?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Some((seq2, ftype, pt)))
     }
 }
 
@@ -489,5 +766,181 @@ mod tests {
             received, 100,
             "unthrottled receiver must not drop high-rate burst packets"
         );
+    }
+    #[tokio::test]
+    async fn active_transmission_loop_auto_rollover_packet_threshold() {
+        let (ep_a, ep_b) = loopback_pair().await;
+        let addr_a = ep_a.local_addr().unwrap();
+        let addr_b = ep_b.local_addr().unwrap();
+
+        let initial_sk = [0x7Cu8; 32];
+        let mut loop_a = ActiveTransmissionLoop::new(ep_a, addr_b, &initial_sk, "initiator", 1232).unwrap();
+        let mut loop_b = ActiveTransmissionLoop::new(ep_b, addr_a, &initial_sk, "responder", 1232).unwrap();
+
+        // 1. Bob advertises initial ML-KEM-1024 bundle to Alice
+        let bob_adv = loop_b.ratchet.advertise_bundle();
+        loop_a.set_peer_bundle(bob_adv);
+
+        // 2. Set low threshold N = 5 for unit test verification
+        loop_a.ratchet.set_rollover_thresholds(5, 10_000_000);
+
+        // 3. Alice sends 4 packets at Epoch 0
+        for i in 1..=4 {
+            let msg = format!("msg-epoch0-{i}");
+            loop_a.send_msg(msg.as_bytes()).await.unwrap();
+            let (_seq, ftype, pt) = loop_b.recv_packet(Duration::from_millis(200)).await.unwrap().unwrap();
+            assert_eq!(ftype, FTYPE_MSG);
+            assert_eq!(&pt, msg.as_bytes());
+        }
+        assert_eq!(loop_a.ratchet.epoch(), 0);
+        assert_eq!(loop_b.ratchet.epoch(), 0);
+
+        // Capture stolen Epoch 0 key (Attacker compromise model)
+        let stolen_k0 = loop_a.current_frame_key.clone();
+
+        // 4. Send 5th packet: hits N = 5 threshold! Triggers automatic rollover to Epoch 1!
+        let msg5 = b"msg-epoch0-5-triggers-rollover";
+        loop_a.send_msg(msg5).await.unwrap();
+        assert_eq!(loop_a.ratchet.epoch(), 1, "Alice must roll over to Epoch 1 automatically");
+
+        // Bob receives in-flight rekey fragments until epoch rolls over to 1
+        while loop_b.ratchet.epoch() < 1 {
+            let res = loop_b.recv_packet(Duration::from_millis(300)).await.unwrap();
+            assert!(res.is_some());
+        }
+        assert_eq!(loop_b.ratchet.epoch(), 1, "Bob must advance to Epoch 1 after receiving rekey fragments");
+
+        // Bob receives the 5th message
+        let (_s, _ft, pt5) = loop_b.recv_packet(Duration::from_millis(300)).await.unwrap().unwrap();
+        assert_eq!(&pt5, msg5);
+
+        // 5. Subsequent message transmitted strictly under Epoch 1
+        let msg_epoch1 = b"TOP_SECRET_EPOCH_1_TACTICAL_TELEMETRY";
+        let seq_e1 = loop_a.send_msg(msg_epoch1).await.unwrap();
+        let (r_seq, r_ftype, r_pt) = loop_b.recv_packet(Duration::from_millis(200)).await.unwrap().unwrap();
+        assert_eq!(r_seq, seq_e1);
+        assert_eq!(r_ftype, FTYPE_MSG);
+        assert_eq!(&r_pt, msg_epoch1);
+
+        // 6. Post-Compromise Security Verification:
+        // Attacker with stolen Epoch 0 frame key tries to open the Epoch 1 frame -> FAILS!
+        let ep_attacker = Endpoint::bind("127.0.0.1:0").await.unwrap();
+        let att_addr = ep_attacker.local_addr().unwrap();
+        let mut loop_att = ActiveTransmissionLoop::new(ep_attacker, att_addr, &initial_sk, "responder", 1232).unwrap();
+        loop_att.current_frame_key = stolen_k0;
+
+        // Alice sends another Epoch 1 frame directly to attacker address
+        let e1_wire_frame = crate::pacing::build_data_frame_directed(
+            &loop_a.current_frame_key,
+            100,
+            DIR_SEND,
+            1232,
+            b"CLASSIFIED_E1",
+        ).unwrap();
+        loop_a.endpoint.send_raw(&e1_wire_frame, att_addr).await.unwrap();
+
+        let att_res = loop_att.recv_packet(Duration::from_millis(200)).await.unwrap();
+        assert!(att_res.is_none(), "Attacker with stolen Epoch 0 key must fail to open Epoch 1 frame");
+    }
+
+    #[tokio::test]
+    async fn active_transmission_loop_auto_rollover_byte_threshold() {
+        let (ep_a, ep_b) = loopback_pair().await;
+        let addr_a = ep_a.local_addr().unwrap();
+        let addr_b = ep_b.local_addr().unwrap();
+
+        let initial_sk = [0x3Du8; 32];
+        let mut loop_a = ActiveTransmissionLoop::new(ep_a, addr_b, &initial_sk, "initiator", 1232).unwrap();
+        let mut loop_b = ActiveTransmissionLoop::new(ep_b, addr_a, &initial_sk, "responder", 1232).unwrap();
+
+        let bob_adv = loop_b.ratchet.advertise_bundle();
+        loop_a.set_peer_bundle(bob_adv);
+
+        // Set byte threshold M = 1500 bytes for unit testing
+        loop_a.ratchet.set_rollover_thresholds(10_000, 1500);
+
+        // Send 800 bytes (under threshold)
+        let data800 = vec![0x41u8; 800];
+        loop_a.send_msg(&data800).await.unwrap();
+        let _ = loop_b.recv_packet(Duration::from_millis(200)).await.unwrap();
+        assert_eq!(loop_a.ratchet.epoch(), 0);
+
+        // Send another 800 bytes (total 1600 bytes >= 1500 byte threshold!)
+        loop_a.send_msg(&data800).await.unwrap();
+        assert_eq!(loop_a.ratchet.epoch(), 1, "Must trigger rollover upon reaching byte threshold M");
+
+        while loop_b.ratchet.epoch() < 1 {
+            let res = loop_b.recv_packet(Duration::from_millis(300)).await.unwrap();
+            assert!(res.is_some());
+        }
+        assert_eq!(loop_b.ratchet.epoch(), 1);
+        let (_s, _ft, pt2) = loop_b.recv_packet(Duration::from_millis(300)).await.unwrap().unwrap();
+        assert_eq!(pt2.len(), 800);
+    }
+
+    #[test]
+    fn active_transmission_loop_exact_10000_packets_trigger() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let ep = Endpoint::bind("127.0.0.1:0").await.unwrap();
+            let addr = ep.local_addr().unwrap();
+            let mut loop_inst = ActiveTransmissionLoop::new(ep, addr, &[0x22u8; 32], "initiator", 1232).unwrap();
+
+            // Default threshold N = 10,000 packets
+            assert_eq!(loop_inst.ratchet.rollover_counters(), (0, 0));
+            assert!(!loop_inst.ratchet.needs_rollover());
+
+            // Transmit 9,999 packets
+            for _ in 0..9_999 {
+                loop_inst.ratchet.note_transmission(100);
+            }
+            assert_eq!(loop_inst.ratchet.rollover_counters().0, 9_999);
+            assert!(!loop_inst.ratchet.needs_rollover(), "must not trigger at 9,999 packets");
+
+            // 10,000th packet
+            loop_inst.ratchet.note_transmission(100);
+            assert_eq!(loop_inst.ratchet.rollover_counters().0, 10_000);
+            assert!(loop_inst.ratchet.needs_rollover(), "must trigger exactly at 10,000 packets");
+        });
+    }
+
+    #[test]
+    fn active_transmission_loop_exact_10mb_bytes_trigger() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let ep = Endpoint::bind("127.0.0.1:0").await.unwrap();
+            let addr = ep.local_addr().unwrap();
+            let mut loop_inst = ActiveTransmissionLoop::new(ep, addr, &[0x33u8; 32], "initiator", 1232).unwrap();
+
+            // Default threshold M = 10 MB = 10,485,760 bytes
+            assert_eq!(loop_inst.ratchet.rollover_counters(), (0, 0));
+            assert!(!loop_inst.ratchet.needs_rollover());
+
+            // Transmit 10,485,759 bytes (1 byte below 10 MB)
+            loop_inst.ratchet.note_transmission(10_485_759);
+            assert_eq!(loop_inst.ratchet.rollover_counters().1, 10_485_759);
+            assert!(!loop_inst.ratchet.needs_rollover(), "must not trigger at 10,485,759 bytes");
+
+            // 1 more byte reaches 10 MB
+            loop_inst.ratchet.note_transmission(1);
+            assert_eq!(loop_inst.ratchet.rollover_counters().1, 10_485_760);
+            assert!(loop_inst.ratchet.needs_rollover(), "must trigger exactly at 10 MB (10,485,760 bytes)");
+        });
+    }
+
+    #[test]
+    fn active_transmission_loop_default_thresholds_match_spec() {
+        use crate::policy::{ROLLOVER_BYTE_THRESHOLD, ROLLOVER_PACKET_THRESHOLD};
+        assert_eq!(ROLLOVER_PACKET_THRESHOLD, 10_000, "Specification requires N = 10,000 packets");
+        assert_eq!(ROLLOVER_BYTE_THRESHOLD, 10 * 1024 * 1024, "Specification requires M = 10 MB");
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let ep = Endpoint::bind("127.0.0.1:0").await.unwrap();
+            let addr = ep.local_addr().unwrap();
+            let loop_inst = ActiveTransmissionLoop::new(ep, addr, &[0x11u8; 32], "initiator", 1232).unwrap();
+            assert_eq!(loop_inst.ratchet.rollover_counters(), (0, 0));
+            assert!(!loop_inst.ratchet.needs_rollover());
+        });
     }
 }

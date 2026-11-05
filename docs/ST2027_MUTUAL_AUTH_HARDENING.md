@@ -214,3 +214,39 @@ This is strong, standards-based engineering, not a guarantee of
 - ePrint 2026/1418 (CT-KAT), ePrint 2026/934 (masked ML-KEM shuffling),
   KyberSlash disclosures.
 - Trail of Bits, *Constant-Time PQC* guidance.
+
+## 8. Zero-Disk Key Containment & Hardware Key Custody (2026/2027 Standards)
+
+### 8.1 Threat Model: Eliminating Disk-Based Signing Seeds
+File-based signing seeds (`--auth-sk-file`) stored on host filesystem disks remain vulnerable to physical acquisition, host root compromise, and unencrypted cold storage extraction. Zero-Disk Key Containment guarantees that no raw signing seeds ever reside in plaintext on persistent host media.
+
+### 8.2 Native PKCS#11 HSM Architecture (Rust Data Plane)
+Direct hardware signing is integrated natively into `rust_data_plane` via the `cryptoki` crate (PKCS#11 v3.1):
+- **Function**: `destroyer_core::auth::sign_with_hsm(session: &Session, key_handle: ObjectHandle, digest: &[u8]) -> Result<Vec<u8>, HsmError>`
+- **Hardware Targets Supported**:
+  - **YubiKey 5 FIPS**: `ykcs11` driver (`libykcs11.so` / `ykcs11.dll`)
+  - **Thales Luna PCIe HSM**: `libCryptoki2_64.so` / `Crystoki.dll`
+  - **Nitrokey HSM**: OpenSC PKCS#11 (`opensc-pkcs11.so` / `opensc-pkcs11.dll`)
+- **Algorithms**: FIPS 204 ML-DSA-87 (`Mechanism::MlDsa`), ECDSA (P-384), Pure Ed25519 (`EddsaParams`), RSA-PSS.
+- **Probe Command**: `secure-transmit hsm-probe` inspects standard driver candidate paths across Windows, Linux, and macOS.
+
+### 8.3 TPM 2.0 PCR-Sealed Identity Storage
+Nodes utilize TCG TPM 2.0 Part 1/2 measured boot object sealing via `destroyer_core::tpm_nv`:
+- **Sealing**: `secure-transmit auth-tpm-seal --seed-file <PATH> --out-priv <PATH> --out-pub <PATH> --pcrs 0,1,2,7`
+  - The plaintext seed file is ingested into page-locked RAM and immediately wiped from disk (3-pass NIST SP 800-88 purge).
+  - The seed is sealed against measured boot registers:
+    - **PCR 0**: CRTM, BIOS / UEFI firmware code & embedded measurements
+    - **PCR 1**: Host Platform Configuration & motherboard hardware
+    - **PCR 2**: UEFI Option ROMs (PCIe devices, RAID, NIC firmware)
+    - **PCR 7**: Secure Boot State, PK, KEK, db, dbx, and policy enforcement
+- **Unsealing & KEX**:
+  - `secure-transmit kex-listen --auth-tpm-sealed <PRIV> [--auth-tpm-pub <PUB>] --peer-auth-pk-file <PEER_VK> ...`
+  - `secure-transmit kex-connect --auth-tpm-sealed <PRIV> [--auth-tpm-pub <PUB>] --peer-auth-pk-file <PEER_VK> ...`
+  - In `secure_p2p.py node`: `--auth-tpm-sealed <PRIV>` directly substitutes for `--auth-sk-file`.
+  - **Fail-Closed Policy Enforcement**: If firmware is tampered with or Secure Boot is disabled, TPM silicon returns `TPM_RC_POLICY_FAIL` (0x99D), and the data plane aborts execution without unsealing the identity key.
+
+### 8.4 Two-Person Integrity (TPI) Split-Knowledge Doctrine
+Under DoD S-5210.41M, high-consequence operations (Emergency Action Messages `/eam`, Push-to-Talk bursts `/ptt`, and NC3 directives) require physical split-knowledge smartcard tokens:
+- **Production Doctrine**: Disk-based synthetic JSON signature files are strictly prohibited outside `--lab` mode.
+- **Hardware Ceremony**: `secure-transmit eam-auth-hw` co-signs the canonical EAM wire bytes via two independent physical hardware tokens (`--token1-module`, `--token2-module`).
+- Both officers must be distinct authorized operators holding enrolled hardware tokens.

@@ -6,7 +6,7 @@
 //! chaff frames (FTYPE_CHAFF = 0xFF) are generated under the active AEAD key.
 
 use crate::aead::{self, FrameKey, DIR_SEND};
-use crate::frame::{quantize, FRAME_OVERHEAD, FTYPE_CHAFF, FTYPE_MSG};
+use crate::frame::{quantize, FRAME_OVERHEAD, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY};
 use std::time::{Duration, Instant};
 
 /// Default wire quantum matching standard IPv6 non-fragmented datagram.
@@ -109,6 +109,60 @@ pub fn build_data_frame_directed(
         getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
     }
     let frame = aead::seal_with_len(key, seq, dir, FTYPE_MSG, payload.len() as u16, &padded)?;
+    if frame.len() != valid_quantum {
+        return Err(aes_gcm::aead::Error);
+    }
+    Ok(frame)
+}
+
+/// Build a quantum-padded in-band rekey frame with CSPRNG filler to eliminate size side-channels.
+pub fn build_rekey_frame_directed(
+    key: &FrameKey,
+    seq: u64,
+    dir: u8,
+    quantum: usize,
+    payload: &[u8],
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
+    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
+    let max_payload_len = valid_quantum
+        .checked_sub(FRAME_OVERHEAD)
+        .ok_or(aes_gcm::aead::Error)?;
+    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
+        return Err(aes_gcm::aead::Error);
+    }
+    let mut padded = vec![0u8; max_payload_len];
+    padded[..payload.len()].copy_from_slice(payload);
+    if payload.len() < max_payload_len {
+        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
+    }
+    let frame = aead::seal_with_len(key, seq, dir, FTYPE_REKEY, payload.len() as u16, &padded)?;
+    if frame.len() != valid_quantum {
+        return Err(aes_gcm::aead::Error);
+    }
+    Ok(frame)
+}
+
+/// Build a quantum-padded in-band epoch rekey frame (FTYPE_IN_BAND_EPOCH_REKEY = 0x07) with CSPRNG filler to eliminate size side-channels.
+pub fn build_epoch_rekey_frame_directed(
+    key: &FrameKey,
+    seq: u64,
+    dir: u8,
+    quantum: usize,
+    payload: &[u8],
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
+    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
+    let max_payload_len = valid_quantum
+        .checked_sub(FRAME_OVERHEAD)
+        .ok_or(aes_gcm::aead::Error)?;
+    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
+        return Err(aes_gcm::aead::Error);
+    }
+    let mut padded = vec![0u8; max_payload_len];
+    padded[..payload.len()].copy_from_slice(payload);
+    if payload.len() < max_payload_len {
+        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
+    }
+    let frame = aead::seal_with_len(key, seq, dir, FTYPE_IN_BAND_EPOCH_REKEY, payload.len() as u16, &padded)?;
     if frame.len() != valid_quantum {
         return Err(aes_gcm::aead::Error);
     }

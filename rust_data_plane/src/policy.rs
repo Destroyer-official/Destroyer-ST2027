@@ -126,6 +126,20 @@ pub const DOMAIN_SIG_INITIATOR: &[u8] = b"ST2027-KEX-v2::sig-initiator";
 pub const DOMAIN_RATCHET_CHAIN: &[u8] = b"ST2027-RATCHET-v2::chain";
 /// Ratchet root domain.
 pub const DOMAIN_RATCHET_ROOT: &[u8] = b"ST2027-RATCHET-v2::root";
+/// Handshake signature auth binding domain.
+pub const DOMAIN_AUTH_BINDING: &[u8] = b"ST2027-KEX-v2::auth-binding";
+/// Responder confirmation tag domain.
+pub const DOMAIN_CONFIRM_RESPONDER: &[u8] = b"ST2027-RESPONDER-CONFIRM";
+/// Initiator confirmation tag domain.
+pub const DOMAIN_CONFIRM_INITIATOR: &[u8] = b"ST2027-INITIATOR-CONFIRM";
+/// Domain separator for in-band continuous epoch ratchet root derivation.
+pub const DOMAIN_EPOCH_RATCHET_ROOT: &[u8] = b"ST2027-EPOCH-RATCHET::root";
+/// Domain separator for in-band epoch rekey authentication tag key derivation.
+pub const DOMAIN_EPOCH_AUTH_KEY: &[u8] = b"ST2027-EPOCH-REKEY-AUTH::key";
+/// Default packet threshold for automatic in-band epoch rollover (N = 10,000 packets).
+pub const ROLLOVER_PACKET_THRESHOLD: u64 = 10_000;
+/// Default byte threshold for automatic in-band epoch rollover (M = 10 MB = 10,485,760 bytes).
+pub const ROLLOVER_BYTE_THRESHOLD: u64 = 10 * 1024 * 1024;
 
 #[cfg(test)]
 mod tests {
@@ -157,5 +171,11 @@ mod tests {
     fn domains_are_separated() {
         assert_ne!(DOMAIN_SIG_RESPONDER, DOMAIN_SIG_INITIATOR);
         assert_ne!(DOMAIN_KEX_SESSION, DOMAIN_RATCHET_ROOT);
+        assert_ne!(DOMAIN_AUTH_BINDING, DOMAIN_KEX_SESSION);
+        assert_ne!(DOMAIN_CONFIRM_RESPONDER, DOMAIN_CONFIRM_INITIATOR);
+        assert_ne!(DOMAIN_EPOCH_RATCHET_ROOT, DOMAIN_RATCHET_ROOT);
+        assert_ne!(DOMAIN_EPOCH_AUTH_KEY, DOMAIN_EPOCH_RATCHET_ROOT);
+        assert_eq!(ROLLOVER_PACKET_THRESHOLD, 10_000);
+        assert_eq!(ROLLOVER_BYTE_THRESHOLD, 10_485_760);
     }
 }

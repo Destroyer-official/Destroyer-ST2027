@@ -5,9 +5,11 @@
 //! Messages (EAM). Also provides the NC3 Safety Gate scanner that blocks
 //! single-officer nuclear directives from leaking through routine conversational chat.
 
-use crate::auth::{Mldsa87SigningKey, Mldsa87VerifyingKey};
+use crate::auth::{sign_with_hsm, Mldsa87SigningKey, Mldsa87VerifyingKey};
 use crate::ct::ct_eq;
 use crate::policy::{CoreError, MLDSA87_PK, MLDSA87_SIG};
+use cryptoki::object::ObjectHandle;
+use cryptoki::session::Session;
 
 /// Cryptographic domain separation string for NC3 Emergency Action Messages.
 pub const NC3_EAM_DOMAIN: &[u8] = b"DESTROYER-ST2027-NC3-EAM";
@@ -214,6 +216,60 @@ pub fn verify_eam(
     Ok(())
 }
 
+
+/// Create an authentic dual-officer signed NC3 Emergency Action Message using physical hardware PKCS#11 tokens.
+///
+/// Under DoD Directive 5210.41M (Two-Person Rule / Two-Person Integrity), signing
+/// requires two physically distinct hardware tokens (e.g. dual YubiKeys, dual Luna partitions,
+/// or hardware PAL conduits).
+pub fn create_eam_with_hw_tokens(
+    directive: &[u8],
+    session1: &Session,
+    key_handle1: ObjectHandle,
+    vk1_bytes: &[u8],
+    session2: &Session,
+    key_handle2: ObjectHandle,
+    vk2_bytes: &[u8],
+) -> Result<EamDirective, CoreError> {
+    verify_two_person_rule(vk1_bytes, vk2_bytes)?;
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| CoreError::OsRandom)?
+        .as_secs();
+
+    let tbs = compute_eam_tbs(directive, now_secs);
+
+    let sig1 = sign_with_hsm(session1, key_handle1, &tbs).map_err(|_| CoreError::AuthRequired)?;
+    let sig2 = sign_with_hsm(session2, key_handle2, &tbs).map_err(|_| CoreError::AuthRequired)?;
+
+    Ok(EamDirective {
+        directive_text: directive.to_vec(),
+        officer1_sig: sig1,
+        officer2_sig: sig2,
+        timestamp_secs: now_secs,
+    })
+}
+
+/// Enforce production split-knowledge doctrine.
+///
+/// In production, disk-based synthetic JSON signatures are strictly prohibited fail-closed
+/// to eliminate accidental unauthorized command release without physical smartcards.
+pub fn enforce_production_split_knowledge_doctrine(
+    is_production: bool,
+    used_disk_signatures: bool,
+) -> Result<(), CoreError> {
+    if is_production && used_disk_signatures {
+        eprintln!(
+            "SECURITY VIOLATION: DISK-BASED SIMULATED SIGNATURES PROHIBITED IN PRODUCTION. \
+Physical split-knowledge hardware smartcards (dual YubiKeys or hardware PAL conduit) \
+required under DoD 5210.41M. Accidental command release prevention enforced."
+        );
+        return Err(CoreError::AuthRequired);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +346,19 @@ mod tests {
             verify_eam(&eam, &vk1, &vk1, None),
             Err(CoreError::AuthRequired)
         );
+    }
+
+    #[test]
+    fn production_split_knowledge_doctrine_enforcement() {
+        // Lab mode allows simulated disk signatures
+        assert!(enforce_production_split_knowledge_doctrine(false, true).is_ok());
+        assert!(enforce_production_split_knowledge_doctrine(false, false).is_ok());
+        // Production strictly forbids disk signatures
+        assert_eq!(
+            enforce_production_split_knowledge_doctrine(true, true),
+            Err(CoreError::AuthRequired)
+        );
+        // Production allows hardware token signatures (non-disk)
+        assert!(enforce_production_split_knowledge_doctrine(true, false).is_ok());
     }
 }
