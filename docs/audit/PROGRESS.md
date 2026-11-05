@@ -96,6 +96,8 @@ All 18 product modules have been audited, cross-checked against implementation s
 | `819df35` | System Security Vol A | `docs/SYSTEM_SECURITY_DOCUMENTATION.md` | Replaced promotional phrases with technical baseline mechanisms; preserved mandatory honesty disclosures | 4/4 passed (`test_docs_truth_in_claims.py`) |
 | `5ddd8d2` | System Security Vol C | `docs/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md` | Replaced promotional phrases with strict profile specifications and integration test suite descriptions | 4/4 passed (`test_docs_truth_in_claims.py`) |
 | `f8fb7aa` | Native Loader | `ts_runtime.py` | Supported explicit `P2P_TS_RT_LIB` path in native library loader | 188/188 Rust data-plane tests passed |
+| `cbb78ab` | Cryptography Wrapper | `liboqs_wrapper.py` | Fixed Linux CI CMake build flags and added resilient algorithm fallback diagnostics | 31 passed, 2 skipped (`test_cli_key_fill_and_diode.py`) |
+| `aa45f1e` | Operational Scripts | `launch_*.bat`, `start_*.bat` | Normalized operator console titles and terminology in launcher scripts | 28 passed, 2 skipped (`test_no_marketing_buzzwords_property.py`) |
 
 ### Final Verification Suite Summary
 
