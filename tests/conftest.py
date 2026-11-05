@@ -107,7 +107,7 @@ def pytest_sessionstart(session):
 
         # 5. Build and install destroyer_core via pip/maturin or provide _native extension
         try:
-            import destroyer_core  # noqa: F401
+            import destroyer_core._native  # noqa: F401
         except ImportError:
             try:
                 subprocess.run(

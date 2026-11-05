@@ -68,6 +68,10 @@ def test_production_node_requires_mutual_auth_material():
     with tempfile.TemporaryDirectory() as td:
         psk = Path(td) / "shared.psk"
         psk.write_text("ab" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(psk, 0o600)
+        except OSError:
+            pass
         res = _run(
             ["node", "--role", "responder", "--psk-file", str(psk)],
             env={"P2P_PRODUCTION": "1"},
@@ -81,6 +85,10 @@ def test_production_node_rejects_malformed_auth_material():
         td = Path(td)
         psk = td / "shared.psk"
         psk.write_text("ab" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(psk, 0o600)
+        except OSError:
+            pass
         sk = td / "local.sk"
         pk = td / "peer.pk"
         sk.write_text("00" * 32 + "\n", encoding="utf-8")
@@ -99,6 +107,10 @@ def test_production_refuses_weak_crypto_env_overrides():
         td = Path(td)
         psk = td / "shared.psk"
         psk.write_text("ab" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(psk, 0o600)
+        except OSError:
+            pass
         sk = td / "local.sk"
         pk = td / "peer.pk"
         sk.write_text("11" * 32 + "\n", encoding="utf-8")
@@ -142,6 +154,10 @@ def test_production_node_with_require_hardware_fails_closed():
         td = Path(td)
         psk = td / "shared.psk"
         psk.write_text("ab" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(psk, 0o600)
+        except OSError:
+            pass
         sk = td / "local.sk"
         pk = td / "peer.pk"
         sk.write_text("11" * 32 + "\n", encoding="utf-8")

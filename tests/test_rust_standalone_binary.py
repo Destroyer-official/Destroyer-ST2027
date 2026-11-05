@@ -164,6 +164,10 @@ class TestRustStandaloneBinary(unittest.TestCase):
             wrong = os.path.join(tmp, "wrong.key")
             with open(wrong, "w") as f:
                 f.write("ab" * 32 + "\n")
+            try:
+                os.chmod(wrong, 0o600)
+            except OSError:
+                pass
             port = _free_udp_port()
             recv_state = os.path.join(tmp, "recv.state")
             send_state = os.path.join(tmp, "send.state")
@@ -230,6 +234,10 @@ class TestRustStandaloneBinary(unittest.TestCase):
             wrong = os.path.join(tmp, "wrong.key")
             with open(wrong, "w") as f:
                 f.write("ab" * 32 + "\n")
+            try:
+                os.chmod(wrong, 0o600)
+            except OSError:
+                pass
             port = _free_udp_port()
             src = os.path.join(tmp, "in.bin")
             dst = os.path.join(tmp, "out.bin")
@@ -330,6 +338,10 @@ class TestRustStandaloneBinary(unittest.TestCase):
             wrong = os.path.join(tmp, "wrong.key")
             with open(wrong, "w") as f:
                 f.write("cd" * 32 + "\n")
+            try:
+                os.chmod(wrong, 0o600)
+            except OSError:
+                pass
             r = _run("send", "--key-file", wrong, "--state", st,
                      "--to", f"127.0.0.1:{port}", "--msg", "evil")
             self.assertNotEqual(r.returncode, 0)

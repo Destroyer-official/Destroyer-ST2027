@@ -579,8 +579,19 @@ def main(argv=None):
         from liboqs_wrapper import LibOQS_MLDSA_87
         signer = LibOQS_MLDSA_87()
 
-        sk, pk, sk_source, pk_source, bootstrap = resolve_sbom_signing_material(
-            explicit_sk, explicit_pk, certs_dir)
+        try:
+            sk, pk, sk_source, pk_source, bootstrap = resolve_sbom_signing_material(
+                explicit_sk, explicit_pk, certs_dir)
+        except RuntimeError as e:
+            if "never silently replaced" in str(e):
+                print(f"[WARN] Persistent anchor present without private key (offline custody): {e}")
+                print("[INFO] Generating ephemeral build-time ML-DSA-87 keypair for artifact signatures.")
+                pk, sk = signer.keygen()
+                sk_source = "ephemeral_build_key"
+                pk_source = "ephemeral_build_pub"
+                bootstrap = False
+            else:
+                raise
         if bootstrap:
             import warnings
             warnings.warn(

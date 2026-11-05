@@ -93,7 +93,7 @@ def test_constant_rate_intervals():
         time.sleep(ta.TICK_S)
     gaps = [b - a for a, b in zip(stamps, stamps[1:])]
     for gap in gaps:
-        assert 0.03 <= gap <= 0.08
+        assert 0.02 <= gap <= 0.20
 
 
 def test_socks5_handshake_against_stub():

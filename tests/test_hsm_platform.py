@@ -20,6 +20,8 @@ import platform_hsm_interface as phi
 def _hermetic_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("P2P_STORAGE_PASSPHRASE", raising=False)
+    monkeypatch.delenv("P2P_KEYFILE_PASSPHRASE", raising=False)
     yield
 
 

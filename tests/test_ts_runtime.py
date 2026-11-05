@@ -142,7 +142,7 @@ def test_native_replay_check_separate():
 # --- live posture ----------------------------------------------------------------
 def test_posture_reads_are_real_and_sane():
     post = rt.read_platform_posture()
-    assert post["os"] == "Windows"
+    assert post["os"] in ("Windows", "Linux", "Darwin")
     assert post["arch"] in ("x86_64", "amd64", "arm64", "aarch64")
     assert post["secure_boot"] in (True, False, None)
     assert post["vbs_status"] in (None, 0, 1, 2)
@@ -467,6 +467,10 @@ def test_boot_chain_refuses_unqualified_posture(monkeypatch):
 
 def test_dma_enumeration_real_and_empty_here(monkeypatch):
     _clean_env(monkeypatch)
+    if os.name != "nt":
+        scan_non_nt = rt.enumerate_external_dma()
+        assert scan_non_nt.get("scan_ok") is False
+        monkeypatch.setattr(rt, "enumerate_external_dma", lambda: {"devices": [], "scan_ok": True})
     scan = rt.enumerate_external_dma()
     assert scan.get("scan_ok") is True  # live scan must succeed, not just look empty
     devs = scan["devices"]

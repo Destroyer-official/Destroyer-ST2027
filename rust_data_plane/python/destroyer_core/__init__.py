@@ -40,7 +40,7 @@ except ImportError:
 
     class SecureEngine:  # type: ignore[no-redef]
         def __init__(self):
-            self.is_connected = False
+            self._connected = False
             self.key = None
             self.hp_key = None
             self.send_seq = 0
@@ -58,10 +58,10 @@ except ImportError:
             self.hp_key = HKDF(algorithm=hashes.SHA384(), length=32, salt=None, info=b"destroyer/header-protection/v2").derive(raw)
             self.send_seq = start_seq
             self.is_initiator = is_initiator
-            self.is_connected = True
+            self._connected = True
 
         def is_connected(self):
-            return self.is_connected
+            return self._connected
 
         def send_dir(self):
             return 0x00 if self.is_initiator else 0x01
@@ -142,20 +142,78 @@ except ImportError:
             self.replay_max = 0
             self.drops = 0
 
-        def check_seq(self, seq: int) -> bool:
-            return seq not in self.replay_window
-
         def check_seq_readonly(self, seq: int) -> bool:
-            return seq not in self.replay_window
+            if seq <= 0:
+                return False
+            if seq in self.replay_window:
+                return False
+            if self.replay_max > 64 and seq + 64 <= self.replay_max:
+                return False
+            return True
 
         def mark_seq(self, seq: int):
+            if seq <= 0:
+                return
             self.replay_window.add(seq)
+            if seq > self.replay_max:
+                self.replay_max = seq
+            self.replay_window = {s for s in self.replay_window if s + 1024 >= self.replay_max}
+
+        def check_seq(self, seq: int) -> bool:
+            if not self.check_seq_readonly(seq):
+                self.drops += 1
+                return False
+            self.mark_seq(seq)
+            return True
 
         def drop_count(self) -> int:
             return self.drops
 
     class _DummyCore:
         def __init__(self, *args, **kwargs):
+            pass
+
+        def verify_read(self, *args, **kwargs):
+            return True
+
+        def register_peer(self, *args, **kwargs):
+            return True
+
+        def verifying_bytes(self, *args, **kwargs):
+            return b"\x00" * 32
+
+        def get_public_keys(self, *args, **kwargs):
+            return b"\x00" * 32
+
+        def is_quarantined(self, *args, **kwargs):
+            return False
+
+        def is_emergency_isolated(self, *args, **kwargs):
+            return False
+
+        def create_cookie(self, *args, **kwargs):
+            return b"\x00" * 32
+
+        def create_challenge(self, *args, **kwargs):
+            return b"\x00" * 32
+
+        @classmethod
+        def solve_challenge(cls, *args, **kwargs):
+            return 0
+
+        def secure_wipe(self, *args, **kwargs):
+            pass
+
+        def process_incoming_m1(self, *args, **kwargs):
+            return b"\x00" * 32
+
+        def trust_score(self, *args, **kwargs):
+            return 100
+
+        def score(self, *args, **kwargs):
+            return 100
+
+        def record_action(self, *args, **kwargs):
             pass
 
     NativeHybridKex = _DummyCore  # type: ignore[assignment,misc]

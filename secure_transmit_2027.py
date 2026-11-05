@@ -2174,24 +2174,32 @@ def _resolve_peer_pk(value: Optional[str], peer_cert_json: Optional[str] = None)
     """Resolve expected ML-DSA-87 peer public key (2592 bytes) from CLI argument or cert."""
     if value:
         val = str(value).strip()
-        candidate = Path(val)
-        if candidate.is_file():
-            raw = candidate.read_bytes()
-            if len(raw) == 2592:
-                return raw
-            txt = raw.decode("utf-8", errors="ignore").strip()
-            if len(txt) == 5184:
-                try:
-                    return bytes.fromhex(txt)
-                except ValueError:
-                    pass
-            import base64
+        if len(val) == 5184:
             try:
-                dec = base64.b64decode(txt)
-                if len(dec) == 2592:
-                    return dec
-            except Exception:
+                return bytes.fromhex(val)
+            except ValueError:
                 pass
+        try:
+            candidate = Path(val)
+            if len(val) < 1024 and candidate.is_file():
+                raw = candidate.read_bytes()
+                if len(raw) == 2592:
+                    return raw
+                txt = raw.decode("utf-8", errors="ignore").strip()
+                if len(txt) == 5184:
+                    try:
+                        return bytes.fromhex(txt)
+                    except ValueError:
+                        pass
+                import base64
+                try:
+                    dec = base64.b64decode(txt)
+                    if len(dec) == 2592:
+                        return dec
+                except Exception:
+                    pass
+        except OSError:
+            pass
         if len(val) == 5184:
             try:
                 return bytes.fromhex(val)
