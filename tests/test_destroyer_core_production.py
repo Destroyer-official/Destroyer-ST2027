@@ -20,7 +20,7 @@ import struct
 
 # Pre-import destroyer_core before any process mitigations
 try:
-    from destroyer_core import SecureEngine
+    from destroyer_core._native import SecureEngine
     DESTROYER_AVAILABLE = True
 except ImportError:
     DESTROYER_AVAILABLE = False

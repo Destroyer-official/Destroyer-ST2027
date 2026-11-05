@@ -131,7 +131,7 @@ def _assert_no_link(path: Path) -> None:
         st = path.lstat()
     except FileNotFoundError:
         return
-    if st.st_nlink != 1:
+    if not stat.S_ISDIR(st.st_mode) and st.st_nlink != 1:
         raise RuntimeError(
             f"audit signer path has {st.st_nlink} hard links: {path} (fail-closed)"
         )

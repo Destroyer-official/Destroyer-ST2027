@@ -21,7 +21,8 @@ import struct
 
 import pytest
 
-destroyer_core = pytest.importorskip("destroyer_core")
+pytest.importorskip("destroyer_core._native")
+import destroyer_core
 
 DIR_SEND = 0x00
 FTYPE_MSG = 0x01

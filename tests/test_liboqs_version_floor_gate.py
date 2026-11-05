@@ -92,7 +92,7 @@ class TestFloorSingleSource:
     def test_floor_matches_pin(self):
         floor = dsv.liboqs_version_floor()
         pinned = dsv.DependencySecurityVerifier().critical_dependencies[
-            "oqs.dll"]["min_version"]
+            "oqs.dll" if "oqs.dll" in dsv.DependencySecurityVerifier().critical_dependencies else "liboqs.so"]["min_version"]
         assert floor == (0, 16, 0)
         assert dsv.parse_oqs_version(pinned) == floor
 

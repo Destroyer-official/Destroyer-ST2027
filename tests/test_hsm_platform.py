@@ -196,6 +196,7 @@ def test_runtime_integrity_unavailable_is_false():
     assert "return False" in tail  # nosec: B101
 
 
+@pytest.mark.skipif(not hasattr(phi, "_NCryptImportKey"), reason="Windows CNG NCrypt is Windows-only")
 def test_store_in_tpm_labels_file_fallback_honestly(monkeypatch):
     # Force the CNG path then make import fail -> file fallback must NOT
     # claim provider "windows_cng".

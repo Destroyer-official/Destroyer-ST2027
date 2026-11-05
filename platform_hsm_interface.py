@@ -4016,7 +4016,7 @@ def retrieve_key_kernel_keyring(label_or_id: str, timeout: int = 20) -> dict:
             return {"ok": False, "reason": (proc.stderr.decode(
                 "utf-8", "replace") if isinstance(proc.stderr, bytes)
                 else str(proc.stderr or ""))[:120] or "keyctl pipe failed"}
-        raw = proc.stdout.decode("utf-8", "replace").strip()
+        raw = (proc.stdout.decode("utf-8", "replace") if isinstance(proc.stdout, bytes) else str(proc.stdout or "")).strip()
         try:
             return {"ok": True, "secret": bytes.fromhex(raw)}
         except Exception:

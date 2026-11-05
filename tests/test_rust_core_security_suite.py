@@ -17,7 +17,7 @@ import unittest
 import pytest
 
 try:
-    import destroyer_core
+    import destroyer_core._native
     from destroyer_core import (
         CoreCookieGate,
         CoreAcdEngine,

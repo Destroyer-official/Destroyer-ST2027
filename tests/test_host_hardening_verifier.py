@@ -18,7 +18,10 @@ from unittest.mock import patch, MagicMock
 
 # Ensure scripts directory is on sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
+import verify_host_hardening
 from verify_host_hardening import HostHardeningVerifier
+if getattr(verify_host_hardening, "winreg", None) is None:
+    verify_host_hardening.winreg = MagicMock()
 
 
 def test_verifier_structure_and_run_all():

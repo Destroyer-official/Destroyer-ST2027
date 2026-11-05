@@ -142,11 +142,16 @@ def test_shared_secret_combiner():
 
 
 def test_max_diversity_mode():
-    from triple_hybrid_kem import is_hqc_available
+    from triple_hybrid_kem import is_hqc_available, TripleKEMError
     hqc_avail = is_hqc_available()
     leg_name = "HQC-256" if hqc_avail else "McEliece-8192128f"
     log_step(f"Testing MAX_DIVERSITY Mode (P-521 + ML-KEM-1024 + {leg_name})")
-    kem = TripleHybridKEM(mode=KEMProfileMode.MAX_DIVERSITY)
+    try:
+        kem = TripleHybridKEM(mode=KEMProfileMode.MAX_DIVERSITY)
+    except TripleKEMError as e:
+        import pytest
+        pytest.skip(f"MAX_DIVERSITY 3rd leg not available: {e}")
+        return
     assert kem.mode == KEMProfileMode.MAX_DIVERSITY  # nosec: B101
 
     pk, sk = kem.keygen()

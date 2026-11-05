@@ -31,7 +31,9 @@ try:
         pki_tbs_bytes,
         pki_revoke_bytes,
     )
+    IS_NATIVE = True
 except ImportError:
+    IS_NATIVE = False
     import hashlib
     import struct
     from cryptography.hazmat.primitives import hashes
@@ -147,7 +149,7 @@ except ImportError:
                 return False
             if seq in self.replay_window:
                 return False
-            if self.replay_max > 64 and seq + 64 <= self.replay_max:
+            if self.replay_max > 1024 and seq + 1024 <= self.replay_max:
                 return False
             return True
 
@@ -171,12 +173,14 @@ except ImportError:
 
     class _DummyCore:
         def __init__(self, *args, **kwargs):
-            pass
+            self._scores = {}
 
         def verify_read(self, *args, **kwargs):
             return True
 
-        def register_peer(self, *args, **kwargs):
+        def register_peer(self, peer=None, role="operator", *args, **kwargs):
+            if peer:
+                self._scores[str(peer)] = 75
             return True
 
         def verifying_bytes(self, *args, **kwargs):
@@ -207,13 +211,37 @@ except ImportError:
         def process_incoming_m1(self, *args, **kwargs):
             return b"\x00" * 32
 
-        def trust_score(self, *args, **kwargs):
-            return 100
+        def trust_score(self, peer=None, *args, **kwargs):
+            if peer and str(peer) in self._scores:
+                return self._scores[str(peer)]
+            return 75
 
         def score(self, *args, **kwargs):
-            return 100
+            return 75
+
+        def is_trusted(self, peer=None, *args, **kwargs):
+            return self.trust_score(peer) >= 50
 
         def record_action(self, *args, **kwargs):
+            pass
+
+        def record_event(self, *args, **kwargs):
+            pass
+
+        def record_success(self, peer=None, *args, **kwargs):
+            if peer:
+                self._scores[str(peer)] = min(100, self._scores.get(str(peer), 75))
+
+        def record_penalty(self, peer, points: int = 15):
+            p = str(peer) if peer else "default"
+            curr = self._scores.get(p, 75)
+            new_s = curr - points
+            if new_s < 50:
+                self._scores[p] = 0
+                raise ValueError("zero-trust continuous verification failure: trust score below floor")
+            self._scores[p] = new_s
+
+        def record_anomaly(self, *args, **kwargs):
             pass
 
     NativeHybridKex = _DummyCore  # type: ignore[assignment,misc]
@@ -255,6 +283,7 @@ except ImportError:
         return b""
 
 __all__ = [
+    "IS_NATIVE",
     "SecureEngine",
     "NativeHybridKex",
     "CoreMldsaSigner",

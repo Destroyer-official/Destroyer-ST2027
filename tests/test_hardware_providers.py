@@ -349,12 +349,15 @@ def test_keyctl_trusted_roundtrip_mocked(monkeypatch):
         if argv[1] == "add":
             state["id"] = "123456"
             state["hex"] = None
-            return _Proc(stdout="123456\n")
+            out = "123456\n" if kwargs.get("text") else b"123456\n"
+            return _Proc(stdout=out)
         if argv[1] == "padd":
             state["hex"] = argv[2]
             return _Proc()
         if argv[1] == "pipe":
-            return _Proc(stdout=(state.get("hex") or "") + "\n")
+            h = state.get("hex") or ""
+            out = (h + "\n") if kwargs.get("text") else ((h + "\n").encode("utf-8"))
+            return _Proc(stdout=out)
         if argv[1] == "revoke":
             return _Proc()
         raise AssertionError(argv)

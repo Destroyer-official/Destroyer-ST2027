@@ -26,7 +26,7 @@ from pathlib import Path
 
 # Preload native extension before any process mitigation locks
 try:
-    from destroyer_core import SecureEngine
+    from destroyer_core._native import SecureEngine
     DESTROYER_AVAILABLE = True
 except ImportError:
     DESTROYER_AVAILABLE = False
