@@ -33,16 +33,42 @@ class DestroyerNode:
         try:
             from destroyer_core import SecureEngine
         except ImportError as e:
+            import os
+            import shutil
+            import subprocess
             import sys
             import traceback
 
-            raise DataPlaneUnavailable(
-                "destroyer_core native module not built. "
-                "Run `maturin develop -r` in rust_data_plane/ first. "
-                f"cause={e!r} exe={sys.executable} "
-                f"path0={sys.path[0] if sys.path else None} "
-                f"trace={traceback.format_exc(limit=3)}"
-            ) from e
+            built = False
+            if shutil.which("cargo"):
+                cargo_toml = os.path.join(os.path.dirname(__file__), "rust_data_plane", "Cargo.toml")
+                if os.path.exists(cargo_toml):
+                    try:
+                        subprocess.run(
+                            [sys.executable, "-m", "pip", "install", "maturin"],
+                            check=False,
+                            capture_output=True,
+                            timeout=60,
+                        )
+                        res = subprocess.run(
+                            [sys.executable, "-m", "maturin", "develop", "-r", "-m", cargo_toml],
+                            check=False,
+                            capture_output=True,
+                            timeout=180,
+                        )
+                        if res.returncode == 0:
+                            from destroyer_core import SecureEngine
+                            built = True
+                    except Exception:
+                        pass
+            if not built:
+                raise DataPlaneUnavailable(
+                    "destroyer_core native module not built. "
+                    "Run `maturin develop -r` in rust_data_plane/ first. "
+                    f"cause={e!r} exe={sys.executable} "
+                    f"path0={sys.path[0] if sys.path else None} "
+                    f"trace={traceback.format_exc(limit=3)}"
+                ) from e
         self.engine = SecureEngine()
         try:
             from destroyer_core import CoreAcdEngine, CoreZeroTrustEngine
