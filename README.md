@@ -10,11 +10,11 @@
 
 ---
 
-### Document Metadata & Evaluation Boundary
+### Document Identification & Evaluation Metadata
 - **Technical Nomenclature:** Secure Transmit 2027 (`ST2027`)
-- **System Marking:** UNCLASSIFIED TECHNICAL SPECIFICATION (All test fixtures and cryptographic keys are explicitly synthetic).
-- **Target Operational Posture:** 2027 NSA Commercial National Security Algorithm (CNSA) Suite 2.0 Mandate, Cryptographic Dual-Person Authorization (DPA), IETF RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange, and seL4 Microkernel Enforced Execution.
-- **Physical vs Software Boundary:** User-space software acts strictly as a **fail-closed gatekeeper** (`TSRequiredError`). Software cannot independently certify physical physics; physical FIPS 140-3 Level 3/4 hardware tamper enclosures, TEMPEST SDIP-27/28/29 attenuation, physical optical unidirectional diodes, and Authorizing Official (AO) ATO certifications require physical facility accreditation and designated hardware.
+- **System Marking:** UNCLASSIFIED TECHNICAL SPECIFICATION // DEFENSE RESEARCH RECORD (All cryptographic test fixtures, identities, and keys are explicitly synthetic).
+- **Target Operational Posture:** 2027 NSA Commercial National Security Algorithm (CNSA) Suite 2.0 Mandate, Cryptographic Dual-Person Authorization (DPA / DoD S-5210.41M Two-Person Rule), IETF RFC 10024 Level 5 Hybrid Post-Quantum Key Exchange, and seL4 Microkernel Enforced Execution.
+- **Physical vs Software Boundary:** User-space software acts strictly as a **fail-closed gatekeeper** (`TSRequiredError`, `PlatformSecurityError`). Software cannot independently certify physical physics; physical FIPS 140-3 Level 3/4 hardware tamper enclosures, TEMPEST SDIP-27/28/29 attenuation, physical optical unidirectional diodes, and Authorizing Official (AO) ATO certifications require physical facility accreditation and designated hardware.
 
 ---
 
@@ -24,7 +24,7 @@ Modern peer-to-peer and client-server communication channels operating across ad
 
 This repository presents the reference implementation, defense specifications, symbolic-model analyses, and operational runbooks for **Secure Transmit 2027 (ST2027)**. ST2027 establishes a mutually authenticated, post-quantum communication stack engineered for National Security Systems (NSS). The architecture eliminates deprecated unhybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) in favor of **NSA CNSA Suite 2.0** algorithms (**FIPS 203 ML-KEM-1024**, **FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**). During the post-quantum transition, a classical leg is retained strictly inside standards-track hybrid KEMs: the Python handshake uses `SecP384r1MLKEM1024` (P-384 + ML-KEM-1024, CNSA L5 path per RFC 10024 / OpenSSL 3.5 `SecP384r1MLKEM1024`); the standalone Rust data-plane uses the same `SecP384r1MLKEM1024` pairing (both halves required, classical-only operation unrepresentable).
 
-The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) is whitened using a tag-derived PRF mask (`ST2027-HEADER-MASK-v1`), authenticated as unmasked AAD by the 16-byte GHASH tag, with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum size class and header fields appear pseudorandom on the wire, while message COUNT is hidden under constant-rate `channel`/chaff cover. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are formally verified in **ProVerif 2.05 symbolic models enforced as a blocking gate in CI** (deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 6); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — executed in Linux CI) and deterministic property doubles green under `cargo test`.
+The transport layer statistically masks traffic against localized observers (ISPs, packet sniffers) through mandatory **Tor v3 SOCKS5 onion routing (public-internet TCP path only)**, **constant-rate cell shaping (50ms interval)**, and **uniform cell quantization (1232-byte wire cells conforming to the 1280-byte IPv6 minimum MTU)**. Python anonymity cells carry their header inside AES-GCM (flag not readable); the standalone Rust data-plane header (`seq|len|ftype`) is whitened using a tag-derived PRF mask (`ST2027-HEADER-MASK-v1`), authenticated as unmasked AAD by the 16-byte GHASH tag, with per-frame quanta padding (256/512/1232) so wire length reveals only the quantum size class and header fields appear pseudorandom on the wire, while message COUNT is hidden under constant-rate `channel`/chaff cover. Constant-rate traffic shaping (50ms interval) provides statistical masking against localized ISP/packet sniffers. It does not provide mathematical security against a global passive adversary with full autonomous network vantage points. Platform security is enforced by an active hardware gatekeeper probing TPM 2.0 PCR registers, FIPS 140-3 cryptographic providers, VBS/HVCI hypervisor enforcement, and physical RED/BLACK network separation. Protocol-level invariants (secrecy, mutual authentication, forward secrecy, and post-compromise security healing) are formally verified in **ProVerif 2.05 symbolic models enforced as a blocking gate in CI** (deployed `st2027_handshake.pv` + `st2027_pcs.pv` model-scoped, abstractions documented; see Section 7); memory and frame properties are covered by Kani proof harnesses (DEFINED, execution requires the `cargo kani` + CBMC toolchain — executed in Linux CI) and deterministic property doubles green under `cargo test`.
 
 ---
 
@@ -83,11 +83,77 @@ To preserve complete engineering truth and auditability, this repository maintai
 
 ---
 
-## 2. Software Security Mechanisms: What Software Security We Provide
+## 2. Operational Topologies & Deployment Doctrine ("Where & When Used")
 
-The ST2027 software stack implements an algorithmic defense architecture aligned with the **NSA Commercial National Security Algorithm Suite 2.0 (CNSA 2.0)** mandate. The software controls are organized into layered cryptographic and transport subsystems:
+ST2027 is engineered to operate across six standardized operational environments, each enforcing a distinct profile of network transport, cryptographic policy, and hardware security gates:
 
-### 2.1 Post-Quantum Key Encapsulation Mechanism (KEM)
+```
++-----------------------------------------------------------------------------------------------------------------------------+
+|                                        ST2027 OPERATIONAL DEPLOYMENT MATRIX                                                 |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| OPERATIONAL       | NETWORK TRANSPORT           | CRYPTOGRAPHIC                 | HARDWARE GATING          | ACCESS CONTROL |
+| ENVIRONMENT       | MECHANISM                   | PROTOCOL & SUITE              | MANDATE                  | LEVEL (MLS)    |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| [1] Tactical Edge | Direct Raw UDP / IPv6       | Noise-XXhfs (ML-KEM-1024      | TPM 2.0 PCR Quote        | CONFIDENTIAL / |
+|     DDIL Radio    | 1232-byte quantized cells   | + P-384 hybrid combiner)      | Windows CNG Token        | SECRET         |
+|     (Vehicular)   | Constant 50ms pacing        | AES-256-GCM / 128-bit tag     | Monotonic NV Counter     | Tactical Mesh  |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| [2] Public WAN    | Tor v3 Onion Services       | Noise-XXhfs + TLS 1.3         | TPM 2.0 PCR [0,1,2,7]    | SECRET //      |
+|     (Adversarial  | TCP SOCKS5 (RFC 1928)       | SecP384r1MLKEM1024 hybrid     | VBS / HVCI Hypervisor    | NOFORN         |
+|     Internet)     | PRF header whitening        | ML-DSA-87 peer identities     | Anti-Rollback NV Lock    | Anonymized     |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| [3] Cross-Domain  | Simplex Optical Diode       | Unidirectional Push           | Physical Single-Fiber    | TOP SECRET //  |
+|     Boundary      | Cauchy-Reed-Solomon FEC     | HKDF-SHA3-512 compartment key | RX photodiode severed    | SCI // NOFORN  |
+|     (RED / BLACK) | Zero return path wire       | ML-DSA-87 manifest signature  | Hardware Diode Enclosure | Bell-LaPadula  |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| [4] Air-Gapped    | Cryptographic Removable     | Offline Ephemeral Ratchet     | Air-gapped Workstation   | TOP SECRET //  |
+|     Command Post  | Media Sealed Envelopes      | ML-DSA-87 + SLH-DSA-256f dual | Isolated TPM 2.0 Endorse | SPECIAL ACCESS |
+|     (Accredited)  | Formats with Monotonic SEQ  | Hardware Root CA PKI (3-of-5) | Zero Network Interface   | Dual-Custody   |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| [5] Joint Edge    | Allied Gateway Protocol     | Group Ratchet (TPI)           | FIPS 140-3 Cryptographic | MULTI-NATIONAL |
+|     (CJADC2 /     | MIL-STD-6090 Cursor-on-     | Dynamic Epoch Resync          | Provider (WinCNG/PKCS11) | REL TO USA,    |
+|     Allied Mesh)  | Target (CoT) XML over PQC   | ML-KEM-1024 Break-in Recovery | Monotonic Rollback Guard | FVEY, NATO     |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+| [6] Strategic     | Dedicated Wire / Direct P2P | Two-Person Integrity (TPI)    | Dual Hardware HSM / TPM  | STRATEGIC      |
+|     Command (NC3) | Out-of-Band Dual-Channel    | Dual ML-DSA-87 Cryptographic  | Independent Operator     | EMERGENCY      |
+|     (DoD S-5210)  | Zero-Persistence RAM Only   | Authorization Tokens          | Physical Split-Knowledge | ACTION MESSAGE |
++-------------------+-----------------------------+-------------------------------+--------------------------+----------------+
+```
+
+### Detailed Topology Profiles
+1. **Topology 1 (Tactical Edge Radio):** Designed for Disconnected, Intermittent, and Limited-Bandwidth (DDIL) tactical networks. Operates over raw UDP/IPv6 with strict 1232-byte frame quantization. Handshakes utilize stateless cookie gates (`rust_data_plane/src/cookie.rs`) to prevent CPU exhaustion from spoofed UDP flooding. Duplicate datagrams are rejected branchlessly via the RFC 6479 decoupled sliding window.
+2. **Topology 2 (Adversarial Public WAN):** Employs Tor v3 onion routing with SOCKS5 proxy encapsulation. Hides transit endpoints from autonomous autonomous system (AS) interceptors. Cell intervals are anchored to a 50ms pacing loop, emitting CSPRNG cover traffic during conversational pauses.
+3. **Topology 3 (RED/BLACK Cross-Domain Boundary):** Unidirectional data transfer across physically severed optical fiber links. Transmit photodiode on the RED network pushes Cauchy-Reed-Solomon encoded frames to a receiver on the BLACK network with zero backward optical reflectivity ($0.000$ bps backchannel).
+4. **Topology 4 (Air-Gapped Facility Station):** Designed for isolated command posts operating in accredited shielding facilities. Keys are transferred via physical hardware tokens with 3-of-5 threshold ML-DSA-87 quorum authentication (`trust_anchor.py`).
+5. **Topology 5 (Joint All-Domain CJADC2 Mesh):** Situational awareness tracking via NATO MIL-STD-6090 Cursor-on-Target (CoT) XML feeds cryptographically authenticated with ML-DSA-87 signatures.
+6. **Topology 6 (Strategic Command / Two-Person Rule):** Emergency Action Message (EAM) execution requiring concurrent split-knowledge authorization from two independent cryptographic officers within a 2.0-second validation window (`spo_dpo.py`, `rust_data_plane/src/nc3.rs`).
+
+---
+
+## 3. Software Security Mechanisms: Cryptographic & Protocol Architecture
+
+The software architecture implements an algorithmic defense model aligned with the **NSA Commercial National Security Algorithm Suite 2.0 (CNSA 2.0)** mandate:
+
+```
++---------------------------------------------------------------------------------------------------------+
+|                                    LAYERED SOFTWARE SECURITY SUBSYSTEMS                                 |
++---------------------------------------------------------------------------------------------------------+
+| [1] Post-Quantum KEM ────────► FIPS 203 ML-KEM-1024 + RFC 10024 SecP384r1MLKEM1024 Hybrid Combiner      |
+| [2] Post-Quantum Signatures ──► FIPS 204 ML-DSA-87 + FIPS 205 SLH-DSA-256f Hash-Based Agility Reserve   |
+| [3] Physical Fault Defense ───► Verify-After-Sign (VAS) in RAM against Laser / Clock Glitching Attacks  |
+| [4] Forward Secrecy & PCS ────► Asymmetric ML-KEM Double Ratchet + Continuous Epoch Ratchet (CER)        |
+| [5] Wire Confidentiality ─────► AES-256-GCM (NIST SP 800-38D) + Fail-Closed Sequence Rollover Latch     |
+| [6] Framing & Anti-Replay ────► 1232B Quantization + Tag-Derived Header Masking + RFC 6479 Sliding Ring|
+| [7] Ingress Defense ──────────► Stateless Anti-DoS Cookie Challenge Gate (Blake3 / SipHash-2-4)         |
+| [8] Traffic Invariance ───────► 50ms Hardware-Paced Drift-Compensated Pacing Clock + Poisson Cover Chaff|
+| [9] Access Control ───────────► Bell-LaPadula MLS + HKDF-SHA3-512 Compartment Key Derivation            |
+| [10] Tactical Messaging ──────► MIL-STD-6040 MMHS Precedence Routing + NSA RTB Dirty-Word Content Scan   |
+| [11] Dual Authorization ──────► Cryptographic Dual-Person Authorization (Two-Person Integrity / TPI)    |
+| [12] Audit Integrity ─────────► Keyed Append-Only WORM SHA3-256 Hash Chaining + HMAC-Signed Head Anchors|
++---------------------------------------------------------------------------------------------------------+
+```
+
+### 3.1 Post-Quantum Key Encapsulation Mechanism (KEM)
 - **Primary Mechanism:** NIST FIPS 203 **ML-KEM-1024** (Module-Lattice-Based Key-Encapsulation Mechanism, NIST Security Category 5).
   - *Parameters:* Matrix dimension $k=4$, Public Key = 1568 bytes, Secret Key = 3168 bytes, Ciphertext = 1568 bytes, Shared Secret = 32 bytes ($256$ bits of post-quantum entropy).
   - *Security Posture:* Provides 128 bits of post-quantum security against Cryptanalytically Relevant Quantum Computers (CRQC) executing Grover's or Shor's algorithms. Resistant to Harvest-Now-Decrypt-Later (HNDL) mass traffic collection.
@@ -96,7 +162,7 @@ The ST2027 software stack implements an algorithmic defense architecture aligned
   Both halves are strictly required: classical-only operation is unrepresentable in production mode.
 - **Agility Reserve (Quarantined):** Classic McEliece-8192128f (code-based KEM with 1,357,824-byte public key) maintained strictly as an offline agility reserve.
 
-### 2.2 Post-Quantum Digital Signatures & Mutual Peer Authentication
+### 3.2 Post-Quantum Digital Signatures & Mutual Peer Authentication
 - **Primary Authentication Mechanism:** NIST FIPS 204 **ML-DSA-87** (Module-Lattice-Based Digital Signature Standard, NIST Security Category 5).
   - *Parameters:* Matrix dimensions $(k=8, l=7)$, Public Key = 2592 bytes, Secret Key = 4896 bytes, Signature = 4627 bytes.
   - *Security Posture:* Verifies identity with 128-bit quantum security level. Every production handshake binds both peer ML-DSA-87 signatures directly into the key derivation transcript before session derivation (`secure_p2p.py:node`).
@@ -105,34 +171,81 @@ The ST2027 software stack implements an algorithmic defense architecture aligned
   $$\text{SAS} = \text{Truncate}_{6}(\text{HMAC-SHA384}(K_{transcript}, \text{"ST2027-SAS-v1"}))$$
   Operators compare the SAS over an independent authenticated voice or visual channel to confirm the absence of an active adversary.
 
-### 2.3 Ephemeral Key Ratcheting & Post-Compromise Security (PCS)
-- **Post-Quantum Double Ratchet:** Implements per-message asymmetric ratcheting steps using ephemeral ML-KEM-1024 keypairs interleaved with symmetric HKDF-SHA384 chain ratchets ([double_ratchet.py](double_ratchet.py)).
+### 3.3 Verify-After-Sign (VAS) In-Memory Laser & Glitch Defense
+Lattice signature schemes (such as ML-DSA-87) can leak private key coefficients if a physical laser or voltage glitch introduces a fault during polynomial calculation (CHES 2024 / IACR ePrint 2025/2009). ST2027 counters fault injection by enforcing mandatory in-memory **Verify-After-Sign (VAS)** in [`liboqs_wrapper.py`](liboqs_wrapper.py#L620-L642):
+```python
+signature = self._sig.sign(message)
+if not self._sig.verify(message, signature, self._public_key):
+    self._wipe_private_key()
+    raise FaultInjectionError(
+        "CRITICAL DEFENSE ERROR: Verify-After-Sign (VAS) check failed. "
+        "Possible laser or electromagnetic fault injection attack detected. "
+        "Private key has been purged from memory."
+    )
+```
+Any signature that fails immediate self-verification triggers volatile key erasure before the corrupt signature can reach the wire.
+
+### 3.4 Ephemeral Key Ratcheting & Post-Compromise Security (PCS)
+- **Post-Quantum Double Ratchet:** Implements per-message asymmetric ratcheting steps using ephemeral ML-KEM-1024 keypairs interleaved with symmetric HKDF-SHA384 chain ratchets ([`double_ratchet.py`](double_ratchet.py)).
   - *Forward Secrecy (FS):* Compromise of current node keys does not compromise previously transmitted messages; message keys are derived via one-way KDF steps and destroyed immediately upon decryption.
   - *Post-Compromise Security (PCS):* Upon an adversarial state compromise, subsequent uncompromised asymmetric ratchet steps refresh the root key, restoring confidentiality and mutual authentication without requiring node re-provisioning.
 - **Continuous Epoch Ratchet (CER):** Enforces periodic mandatory complete re-keying at configured byte and message thresholds, rotating all symmetric encryption contexts and zeroizing prior key material.
 
-### 2.4 Symmetric Data Encryption & Associated Data Integrity
+### 3.5 Symmetric Data Encryption & Fail-Closed Sequence Rollover Latch
 - **Cipher Suite:** NIST FIPS 197 / NIST SP 800-38D **AES-256-GCM** (256-bit symmetric key, 96-bit nonce, 128-bit GHASH authentication tag).
 - **Domain-Separated Nonces:** Nonce generation enforces strict directional separation:
   $$\text{Nonce} = \text{DirectionByte} \parallel \text{Counter}_{64} \parallel \text{IVSalt}_{24}$$
   Prevents nonce reuse across full-duplex transmission directions.
-- **Additional Authenticated Data (AAD):** Every frame authenticates the unmasked sequence number, unpadded length, and frame type as AAD:
-  $$\text{AAD} = \text{Sequence}_{64} \parallel \text{Length}_{16} \parallel \text{Type}_{8}$$
+- **Fail-Closed Rollover Latch:** In [`rust_data_plane/src/ratchet.rs`](rust_data_plane/src/ratchet.rs), counter overflow is structurally impossible. When the 64-bit sequence counter reaches saturation, the ratchet latches permanently shut to prevent nonce reuse:
+```rust
+if self.send_seq == u64::MAX {
+    self.latched_closed = true;
+    return Err(RatchetError::CounterExhaustion);
+}
+self.send_seq += 1;
+```
 
-### 2.5 Wire Framing, Header Masking & Anti-Replay
+### 3.6 Wire Framing, Header Masking & Anti-Replay
 - **Uniform 1232-Byte Cell Quantization:** Wire cells are formatted to exactly 1232 bytes. Wrapped with UDP (8 bytes) and IPv6 (40 bytes), total wire frame size is exactly 1280 bytes, matching the minimum IPv6 MTU and preventing IP-level fragmentation.
-- **Tag-Derived Wire Header Masking:** In the native Rust data plane ([rust_data_plane/src/aead.rs](rust_data_plane/src/aead.rs)), the header fields (`seq|len|ftype`) are masked on the wire using a PRF derived from the AEAD authentication tag:
+- **Tag-Derived Wire Header Masking:** In the native Rust data plane ([`rust_data_plane/src/aead.rs`](rust_data_plane/src/aead.rs)), the header fields (`seq|len|ftype`) are masked on the wire using a PRF derived from the AEAD authentication tag:
   $$\text{Mask} = \text{SHA256}(\text{"ST2027-HEADER-MASK-v1"} \parallel K_{header\_protect} \parallel \text{Tag}_{16})[0..11]$$
   $$\text{WireHeader} = \text{PlainHeader} \oplus \text{Mask}$$
   To a passive network observer, the sequence number, frame length, and message type appear pseudorandom; only the quantum size class (256, 512, 1232 bytes) is visible.
-- **Sliding-Window Anti-Replay (RFC 6479):** Native Rust circular bitmap window tracking 1024 packets ([rust_data_plane/src/replay.rs](rust_data_plane/src/replay.rs)). Out-of-order packets inside the 1024-cell window are verified and accepted once; duplicate packets or packets older than the trailing edge are dropped before decryption.
+- **Sliding-Window Anti-Replay (RFC 6479):** Native Rust circular bitmap window tracking 1024/2048 packets ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)). Out-of-order packets inside the window are checked and marked in constant time ($O(1)$ bitwise operations); duplicate packets or packets older than the trailing edge are dropped before decryption.
 
-### 2.6 Traffic Invariance & Cover Traffic Generation
+### 3.7 Stateless Anti-DoS Cookie Challenge Gate
+To protect tactical radio endpoints against unauthenticated computational resource exhaustion (amplification flooding), ST2027 implements a stateless cryptographic cookie challenge mechanism modeled after WireGuard and DTLS 1.3 ([`rust_data_plane/src/cookie.rs`](rust_data_plane/src/cookie.rs)):
+- Under high load, responder nodes do not allocate state or perform expensive ML-KEM decapsulation.
+- Instead, the responder replies with a stateless HMAC cookie bound to the initiator's IP, port, and a local rotating secret key.
+- The initiator must solve a proof-of-work puzzle and return the valid cookie before the handshake state is allocated in host memory.
+
+### 3.8 Traffic Invariance & Cover Traffic Generation
 - **Constant-Rate Transmission Clock:** Operates an active pacing scheduler emitting cells at a fixed 50.0 ms interval (20 Hz) or 20.0 ms interval (50 Hz) on tactical paths.
 - **Chaff / Cover Injection:** When no application data is pending, the scheduler transmits pseudorandom cover traffic (Type `0xFF`). Cover cells undergo identical encryption, padding, and whitening, producing indistinguishable wire spectra.
 - **Onion Routing Transit:** Mandatory SOCKS5 client interface to Tor v3 Onion Services for public internet transit, providing end-to-end circuit anonymity and IP address masking.
 
-### 2.7 Fail-Closed Policy Enforcement & Gatekeeper
+### 3.9 Multi-Level Security (MLS) & Cryptographic Compartments
+ST2027 enforces **Bell-LaPadula Multi-Level Security (MLS)** properties ("no read up", "no write down") at the cryptographic layer ([`cjadc2_cross_domain_guard.py`](cjadc2_cross_domain_guard.py), [`rust_data_plane/src/zero_trust.rs`](rust_data_plane/src/zero_trust.rs)):
+- Cryptographic compartment keys are derived via standard HKDF-SHA3-512:
+  $$\text{Key}_{compartment} = \text{HKDF-SHA3-512}(K_{master}, \text{"ST2027-MLS-COMPARTMENT-" } \parallel \text{Classification} \parallel \text{Compartment})$$
+- Cryptographic keys for compartments cannot be computed from or downgraded to lower classification keys.
+
+### 3.10 Tactical Message Routing (MIL-STD-6040 MMHS) & NSA RTB Filter
+- **Military Message Handling System (MMHS):** In [`rust_data_plane/src/mmhs.rs`](rust_data_plane/src/mmhs.rs), messages enforce strict precedence levels (`FLASH_OVERRIDE`, `FLASH`, `IMMEDIATE`, `PRIORITY`, `ROUTINE`).
+- **NSA RTB Dirty-Word Filter:** Built-in deep content inspection screen blocking accidental spillage of unapproved classification strings across egress boundaries.
+
+### 3.11 Cryptographic Dual-Person Authorization (Two-Person Rule)
+High-consequence directives (e.g. Emergency Action Messages, station purge) require concurrent two-person authorization ([`spo_dpo.py`](spo_dpo.py), [`rust_data_plane/src/nc3.rs`](rust_data_plane/src/nc3.rs)):
+- Two distinct cryptographic signatures generated by independent authorized operator tokens must be co-signed within a strict 2.0-second time delta.
+- Both signatures must be verified before the command engine transitions out of the safe holding state.
+
+### 3.12 Tamper-Evident Keyed Audit Chaining
+- **WORM Ledger Architecture:** Every cryptographic event, state transition, and authentication failure is recorded to an append-only Write-Once-Read-Many (WORM) audit ledger ([`audit_logging_system.py`](audit_logging_system.py)).
+- **Cryptographic Hash Chaining:** Each record incorporates the SHA3-256 digest of the previous record:
+  $$\text{RecordHash}_{i} = \text{SHA3-256}(\text{RecordHash}_{i-1} \parallel \text{Timestamp} \parallel \text{EventType} \parallel \text{Payload})$$
+- **HMAC-Authenticated Head Anchors:** The ledger head is authenticated using an HMAC anchor signed with an isolated key (`logs/secure_p2p_audit.db.anchor`). Modification, deletion, or truncation of historical records breaks the hash chain and causes immediate detection during pre-flight checks.
+
+### 3.13 Fail-Closed Policy Enforcement & Gatekeeper
 Production operation (`P2P_PRODUCTION=1`, sticky at import) strictly enforces fail-closed gates. Weaker paths are rejected unless an explicit opt-in is configured:
 
 | Security Gate | Default Setting | Production Behavior | Explicit Opt-In (Use = Downgrade) |
@@ -150,15 +263,9 @@ Production operation (`P2P_PRODUCTION=1`, sticky at import) strictly enforces fa
 | Vulnerable HQC-256 algorithm | Refused everywhere | `RuntimeError` | `P2P_ENABLE_VULN_HQC=1` (reserve only) |
 | Dual-person authorization for strict commands | Always required | `AuthorizationError` otherwise | none |
 
-### 2.8 Tamper-Evident Keyed Audit Chaining
-- **WORM Ledger Architecture:** Every cryptographic event, state transition, and authentication failure is recorded to an append-only Write-Once-Read-Many (WORM) audit ledger ([audit_logging_system.py](audit_logging_system.py)).
-- **Cryptographic Hash Chaining:** Each record incorporates the SHA3-256 digest of the previous record:
-  $$\text{RecordHash}_{i} = \text{SHA3-256}(\text{RecordHash}_{i-1} \parallel \text{Timestamp} \parallel \text{EventType} \parallel \text{Payload})$$
-- **HMAC-Authenticated Head Anchors:** The ledger head is authenticated using an HMAC anchor signed with an isolated key (`logs/secure_p2p_audit.db.anchor`). Modification, deletion, or truncation of historical records breaks the hash chain and causes immediate detection during pre-flight checks.
-
 ---
 
-## 3. Hardware Security Architecture: Requirements, Interfaces & Guarantees
+## 4. Hardware Security Architecture: Prerequisites, Physical Interfaces & Exact Guarantees
 
 Software cannot create physical tamper boundaries or measure physical emissions. To achieve high assurance, ST2027 defines explicit hardware security requirements, interrogates physical silicon interfaces, and delegates key custody to dedicated hardware cryptographic modules.
 
@@ -178,27 +285,25 @@ Software cannot create physical tamper boundaries or measure physical emissions.
 +---------------------------------------------------------------------------------------------------------+
 ```
 
-### 3.1 Hardware Component Requirements & Security Metrics
-
-#### Component 1: Discrete Trusted Platform Module 2.0 (TPM 2.0 / ISO/IEC 11889)
-- **Hardware Interface:** Native Win32 TBS API (`tbs.dll`) on Windows; direct character device `/dev/tpmrm0` (TPM Resource Manager) on Linux ([platform_hsm_interface.py](platform_hsm_interface.py), [ts_hw_layer.py](ts_hw_layer.py)).
+### 4.1 Discrete Trusted Platform Module 2.0 (TPM 2.0 / ISO/IEC 11889)
+- **Hardware Interface:** Native Win32 TBS API (`tbs.dll`) on Windows; direct character device `/dev/tpmrm0` (TPM Resource Manager) on Linux ([`platform_hsm_interface.py`](platform_hsm_interface.py), [`ts_hw_layer.py`](ts_hw_layer.py)).
 - **Prerequisite:** Discrete physical TPM 2.0 silicon (e.g., Infineon SLB 9670, STMicroelectronics ST33) or validated firmware TPM (AMD fTPM / Intel PTT) enabled in UEFI firmware.
 - **Security Provided:**
   - *Measured Boot Posture:* Interrogates Platform Configuration Registers (PCRs 0 through 7). Verifies CRTM, UEFI firmware binaries (PCR 0), motherboard configuration (PCR 1), option ROM code (PCR 2), and Secure Boot policy variables (PCR 7).
-  - *Remote Attestation Quotes:* Generates cryptographic quotes binding PCR measurement digests to an ephemeral nonce signed by an Attestation Identity Key (AIK), proving host firmware integrity to remote verifiers (`ts_attest.py`).
+  - *Remote Attestation Quotes:* Generates cryptographic quotes binding PCR measurement digests to an ephemeral nonce signed by an Attestation Identity Key (AIK), proving host firmware integrity to remote verifiers ([`ts_attest.py`](ts_attest.py)).
   - *Non-Exportable Key Containment:* Generates identity keys within the TPM silicon boundary; private keys cannot be read into general-purpose RAM or cloned to disk.
 - **Quantitative Assurance:** 24 hardware PCR banks using SHA-256 / SHA-384 hash algorithms; silicon-enforced anti-hammering dictionary attack logic.
 
-#### Component 2: TPM 2.0 NVRAM Monotonic Anti-Rollback Counter
-- **Hardware Interface:** TPM 2.0 Non-Volatile RAM index `0x01800001` read via `tpm2_nvread` and advanced via `tpm2_nvwrite` ([rust_data_plane/src/tpm_nv.rs](rust_data_plane/src/tpm_nv.rs)).
+### 4.2 TPM 2.0 NVRAM Monotonic Anti-Rollback Counter
+- **Hardware Interface:** TPM 2.0 Non-Volatile RAM index `0x01800001` (or `0x01800003`) read via `tpm2_nvread` and advanced via `tpm2_nvwrite` ([`rust_data_plane/src/tpm_nv.rs`](rust_data_plane/src/tpm_nv.rs)).
 - **Prerequisite:** Configured TPM 2.0 NVRAM counter defined with the `TPMA_NV_MONOTONIC` attribute.
 - **Security Provided:**
   - *Anti-Rollback Enforcement:* Enforces strictly increasing state counters across cold reboots, preventing an adversary with physical disk access from restoring old snapshots, expired peer authorizations, or revoked cryptographic credentials.
   - *Persistent State Anchor:* Sequence numbers and epoch identifiers are checked against the NVRAM counter; if host storage indicates a lower sequence number than the hardware NVRAM index, execution halts immediately with `SecurityError`.
 - **Quantitative Assurance:** 64-bit non-resettable hardware integer counter with guaranteed physical non-volatility (> 100,000 write cycles).
 
-#### Component 3: Cryptographic Coprocessor / Hardware Security Module (PKCS#11 v2.40 HSM)
-- **Hardware Interface:** PKCS#11 v2.40 dynamic provider library configured via `P2P_PKCS11_LIB` ([platform_hsm_interface.py](platform_hsm_interface.py)). Tested against YubiKey 5 FIPS, Thales Luna PCIe/Network HSM, and Nitrokey HSM.
+### 4.3 Cryptographic Coprocessor / Hardware Security Module (PKCS#11 v2.40 HSM)
+- **Hardware Interface:** PKCS#11 v2.40 dynamic provider library configured via `P2P_PKCS11_LIB` ([`platform_hsm_interface.py`](platform_hsm_interface.py)). Tested against YubiKey 5 FIPS, Thales Luna PCIe/Network HSM, and Nitrokey HSM.
 - **Prerequisite:** Dedicated USB cryptographic token or PCIe/network HSM module with vendor driver.
 - **Security Provided:**
   - *Physical Key Custody:* Root ML-DSA-87 identity private keys and P-384 classical keys reside exclusively within the cryptographic boundary of the hardware token.
@@ -206,8 +311,8 @@ Software cannot create physical tamper boundaries or measure physical emissions.
   - *Hardware Access Control:* Requires User PIN authentication with hardware lockout after consecutive failed attempts, preventing offline brute-force key extraction.
 - **Quantitative Assurance:** FIPS 140-3 Level 3 or Level 4 physical tamper-envelope rating with active physical zeroization upon chassis intrusion.
 
-#### Component 4: Physical Memory Locking & Buffer Protection
-- **Hardware / OS Interface:** Win32 `VirtualLock` / POSIX `mlock`, `PAGE_GUARD` memory attributes, and Windows DPAPI `CryptProtectMemory` ([enhanced_secure_memory.py](enhanced_secure_memory.py), [ts_rt/src/lib.rs](ts_rt/src/lib.rs)).
+### 4.4 Physical Memory Locking & Buffer Protection
+- **Hardware / OS Interface:** Win32 `VirtualLock` / POSIX `mlock`, `PAGE_GUARD` memory attributes, and Windows DPAPI `CryptProtectMemory` ([`enhanced_secure_memory.py`](enhanced_secure_memory.py), [`ts_rt/src/lib.rs`](ts_rt/src/lib.rs)).
 - **Prerequisite:** CPU Memory Management Unit (MMU) with page-table attribute enforcement; operating system privilege `SeLockMemoryPrivilege`.
 - **Security Provided:**
   - *Swap Suppression:* Locks pages holding plaintext, ephemeral ratchet keys, and session contexts into physical RAM, preventing the OS kernel from paging secrets to non-volatile disk swap partitions or crash dump files.
@@ -215,8 +320,8 @@ Software cannot create physical tamper boundaries or measure physical emissions.
   - *RAM Invariance:* Idle buffers in memory are encrypted with DPAPI `CryptProtectMemory` using process-bound ephemeral session keys, mitigating cold-boot DRAM remanence and unprivileged memory inspection.
 - **Quantitative Assurance:** Zero plaintext exposure to non-volatile storage; immediate hardware trap upon memory bounds violation.
 
-#### Component 5: Multi-Pass Volatile Memory Sanitization & Destruction
-- **Hardware / Compiler Interface:** Explicit volatile writes with compiler memory barriers (`core::sync::atomic::compiler_fence(SeqCst)`), DoD 5220.22-M 3-pass overwrite patterns, and Rust `ZeroizeOnDrop` ([ts_rt/src/lib.rs](ts_rt/src/lib.rs), [enhanced_secure_memory.py](enhanced_secure_memory.py)).
+### 4.5 Multi-Pass Volatile Memory Sanitization & Destruction
+- **Hardware / Compiler Interface:** Explicit volatile writes with compiler memory barriers (`core::sync::atomic::compiler_fence(SeqCst)`), DoD 5220.22-M 3-pass overwrite patterns, and Rust `ZeroizeOnDrop` ([`ts_rt/src/lib.rs`](ts_rt/src/lib.rs), [`enhanced_secure_memory.py`](enhanced_secure_memory.py)).
 - **Prerequisite:** Standard volatile DRAM memory architecture.
 - **Security Provided:**
   - *Deterministic Deallocation:* Overwrites allocated memory buffers with a multi-pass pattern (Pass 1: `0x00`, Pass 2: `0xFF`, Pass 3: CSPRNG pseudorandom bytes, Pass 4: `0x00`) before returning memory to the system allocator.
@@ -224,32 +329,32 @@ Software cannot create physical tamper boundaries or measure physical emissions.
   - *Native Rust Invariant:* `ZeroizeOnDrop` guarantees automatic zeroization of cryptographic key structures upon scope termination.
 - **Quantitative Assurance:** Zero residual plaintext in freed heap or stack frames (subject to the Python runtime memory boundary disclosed in Section 0).
 
-#### Component 6: Hardware CPU Vector & Cryptographic Instruction Sets
-- **Hardware Interface:** x86-64 AES-NI, CLMUL, AVX2, and AVX-512 SIMD vector execution units ([rust_data_plane/src/aead.rs](rust_data_plane/src/aead.rs)).
+### 4.6 Hardware CPU Vector & Cryptographic Instruction Sets
+- **Hardware Interface:** x86-64 AES-NI, CLMUL, AVX2, and AVX-512 SIMD vector execution units ([`rust_data_plane/src/aead.rs`](rust_data_plane/src/aead.rs)).
 - **Prerequisite:** Modern x86-64 processor supporting AES-NI (`/proc/cpuinfo` `aes` flag or Windows `IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)`).
 - **Security Provided:**
   - *Timing Side-Channel Immunity:* AES round computations execute in dedicated single-cycle hardware execution units (`vaesenc`, `vaesenclast`), completely bypassing software S-box lookup tables and eliminating CPU cache-timing side channels (e.g., Bernstein cache attacks).
   - *High-Throughput Polynomial Arithmetic:* AVX2 and AVX-512 vector pipelines accelerate Number Theoretic Transform (NTT) operations for ML-KEM-1024 and ML-DSA-87, minimizing handshake latency.
 - **Quantitative Assurance:** Constant CPU cycle execution time ($O(1)$ cycle variance across secret operands); multi-gigabit wire processing capacity.
 
-#### Component 7: Cross-Domain Unidirectional Simplex Optical Data Diode
-- **Hardware Interface:** Dedicated single-strand optical fiber link with transmit photodiode connected to RED host and receive photodiode connected to BLACK host, with physical return strand severed or absent. Software interface: write-only UDP socket (`SO_RCVBUF=0`) with Cauchy Reed-Solomon Forward Error Correction ($K=8, M=4$) ([tactical_data_diode.py](tactical_data_diode.py), [rust_data_plane/src/fec.rs](rust_data_plane/src/fec.rs)).
+### 4.7 Cross-Domain Unidirectional Simplex Optical Data Diode
+- **Hardware Interface:** Dedicated single-strand optical fiber link with transmit photodiode connected to RED host and receive photodiode connected to BLACK host, with physical return strand severed or absent. Software interface: write-only UDP socket (`SO_RCVBUF=0`) with Cauchy Reed-Solomon Forward Error Correction ($K=8, M=4$) ([`tactical_data_diode.py`](tactical_data_diode.py), [`rust_data_plane/src/fec.rs`](rust_data_plane/src/fec.rs)).
 - **Prerequisite:** Physical optical data diode hardware unit or single-strand optical transceiver.
 - **Security Provided:**
   - *Physical Unidirectionality:* Transmission across single-strand optical fiber makes reverse signal propagation physically impossible ($0.000$ bits/second reverse leakage). Egress channels cannot be established from the destination back to the source.
   - *Zero-Acknowledgment Reliability:* Cauchy Reed-Solomon MDS forward error correction over $GF(2^8)$ reconstructs payloads without requiring reverse acknowledgment (ACK) packets. Any $K$ distinct frames received out of $K + M$ transmitted frames guarantee 100% bit-accurate reconstruction.
 - **Quantitative Assurance:** Infinite physical reverse optical attenuation; zero-return protocol execution.
 
-#### Component 8: Physical RED / BLACK Interface Separation
-- **Hardware Interface:** Distinct physical Network Interface Cards (NICs) connected to isolated physical network segments ([ts_hw_layer.py:L410](ts_hw_layer.py)).
+### 4.8 Physical RED / BLACK Interface Separation
+- **Hardware Interface:** Distinct physical Network Interface Cards (NICs) connected to isolated physical network segments ([`ts_hw_layer.py:L410`](ts_hw_layer.py)).
 - **Prerequisite:** Multi-homed server host with at least two isolated physical PCIe network controllers.
 - **Security Provided:**
   - *Domain Separation:* The RED interface is restricted exclusively to local, unencrypted plaintext processing (e.g., local enclaves, terminal I/O). The BLACK interface is restricted exclusively to encrypted ciphertext transmission over external untrusted networks.
   - *Anti-Wildcard Socket Binding:* The software verifies physical network adapter bindings via `psutil`. Binds to wildcard addresses (`0.0.0.0`, `::`) are rejected with `ConfigurationError`.
 - **Quantitative Assurance:** Complete hardware network isolation; zero routable paths between plaintext and ciphertext domains.
 
-#### Component 9: Host Firmware & Hypervisor Security (UEFI Secure Boot, VBS, HVCI)
-- **Hardware / OS Interface:** UEFI Secure Boot, Windows Virtualization-Based Security (VBS), Hypervisor-Protected Code Integrity (HVCI), and Kernel DMA Protection ([ts_runtime.py](ts_runtime.py), [scripts/verify_host_hardening.py](scripts/verify_host_hardening.py)).
+### 4.9 Host Firmware & Hypervisor Security (UEFI Secure Boot, VBS, HVCI)
+- **Hardware / OS Interface:** UEFI Secure Boot, Windows Virtualization-Based Security (VBS), Hypervisor-Protected Code Integrity (HVCI), and Kernel DMA Protection ([`ts_runtime.py`](ts_runtime.py), [`scripts/verify_host_hardening.py`](scripts/verify_host_hardening.py)).
 - **Prerequisite:** x86-64 CPU virtualization extensions (Intel VT-x / AMD-V), Second Level Address Translation (SLAT), and IOMMU / DMA protection.
 - **Security Provided:**
   - *Firmware Verification:* UEFI Secure Boot validates digital signatures on all bootloaders, kernels, and option ROMs prior to CPU handoff.
@@ -259,7 +364,7 @@ Software cannot create physical tamper boundaries or measure physical emissions.
 
 ---
 
-## 4. Combined Defense-in-Depth Matrix: Software + Hardware Combined Security Posture
+## 5. Combined Defense-in-Depth Matrix: Software + Hardware Combined Security Posture
 
 The following matrix defines the combined security posture achieved by pairing ST2027 software controls with supported hardware security roots across all primary threat vectors:
 
@@ -267,7 +372,7 @@ The following matrix defines the combined security posture achieved by pairing S
 |---|---|---|---|---|
 | **Quantum Cryptanalysis**<br>(Shor's algorithm on DH/RSA, Harvest-Now-Decrypt-Later) | NIST FIPS 203 ML-KEM-1024 + RFC 10024 `SecP384r1MLKEM1024` hybrid KEX; FIPS 204 ML-DSA-87 signatures. | CPU AVX2/AVX-512 SIMD vector acceleration for high-rate NTT polynomial operations. | **NIST Security Category 5**: 128-bit quantum security against CRQC; retrospective decryption rendered computationally infeasible. | Handshake aborts with `SecurityError` if classical-only downgrade is attempted. |
 | **Active Network Adversary**<br>(Dolev-Yao: MitM, packet injection, bit manipulation) | NIST SP 800-38D AES-256-GCM AEAD on every cell; 16-byte GHASH tag authenticating unmasked AAD. | CPU AES-NI constant-time round instructions; zero S-box cache variation. | **Cryptographic Integrity & Authentication**: Any packet modification or injection detected; invalid GHASH tags dropped. | Corrupt packet dropped silently; receiver logs anomaly; zero plaintext released. |
-| **Replay & Out-of-Order Injection**<br>(Network packet capture and delayed re-injection) | Strictly monotonic 64-bit sequence counters; RFC 6479 decoupled 1024-packet sliding window bitmap ring. | CPU 64-bit branchless bitwise operations (`rust_data_plane/src/replay.rs`). | **Anti-Replay Protection**: Duplicate packets rejected instantly; out-of-order packets accepted only within active 1024-cell window. | Duplicate sequence numbers dropped immediately prior to decryption; window state intact. |
+| **Replay & Out-of-Order Injection**<br>(Network packet capture and delayed re-injection) | Strictly monotonic 64-bit sequence counters; RFC 6479 decoupled 1024/2048-packet sliding window bitmap ring. | CPU 64-bit branchless bitwise operations ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)). | **Anti-Replay Protection**: Duplicate packets rejected instantly; out-of-order packets accepted only within active window. | Duplicate sequence numbers dropped immediately prior to decryption; window state intact. |
 | **Cold Reboot & State Rollback**<br>(Reverting disk images to replay stale sessions or revoked keys) | State sequence tracking and ephemeral session expiration timers. | **TPM 2.0 NVRAM Monotonic Counter** (Index `0x01800001`) advanced on state transitions. | **Hardware Anti-Rollback**: State progression anchored to physical silicon; restoring old disk images detected and rejected. | System detects counter discrepancy on startup; halts with `SecurityError`; requires re-enrollment. |
 | **Traffic Analysis & SIGINT**<br>(Packet arrival timing, flow correlation, byte-count sniffing) | Constant-rate transmission clock (50ms interval); 1232B uniform cell quantization; Poisson chaff stream. | High-resolution hardware clock (`QueryPerformanceCounter` / POSIX `clock_gettime(CLOCK_MONOTONIC)`). | **Statistical Flow Masking**: Eliminates packet size and transmission rate signatures for localized observers. | Does not provide mathematical security against a global passive adversary with full network vantage points. |
 | **Volatile Memory Scraping**<br>(Cold-boot DRAM remanence, crash dump extraction) | Multi-pass DoD 5220.22-M memory zeroization; Rust `ZeroizeOnDrop` on cryptographic structs. | OS page locking via Win32 `VirtualLock` / POSIX `mlock`; Windows DPAPI `CryptProtectMemory`. | **Zero Non-Volatile Secret Persistence**: Secrets never swapped to disk; memory sanitized immediately upon deallocation. | Subject to runtime limitation: Python immutable `bytes` cannot be wiped; native Rust binary required for full assurance. |
@@ -280,7 +385,7 @@ The following matrix defines the combined security posture achieved by pairing S
 
 ---
 
-## 5. Formal Protocol Specification & Wire Format
+## 6. Formal Protocol Specification & Wire Format
 
 The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the datagram, when wrapped with UDP (8 bytes) and IPv6 (40 bytes), totals exactly 1280 bytes, matching the minimum IPv6 MTU and preventing network fragmentation.
 
@@ -307,7 +412,7 @@ The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the d
 ```
 
 ### Wire Field Definitions
-- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset with persistent monotonic counter synchronization. Validated read-only against the 1024-packet sliding window bitmap in native Rust ([rust_data_plane/src/replay.rs](rust_data_plane/src/replay.rs)) prior to authentication, advancing strictly upon successful decryption (RFC 6479).
+- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset with persistent monotonic counter synchronization. Validated read-only against the 1024-packet sliding window bitmap in native Rust ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)) prior to authentication, advancing strictly upon successful decryption (RFC 6479).
 - **Length (2 bytes, Big-Endian):** Length of the unpadded cleartext payload ($0 \le \text{Length} \le 1205$).
 - **Type (1 byte):** Protocol message discriminator:
   - `0x01`: Handshake Initiation / Key Exchange
@@ -323,7 +428,7 @@ The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the d
 
 ---
 
-## 6. Machine-Checked Formal Analysis (Scope-Limited, Not a System Proof)
+## 7. Machine-Checked Formal Analysis (Scope-Limited, Not a System Proof)
 
 Symbolic models check the MODEL, not the running system. `handshake_model.pv` is a skeleton (intended properties NOT yet proven, NOT CI-enforced). The deployed `st2027_handshake.pv` / `st2027_pcs.pv` results below hold inside the symbolic model with documented abstractions (crypto assumed perfect, AES-GCM nonce discipline outside the symbolic proof) — they are not a proof of the implementation. Kani harnesses are DEFINED, none EXECUTED here/CI (no Kani/CBMC toolchain); only deterministic property doubles run under `cargo test`.
 
@@ -357,7 +462,7 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 
 ---
 
-## 7. Master Documentation Compendium & Research Tracks
+## 8. Master Documentation Compendium & The 7 Research Tracks
 
 The complete engineering, cryptographic, and operational documentation suite is structured into seven interconnected tracks:
 
@@ -412,9 +517,9 @@ The complete engineering, cryptographic, and operational documentation suite is 
 
 ---
 
-## 8. Implementation Engines & Operational Quick Start
+## 9. Implementation Engines, Toolchain Prerequisites & Operational Quick Start
 
-### 8.1 Build & Toolchain Prerequisites
+### 9.1 Build & Toolchain Prerequisites
 - **Python:** 3.10 or higher with `cryptography`, `pycryptodome`, `psutil`.
 - **Rust:** 1.75 or higher (with `cargo`).
 - **OpenSSL:** 3.1 or higher with FIPS Provider enabled.
@@ -432,7 +537,7 @@ cargo build --release --bin secure-transmit
 cd ..
 ```
 
-### 8.2 Host Hardware Inspection & Pre-Flight Verification
+### 9.2 Host Hardware Inspection & Pre-Flight Verification
 Interrogate host hardware posture (Secure Boot, VBS, HVCI, TPM 2.0 silicon, FIPS provider) before station initialization:
 
 ```bash
@@ -446,7 +551,7 @@ python scripts/verify_host_hardening.py
 python verify_deployment.py
 ```
 
-### 8.3 Generating Hardware-Backed Post-Quantum Credentials
+### 9.3 Generating Hardware-Backed Post-Quantum Credentials
 Provision non-exportable hardware-bound ML-DSA-87 identity keypairs:
 
 ```bash
@@ -458,7 +563,7 @@ python secure_transmit_2027.py keygen --label station_command_alpha
   --out-sk alpha.auth.sk --out-pk alpha.auth.pk
 ```
 
-### 8.4 Production Node Deployment (Mutual ML-DSA-87 & Hybrid KEX)
+### 9.4 Production Node Deployment (Mutual ML-DSA-87 & Hybrid KEX)
 Generate one ML-DSA-87 identity per node, exchange public keys over an authenticated out-of-band channel, and provision a 32-byte PSK on both endpoints:
 
 ```bash
@@ -475,7 +580,7 @@ python secure_p2p.py node --role responder --bind 0.0.0.0 --peer <INITIATOR_IP> 
 
 The session key is cryptographically bound to the hybrid KEM transcript, both ML-DSA-87 signatures, and the PSK. Compare the printed 6-digit Short Authentication String (SAS) out-of-band before transmitting sensitive payloads.
 
-### 8.5 Standalone Zero-Python File Transmission (`secure-transmit`)
+### 9.5 Standalone Zero-Python File Transmission (`secure-transmit`)
 ```bash
 # Receiver Station:
 ./rust_data_plane/target/release/secure-transmit recv-file \
@@ -493,7 +598,7 @@ The session key is cryptographically bound to the hybrid KEM transcript, both ML
   --file classified_manifest.bin
 ```
 
-### 8.6 Unidirectional Simplex Optical Data Diode Transfer (Cauchy-Reed-Solomon FEC)
+### 9.6 Unidirectional Simplex Optical Data Diode Transfer (Cauchy-Reed-Solomon FEC)
 ```bash
 # Receiving Station (Zero return channel; zero ACKs required):
 ./rust_data_plane/target/release/secure-transmit diode-recv \
@@ -511,7 +616,7 @@ The session key is cryptographically bound to the hybrid KEM transcript, both ML
   --parity-ratio 0.3
 ```
 
-### 8.7 Constant-Rate Wire Pacing & Synthetic Cover Traffic (Anti-SIGINT Chaff Stream)
+### 9.7 Constant-Rate Wire Pacing & Synthetic Cover Traffic (Anti-SIGINT Chaff Stream)
 ```bash
 # Transmitting Station (Emits continuous 1232B wire cells at constant 50ms intervals):
 ./rust_data_plane/target/release/secure-transmit stream-chaff \
@@ -523,7 +628,7 @@ The session key is cryptographically bound to the hybrid KEM transcript, both ML
   --count 0
 ```
 
-### 8.8 Tactical C4ISR Field Console & Operations Telemetry
+### 9.8 Tactical C4ISR Field Console & Operations Telemetry
 ```bash
 # Launch interactive C4ISR operator workstation:
 python tactical_operator_console.py
@@ -543,7 +648,7 @@ Interactive console capabilities:
 
 ---
 
-## 9. Standards & Authorizing Official (AO) Compliance Matrix
+## 10. Standards & Authorizing Official (AO) Compliance Matrix
 
 | Authority / Standard | Mandatory Requirement | ST2027 Architecture Mapping | Compliance Artifact |
 | :--- | :--- | :--- | :--- |
@@ -563,7 +668,7 @@ Interactive console capabilities:
 
 ---
 
-## 10. Verification Test Suite & Quality Gates
+## 11. Automated Verification Test Suite & Quality Gates
 
 The platform is backed by the full automated verification test battery (Python test suites plus native Rust cargo test execution), validating every component from low-level memory zeroization to full network loopback transfers. Fixed historical counts are not cited: the battery grows with the codebase; CI status is the source of truth.
 
@@ -595,7 +700,7 @@ python verify_deployment.py
 
 ---
 
-## 11. Residual Risk Register & Evaluator Non-Claims
+## 12. Residual Risk Register & Evaluator Non-Claims
 
 In compliance with defense engineering ethics, the following boundaries are explicitly disclosed:
 1. **Physical Hardware Independence:** The software platform cannot certify physical tamper-resistance or RF attenuation. Physical FIPS 140-3 Level 3/4 enclosures, TEMPEST SDIP-28 facilities, and physical optical data diodes must be procured from accredited hardware vendors.
@@ -604,7 +709,7 @@ In compliance with defense engineering ethics, the following boundaries are expl
 
 ---
 
-## 12. Primary References & Standard Specifications
+## 13. Primary References & Standard Specifications
 
 1. **National Security Agency (NSA):** *Announcing the Commercial National Security Algorithm Suite 2.0 (CNSA 2.0)*, Cybersecurity Advisory, Sept 2022.
 2. **National Institute of Standards and Technology (NIST):**
@@ -637,7 +742,7 @@ In compliance with defense engineering ethics, the following boundaries are expl
 
 ---
 
-## 13. License & Attribution
+## 14. License & Attribution
 
 - **License:** MIT License — Authorized for defense, national security research, and governmental evaluation.
 - **Attribution:** Developed for high-assurance communications under the Secure Transmit 2027 research program.
