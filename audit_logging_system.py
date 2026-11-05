@@ -606,7 +606,7 @@ class AuditLogger:
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
         data["mac"] = self._anchor_mac(canonical)
         path = self._anchor_path()
-        tmp = path + ".tmp"
+        import threading; tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, sort_keys=True)
             f.flush()

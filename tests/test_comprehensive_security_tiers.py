@@ -861,7 +861,7 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
 
         # Idle timer tick triggers scheduled padding
         import time
-        time.sleep(0.06)
+        fsm._last_event_time = time.monotonic() - 1.0
         s_tick, a_tick, meta_tick = fsm.on_timer_tick(idle_threshold_sec=0.05)
         self.assertEqual(s_tick, TrafficState.STATE_SCHEDULED_PADDING)
         self.assertEqual(a_tick, TrafficAction.ACTION_INJECT_CHAFF)

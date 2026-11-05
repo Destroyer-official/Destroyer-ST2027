@@ -79,6 +79,15 @@ pub struct LockedKey32 {
     locked: bool,
 }
 
+impl std::fmt::Debug for LockedKey32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LockedKey32")
+            .field("locked", &self.locked)
+            .field("inner", &"[REDACTED_32B]")
+            .finish()
+    }
+}
+
 impl LockedKey32 {
     /// Move key bytes into a locked box. The caller's source array is NOT
     /// touched (it was moved-from by value) — the caller must still wipe

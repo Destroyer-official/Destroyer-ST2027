@@ -178,14 +178,6 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
     import shutil
     import tempfile
 
-    # Fast check: package manager
-    if shutil.which("apt-get") and shutil.which("sudo"):
-        try:
-            subprocess.run(["sudo", "apt-get", "update", "-qq"], timeout=45, capture_output=True)  # nosec: B603, B607
-            subprocess.run(["sudo", "apt-get", "install", "-y", "-qq", "liboqs-dev"], timeout=90, capture_output=True)  # nosec: B603, B607
-        except Exception:  # nosec: B110
-            pass
-
     check_paths = [
         Path("/usr/local/lib/liboqs.so"),
         Path("/usr/lib/x86_64-linux-gnu/liboqs.so"),
@@ -193,9 +185,16 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
         Path(tempfile.gettempdir()) / "liboqs_src" / "build" / "lib" / "liboqs.so",  # nosec: B108
         repo_dir / "liboqs.so"
     ]
+    # Check if a candidate already meets the 0.16.0 floor
     for p in check_paths:
         if p.exists() and p.is_file():
-            return p.resolve()
+            try:
+                from dependency_security_verifier import verify_liboqs_native_version
+                _, ok = verify_liboqs_native_version(str(p.resolve()))
+                if ok:
+                    return p.resolve()
+            except Exception:
+                pass
 
     # Pinned hermetic build from source if native tools exist
     if shutil.which("git") and shutil.which("cmake"):
@@ -272,6 +271,14 @@ def _find_liboqs_path() -> Path:
     for cand in candidates:
         try:
             if cand.resolve().exists() and cand.is_file():
+                if platform.system() == "Linux" and cand != repo_dir / "liboqs.so":
+                    try:
+                        from dependency_security_verifier import verify_liboqs_native_version
+                        _, ok = verify_liboqs_native_version(str(cand.resolve()))
+                        if not ok and shutil.which("cmake"):
+                            continue
+                    except Exception:
+                        pass
                 return cand.resolve()
         # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
         except Exception:  # nosec: B110
@@ -431,6 +438,12 @@ class LibOQS_MLKEM_1024:
     def __init__(self):
         self.alg_name = b"ML-KEM-1024"
         self.kem = liboqs.OQS_KEM_new(self.alg_name)
+        if not self.kem:
+            for alt in (b"ml-kem-1024", b"Kyber1024", b"KYBER1024", b"kyber1024"):
+                self.kem = liboqs.OQS_KEM_new(alt)
+                if self.kem:
+                    self.alg_name = alt
+                    break
         if not self.kem: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
         self.pk_size = self.kem.contents.length_public_key
         self.sk_size = self.kem.contents.length_secret_key
@@ -622,6 +635,12 @@ class LibOQS_MLDSA_87:
     def __init__(self):
         self.alg_name = b"ML-DSA-87"
         self.sig = liboqs.OQS_SIG_new(self.alg_name)
+        if not self.sig:
+            for alt in (b"ml-dsa-87", b"Dilithium5", b"DILITHIUM5", b"dilithium5"):
+                self.sig = liboqs.OQS_SIG_new(alt)
+                if self.sig:
+                    self.alg_name = alt
+                    break
         if not self.sig: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
         self.pk_size = self.sig.contents.length_public_key
         self.sk_size = self.sig.contents.length_secret_key

@@ -419,7 +419,7 @@ class TamperEvidentAuditChain:
             if not self.memory_only:
                 signed = dict(anchor)
                 signed["mac"] = self._anchor_hmac(anchor)
-                tmp = str(self.anchor_path) + ".tmp"
+                import threading; tmp = f"{str(self.anchor_path)}.tmp.{os.getpid()}.{threading.get_ident()}"
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(signed, f, indent=2)
                     f.flush()

@@ -247,7 +247,7 @@ mod tests {
         symlink(&real, &link).unwrap();
         // Followed-metadata `is_symlink` would MISS this; `symlink_metadata`
         // refuses it fail-closed.
-        assert_eq!(read_key_file(&ls).unwrap_err(), CoreError::FilePermissions);
+        assert!(matches!(read_key_file(&ls), Err(CoreError::FilePermissions)));
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_file(&real);
     }
@@ -262,7 +262,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
         write_key_file_exclusive(&s, &"ab".repeat(32)).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert_eq!(read_key_file(&s).unwrap_err(), CoreError::FilePermissions);
+        assert!(matches!(read_key_file(&s), Err(CoreError::FilePermissions)));
         let _ = std::fs::remove_file(&p);
     }
 }

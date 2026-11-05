@@ -331,7 +331,7 @@ class HashChainAuditLogger:
         }
         path = self._anchor_path()
         try:
-            tmp = path + ".tmp"
+            import threading; tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f)
                 f.flush()

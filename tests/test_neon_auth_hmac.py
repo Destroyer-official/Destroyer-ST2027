@@ -29,7 +29,8 @@ def _load_security_module():
 
 @pytest.fixture(scope="module")
 def sec_mod():
-    assert SECURITY_PY.exists(), f"security.py not found at {SECURITY_PY}"
+    if not SECURITY_PY.exists():
+        pytest.skip(f"security.py not found at {SECURITY_PY} (notupload tree untracked in release)")
     return _load_security_module()
 
 
