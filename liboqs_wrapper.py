@@ -215,8 +215,15 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
             res = subprocess.run(["git", "-C", str(build_dir), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # nosec: B603, B607
             if res.stdout.strip() == pin_sha:
                 cmake_b = build_dir / "build"
-                min_build = "-DOQS_MINIMAL_BUILD=ML-KEM-1024;ML-DSA-87;Falcon-1024;SLH-DSA-pure-SHA2-256f;SLH-DSA-pure-SHAKE-256f"
-                subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON", "-DCMAKE_BUILD_TYPE=Release", min_build, "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
+                if cmake_b.exists():
+                    shutil.rmtree(cmake_b, ignore_errors=True)
+                cmake_b.mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    ["cmake", "-S", str(build_dir), "-B", str(cmake_b),
+                     "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON",
+                     "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=/usr/local"],
+                    check=True, timeout=90
+                )  # nosec: B603, B607
                 nproc = str(os.cpu_count() or 2)
                 subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=300)  # nosec: B603, B607
                 if shutil.which("sudo"):
@@ -473,7 +480,15 @@ class LibOQS_MLKEM_1024:
                                 break
             except Exception:
                 pass
-        if not self.kem: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
+        if not self.kem:
+            available = []
+            if hasattr(liboqs, "OQS_KEM_alg_count") and hasattr(liboqs, "OQS_KEM_alg_identifier"):
+                try:
+                    count = liboqs.OQS_KEM_alg_count()
+                    available = [liboqs.OQS_KEM_alg_identifier(i).decode(errors="replace") for i in range(count)]
+                except Exception:
+                    pass
+            raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled? Available KEMs in liboqs ({len(available)}): {available[:10]}")
         self.pk_size = self.kem.contents.length_public_key
         self.sk_size = self.kem.contents.length_secret_key
         self.ct_size = self.kem.contents.length_ciphertext
@@ -744,12 +759,34 @@ class LibOQS_SLH_DSA_256f:
         self.alg_name = b"SLH_DSA_PURE_SHAKE_256F"
         self.sig = liboqs.OQS_SIG_new(self.alg_name)
         if not self.sig:
-            for alt in (b"SLH-DSA-SHAKE-256f", b"SPHINCS+-SHAKE-256f-simple", b"sphincs-shake-256f-simple"):
+            for alt in (b"SLH-DSA-pure-SHAKE-256f", b"SLH-DSA-SHAKE-256f", b"SLH-DSA-pure-SHA2-256f", b"SPHINCS+-SHAKE-256f-simple", b"sphincs-shake-256f-simple"):
                 self.sig = liboqs.OQS_SIG_new(alt)
                 if self.sig:
                     self.alg_name = alt
                     break
-        if not self.sig: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled?")
+        if not self.sig and hasattr(liboqs, "OQS_SIG_alg_count") and hasattr(liboqs, "OQS_SIG_alg_identifier"):
+            try:
+                count = liboqs.OQS_SIG_alg_count()
+                for i in range(count):
+                    id_name = liboqs.OQS_SIG_alg_identifier(i)
+                    if id_name:
+                        id_norm = id_name.lower().replace(b"-", b"").replace(b"_", b"")
+                        if (b"slhdsa" in id_norm or b"sphincs" in id_norm) and b"256f" in id_norm:
+                            self.sig = liboqs.OQS_SIG_new(id_name)
+                            if self.sig:
+                                self.alg_name = id_name
+                                break
+            except Exception:
+                pass
+        if not self.sig:
+            available = []
+            if hasattr(liboqs, "OQS_SIG_alg_count") and hasattr(liboqs, "OQS_SIG_alg_identifier"):
+                try:
+                    count = liboqs.OQS_SIG_alg_count()
+                    available = [liboqs.OQS_SIG_alg_identifier(i).decode(errors="replace") for i in range(count)]
+                except Exception:
+                    pass
+            raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled? Available signatures in liboqs ({len(available)}): {available[:10]}")
         self.pk_size = self.sig.contents.length_public_key
         self.sk_size = self.sig.contents.length_secret_key
         self.sig_size = self.sig.contents.length_signature # Max size
@@ -807,7 +844,35 @@ class LibOQS_Falcon_1024:
     def __init__(self):
         self.alg_name = b"Falcon-1024"
         self.sig = liboqs.OQS_SIG_new(self.alg_name)
-        if not self.sig: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled into oqs.dll?")
+        if not self.sig:
+            for alt in (b"falcon-1024", b"Falcon1024", b"falcon1024", b"Falcon-padded-1024"):
+                self.sig = liboqs.OQS_SIG_new(alt)
+                if self.sig:
+                    self.alg_name = alt
+                    break
+        if not self.sig and hasattr(liboqs, "OQS_SIG_alg_count") and hasattr(liboqs, "OQS_SIG_alg_identifier"):
+            try:
+                count = liboqs.OQS_SIG_alg_count()
+                for i in range(count):
+                    id_name = liboqs.OQS_SIG_alg_identifier(i)
+                    if id_name:
+                        id_norm = id_name.lower().replace(b"-", b"").replace(b"_", b"")
+                        if b"falcon" in id_norm and b"1024" in id_norm:
+                            self.sig = liboqs.OQS_SIG_new(id_name)
+                            if self.sig:
+                                self.alg_name = id_name
+                                break
+            except Exception:
+                pass
+        if not self.sig:
+            available = []
+            if hasattr(liboqs, "OQS_SIG_alg_count") and hasattr(liboqs, "OQS_SIG_alg_identifier"):
+                try:
+                    count = liboqs.OQS_SIG_alg_count()
+                    available = [liboqs.OQS_SIG_alg_identifier(i).decode(errors="replace") for i in range(count)]
+                except Exception:
+                    pass
+            raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled into oqs.dll / liboqs.so? Available signatures in liboqs ({len(available)}): {available[:10]}")
         self.pk_size = self.sig.contents.length_public_key
         self.sk_size = self.sig.contents.length_secret_key
         self.sig_size = self.sig.contents.length_signature
