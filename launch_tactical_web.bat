@@ -1,9 +1,9 @@
 @echo off
 cd /d "%~dp0"
-title DEFCON-1 TACTICAL P2P WEB COMMAND CENTER
+title ST2027 WEB OPERATOR CONSOLE
 echo ===============================================================================
-echo   LAUNCHING DESTROYER DEFCON-1 TACTICAL P2P WEB COMMAND CENTER
-echo   Post-Quantum ML-KEM-1024 + 20ms Continuous Hardware Wire Camouflage
+echo   LAUNCHING ST2027 WEB OPERATOR CONSOLE
+echo   Post-Quantum ML-KEM-1024 + 20ms Continuous Wire Pacing
 echo   URL: http://127.0.0.1:8443
 echo ===============================================================================
 echo.
