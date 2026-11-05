@@ -19,7 +19,10 @@ use aes_gcm::{
 };
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
-use crate::frame::{FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY};
+use crate::frame::{
+    FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY,
+    FTYPE_REVOCATION,
+};
 
 /// Send/receive direction bit mixed into the nonce (domain separation).
 pub const DIR_SEND: u8 = 0x00;
@@ -108,7 +111,13 @@ pub fn seal(
     ftype: u8,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF && ftype != FTYPE_REKEY && ftype != FTYPE_IN_BAND_EPOCH_REKEY {
+    if ftype != FTYPE_MSG
+        && ftype != FTYPE_CHAFF
+        && ftype != FTYPE_REKEY
+        && ftype != FTYPE_IN_BAND_EPOCH_REKEY
+        && ftype != FTYPE_ATTESTATION_EVIDENCE
+        && ftype != FTYPE_REVOCATION
+    {
         return Err(aes_gcm::aead::Error);
     }
     let payload_len = u16::try_from(plaintext.len()).map_err(|_| aes_gcm::aead::Error)?;
@@ -155,7 +164,13 @@ pub fn seal_with_len(
     true_len: u16,
     padded: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF && ftype != FTYPE_REKEY && ftype != FTYPE_IN_BAND_EPOCH_REKEY {
+    if ftype != FTYPE_MSG
+        && ftype != FTYPE_CHAFF
+        && ftype != FTYPE_REKEY
+        && ftype != FTYPE_IN_BAND_EPOCH_REKEY
+        && ftype != FTYPE_ATTESTATION_EVIDENCE
+        && ftype != FTYPE_REVOCATION
+    {
         return Err(aes_gcm::aead::Error);
     }
     if (true_len as usize) > padded.len() {
@@ -241,7 +256,13 @@ pub fn open_indexed(
     }
     let seq = u64::from_be_bytes(header[..8].try_into().map_err(|_| AeadError)?);
     let ftype = header[10];
-    if ftype != FTYPE_MSG && ftype != FTYPE_CHAFF && ftype != FTYPE_REKEY && ftype != FTYPE_IN_BAND_EPOCH_REKEY {
+    if ftype != FTYPE_MSG
+        && ftype != FTYPE_CHAFF
+        && ftype != FTYPE_REKEY
+        && ftype != FTYPE_IN_BAND_EPOCH_REKEY
+        && ftype != FTYPE_ATTESTATION_EVIDENCE
+        && ftype != FTYPE_REVOCATION
+    {
         return Err(AeadError);
     }
     let cipher = Aes256Gcm::new(&key.0);
@@ -295,6 +316,12 @@ mod tests {
             (1u64, FTYPE_MSG, b"hello".as_slice()),
             (2u64, FTYPE_CHAFF, b"".as_slice()),
             (3u64, FTYPE_REKEY, b"rekey_step_data".as_slice()),
+            (
+                4u64,
+                FTYPE_ATTESTATION_EVIDENCE,
+                b"cert_chain_der".as_slice(),
+            ),
+            (5u64, FTYPE_REVOCATION, b"crl_der_bytes".as_slice()),
             (1_000_000u64, FTYPE_MSG, &[7u8; 1205][..]),
         ] {
             let frame = seal(&key, seq, DIR_SEND, ftype, pt).unwrap();

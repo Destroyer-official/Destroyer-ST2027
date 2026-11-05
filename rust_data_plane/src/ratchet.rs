@@ -110,7 +110,11 @@ impl RatchetStep {
             return Err(CoreError::Malformed);
         }
         let mut offset = 0;
-        let epoch = u64::from_be_bytes(slice[offset..offset + 8].try_into().map_err(|_| CoreError::Malformed)?);
+        let epoch = u64::from_be_bytes(
+            slice[offset..offset + 8]
+                .try_into()
+                .map_err(|_| CoreError::Malformed)?,
+        );
         offset += 8;
 
         let mut eph_p_pub = [0u8; P384_PK];
@@ -190,7 +194,8 @@ impl RekeyMessage {
                 if slice.len() != 1 + 8 + 32 {
                     return Err(CoreError::Malformed);
                 }
-                let epoch = u64::from_be_bytes(slice[1..9].try_into().map_err(|_| CoreError::Malformed)?);
+                let epoch =
+                    u64::from_be_bytes(slice[1..9].try_into().map_err(|_| CoreError::Malformed)?);
                 let mut auth_tag = [0u8; 32];
                 auth_tag.copy_from_slice(&slice[9..41]);
                 Ok(RekeyMessage::Confirm { epoch, auth_tag })
@@ -369,7 +374,8 @@ impl PcsRatchet {
         use hmac::{Hmac, Mac};
         type HmacSha384 = Hmac<sha2::Sha384>;
         let auth_key = hkdf32(root, DOMAIN_EPOCH_AUTH_KEY, b"ST2027-EPOCH-REKEY-AUTH")?;
-        let mut mac = <HmacSha384 as hmac::digest::KeyInit>::new_from_slice(&auth_key).map_err(|_| CoreError::Malformed)?;
+        let mut mac = <HmacSha384 as hmac::digest::KeyInit>::new_from_slice(&auth_key)
+            .map_err(|_| CoreError::Malformed)?;
         mac.update(&epoch.to_be_bytes());
         mac.update(ct);
         let full_tag = mac.finalize().into_bytes();
@@ -424,9 +430,11 @@ impl PcsRatchet {
         if peer_ml_ek.len() != MLKEM1024_PK {
             return Err(CoreError::Malformed);
         }
-        let next_epoch = (self.epoch as u32).checked_add(1).ok_or(CoreError::Oversize)?;
-        let (ct_vec, ml_ss) = crate::kem::encapsulate_mlkem(peer_ml_ek)
-            .map_err(|_| CoreError::Malformed)?;
+        let next_epoch = (self.epoch as u32)
+            .checked_add(1)
+            .ok_or(CoreError::Oversize)?;
+        let (ct_vec, ml_ss) =
+            crate::kem::encapsulate_mlkem(peer_ml_ek).map_err(|_| CoreError::Malformed)?;
         if ct_vec.len() != MLKEM1024_CT_LEN {
             return Err(CoreError::Malformed);
         }
@@ -463,12 +471,11 @@ impl PcsRatchet {
     /// Decapsulates ML-KEM-1024 ciphertext with local private key.
     /// Evolves root key: `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ML-KEM-1024-Decaps(ct))`.
     /// Immediately volatile-zeroizes old root, old chain, decapsulation key, and intermediate secrets.
-    pub fn process_in_band_epoch_rekey(
-        &mut self,
-        payload: &[u8],
-    ) -> Result<[u8; 32], CoreError> {
+    pub fn process_in_band_epoch_rekey(&mut self, payload: &[u8]) -> Result<[u8; 32], CoreError> {
         let parsed = InBandEpochRekeyPayload::from_bytes(payload)?;
-        let expected_epoch = (self.epoch as u32).checked_add(1).ok_or(CoreError::Oversize)?;
+        let expected_epoch = (self.epoch as u32)
+            .checked_add(1)
+            .ok_or(CoreError::Oversize)?;
         if parsed.epoch != expected_epoch {
             return Err(CoreError::Stale);
         }
@@ -751,7 +758,10 @@ mod tests {
             _ => panic!("expected Step"),
         }
 
-        let msg_conf = RekeyMessage::Confirm { epoch: 100, auth_tag: [0x99u8; 32] };
+        let msg_conf = RekeyMessage::Confirm {
+            epoch: 100,
+            auth_tag: [0x99u8; 32],
+        };
         let wire_conf = msg_conf.to_wire();
         match RekeyMessage::from_wire(&wire_conf).unwrap() {
             RekeyMessage::Confirm { epoch, auth_tag } => {
@@ -810,7 +820,14 @@ mod tests {
         let k0_bob = bob.current_frame_key().unwrap();
 
         // Normal traffic in Epoch 0
-        let frame0 = seal(&k0_alice, 1, DIR_SEND, crate::frame::FTYPE_MSG, b"SECRET_EPOCH_0").unwrap();
+        let frame0 = seal(
+            &k0_alice,
+            1,
+            DIR_SEND,
+            crate::frame::FTYPE_MSG,
+            b"SECRET_EPOCH_0",
+        )
+        .unwrap();
         let (_s, _t, pt0) = open_indexed(&k0_bob, DIR_SEND, &frame0).unwrap();
         assert_eq!(&pt0, b"SECRET_EPOCH_0");
 
@@ -847,7 +864,14 @@ mod tests {
         let k1_bob = crate::aead::FrameKey::from_bytes(b_msg_key);
 
         // Alice sends classified tactical message under Epoch 1
-        let frame1 = seal(&k1_alice, 2, DIR_SEND, crate::frame::FTYPE_MSG, b"TOP_SECRET_EPOCH_1").unwrap();
+        let frame1 = seal(
+            &k1_alice,
+            2,
+            DIR_SEND,
+            crate::frame::FTYPE_MSG,
+            b"TOP_SECRET_EPOCH_1",
+        )
+        .unwrap();
 
         // Bob decrypts successfully under Epoch 1
         let (_s, _t, pt1) = open_indexed(&k1_bob, DIR_SEND, &frame1).unwrap();
@@ -855,7 +879,10 @@ mod tests {
 
         // --- POST-COMPROMISE SECURITY VERIFICATION ---
         // 1. Attacker tries to decrypt Epoch 1 message with stolen Epoch 0 frame key -> FAILS!
-        assert!(open_indexed(&stolen_k0, DIR_SEND, &frame1).is_err(), "Attacker cannot use old key");
+        assert!(
+            open_indexed(&stolen_k0, DIR_SEND, &frame1).is_err(),
+            "Attacker cannot use old key"
+        );
 
         // 2. Attacker tries to evolve their stolen root/chain:
         // Attacker observes wire_step.eph_p_pub and wire_step.ml_ct.
@@ -863,14 +890,19 @@ mod tests {
         // In ML-KEM-1024 (FIPS 203), decapsulation under the wrong private key produces an IND-CCA2
         // pseudorandom rejection value that completely diverges from the authentic shared secret.
         let bogus_bundle = EphemeralKeys::generate().unwrap();
-        let bogus_hybrid = bogus_bundle.decapsulate(&wire_step.eph_p_pub, &wire_step.ml_ct).unwrap();
+        let bogus_hybrid = bogus_bundle
+            .decapsulate(&wire_step.eph_p_pub, &wire_step.ml_ct)
+            .unwrap();
         let mut bogus_ratchet = PcsRatchet::new(&stolen_root0).unwrap();
         bogus_ratchet.chain = stolen_chain0;
         let (_bogus_root, bogus_chain) = bogus_ratchet.evolved(&bogus_hybrid).unwrap();
         let bogus_key = PcsRatchet::message_key_for(&bogus_chain, 0).unwrap();
         let bogus_fk = crate::aead::FrameKey::from_bytes(bogus_key);
 
-        assert!(open_indexed(&bogus_fk, DIR_SEND, &frame1).is_err(), "Attacker cannot forge or decrypt Epoch 1 frame");
+        assert!(
+            open_indexed(&bogus_fk, DIR_SEND, &frame1).is_err(),
+            "Attacker cannot forge or decrypt Epoch 1 frame"
+        );
     }
     #[test]
     fn in_band_epoch_rekey_flow_and_post_compromise_security() {
@@ -887,7 +919,14 @@ mod tests {
         // Epoch 0 traffic
         let k0_alice = alice.current_frame_key().unwrap();
         let k0_bob = bob.current_frame_key().unwrap();
-        let f0 = seal(&k0_alice, 1, DIR_SEND, crate::frame::FTYPE_MSG, b"EPOCH_0_MSG").unwrap();
+        let f0 = seal(
+            &k0_alice,
+            1,
+            DIR_SEND,
+            crate::frame::FTYPE_MSG,
+            b"EPOCH_0_MSG",
+        )
+        .unwrap();
         let (_s, _t, pt0) = open_indexed(&k0_bob, DIR_SEND, &f0).unwrap();
         assert_eq!(&pt0, b"EPOCH_0_MSG");
 
@@ -900,7 +939,10 @@ mod tests {
         for _ in 0..10_000 {
             alice.note_transmission(64);
         }
-        assert!(alice.needs_rollover(), "must trigger rollover at 10,000 packets");
+        assert!(
+            alice.needs_rollover(),
+            "must trigger rollover at 10,000 packets"
+        );
         let (pkts, bytes) = alice.rollover_counters();
         assert_eq!(pkts, 10_000);
         assert_eq!(bytes, 640_000);
@@ -923,7 +965,14 @@ mod tests {
         let k1_bob = bob.current_frame_key().unwrap();
 
         // Alice sends message in Epoch 1
-        let f1 = seal(&k1_alice, 2, DIR_SEND, crate::frame::FTYPE_MSG, b"EPOCH_1_SECRET").unwrap();
+        let f1 = seal(
+            &k1_alice,
+            2,
+            DIR_SEND,
+            crate::frame::FTYPE_MSG,
+            b"EPOCH_1_SECRET",
+        )
+        .unwrap();
         let (_s, _t, pt1) = open_indexed(&k1_bob, DIR_SEND, &f1).unwrap();
         assert_eq!(&pt1, b"EPOCH_1_SECRET");
 
@@ -939,12 +988,16 @@ mod tests {
         // Trying to decapsulate with an attacker key yields IND-CCA2 rejection value:
         let fake_bundle = EphemeralKeys::generate().unwrap();
         let fake_ml_ss = fake_bundle.decapsulate_mlkem(&parsed.ct).unwrap();
-        let fake_root_1 = PcsRatchet::hkdf_epoch_root(&stolen_root_0, fake_ml_ss.as_slice(), 1).unwrap();
+        let fake_root_1 =
+            PcsRatchet::hkdf_epoch_root(&stolen_root_0, fake_ml_ss.as_slice(), 1).unwrap();
         let fake_chain_1 = hkdf32(&fake_root_1, DOMAIN_RATCHET_CHAIN, &1u32.to_be_bytes()).unwrap();
         let fake_fk_1 = crate::aead::FrameKey::from_bytes(fake_chain_1);
 
         // Attacker frame key completely fails to open Epoch 1 ciphertext!
-        assert!(open_indexed(&fake_fk_1, DIR_SEND, &f1).is_err(), "Attacker cannot decrypt Epoch 1");
+        assert!(
+            open_indexed(&fake_fk_1, DIR_SEND, &f1).is_err(),
+            "Attacker cannot decrypt Epoch 1"
+        );
     }
 
     #[test]
@@ -961,7 +1014,10 @@ mod tests {
 
         // Send 1.2 MB data
         alice.note_transmission(1_200_000);
-        assert!(alice.needs_rollover(), "must trigger rollover when byte threshold reached");
+        assert!(
+            alice.needs_rollover(),
+            "must trigger rollover when byte threshold reached"
+        );
 
         let rekey_payload = alice.build_in_band_epoch_rekey(&bob_adv.ek).unwrap();
 
@@ -972,7 +1028,11 @@ mod tests {
             bob.process_in_band_epoch_rekey(&tampered_payload),
             Err(CoreError::BadSignature)
         );
-        assert_eq!(bob.epoch(), 0, "Bob state must not advance on bad signature");
+        assert_eq!(
+            bob.epoch(),
+            0,
+            "Bob state must not advance on bad signature"
+        );
 
         // 2. Tampered ciphertext fails closed (AuthTag check catches tampering)
         let mut tampered_ct = rekey_payload;

@@ -463,6 +463,27 @@ class TacticalConsoleStation:
             print(f"\n{WHITE_ON_RED}[NC3 SECURITY ALERT - REJECTED]{RESET} Stale or replayed EAM directive '{directive}' (timestamp skew exceeds 120s)")
             return False
 
+        # Temporal Hardware Window (Δt <= 2.0s) check for physical smartcard split-knowledge
+        temporal_skew_ms = packet.get("temporal_skew_ms", 0)
+        if temporal_skew_ms > 2000:
+            print(f"\n{WHITE_ON_RED}[NC3 SECURITY ALERT - REJECTED]{RESET} Stale or asynchronous EAM directive '{directive}' (temporal hardware skew {temporal_skew_ms}ms exceeds 2000ms window)")
+            return False
+
+        # DirectiveHash = SHA3-512(Timestamp || Target || ActionPayload) verification
+        given_hash = packet.get("directive_hash_sha3_512")
+        if given_hash:
+            import hashlib
+            target = packet.get("target", "PENTAGON_NMCC")
+            ts_int = int(ts)
+            h_dir = hashlib.sha3_512()
+            h_dir.update(ts_int.to_bytes(8, byteorder="big"))
+            h_dir.update(target.encode("utf-8"))
+            h_dir.update(directive.encode("utf-8"))
+            expected_hash = h_dir.hexdigest()
+            if given_hash.lower() != expected_hash.lower():
+                print(f"\n{WHITE_ON_RED}[NC3 SECURITY ALERT - REJECTED]{RESET} Directive hash SHA3-512 mismatch on directive '{directive}'")
+                return False
+
         # Cryptographically verify both ML-DSA-87 signatures over canonical EAM envelope
         env_bytes = canonical_eam_bytes(directive, of1, of2, ts, nonce)
         try:
@@ -691,6 +712,17 @@ class TacticalConsoleStation:
         nonce = secrets.token_hex(16)
         env_bytes = canonical_eam_bytes(directive, officer1, officer2, ts, nonce)
 
+        # FIPS 202 SHA3-512 canonical directive hash: DirectiveHash = SHA3-512(Timestamp || Target || ActionPayload)
+        import hashlib
+        target = kwargs.get("target", "PENTAGON_NMCC")
+        ts_int = int(ts)
+        h_dir = hashlib.sha3_512()
+        h_dir.update(ts_int.to_bytes(8, byteorder="big"))
+        h_dir.update(target.encode("utf-8"))
+        h_dir.update(directive.encode("utf-8"))
+        directive_hash_sha3_512 = h_dir.hexdigest()
+
+        t1 = time.time()
         sig1 = self.sign_data(env_bytes)
         pk1 = self.pubkey_mldsa
 
@@ -703,6 +735,7 @@ class TacticalConsoleStation:
                 print(f"{RED}[NC3 VIOLATION]{RESET} Second officer public key is required to bind the signature!")
                 return {}
             sig2 = second_officer_signer(env_bytes)
+            t2 = time.time() + kwargs.get("simulated_skew_secs", 0.0)
         elif second_officer_sk is not None or kwargs.get("officer2_sk") is not None:
             sk2 = second_officer_sk or kwargs.get("officer2_sk")
             pk2 = second_officer_pk or kwargs.get("officer2_pk")
@@ -710,8 +743,15 @@ class TacticalConsoleStation:
                 print(f"{RED}[NC3 VIOLATION]{RESET} Second officer public key is required to bind the signature!")
                 return {}
             sig2 = self.mldsa_signer.sign(sk2, env_bytes)
+            t2 = time.time() + kwargs.get("simulated_skew_secs", 0.0)
         else:
             print(f"{RED}[NC3 VIOLATION]{RESET} Two-Person Rule requires independently supplied second-officer credentials; refusing to self-generate a custodian!")
+            return {}
+
+        temporal_skew_ms = int(abs(t2 - t1) * 1000)
+        max_skew_ms = int(kwargs.get("max_skew_ms", kwargs.get("max_temporal_skew_secs", 2.0) * 1000))
+        if temporal_skew_ms > max_skew_ms:
+            print(f"{RED}[NC3 VIOLATION]{RESET} Temporal hardware window violation: signatures generated {temporal_skew_ms}ms apart (max {max_skew_ms}ms allowed fail-closed)!")
             return {}
 
         # Derive the custody claim from actual verification, never a literal.
@@ -748,6 +788,9 @@ class TacticalConsoleStation:
             "custody_status": custody_status,
             "signer": self.callsign,
             "timestamp": ts,
+            "directive_hash_sha3_512": directive_hash_sha3_512,
+            "temporal_skew_ms": temporal_skew_ms,
+            "target": target,
         }
 
         if dest_host and dest_port:

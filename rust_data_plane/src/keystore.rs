@@ -247,7 +247,10 @@ mod tests {
         symlink(&real, &link).unwrap();
         // Followed-metadata `is_symlink` would MISS this; `symlink_metadata`
         // refuses it fail-closed.
-        assert!(matches!(read_key_file(&ls), Err(CoreError::FilePermissions)));
+        assert!(matches!(
+            read_key_file(&ls),
+            Err(CoreError::FilePermissions)
+        ));
         let _ = std::fs::remove_file(&link);
         let _ = std::fs::remove_file(&real);
     }

@@ -74,7 +74,10 @@ impl Fragment {
     pub fn to_text_line(&self) -> String {
         let tx_hex = hex_encode(&self.tx_id);
         let b64 = base64_sim_encode(&self.data);
-        format!("ZGDP_FRAG:{}:{}:{}:{}\n", tx_hex, self.index, self.total, b64)
+        format!(
+            "ZGDP_FRAG:{}:{}:{}:{}\n",
+            tx_hex, self.index, self.total, b64
+        )
     }
 
     /// Parse from ASCII line `ZGDP_FRAG:<tx_id_hex>:<index>:<total>:<base64_data>`.
@@ -317,9 +320,21 @@ fn base64_sim_decode(input: &str) -> Result<Vec<u8>, ()> {
     let mut i = 0;
     while i < bytes.len() {
         let b0 = base64_val(bytes[i])?;
-        let b1 = if i + 1 < bytes.len() { base64_val(bytes[i + 1])? } else { 0 };
-        let b2 = if i + 2 < bytes.len() { base64_val(bytes[i + 2])? } else { 0 };
-        let b3 = if i + 3 < bytes.len() { base64_val(bytes[i + 3])? } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            base64_val(bytes[i + 1])?
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            base64_val(bytes[i + 2])?
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() {
+            base64_val(bytes[i + 3])?
+        } else {
+            0
+        };
 
         let n = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
 
@@ -419,4 +434,3 @@ mod tests {
         assert_eq!(buf.insert(wrong_f).unwrap_err(), CoreError::Malformed);
     }
 }
-

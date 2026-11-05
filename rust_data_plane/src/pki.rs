@@ -263,6 +263,89 @@ impl RevocationCache {
     }
 }
 
+/// Load enrolled 3-of-5 Root CA custodians from a JSON string or file.
+/// Expected format: `[{"label": "custodian-0", "mldsa_pk": "<hex 2592 bytes>"}, ...]`
+pub fn parse_custodians_json(raw: &str) -> Result<Vec<Custodian>, CoreError> {
+    let mut out = Vec::new();
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return Err(CoreError::Malformed);
+    }
+    for block in trimmed.split('{').skip(1) {
+        if let Some(end) = block.find('}') {
+            let obj = &block[..end];
+            let label = if let Some(l_idx) = obj.find("\"label\"") {
+                let rest = &obj[l_idx + 7..];
+                if let Some(start_q) = rest.find('"') {
+                    let after_q = &rest[start_q + 1..];
+                    if let Some(end_q) = after_q.find('"') {
+                        &after_q[..end_q]
+                    } else {
+                        return Err(CoreError::Malformed);
+                    }
+                } else {
+                    return Err(CoreError::Malformed);
+                }
+            } else {
+                return Err(CoreError::Malformed);
+            };
+
+            let pk_hex = if let Some(pk_idx) = obj.find("\"mldsa_pk\"") {
+                let rest = &obj[pk_idx + 10..];
+                if let Some(start_q) = rest.find('"') {
+                    let after_q = &rest[start_q + 1..];
+                    if let Some(end_q) = after_q.find('"') {
+                        &after_q[..end_q]
+                    } else {
+                        return Err(CoreError::Malformed);
+                    }
+                } else {
+                    return Err(CoreError::Malformed);
+                }
+            } else {
+                return Err(CoreError::Malformed);
+            };
+
+            if pk_hex.len() != MLDSA87_PK * 2 {
+                return Err(CoreError::Malformed);
+            }
+            let mut pk_bytes = Vec::with_capacity(MLDSA87_PK);
+            for i in 0..MLDSA87_PK {
+                let byte = u8::from_str_radix(&pk_hex[i * 2..i * 2 + 2], 16)
+                    .map_err(|_| CoreError::Malformed)?;
+                pk_bytes.push(byte);
+            }
+
+            out.push(Custodian::new(label, pk_bytes)?);
+        }
+    }
+    if out.len() != TOTAL {
+        return Err(CoreError::Malformed);
+    }
+    Ok(out)
+}
+
+pub fn load_custodians_from_file_or_env(
+    path_opt: Option<&str>,
+) -> Result<Vec<Custodian>, CoreError> {
+    if let Some(path) = path_opt {
+        let content = std::fs::read_to_string(path).map_err(|_| CoreError::Malformed)?;
+        return parse_custodians_json(&content);
+    }
+    if let Ok(raw) = std::env::var("P2P_CA_CUSTODIANS") {
+        if !raw.trim().is_empty() {
+            return parse_custodians_json(&raw);
+        }
+    }
+    if let Ok(path) = std::env::var("P2P_CA_FILE") {
+        if !path.trim().is_empty() {
+            let content = std::fs::read_to_string(&path).map_err(|_| CoreError::Malformed)?;
+            return parse_custodians_json(&content);
+        }
+    }
+    Err(CoreError::UnknownIdentity)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

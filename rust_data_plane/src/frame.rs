@@ -9,6 +9,10 @@ use crate::policy::CoreError;
 pub const FTYPE_MSG: u8 = 0x01;
 /// In-band Continuous Epoch Ratchet (CER) rekeying envelope (FTYPE_REKEY = 0x02).
 pub const FTYPE_REKEY: u8 = 0x02;
+/// Attestation evidence envelope (carrying post-quantum RFC 9881 certificate chains / attestation evidence).
+pub const FTYPE_ATTESTATION_EVIDENCE: u8 = 0x05;
+/// In-band threshold Certificate Revocation List (CRL) broadcast.
+pub const FTYPE_REVOCATION: u8 = 0x06;
 /// In-band Continuous Epoch Ratchet (CER) key replenishment frame (FTYPE_IN_BAND_EPOCH_REKEY = 0x07).
 pub const FTYPE_IN_BAND_EPOCH_REKEY: u8 = 0x07;
 /// Alias matching specification name: IN_BAND_EPOCH_REKEY = 0x07.
@@ -21,8 +25,7 @@ pub const FTYPE_CHAFF: u8 = 0xFF;
 pub const EPOCH_INDEX_LEN: usize = 4;
 pub const MLKEM1024_CT_LEN: usize = 1568;
 pub const AUTH_TAG_16_LEN: usize = 16;
-pub const IN_BAND_REKEY_PAYLOAD_LEN: usize =
-    EPOCH_INDEX_LEN + MLKEM1024_CT_LEN + AUTH_TAG_16_LEN; // 1588 bytes
+pub const IN_BAND_REKEY_PAYLOAD_LEN: usize = EPOCH_INDEX_LEN + MLKEM1024_CT_LEN + AUTH_TAG_16_LEN; // 1588 bytes
 
 /// Wire representation of an In-Band Continuous Epoch Ratchet (CER) rekey payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,11 +58,7 @@ impl InBandEpochRekeyPayload {
         if slice.len() != IN_BAND_REKEY_PAYLOAD_LEN {
             return Err(CoreError::Malformed);
         }
-        let epoch = u32::from_be_bytes(
-            slice[..4]
-                .try_into()
-                .map_err(|_| CoreError::Malformed)?,
-        );
+        let epoch = u32::from_be_bytes(slice[..4].try_into().map_err(|_| CoreError::Malformed)?);
         let mut ct = [0u8; MLKEM1024_CT_LEN];
         ct.copy_from_slice(&slice[4..4 + MLKEM1024_CT_LEN]);
         let mut tag = [0u8; AUTH_TAG_16_LEN];
@@ -163,9 +162,15 @@ mod tests {
         assert_eq!(parsed, payload);
 
         // Malformed lengths fail-closed
-        assert_eq!(InBandEpochRekeyPayload::from_bytes(&bytes[..1000]), Err(CoreError::Malformed));
+        assert_eq!(
+            InBandEpochRekeyPayload::from_bytes(&bytes[..1000]),
+            Err(CoreError::Malformed)
+        );
         let mut oversize = bytes.to_vec();
         oversize.push(0x00);
-        assert_eq!(InBandEpochRekeyPayload::from_bytes(&oversize), Err(CoreError::Malformed));
+        assert_eq!(
+            InBandEpochRekeyPayload::from_bytes(&oversize),
+            Err(CoreError::Malformed)
+        );
     }
 }

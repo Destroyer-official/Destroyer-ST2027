@@ -288,7 +288,9 @@ pub fn parse_telegram(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zero_trust::{CAVEAT_EYES_ONLY, CAVEAT_NOFORN, CAVEAT_REL_TO_COALITION, CAVEAT_SI_TK_G};
+    use crate::zero_trust::{
+        CAVEAT_EYES_ONLY, CAVEAT_NOFORN, CAVEAT_REL_TO_COALITION, CAVEAT_SI_TK_G,
+    };
 
     #[test]
     fn format_parse_roundtrip() {

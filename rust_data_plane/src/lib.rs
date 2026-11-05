@@ -63,8 +63,8 @@ pub mod nc3;
 pub mod net;
 pub mod nostd_microcore;
 pub mod pacing;
-pub mod pipeline;
 pub mod pad;
+pub mod pipeline;
 pub mod pki;
 pub mod policy;
 pub mod ptt;
@@ -73,6 +73,7 @@ pub mod ratchet;
 pub mod replay;
 pub mod session;
 pub mod tpm_nv;
+pub mod x509;
 pub mod zero_trust;
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};

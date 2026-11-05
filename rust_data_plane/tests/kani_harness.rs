@@ -25,10 +25,10 @@
 // Real sources, included by path (additive-only workaround for cdylib-only).
 #![allow(dead_code)]
 #![allow(clippy::all)]
-#[path = "../src/policy.rs"]
-pub mod policy;
 #[path = "../src/frame.rs"]
 mod frame;
+#[path = "../src/policy.rs"]
+pub mod policy;
 #[path = "../src/replay.rs"]
 mod replay;
 // NOTE: `aead.rs` does `use crate::frame::{FTYPE_CHAFF, FTYPE_MSG};` — that

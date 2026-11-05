@@ -55,7 +55,9 @@ impl std::fmt::Display for HsmError {
             HsmError::DeviceNotFound(d) => write!(f, "HSM hardware device not found: {d}"),
             HsmError::SlotNotFound(s) => write!(f, "HSM token slot not found: {s}"),
             HsmError::KeyNotFound(k) => write!(f, "Hardware key object not found: {k}"),
-            HsmError::MechanismUnsupported(m) => write!(f, "Cryptographic mechanism unsupported by token: {m}"),
+            HsmError::MechanismUnsupported(m) => {
+                write!(f, "Cryptographic mechanism unsupported by token: {m}")
+            }
             HsmError::InvalidPin => write!(f, "HSM hardware PIN authentication failed"),
             HsmError::HardwareRefusal(r) => write!(f, "HSM silicon security boundary refusal: {r}"),
             HsmError::Io(e) => write!(f, "I/O error during hardware communication: {e}"),
@@ -99,9 +101,17 @@ impl HsmDeviceType {
 
         if m.contains("yubico") || md.contains("yubikey") || l.contains("yubikey") {
             HsmDeviceType::YubiKey5Fips
-        } else if m.contains("safenet") || m.contains("chrysalis") || md.contains("luna") || l.contains("luna") {
+        } else if m.contains("safenet")
+            || m.contains("chrysalis")
+            || md.contains("luna")
+            || l.contains("luna")
+        {
             HsmDeviceType::ThalesLunaPcie
-        } else if m.contains("nitrokey") || m.contains("cardcontact") || md.contains("smartcard-hsm") || l.contains("smartcard-hsm") {
+        } else if m.contains("nitrokey")
+            || m.contains("cardcontact")
+            || md.contains("smartcard-hsm")
+            || l.contains("smartcard-hsm")
+        {
             HsmDeviceType::NitrokeyHsm
         } else {
             HsmDeviceType::GenericPkcs11
@@ -115,9 +125,15 @@ impl HsmDeviceType {
             HsmDeviceType::YubiKey5Fips => {
                 #[cfg(target_os = "windows")]
                 {
-                    paths.push(PathBuf::from(r"C:\Program Files\Yubico\Yubico PIV Tool\bin\ykcs11.dll"));
-                    paths.push(PathBuf::from(r"C:\Program Files (x86)\Yubico\Yubico PIV Tool\bin\ykcs11.dll"));
-                    paths.push(PathBuf::from(r"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll"));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files\Yubico\Yubico PIV Tool\bin\ykcs11.dll",
+                    ));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files (x86)\Yubico\Yubico PIV Tool\bin\ykcs11.dll",
+                    ));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll",
+                    ));
                     paths.push(PathBuf::from("ykcs11.dll"));
                 }
                 #[cfg(target_os = "linux")]
@@ -139,25 +155,37 @@ impl HsmDeviceType {
             HsmDeviceType::ThalesLunaPcie => {
                 #[cfg(target_os = "windows")]
                 {
-                    paths.push(PathBuf::from(r"C:\Program Files\SafeNet\LunaClient\bin\cryptoki.dll"));
-                    paths.push(PathBuf::from(r"C:\Program Files\SafeNet\LunaClient\bin64\cryptoki.dll"));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files\SafeNet\LunaClient\bin\cryptoki.dll",
+                    ));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files\SafeNet\LunaClient\bin64\cryptoki.dll",
+                    ));
                     paths.push(PathBuf::from("cryptoki.dll"));
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    paths.push(PathBuf::from("/usr/safenet/lunaclient/lib/libCryptoki2_64.so"));
-                    paths.push(PathBuf::from("/opt/safenet/lunaclient/lib/libCryptoki2_64.so"));
+                    paths.push(PathBuf::from(
+                        "/usr/safenet/lunaclient/lib/libCryptoki2_64.so",
+                    ));
+                    paths.push(PathBuf::from(
+                        "/opt/safenet/lunaclient/lib/libCryptoki2_64.so",
+                    ));
                     paths.push(PathBuf::from("/usr/lib/libCryptoki2_64.so"));
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    paths.push(PathBuf::from("/usr/safenet/lunaclient/lib/libCryptoki2_64.dylib"));
+                    paths.push(PathBuf::from(
+                        "/usr/safenet/lunaclient/lib/libCryptoki2_64.dylib",
+                    ));
                 }
             }
             HsmDeviceType::NitrokeyHsm => {
                 #[cfg(target_os = "windows")]
                 {
-                    paths.push(PathBuf::from(r"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll"));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll",
+                    ));
                     paths.push(PathBuf::from("opensc-pkcs11.dll"));
                 }
                 #[cfg(target_os = "linux")]
@@ -177,7 +205,9 @@ impl HsmDeviceType {
             HsmDeviceType::GenericPkcs11 => {
                 #[cfg(target_os = "windows")]
                 {
-                    paths.push(PathBuf::from(r"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll"));
+                    paths.push(PathBuf::from(
+                        r"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll",
+                    ));
                     paths.push(PathBuf::from("opensc-pkcs11.dll"));
                 }
                 #[cfg(target_os = "linux")]
@@ -227,13 +257,19 @@ impl HsmConfig {
     /// Load HSM configuration from environment variables.
     pub fn from_env() -> Self {
         let module_path = std::env::var("P2P_PKCS11_MODULE").ok().map(PathBuf::from);
-        let device_type = match std::env::var("P2P_HSM_TYPE").unwrap_or_default().to_lowercase().as_str() {
+        let device_type = match std::env::var("P2P_HSM_TYPE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
             "luna" | "thales" => HsmDeviceType::ThalesLunaPcie,
             "nitrokey" | "smartcard-hsm" => HsmDeviceType::NitrokeyHsm,
             "generic" | "softhsm" => HsmDeviceType::GenericPkcs11,
             _ => HsmDeviceType::YubiKey5Fips,
         };
-        let slot_index = std::env::var("P2P_HSM_SLOT").ok().and_then(|s| s.parse().ok());
+        let slot_index = std::env::var("P2P_HSM_SLOT")
+            .ok()
+            .and_then(|s| s.parse().ok());
         let token_label = std::env::var("P2P_HSM_TOKEN_LABEL").ok();
         let pin = std::env::var("P2P_HSM_PIN").ok();
         let key_label = std::env::var("P2P_HSM_KEY_LABEL").ok();
@@ -292,6 +328,8 @@ pub struct HsmSession {
     _pkcs11: Pkcs11,
     session: Session,
     device_type: HsmDeviceType,
+    slot_index: usize,
+    token_serial: Option<String>,
 }
 
 impl HsmSession {
@@ -303,40 +341,55 @@ impl HsmSession {
 
         let slots = pkcs11.get_slots_with_token()?;
         if slots.is_empty() {
-            return Err(HsmError::SlotNotFound("No slots with connected hardware tokens found".into()));
+            return Err(HsmError::SlotNotFound(
+                "No slots with connected hardware tokens found".into(),
+            ));
         }
 
-        let target_slot = if let Some(idx) = config.slot_index {
-            *slots.get(idx).ok_or_else(|| HsmError::SlotNotFound(format!("Slot index {idx} out of range")))?
+        let (target_slot, actual_slot_index) = if let Some(idx) = config.slot_index {
+            let s = *slots
+                .get(idx)
+                .ok_or_else(|| HsmError::SlotNotFound(format!("Slot index {idx} out of range")))?;
+            (s, idx)
         } else if let Some(ref label) = config.token_label {
             let mut found = None;
-            for &s in &slots {
+            for (idx, &s) in slots.iter().enumerate() {
                 if let Ok(info) = pkcs11.get_token_info(s) {
                     if info.label().trim() == label.trim() {
-                        found = Some(s);
+                        found = Some((s, idx));
                         break;
                     }
                 }
             }
-            found.ok_or_else(|| HsmError::SlotNotFound(format!("Token with label '{label}' not found")))?
+            found.ok_or_else(|| {
+                HsmError::SlotNotFound(format!("Token with label '{label}' not found"))
+            })?
         } else {
-            slots[0]
+            (slots[0], 0)
         };
 
         let session = pkcs11.open_ro_session(target_slot)?;
         if let Some(ref pin) = config.pin {
-            session.login(UserType::User, Some(&AuthPin::from(pin.clone()))).map_err(|_| HsmError::InvalidPin)?;
+            session
+                .login(UserType::User, Some(&AuthPin::from(pin.clone())))
+                .map_err(|_| HsmError::InvalidPin)?;
         }
 
         let token_info = pkcs11.get_token_info(target_slot).ok();
-        let detected_type = token_info.as_ref().map(|ti| {
-            HsmDeviceType::from_token_info(ti.manufacturer_id(), ti.model(), ti.label())
-        }).unwrap_or(config.device_type);
+        let detected_type = token_info
+            .as_ref()
+            .map(|ti| HsmDeviceType::from_token_info(ti.manufacturer_id(), ti.model(), ti.label()))
+            .unwrap_or(config.device_type);
+        let token_serial = token_info
+            .as_ref()
+            .map(|ti| ti.serial_number().trim().to_string());
 
         Ok(Self {
             _pkcs11: pkcs11,
             session,
             device_type: detected_type,
+            slot_index: actual_slot_index,
+            token_serial,
         })
     }
 
@@ -350,8 +403,22 @@ impl HsmSession {
         self.device_type
     }
 
+    /// Slot index of the token on the PKCS#11 subsystem.
+    pub fn slot_index(&self) -> usize {
+        self.slot_index
+    }
+
+    /// Serial number of the physical token hardware.
+    pub fn token_serial(&self) -> Option<&str> {
+        self.token_serial.as_deref()
+    }
+
     /// Locate private key object handle by optional label or ID.
-    pub fn find_private_key(&self, label: Option<&str>, id: Option<&[u8]>) -> Result<ObjectHandle, HsmError> {
+    pub fn find_private_key(
+        &self,
+        label: Option<&str>,
+        id: Option<&[u8]>,
+    ) -> Result<ObjectHandle, HsmError> {
         let mut template = vec![Attribute::Class(ObjectClass::PRIVATE_KEY)];
         if let Some(l) = label {
             template.push(Attribute::Label(l.as_bytes().to_vec()));
@@ -366,6 +433,48 @@ impl HsmSession {
                 "Private key object not found on token (label={label:?}, id={id:?})"
             ))
         })
+    }
+
+    /// Locate public key object handle by optional label or ID.
+    pub fn find_public_key(
+        &self,
+        label: Option<&str>,
+        id: Option<&[u8]>,
+    ) -> Result<ObjectHandle, HsmError> {
+        let mut template = vec![Attribute::Class(ObjectClass::PUBLIC_KEY)];
+        if let Some(l) = label {
+            template.push(Attribute::Label(l.as_bytes().to_vec()));
+        }
+        if let Some(i) = id {
+            template.push(Attribute::Id(i.to_vec()));
+        }
+
+        let objects = self.session.find_objects(&template)?;
+        objects.into_iter().next().ok_or_else(|| {
+            HsmError::KeyNotFound(format!(
+                "Public key object not found on token (label={label:?}, id={id:?})"
+            ))
+        })
+    }
+
+    /// Read public key raw bytes from hardware object handle.
+    pub fn get_public_key_bytes(&self, key_handle: ObjectHandle) -> Result<Vec<u8>, HsmError> {
+        // Try Value attribute first (common for ML-DSA / PQC and raw keys)
+        let attrs = self
+            .session
+            .get_attributes(key_handle, &[AttributeType::Value]);
+        if let Ok(attr_list) = attrs {
+            for attr in attr_list {
+                if let Attribute::Value(val) = attr {
+                    if !val.is_empty() {
+                        return Ok(val);
+                    }
+                }
+            }
+        }
+        Err(HsmError::KeyNotFound(
+            "Unable to read public key bytes from token object".into(),
+        ))
     }
 
     /// Perform hardware signature inside token silicon.
@@ -402,7 +511,10 @@ pub fn sign_with_hsm(
             match session.sign(&mech, key_handle, digest) {
                 Ok(sig) => return Ok(sig),
                 Err(e) => {
-                    let hmech = Mechanism::HashMlDsaSha384(SignAdditionalContext::new(HedgeType::Preferred, None));
+                    let hmech = Mechanism::HashMlDsaSha384(SignAdditionalContext::new(
+                        HedgeType::Preferred,
+                        None,
+                    ));
                     if let Ok(sig) = session.sign(&hmech, key_handle, digest) {
                         return Ok(sig);
                     }
@@ -411,13 +523,19 @@ pub fn sign_with_hsm(
             }
         } else if kt == KeyType::EC {
             let mech = Mechanism::Ecdsa;
-            return session.sign(&mech, key_handle, digest).map_err(HsmError::Pkcs11);
+            return session
+                .sign(&mech, key_handle, digest)
+                .map_err(HsmError::Pkcs11);
         } else if kt == KeyType::EC_EDWARDS {
             let mech = Mechanism::Eddsa(EddsaParams::new(EddsaSignatureScheme::Pure));
-            return session.sign(&mech, key_handle, digest).map_err(HsmError::Pkcs11);
+            return session
+                .sign(&mech, key_handle, digest)
+                .map_err(HsmError::Pkcs11);
         } else if kt == KeyType::RSA {
             let mech = Mechanism::RsaPkcs;
-            return session.sign(&mech, key_handle, digest).map_err(HsmError::Pkcs11);
+            return session
+                .sign(&mech, key_handle, digest)
+                .map_err(HsmError::Pkcs11);
         }
     }
 
@@ -609,7 +727,11 @@ mod tests {
             HsmDeviceType::ThalesLunaPcie
         );
         assert_eq!(
-            HsmDeviceType::from_token_info("CardContact (www.cardcontact.de)", "SmartCard-HSM", "UserPIN (SmartCard-HSM)"),
+            HsmDeviceType::from_token_info(
+                "CardContact (www.cardcontact.de)",
+                "SmartCard-HSM",
+                "UserPIN (SmartCard-HSM)"
+            ),
             HsmDeviceType::NitrokeyHsm
         );
         assert_eq!(

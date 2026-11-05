@@ -31,10 +31,13 @@ use destroyer_core::auth::{
     Mldsa87VerifyingKey,
 };
 use destroyer_core::cookie::StatelessCookieGate;
-use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::ct;
+use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::fragment;
-use destroyer_core::frame::{self, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY};
+use destroyer_core::frame::{
+    self, FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG,
+    FTYPE_REKEY, FTYPE_REVOCATION,
+};
 use destroyer_core::handshake::Handshake;
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK, P384_PK};
 use destroyer_core::keystore;
@@ -48,9 +51,12 @@ use destroyer_core::purge;
 use destroyer_core::ratchet::{self, PcsRatchet};
 use destroyer_core::replay::AntiReplayWindow;
 use destroyer_core::tpm_nv;
-use destroyer_core::zero_trust::{SecurityRole, ZeroTrustEngine, PERM_MESSAGE_SEND, PERM_CRITICAL_RELEASE};
+use destroyer_core::x509;
 #[cfg(feature = "lab-surfaces")]
 use destroyer_core::zero_trust::{inspect_content_rtb, ClearanceLevel};
+use destroyer_core::zero_trust::{
+    SecurityRole, ZeroTrustEngine, PERM_CRITICAL_RELEASE, PERM_MESSAGE_SEND,
+};
 use fs2::FileExt;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha384};
@@ -204,8 +210,8 @@ fn load_auth_signing_key_from_args(args: &[String]) -> Mldsa87SigningKey {
     let sk_file = get_flag(args, "--auth-sk-file").or_else(|| get_flag(args, "--sk-file"));
 
     if let Some(priv_path) = tpm_sealed {
-        let pub_path = get_flag(args, "--auth-tpm-pub")
-            .unwrap_or_else(|| format!("{priv_path}.pub"));
+        let pub_path =
+            get_flag(args, "--auth-tpm-pub").unwrap_or_else(|| format!("{priv_path}.pub"));
         let pcr_spec = get_flag(args, "--pcrs").unwrap_or_else(|| "0,1,2,7".to_string());
         let pcrs: Vec<u32> = pcr_spec
             .split(',')
@@ -240,17 +246,19 @@ fn load_auth_signing_key_from_args(args: &[String]) -> Mldsa87SigningKey {
     } else if let Some(path) = sk_file {
         load_auth_signing_key(&path)
     } else {
-        fail("mutual auth requires --auth-sk-file PATH or --auth-tpm-sealed PATH (silicon custody)");
+        fail(
+            "mutual auth requires --auth-sk-file PATH or --auth-tpm-sealed PATH (silicon custody)",
+        );
     }
 }
 
 /// Load a pinned peer ML-DSA-87 verifying key (2592 bytes, hex encoded).
 /// Pinning is the trust anchor: a self-supplied peer key proves nothing.
 fn load_peer_verifying_key(path: &str) -> Mldsa87VerifyingKey {
-    let hex_str =
-        std::fs::read_to_string(path).unwrap_or_else(|_| fail("peer auth public-key file unreadable"));
-    let bytes = decode_hex(&hex_str)
-        .unwrap_or_else(|_| fail("peer auth public-key file is not valid hex"));
+    let hex_str = std::fs::read_to_string(path)
+        .unwrap_or_else(|_| fail("peer auth public-key file unreadable"));
+    let bytes =
+        decode_hex(&hex_str).unwrap_or_else(|_| fail("peer auth public-key file is not valid hex"));
     Mldsa87VerifyingKey::from_bytes(&bytes)
         .unwrap_or_else(|_| fail("peer auth public-key is not a valid ML-DSA-87 key"))
 }
@@ -282,6 +290,63 @@ fn auth_binding(
     h.update(transcript_hash);
     h.update((responder_sig.len() as u32).to_be_bytes());
     h.update(responder_sig);
+    h.update((initiator_sig.len() as u32).to_be_bytes());
+    h.update(initiator_sig);
+    h.finalize().into()
+}
+
+/// Load an RFC 9881 X.509 certificate in DER format.
+#[allow(dead_code)]
+fn load_cert_file(path: &str) -> (Vec<u8>, x509::PqX509Certificate) {
+    let der = std::fs::read(path)
+        .unwrap_or_else(|e| fail(&format!("failed to read cert file {path}: {e}")));
+    let cert = x509::PqX509Certificate::from_der(&der)
+        .unwrap_or_else(|e| fail(&format!("failed to parse X.509 cert from {path}: {e}")));
+    (der, cert)
+}
+
+/// Load CA custodian keys (verifying 3-of-5 threshold requirement).
+#[allow(dead_code)]
+fn load_ca_custodians(ca_path: Option<&str>) -> Vec<Custodian> {
+    let custodians = pki::load_custodians_from_file_or_env(ca_path)
+        .unwrap_or_else(|e| fail(&format!("failed to load CA custodians: {e:?}")));
+    if custodians.len() < 3 {
+        fail(&format!(
+            "3-of-5 threshold Root CA requires at least 3 custodian keys; found {}",
+            custodians.len()
+        ));
+    }
+    custodians
+}
+
+/// Load and parse an X.509 DER Certificate Revocation List (CRL).
+#[allow(dead_code)]
+fn load_crl_file(path: &str) -> (Vec<u8>, x509::PqX509Crl) {
+    let der = std::fs::read(path)
+        .unwrap_or_else(|e| fail(&format!("failed to read CRL file {path}: {e}")));
+    let crl = x509::PqX509Crl::from_der(&der)
+        .unwrap_or_else(|e| fail(&format!("failed to parse X.509 CRL from {path}: {e}")));
+    (der, crl)
+}
+
+/// Dynamic PKI KDF authentication binding hashing both certificates and signatures.
+#[allow(dead_code)]
+fn auth_binding_pki(
+    transcript_hash: &[u8; 48],
+    responder_cert: &[u8],
+    responder_sig: &[u8],
+    initiator_cert: &[u8],
+    initiator_sig: &[u8],
+) -> [u8; 48] {
+    let mut h = Sha384::new();
+    h.update(b"ST2027-KEX-v3::pki-binding");
+    h.update(transcript_hash);
+    h.update((responder_cert.len() as u32).to_be_bytes());
+    h.update(responder_cert);
+    h.update((responder_sig.len() as u32).to_be_bytes());
+    h.update(responder_sig);
+    h.update((initiator_cert.len() as u32).to_be_bytes());
+    h.update(initiator_cert);
     h.update((initiator_sig.len() as u32).to_be_bytes());
     h.update(initiator_sig);
     h.finalize().into()
@@ -1822,6 +1887,7 @@ fn cmd_stream_chaff(args: &[String]) {
     });
 }
 
+#[allow(unused_variables, unused_mut)]
 fn cmd_channel(args: &[String]) {
     reject_forbidden_cli(args);
     let (kb, key_id) = load_key_material(args);
@@ -1894,10 +1960,56 @@ fn cmd_channel(args: &[String]) {
     let mut pending_frame_key: Option<FrameKey> = None;
     let mut prev_frame_key: Option<FrameKey> = None;
     let mut prev_key_remaining_ticks: u32 = 0;
-    let rekey_chunk_size = (quantum.saturating_sub(frame::FRAME_OVERHEAD + fragment::FRAGMENT_HEADER_LEN)).min(600);
-    let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
-    let mut inbound_rekey_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> = std::collections::HashMap::new();
+    let rekey_chunk_size =
+        (quantum.saturating_sub(frame::FRAME_OVERHEAD + fragment::FRAGMENT_HEADER_LEN)).min(600);
+    let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> =
+        std::collections::VecDeque::new();
+    let mut inbound_rekey_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> =
+        std::collections::HashMap::new();
     let mut trigger_rekey = false;
+
+    let cert_file = get_flag(args, "--cert-file").or_else(|| get_flag(args, "--cert"));
+    let ca_file = get_flag(args, "--ca-file").or_else(|| get_flag(args, "--ca"));
+    let crl_file = get_flag(args, "--crl-file").or_else(|| get_flag(args, "--crl"));
+    let is_pki = cert_file.is_some() || ca_file.is_some();
+
+    let our_cert_data = cert_file.as_ref().map(|p| load_cert_file(p));
+    let ca_custodians = if is_pki {
+        Some(load_ca_custodians(ca_file.as_deref()))
+    } else {
+        None
+    };
+    let our_crl_data = crl_file.as_ref().map(|p| load_crl_file(p));
+    let mut active_crl: Option<x509::PqX509Crl> = our_crl_data.as_ref().map(|(_, c)| c.clone());
+    let mut peer_cert_serial: Option<[u8; 16]> = None;
+
+    let mut outbound_attestations: std::collections::VecDeque<Vec<u8>> =
+        std::collections::VecDeque::new();
+    let mut outbound_revocations: std::collections::VecDeque<Vec<u8>> =
+        std::collections::VecDeque::new();
+    let mut inbound_attestation_buffers: std::collections::HashMap<
+        [u8; 8],
+        fragment::ReassemblyBuffer,
+    > = std::collections::HashMap::new();
+    let mut inbound_revocation_buffers: std::collections::HashMap<
+        [u8; 8],
+        fragment::ReassemblyBuffer,
+    > = std::collections::HashMap::new();
+
+    if let Some((ref der, _)) = our_cert_data {
+        if let Ok(frags) = fragment::fragment(der, rekey_chunk_size) {
+            for f in frags {
+                outbound_attestations.push_back(f.to_wire());
+            }
+        }
+    }
+    if let Some((ref der, _)) = our_crl_data {
+        if let Ok(frags) = fragment::fragment(der, rekey_chunk_size) {
+            for f in frags {
+                outbound_revocations.push_back(f.to_wire());
+            }
+        }
+    }
 
     // Queue initial advert bundle so both parties exchange initial public keys
     let my_adv = pcs_ratchet.advertise_bundle();
@@ -2077,7 +2189,13 @@ fn cmd_channel(args: &[String]) {
                     let seq = next_send_seq;
                     next_send_seq += 1;
 
-                    let frame = if let Some(payload) = outbound_msgs.pop_front() {
+                    let frame = if let Some(attest_frag) = outbound_attestations.pop_front() {
+                        pacing::build_attestation_frame_directed(&current_frame_key, seq, tx_dir, quantum, &attest_frag)
+                            .unwrap_or_else(|_| fail("build attestation frame failed"))
+                    } else if let Some(rev_frag) = outbound_revocations.pop_front() {
+                        pacing::build_revocation_frame_directed(&current_frame_key, seq, tx_dir, quantum, &rev_frag)
+                            .unwrap_or_else(|_| fail("build revocation frame failed"))
+                    } else if let Some(payload) = outbound_msgs.pop_front() {
                         pcs_ratchet.note_transmission(payload.len());
                         let f = pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &payload)
                             .unwrap_or_else(|_| fail("build data frame failed"));
@@ -2319,6 +2437,119 @@ fn cmd_channel(args: &[String]) {
                             } else {
                                 ep.note_auth_drop();
                             }
+                        } else if ftype == FTYPE_ATTESTATION_EVIDENCE {
+                            if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
+                                let tx_id = frag.tx_id;
+                                let total = frag.total;
+                                let mut complete = false;
+                                let mut finished_payload = None;
+                                {
+                                    if inbound_attestation_buffers.len() > 16 {
+                                        inbound_attestation_buffers.clear();
+                                    }
+                                    let buffer = inbound_attestation_buffers.entry(tx_id).or_insert_with(|| {
+                                        fragment::ReassemblyBuffer::new(tx_id, total).unwrap()
+                                    });
+                                    match buffer.insert(frag) {
+                                        Ok(is_done) => {
+                                            if is_done {
+                                                complete = true;
+                                                if let Ok(assembled) = buffer.reassemble() {
+                                                    finished_payload = Some(assembled);
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                }
+                                if complete {
+                                    inbound_attestation_buffers.remove(&tx_id);
+                                }
+                                if let Some(raw_cert) = finished_payload {
+                                    if let Ok(peer_cert) = x509::PqX509Certificate::from_der(&raw_cert) {
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_secs_f64())
+                                            .unwrap_or(0.0);
+                                        let verified = if let Some(ref custs) = ca_custodians {
+                                            peer_cert.verify_threshold(custs, now).is_ok()
+                                        } else {
+                                            true
+                                        };
+                                        if verified {
+                                            println!("channel: ATTESTATION_EVIDENCE_VALID serial={}", hex_of(&peer_cert.serial));
+                                            peer_cert_serial = Some(peer_cert.serial);
+                                            if let Some(ref crl) = active_crl {
+                                                if crl.revoked_serials.contains(&peer_cert.serial) {
+                                                    println!("channel: TERMINATING_SESSION_PEER_CERT_REVOKED serial={}", hex_of(&peer_cert.serial));
+                                                    break;
+                                                }
+                                            }
+                                        } else {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                }
+                            }
+                        } else if ftype == FTYPE_REVOCATION {
+                            if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
+                                let tx_id = frag.tx_id;
+                                let total = frag.total;
+                                let mut complete = false;
+                                let mut finished_payload = None;
+                                {
+                                    if inbound_revocation_buffers.len() > 16 {
+                                        inbound_revocation_buffers.clear();
+                                    }
+                                    let buffer = inbound_revocation_buffers.entry(tx_id).or_insert_with(|| {
+                                        fragment::ReassemblyBuffer::new(tx_id, total).unwrap()
+                                    });
+                                    match buffer.insert(frag) {
+                                        Ok(is_done) => {
+                                            if is_done {
+                                                complete = true;
+                                                if let Ok(assembled) = buffer.reassemble() {
+                                                    finished_payload = Some(assembled);
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                }
+                                if complete {
+                                    inbound_revocation_buffers.remove(&tx_id);
+                                }
+                                if let Some(raw_crl) = finished_payload {
+                                    if let Ok(crl) = x509::PqX509Crl::from_der(&raw_crl) {
+                                        let verified = if let Some(ref custs) = ca_custodians {
+                                            crl.verify_threshold(custs).is_ok()
+                                        } else {
+                                            true
+                                        };
+                                        if verified {
+                                            let sidecar = format!("{state}.crl_seq");
+                                            if let Err(e) = tpm_nv::guard_crl_sequence(Some(&sidecar), crl.crl_number) {
+                                                eprintln!("[CHANNEL] CRL rollback rejected by TPM 2.0 anti-rollback counter: {e}");
+                                                continue;
+                                            }
+                                            println!("channel: REVOCATION_LIST_RECEIVED seq={}", crl.crl_number);
+                                            if let Some(ref serial) = peer_cert_serial {
+                                                if crl.revoked_serials.contains(serial) {
+                                                    println!("channel: TERMINATING_SESSION_PEER_CERT_REVOKED serial={}", hex_of(serial));
+                                                    break;
+                                                }
+                                            }
+                                            active_crl = Some(crl);
+                                        } else {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2377,9 +2608,7 @@ fn cmd_terminal(args: &[String]) {
         drop(kb);
         fail("bad --quantum: must be 256, 512, or 1232");
     }
-    let sas = get_flag(args, "--sas").unwrap_or_else(|| {
-        kem::compute_sas(&key_bytes, &[0u8; 48])
-    });
+    let sas = get_flag(args, "--sas").unwrap_or_else(|| kem::compute_sas(&key_bytes, &[0u8; 48]));
     let callsign = get_flag(args, "--callsign").unwrap_or_else(|| "TACTICAL-NODE".to_string());
     let count: u64 = get_flag(args, "--count")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
@@ -2702,7 +2931,6 @@ fn cmd_terminal(args: &[String]) {
     });
 }
 
-
 fn require_kex_auth(psk_present: bool) {
     if !psk_present {
         fail("kex PSK is MANDATORY (set --psk-file); unauthenticated key exchange is never permitted.");
@@ -2722,19 +2950,40 @@ fn cmd_kex_listen(args: &[String]) {
     let mut psk_bytes = get_flag(args, "--psk-file").map(|path| load_psk_file(&path));
     require_kex_auth(psk_bytes.is_some());
     let mutual = mutual_auth_required(args);
-    let auth_sk = if mutual {
+    let cert_file = get_flag(args, "--cert-file").or_else(|| get_flag(args, "--cert"));
+    let ca_file = get_flag(args, "--ca-file").or_else(|| get_flag(args, "--ca"));
+    let crl_file = get_flag(args, "--crl-file").or_else(|| get_flag(args, "--crl"));
+    let is_pki = cert_file.is_some() || ca_file.is_some();
+
+    let our_cert_data = cert_file.as_ref().map(|p| load_cert_file(p));
+    let ca_custodians = if is_pki {
+        Some(load_ca_custodians(ca_file.as_deref()))
+    } else {
+        None
+    };
+    let our_crl_data = crl_file.as_ref().map(|p| load_crl_file(p));
+
+    let auth_sk = if mutual || is_pki {
         Some(load_auth_signing_key_from_args(args))
     } else {
         None
     };
-    let peer_vk = if mutual {
-        let path = get_flag(args, "--peer-auth-pk-file")
-            .unwrap_or_else(|| fail("mutual auth requires --peer-auth-pk-file PATH"));
+
+    if let (Some(sk), Some((_, cert))) = (auth_sk.as_ref(), our_cert_data.as_ref()) {
+        if cert.subject_pk.as_slice() != &sk.verifying_bytes()[..] {
+            fail("local certificate SubjectPublicKeyInfo does not match --auth-sk-file");
+        }
+    }
+
+    let pinned_peer_vk = if let Some(path) = get_flag(args, "--peer-auth-pk-file") {
         Some(load_peer_verifying_key(&path))
+    } else if mutual && !is_pki {
+        fail("mutual auth requires --peer-auth-pk-file PATH (or --cert-file and --ca-file)");
     } else {
         None
     };
-    if mutual && psk_bytes.is_none() {
+
+    if (mutual || is_pki) && psk_bytes.is_none() {
         fail("mutual ML-DSA-87 authentication also requires --psk-file (defense in depth)");
     }
 
@@ -2789,20 +3038,96 @@ fn cmd_kex_listen(args: &[String]) {
             // default). The responder signs the hybrid transcript first,
             // then verifies the initiator's signature against the pinned
             // peer key BEFORE deriving any key material.
-            let binding = if let (Some(sk), Some(vk)) = (auth_sk.as_ref(), peer_vk.as_ref()) {
-                let resp_sig = sign_responder(sk, &transcript_hash);
-                socket
-                    .write_all(&resp_sig)
-                    .await
-                    .map_err(|_| "responder signature write failed")?;
-                let mut init_sig = vec![0u8; MLDSA87_SIG];
-                socket
-                    .read_exact(&mut init_sig)
-                    .await
-                    .map_err(|_| "initiator signature read failed")?;
-                verify_initiator(vk, &transcript_hash, &init_sig)
-                    .map_err(|_| "initiator ML-DSA-87 signature invalid")?;
-                auth_binding(&transcript_hash, &resp_sig, &init_sig)
+            let binding = if let Some(sk) = auth_sk.as_ref() {
+                if let (Some((our_cert_der, _)), Some(custodians)) = (our_cert_data.as_ref(), ca_custodians.as_ref()) {
+                    let crl_bytes = our_crl_data.as_ref().map(|(b, _)| b.as_slice()).unwrap_or(&[]);
+                    let resp_sig = sign_responder(sk, &transcript_hash);
+
+                    socket.write_all(&(our_cert_der.len() as u32).to_be_bytes()).await.map_err(|_| "write cert len failed")?;
+                    socket.write_all(our_cert_der).await.map_err(|_| "write cert failed")?;
+                    socket.write_all(&(crl_bytes.len() as u32).to_be_bytes()).await.map_err(|_| "write crl len failed")?;
+                    if !crl_bytes.is_empty() {
+                        socket.write_all(crl_bytes).await.map_err(|_| "write crl failed")?;
+                    }
+                    socket.write_all(&resp_sig).await.map_err(|_| "responder signature write failed")?;
+
+                    let mut init_cert_len_buf = [0u8; 4];
+                    socket.read_exact(&mut init_cert_len_buf).await.map_err(|_| "read init cert len failed")?;
+                    let init_cert_len = u32::from_be_bytes(init_cert_len_buf) as usize;
+                    if init_cert_len < 100 || init_cert_len > 65536 {
+                        return Err("invalid initiator certificate length");
+                    }
+                    let mut init_cert_der = vec![0u8; init_cert_len];
+                    socket.read_exact(&mut init_cert_der).await.map_err(|_| "read init cert failed")?;
+
+                    let init_cert = x509::PqX509Certificate::from_der(&init_cert_der)
+                        .map_err(|_| "invalid initiator X.509 certificate DER")?;
+
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0);
+                    init_cert.verify_threshold(custodians, now)
+                        .map_err(|_| "initiator X.509 certificate failed 3-of-5 threshold CA verification")?;
+
+                    let mut init_crl_len_buf = [0u8; 4];
+                    socket.read_exact(&mut init_crl_len_buf).await.map_err(|_| "read init crl len failed")?;
+                    let init_crl_len = u32::from_be_bytes(init_crl_len_buf) as usize;
+                    if init_crl_len > 65536 {
+                        return Err("invalid initiator CRL length");
+                    }
+                    let mut active_crl: Option<x509::PqX509Crl> = our_crl_data.as_ref().map(|(_, crl)| crl.clone());
+                    if init_crl_len > 0 {
+                        let mut init_crl_der = vec![0u8; init_crl_len];
+                        socket.read_exact(&mut init_crl_der).await.map_err(|_| "read init crl failed")?;
+                        let recv_crl = x509::PqX509Crl::from_der(&init_crl_der)
+                            .map_err(|_| "invalid initiator CRL DER")?;
+                        recv_crl.verify_threshold(custodians)
+                            .map_err(|_| "initiator CRL failed 3-of-5 threshold CA verification")?;
+                        let crl_sidecar = format!("{out}.crl_seq");
+                        tpm_nv::guard_crl_sequence(Some(&crl_sidecar), recv_crl.crl_number)
+                            .map_err(|_| "initiator CRL rejected by TPM 2.0 anti-rollback counter")?;
+                        active_crl = Some(recv_crl);
+                    }
+
+                    if let Some(ref crl) = active_crl {
+                        if crl.revoked_serials.contains(&init_cert.serial) {
+                            return Err("initiator certificate has been revoked in CRL (fail-closed)");
+                        }
+                    }
+
+                    let extracted_vk = Mldsa87VerifyingKey::from_bytes(&init_cert.subject_pk)
+                        .map_err(|_| "initiator SubjectPublicKeyInfo is not valid ML-DSA-87")?;
+
+                    if let Some(ref pinned) = pinned_peer_vk {
+                        if extracted_vk.to_bytes() != pinned.to_bytes() {
+                            return Err("initiator certificate SubjectPublicKeyInfo does not match pinned peer key");
+                        }
+                    }
+
+                    let mut init_sig = vec![0u8; MLDSA87_SIG];
+                    socket.read_exact(&mut init_sig).await.map_err(|_| "initiator signature read failed")?;
+                    verify_initiator(&extracted_vk, &transcript_hash, &init_sig)
+                        .map_err(|_| "initiator ML-DSA-87 signature invalid")?;
+
+                    auth_binding_pki(&transcript_hash, our_cert_der, &resp_sig, &init_cert_der, &init_sig)
+                } else if let Some(vk) = pinned_peer_vk.as_ref() {
+                    let resp_sig = sign_responder(sk, &transcript_hash);
+                    socket
+                        .write_all(&resp_sig)
+                        .await
+                        .map_err(|_| "responder signature write failed")?;
+                    let mut init_sig = vec![0u8; MLDSA87_SIG];
+                    socket
+                        .read_exact(&mut init_sig)
+                        .await
+                        .map_err(|_| "initiator signature read failed")?;
+                    verify_initiator(vk, &transcript_hash, &init_sig)
+                        .map_err(|_| "initiator ML-DSA-87 signature invalid")?;
+                    auth_binding(&transcript_hash, &resp_sig, &init_sig)
+                } else {
+                    return Err("peer authentication required");
+                }
             } else {
                 transcript_hash
             };
@@ -2816,16 +3141,10 @@ fn cmd_kex_listen(args: &[String]) {
             );
 
             // 7. Mutual Key Confirmation tag exchange
-            let resp_tag = kem::compute_confirmation_tag(
-                &frame_key,
-                b"ST2027-RESPONDER-CONFIRM",
-                &binding,
-            );
-            let init_tag = kem::compute_confirmation_tag(
-                &frame_key,
-                b"ST2027-INITIATOR-CONFIRM",
-                &binding,
-            );
+            let resp_tag =
+                kem::compute_confirmation_tag(&frame_key, b"ST2027-RESPONDER-CONFIRM", &binding);
+            let init_tag =
+                kem::compute_confirmation_tag(&frame_key, b"ST2027-INITIATOR-CONFIRM", &binding);
 
             socket
                 .write_all(&resp_tag)
@@ -2853,7 +3172,9 @@ fn cmd_kex_listen(args: &[String]) {
     });
 
     write_key_file(&out, &key_hex);
-    if mutual {
+    if is_pki {
+        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (RFC 9881 X.509 3-of-5 threshold PKI + mutual ML-DSA-87 authenticated)");
+    } else if mutual {
         println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
     } else if psk_bytes.is_some() {
         println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
@@ -2879,19 +3200,40 @@ fn cmd_kex_connect(args: &[String]) {
     let mut psk_bytes = get_flag(args, "--psk-file").map(|path| load_psk_file(&path));
     require_kex_auth(psk_bytes.is_some());
     let mutual = mutual_auth_required(args);
-    let auth_sk = if mutual {
+    let cert_file = get_flag(args, "--cert-file").or_else(|| get_flag(args, "--cert"));
+    let ca_file = get_flag(args, "--ca-file").or_else(|| get_flag(args, "--ca"));
+    let crl_file = get_flag(args, "--crl-file").or_else(|| get_flag(args, "--crl"));
+    let is_pki = cert_file.is_some() || ca_file.is_some();
+
+    let our_cert_data = cert_file.as_ref().map(|p| load_cert_file(p));
+    let ca_custodians = if is_pki {
+        Some(load_ca_custodians(ca_file.as_deref()))
+    } else {
+        None
+    };
+    let our_crl_data = crl_file.as_ref().map(|p| load_crl_file(p));
+
+    let auth_sk = if mutual || is_pki {
         Some(load_auth_signing_key_from_args(args))
     } else {
         None
     };
-    let peer_vk = if mutual {
-        let path = get_flag(args, "--peer-auth-pk-file")
-            .unwrap_or_else(|| fail("mutual auth requires --peer-auth-pk-file PATH"));
+
+    if let (Some(sk), Some((_, cert))) = (auth_sk.as_ref(), our_cert_data.as_ref()) {
+        if cert.subject_pk.as_slice() != &sk.verifying_bytes()[..] {
+            fail("local certificate SubjectPublicKeyInfo does not match --auth-sk-file");
+        }
+    }
+
+    let pinned_peer_vk = if let Some(path) = get_flag(args, "--peer-auth-pk-file") {
         Some(load_peer_verifying_key(&path))
+    } else if mutual && !is_pki {
+        fail("mutual auth requires --peer-auth-pk-file PATH (or --cert-file and --ca-file)");
     } else {
         None
     };
-    if mutual && psk_bytes.is_none() {
+
+    if (mutual || is_pki) && psk_bytes.is_none() {
         fail("mutual ML-DSA-87 authentication also requires --psk-file (defense in depth)");
     }
 
@@ -2939,20 +3281,96 @@ fn cmd_kex_connect(args: &[String]) {
             // 4b. Mutual ML-DSA-87 identity authentication (production
             // default). Verify the responder's signature against the pinned
             // peer key BEFORE sending our signature or deriving any key.
-            let binding = if let (Some(sk), Some(vk)) = (auth_sk.as_ref(), peer_vk.as_ref()) {
-                let mut resp_sig = vec![0u8; MLDSA87_SIG];
-                socket
-                    .read_exact(&mut resp_sig)
-                    .await
-                    .map_err(|_| "responder signature read failed")?;
-                verify_responder(vk, &transcript_hash, &resp_sig)
-                    .map_err(|_| "responder ML-DSA-87 signature invalid")?;
-                let init_sig = sign_initiator(sk, &transcript_hash);
-                socket
-                    .write_all(&init_sig)
-                    .await
-                    .map_err(|_| "initiator signature write failed")?;
-                auth_binding(&transcript_hash, &resp_sig, &init_sig)
+            let binding = if let Some(sk) = auth_sk.as_ref() {
+                if let (Some((our_cert_der, _)), Some(custodians)) = (our_cert_data.as_ref(), ca_custodians.as_ref()) {
+                    let mut resp_cert_len_buf = [0u8; 4];
+                    socket.read_exact(&mut resp_cert_len_buf).await.map_err(|_| "read resp cert len failed")?;
+                    let resp_cert_len = u32::from_be_bytes(resp_cert_len_buf) as usize;
+                    if resp_cert_len < 100 || resp_cert_len > 65536 {
+                        return Err("invalid responder certificate length");
+                    }
+                    let mut resp_cert_der = vec![0u8; resp_cert_len];
+                    socket.read_exact(&mut resp_cert_der).await.map_err(|_| "read resp cert failed")?;
+
+                    let resp_cert = x509::PqX509Certificate::from_der(&resp_cert_der)
+                        .map_err(|_| "invalid responder X.509 certificate DER")?;
+
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0);
+                    resp_cert.verify_threshold(custodians, now)
+                        .map_err(|_| "responder X.509 certificate failed 3-of-5 threshold CA verification")?;
+
+                    let mut resp_crl_len_buf = [0u8; 4];
+                    socket.read_exact(&mut resp_crl_len_buf).await.map_err(|_| "read resp crl len failed")?;
+                    let resp_crl_len = u32::from_be_bytes(resp_crl_len_buf) as usize;
+                    if resp_crl_len > 65536 {
+                        return Err("invalid responder CRL length");
+                    }
+                    let mut active_crl: Option<x509::PqX509Crl> = our_crl_data.as_ref().map(|(_, crl)| crl.clone());
+                    if resp_crl_len > 0 {
+                        let mut resp_crl_der = vec![0u8; resp_crl_len];
+                        socket.read_exact(&mut resp_crl_der).await.map_err(|_| "read resp crl failed")?;
+                        let recv_crl = x509::PqX509Crl::from_der(&resp_crl_der)
+                            .map_err(|_| "invalid responder CRL DER")?;
+                        recv_crl.verify_threshold(custodians)
+                            .map_err(|_| "responder CRL failed 3-of-5 threshold CA verification")?;
+                        let crl_sidecar = format!("{out}.crl_seq");
+                        tpm_nv::guard_crl_sequence(Some(&crl_sidecar), recv_crl.crl_number)
+                            .map_err(|_| "responder CRL rejected by TPM 2.0 anti-rollback counter")?;
+                        active_crl = Some(recv_crl);
+                    }
+
+                    if let Some(ref crl) = active_crl {
+                        if crl.revoked_serials.contains(&resp_cert.serial) {
+                            return Err("responder certificate has been revoked in CRL (fail-closed)");
+                        }
+                    }
+
+                    let extracted_vk = Mldsa87VerifyingKey::from_bytes(&resp_cert.subject_pk)
+                        .map_err(|_| "responder SubjectPublicKeyInfo is not valid ML-DSA-87")?;
+
+                    if let Some(ref pinned) = pinned_peer_vk {
+                        if extracted_vk.to_bytes() != pinned.to_bytes() {
+                            return Err("responder certificate SubjectPublicKeyInfo does not match pinned peer key");
+                        }
+                    }
+
+                    let mut resp_sig = vec![0u8; MLDSA87_SIG];
+                    socket.read_exact(&mut resp_sig).await.map_err(|_| "responder signature read failed")?;
+                    verify_responder(&extracted_vk, &transcript_hash, &resp_sig)
+                        .map_err(|_| "responder ML-DSA-87 signature invalid")?;
+
+                    let crl_bytes = our_crl_data.as_ref().map(|(b, _)| b.as_slice()).unwrap_or(&[]);
+                    let init_sig = sign_initiator(sk, &transcript_hash);
+
+                    socket.write_all(&(our_cert_der.len() as u32).to_be_bytes()).await.map_err(|_| "write cert len failed")?;
+                    socket.write_all(our_cert_der).await.map_err(|_| "write cert failed")?;
+                    socket.write_all(&(crl_bytes.len() as u32).to_be_bytes()).await.map_err(|_| "write crl len failed")?;
+                    if !crl_bytes.is_empty() {
+                        socket.write_all(crl_bytes).await.map_err(|_| "write crl failed")?;
+                    }
+                    socket.write_all(&init_sig).await.map_err(|_| "initiator signature write failed")?;
+
+                    auth_binding_pki(&transcript_hash, &resp_cert_der, &resp_sig, our_cert_der, &init_sig)
+                } else if let Some(vk) = pinned_peer_vk.as_ref() {
+                    let mut resp_sig = vec![0u8; MLDSA87_SIG];
+                    socket
+                        .read_exact(&mut resp_sig)
+                        .await
+                        .map_err(|_| "responder signature read failed")?;
+                    verify_responder(vk, &transcript_hash, &resp_sig)
+                        .map_err(|_| "responder ML-DSA-87 signature invalid")?;
+                    let init_sig = sign_initiator(sk, &transcript_hash);
+                    socket
+                        .write_all(&init_sig)
+                        .await
+                        .map_err(|_| "initiator signature write failed")?;
+                    auth_binding(&transcript_hash, &resp_sig, &init_sig)
+                } else {
+                    return Err("peer authentication required");
+                }
             } else {
                 transcript_hash
             };
@@ -2966,16 +3384,10 @@ fn cmd_kex_connect(args: &[String]) {
             );
 
             // 6. Mutual Key Confirmation tag exchange
-            let resp_tag = kem::compute_confirmation_tag(
-                &frame_key,
-                b"ST2027-RESPONDER-CONFIRM",
-                &binding,
-            );
-            let init_tag = kem::compute_confirmation_tag(
-                &frame_key,
-                b"ST2027-INITIATOR-CONFIRM",
-                &binding,
-            );
+            let resp_tag =
+                kem::compute_confirmation_tag(&frame_key, b"ST2027-RESPONDER-CONFIRM", &binding);
+            let init_tag =
+                kem::compute_confirmation_tag(&frame_key, b"ST2027-INITIATOR-CONFIRM", &binding);
 
             let mut recv_resp_tag = [0u8; 32];
             socket
@@ -3004,7 +3416,9 @@ fn cmd_kex_connect(args: &[String]) {
     });
 
     write_key_file(&out, &key_hex);
-    if mutual {
+    if is_pki {
+        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (RFC 9881 X.509 3-of-5 threshold PKI + mutual ML-DSA-87 authenticated)");
+    } else if mutual {
         println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
     } else if psk_bytes.is_some() {
         println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
@@ -3430,7 +3844,6 @@ verification runs without a roster cross-check of officer identity."
     println!("authorized_directive: {directive}");
 }
 
-
 fn cmd_nc3_safety_gate(args: &[String]) {
     reject_forbidden_cli(args);
     let msg = get_flag(args, "--msg").unwrap_or_else(|| fail("missing --msg TEXT"));
@@ -3455,7 +3868,10 @@ fn cmd_doc_seal(args: &[String]) {
     let (meta, wire) = destroyer_core::doc_transfer::package_document(filename, &bytes);
     if let Some(out) = get_flag(args, "--out") {
         std::fs::write(&out, &wire).unwrap_or_else(|_| fail("cannot write output"));
-        println!("doc-seal: SUCCESS file={} size={} sha384={}", meta.filename, meta.size_bytes, meta.sha384_hex);
+        println!(
+            "doc-seal: SUCCESS file={} size={} sha384={}",
+            meta.filename, meta.size_bytes, meta.sha384_hex
+        );
     } else {
         println!("{}", String::from_utf8_lossy(&wire));
     }
@@ -3469,12 +3885,14 @@ fn cmd_doc_open(args: &[String]) {
         .unwrap_or_else(|e| fail(&format!("unpack and verify failed: {e}")));
     if let Some(out) = get_flag(args, "--out") {
         std::fs::write(&out, &content).unwrap_or_else(|_| fail("cannot write output"));
-        println!("doc-open: SUCCESS verified={} size={}", meta.filename, meta.size_bytes);
+        println!(
+            "doc-open: SUCCESS verified={} size={}",
+            meta.filename, meta.size_bytes
+        );
     } else {
         println!("doc-open: SUCCESS verified sha384={}", meta.sha384_hex);
     }
 }
-
 
 fn cmd_auth_tpm_seal(args: &[String]) {
     reject_forbidden_cli(args);
@@ -3505,7 +3923,9 @@ fn cmd_auth_tpm_seal(args: &[String]) {
         seed.copy_from_slice(&bytes);
     } else if has_flag(args, "--seed-stdin") {
         let mut s = String::new();
-        std::io::stdin().read_to_string(&mut s).unwrap_or_else(|_| fail("stdin read failed"));
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .unwrap_or_else(|_| fail("stdin read failed"));
         let bytes = decode_hex(s.trim()).unwrap_or_else(|e| fail(e));
         if bytes.len() != 32 {
             fail("seed must be 32 bytes");
@@ -3515,14 +3935,8 @@ fn cmd_auth_tpm_seal(args: &[String]) {
         fail("one of --in-seed-file, --seed-file, --seed-hex, or --seed-stdin is required");
     }
 
-    destroyer_core::tpm_nv::seal_seed_to_pcrs(
-        &seed,
-        &policy,
-        &out_priv,
-        &out_pub,
-        &owner,
-        &tools,
-    ).unwrap_or_else(|e| fail(&format!("TPM sealing failed: {}", e.describe())));
+    destroyer_core::tpm_nv::seal_seed_to_pcrs(&seed, &policy, &out_priv, &out_pub, &owner, &tools)
+        .unwrap_or_else(|e| fail(&format!("TPM sealing failed: {}", e.describe())));
 
     seed.zeroize();
     println!(
@@ -3550,13 +3964,9 @@ fn cmd_auth_tpm_unseal(args: &[String]) {
     let policy = destroyer_core::tpm_nv::TpmPcrPolicy::new("sha256", &pcrs);
     let tools = destroyer_core::tpm_nv::ToolPaths::from_env();
 
-    let locked = destroyer_core::tpm_nv::unseal_seed_from_pcrs(
-        &in_priv,
-        &in_pub,
-        &policy,
-        &owner,
-        &tools,
-    ).unwrap_or_else(|e| fail(&format!("TPM unsealing failed: {}", e.describe())));
+    let locked =
+        destroyer_core::tpm_nv::unseal_seed_from_pcrs(&in_priv, &in_pub, &policy, &owner, &tools)
+            .unwrap_or_else(|e| fail(&format!("TPM unsealing failed: {}", e.describe())));
 
     let digest = Sha384::digest(locked.as_bytes());
     let id_hex = hex_of(&digest[..16]);
@@ -3577,7 +3987,10 @@ fn cmd_hsm_probe(args: &[String]) {
         }
         Err(e) => {
             println!("HSM Probe: no hardware driver detected: {e}");
-            println!("Standard driver candidate paths searched for {:?}:", config.device_type);
+            println!(
+                "Standard driver candidate paths searched for {:?}:",
+                config.device_type
+            );
             for p in config.device_type.default_driver_paths() {
                 println!("  - {}", p.display());
             }
@@ -3590,64 +4003,157 @@ fn cmd_eam_auth_hw(args: &[String]) {
     eprintln!(
         "DoD S-5210.41M HARDWARE ENFORCEMENT: Authenticating Two-Person Integrity via physical tokens"
     );
-    let directive = get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
-
+    let directive =
+        get_flag(args, "--directive").unwrap_or_else(|| fail("missing --directive TEXT"));
+    if directive.trim().is_empty() {
+        fail("directive cannot be empty");
+    }
+    let target = get_flag(args, "--target").unwrap_or_else(|| "PENTAGON_NMCC".to_string());
+    if target.trim().is_empty() {
+        fail("target cannot be empty");
+    }
+    let max_skew_ms: u64 = get_flag(args, "--max-skew-ms")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+    let is_mock = has_flag(args, "--mock")
+        || has_flag(args, "--mock-dual-smartcard")
+        || std::env::var("P2P_MOCK_DUAL_SMARTCARD").as_deref() == Ok("1");
     let mod1 = get_flag(args, "--token1-module");
-    let slot1: usize = get_flag(args, "--token1-slot").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let slot1: usize = get_flag(args, "--token1-slot")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let pin1 = get_flag(args, "--token1-pin");
     let label1 = get_flag(args, "--token1-key-label");
 
     let mod2 = get_flag(args, "--token2-module");
-    let slot2: usize = get_flag(args, "--token2-slot").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let slot2: usize = get_flag(args, "--token2-slot")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
     let pin2 = get_flag(args, "--token2-pin");
     let label2 = get_flag(args, "--token2-key-label");
 
-    let mut cfg1 = destroyer_core::auth::HsmConfig::default();
-    if let Some(m) = mod1 { cfg1.module_path = Some(std::path::PathBuf::from(m)); }
-    cfg1.slot_index = Some(slot1);
-    cfg1.pin = pin1;
-    cfg1.key_label = label1;
+    let is_production = std::env::var("P2P_PRODUCTION").as_deref() == Ok("1")
+        || std::env::var("SECURE_P2P_PRODUCTION").as_deref() == Ok("1")
+        || has_flag(args, "--production");
 
-    let mut cfg2 = destroyer_core::auth::HsmConfig::default();
-    if let Some(m) = mod2 { cfg2.module_path = Some(std::path::PathBuf::from(m)); }
-    cfg2.slot_index = Some(slot2);
-    cfg2.pin = pin2;
-    cfg2.key_label = label2;
+    if is_mock && is_production {
+        fail("SECURITY VIOLATION: Mock dual smartcards prohibited in production (P2P_PRODUCTION=1). Physical split-knowledge hardware smartcards required under DoD 5210.41M.");
+    }
 
-    let hsm1 = destroyer_core::auth::HsmSession::open(&cfg1)
-        .unwrap_or_else(|e| fail(&format!("Officer 1 hardware token session failed: {e}")));
-    let hsm2 = destroyer_core::auth::HsmSession::open(&cfg2)
-        .unwrap_or_else(|e| fail(&format!("Officer 2 hardware token session failed: {e}")));
+    let (wire_hex, hash_hex, skew_ms) = if is_mock {
+        let p1 = pin1.as_deref().unwrap_or("123456");
+        let p2 = pin2.as_deref().unwrap_or("654321");
+        let sim = destroyer_core::nc3::MockDualSmartcardSimulator::new(p1, p2)
+            .unwrap_or_else(|e| fail(&format!("Mock dual smartcard simulator init failed: {e:?}")));
+        let pkg = sim
+            .sign_eam(&target, directive.as_bytes(), p1, p2, max_skew_ms)
+            .unwrap_or_else(|e| fail(&format!("Mock dual smartcard signing failed: {e:?}")));
+        let wire = pkg.to_bytes();
+        let hash = hex_of(&pkg.directive_hash);
+        let skew = if pkg.t1_millis >= pkg.t2_millis {
+            pkg.t1_millis - pkg.t2_millis
+        } else {
+            pkg.t2_millis - pkg.t1_millis
+        };
+        (hex_of(&wire), hash, skew)
+    } else {
+        let mut cfg1 = destroyer_core::auth::HsmConfig::default();
+        if let Some(m) = mod1 {
+            cfg1.module_path = Some(std::path::PathBuf::from(m));
+        }
+        cfg1.slot_index = Some(slot1);
+        cfg1.pin = pin1;
+        cfg1.key_label = label1;
 
-    let k1 = hsm1.find_private_key(cfg1.key_label.as_deref(), None)
-        .unwrap_or_else(|e| fail(&format!("Officer 1 key handle lookup failed: {e}")));
-    let k2 = hsm2.find_private_key(cfg2.key_label.as_deref(), None)
-        .unwrap_or_else(|e| fail(&format!("Officer 2 key handle lookup failed: {e}")));
+        let mut cfg2 = destroyer_core::auth::HsmConfig::default();
+        if let Some(m) = mod2 {
+            cfg2.module_path = Some(std::path::PathBuf::from(m));
+        }
+        cfg2.slot_index = Some(slot2);
+        cfg2.pin = pin2;
+        cfg2.key_label = label2;
 
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+        let hsm1 = destroyer_core::auth::HsmSession::open(&cfg1)
+            .unwrap_or_else(|e| fail(&format!("Officer 1 hardware token session failed: {e}")));
+        let hsm2 = destroyer_core::auth::HsmSession::open(&cfg2)
+            .unwrap_or_else(|e| fail(&format!("Officer 2 hardware token session failed: {e}")));
 
-    let tbs = destroyer_core::nc3::compute_eam_tbs(directive.as_bytes(), now_secs);
+        let k1 = hsm1
+            .find_private_key(cfg1.key_label.as_deref(), None)
+            .unwrap_or_else(|e| fail(&format!("Officer 1 key handle lookup failed: {e}")));
+        let k2 = hsm2
+            .find_private_key(cfg2.key_label.as_deref(), None)
+            .unwrap_or_else(|e| fail(&format!("Officer 2 key handle lookup failed: {e}")));
 
-    let sig1 = hsm1.sign(k1, &tbs)
-        .unwrap_or_else(|e| fail(&format!("Officer 1 silicon sign failed: {e}")));
-    let sig2 = hsm2.sign(k2, &tbs)
-        .unwrap_or_else(|e| fail(&format!("Officer 2 silicon sign failed: {e}")));
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
-    let directive_obj = destroyer_core::nc3::EamDirective {
-        directive_text: directive.as_bytes().to_vec(),
-        officer1_sig: sig1,
-        officer2_sig: sig2,
-        timestamp_secs: now_secs,
+        let tbs = destroyer_core::nc3::compute_eam_tbs(directive.as_bytes(), now_secs);
+
+        let sig1 = hsm1
+            .sign(k1, &tbs)
+            .unwrap_or_else(|e| fail(&format!("Officer 1 silicon sign failed: {e}")));
+        let sig2 = hsm2
+            .sign(k2, &tbs)
+            .unwrap_or_else(|e| fail(&format!("Officer 2 silicon sign failed: {e}")));
+
+        let directive_obj = destroyer_core::nc3::EamDirective {
+            directive_text: directive.as_bytes().to_vec(),
+            officer1_sig: sig1,
+            officer2_sig: sig2,
+            timestamp_secs: now_secs,
+        };
+
+        let wire_bytes = directive_obj.to_bytes();
+        (hex_of(&wire_bytes), String::new(), 0)
     };
-
-    let wire_bytes = directive_obj.to_bytes();
-    let wire_hex = hex_of(&wire_bytes);
 
     println!("eam-auth-hw SUCCESS: DoD 5210.41M DUAL-OFFICER HARDWARE INTEGRITY VERIFIED");
     println!("eam_wire_hex: {}", wire_hex.trim());
+    if !hash_hex.is_empty() {
+        println!("directive_hash_sha3_512: {}", hash_hex.trim());
+        println!("temporal_skew_ms: {}", skew_ms);
+    }
+}
+
+fn cmd_eam_verify_hw(args: &[String]) {
+    reject_forbidden_cli(args);
+    let wire_hex = get_flag(args, "--wire-hex").unwrap_or_else(|| fail("missing --wire-hex HEX"));
+    let max_skew_ms: u64 = get_flag(args, "--max-skew-ms")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+    let max_age_secs: u64 = get_flag(args, "--max-age-secs")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(destroyer_core::nc3::EAM_FRESHNESS_WINDOW_SECS);
+
+    let wire_bytes = decode_hex(&wire_hex).unwrap_or_else(|_| fail("invalid hex in --wire-hex"));
+
+    let pkg = destroyer_core::nc3::HardwareEamPackage::from_bytes(&wire_bytes)
+        .unwrap_or_else(|e| fail(&format!("invalid hardware EAM package wire bytes: {e:?}")));
+
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    pkg.verify(now_millis, max_skew_ms, max_age_secs)
+        .unwrap_or_else(|e| fail(&format!("hardware EAM verification failed: {e:?}")));
+
+    let skew_ms = if pkg.t1_millis >= pkg.t2_millis {
+        pkg.t1_millis - pkg.t2_millis
+    } else {
+        pkg.t2_millis - pkg.t1_millis
+    };
+    let action_str = String::from_utf8_lossy(&pkg.action_payload);
+    let hash_hex = hex_of(&pkg.directive_hash);
+
+    println!("eam-verify-hw SUCCESS: HARDWARE TPI INTEGRITY AND REPLAY FRESHNESS VERIFIED");
+    println!("target: {}", pkg.target);
+    println!("action_payload: {}", action_str);
+    println!("directive_hash_sha3_512: {}", hash_hex.trim());
+    println!("temporal_skew_ms: {}", skew_ms);
 }
 
 fn main() {
@@ -3678,23 +4184,38 @@ fn main() {
         "zero-trust-eval" => cmd_zero_trust_eval(&args[2..]),
         "cot-beacon" => {
             #[cfg(feature = "lab-surfaces")]
-            { cmd_cot_beacon(&args[2..]); }
+            {
+                cmd_cot_beacon(&args[2..]);
+            }
             #[cfg(not(feature = "lab-surfaces"))]
-            { fail("cot-beacon is a simulated/lab surface and is not available in production builds"); }
+            {
+                fail("cot-beacon is a simulated/lab surface and is not available in production builds");
+            }
         }
         "tactical-msg" => {
             #[cfg(feature = "lab-surfaces")]
-            { cmd_tactical_msg(&args[2..]); }
+            {
+                cmd_tactical_msg(&args[2..]);
+            }
             #[cfg(not(feature = "lab-surfaces"))]
-            { fail("tactical-msg is a simulated/lab surface and is not available in production builds"); }
+            {
+                fail("tactical-msg is a simulated/lab surface and is not available in production builds");
+            }
         }
         "eam-auth" => {
             #[cfg(feature = "lab-surfaces")]
-            { cmd_eam_auth(&args[2..]); }
+            {
+                cmd_eam_auth(&args[2..]);
+            }
             #[cfg(not(feature = "lab-surfaces"))]
-            { fail("eam-auth is a simulated/lab surface and is not available in production builds"); }
+            {
+                fail(
+                    "eam-auth is a simulated/lab surface and is not available in production builds",
+                );
+            }
         }
         "eam-auth-hw" => cmd_eam_auth_hw(&args[2..]),
+        "eam-verify-hw" => cmd_eam_verify_hw(&args[2..]),
         "auth-tpm-seal" => cmd_auth_tpm_seal(&args[2..]),
         "auth-tpm-unseal" => cmd_auth_tpm_unseal(&args[2..]),
         "hsm-probe" => cmd_hsm_probe(&args[2..]),

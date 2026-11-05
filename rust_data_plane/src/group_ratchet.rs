@@ -881,11 +881,15 @@ mod tests {
     #[test]
     fn test_f07_forged_frame_rejection_across_all_receive_paths() {
         let epoch_secret = [0x7au8; 48];
-        let mut alpha = SovereignGroupRatchet::new("DEFCON-F07".into(), "ALPHA".into(), epoch_secret).unwrap();
-        let mut bravo = SovereignGroupRatchet::new("DEFCON-F07".into(), "BRAVO".into(), epoch_secret).unwrap();
+        let mut alpha =
+            SovereignGroupRatchet::new("DEFCON-F07".into(), "ALPHA".into(), epoch_secret).unwrap();
+        let mut bravo =
+            SovereignGroupRatchet::new("DEFCON-F07".into(), "BRAVO".into(), epoch_secret).unwrap();
 
-        let alpha_init_chain = SovereignGroupRatchet::derive_sender_chain(&alpha.epoch_secret, "ALPHA", 0).unwrap();
-        let bravo_init_chain = SovereignGroupRatchet::derive_sender_chain(&bravo.epoch_secret, "BRAVO", 0).unwrap();
+        let alpha_init_chain =
+            SovereignGroupRatchet::derive_sender_chain(&alpha.epoch_secret, "ALPHA", 0).unwrap();
+        let bravo_init_chain =
+            SovereignGroupRatchet::derive_sender_chain(&bravo.epoch_secret, "BRAVO", 0).unwrap();
         alpha.add_member("BRAVO".into(), bravo_init_chain);
         bravo.add_member("ALPHA".into(), alpha_init_chain);
 

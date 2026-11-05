@@ -64,9 +64,21 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     let mut i = 0;
     while i < bytes.len() {
         let b0 = base64_val(bytes[i])?;
-        let b1 = if i + 1 < bytes.len() { base64_val(bytes[i + 1])? } else { 0 };
-        let b2 = if i + 2 < bytes.len() { base64_val(bytes[i + 2])? } else { 0 };
-        let b3 = if i + 3 < bytes.len() { base64_val(bytes[i + 3])? } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            base64_val(bytes[i + 1])?
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            base64_val(bytes[i + 2])?
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() {
+            base64_val(bytes[i + 3])?
+        } else {
+            0
+        };
 
         let n = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
 
@@ -138,8 +150,13 @@ mod tests {
 
     #[test]
     fn malformed_ptt_fails() {
-        assert_eq!(unpack_ptt_burst(b"INVALID_HEADER"), Err(CoreError::Malformed));
-        assert_eq!(unpack_ptt_burst(b"PTT:not_num:200:CALL:data"), Err(CoreError::Malformed));
+        assert_eq!(
+            unpack_ptt_burst(b"INVALID_HEADER"),
+            Err(CoreError::Malformed)
+        );
+        assert_eq!(
+            unpack_ptt_burst(b"PTT:not_num:200:CALL:data"),
+            Err(CoreError::Malformed)
+        );
     }
 }
-

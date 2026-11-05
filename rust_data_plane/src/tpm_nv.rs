@@ -138,12 +138,9 @@ impl ToolPaths {
                 .unwrap_or_else(|_| "tpm2_createpolicy".to_string()),
             createprimary: std::env::var("P2P_TPM2_CREATEPRIMARY")
                 .unwrap_or_else(|_| "tpm2_createprimary".to_string()),
-            create: std::env::var("P2P_TPM2_CREATE")
-                .unwrap_or_else(|_| "tpm2_create".to_string()),
-            load: std::env::var("P2P_TPM2_LOAD")
-                .unwrap_or_else(|_| "tpm2_load".to_string()),
-            unseal: std::env::var("P2P_TPM2_UNSEAL")
-                .unwrap_or_else(|_| "tpm2_unseal".to_string()),
+            create: std::env::var("P2P_TPM2_CREATE").unwrap_or_else(|_| "tpm2_create".to_string()),
+            load: std::env::var("P2P_TPM2_LOAD").unwrap_or_else(|_| "tpm2_load".to_string()),
+            unseal: std::env::var("P2P_TPM2_UNSEAL").unwrap_or_else(|_| "tpm2_unseal".to_string()),
             flushcontext: std::env::var("P2P_TPM2_FLUSHCONTEXT")
                 .unwrap_or_else(|_| "tpm2_flushcontext".to_string()),
         }
@@ -643,7 +640,6 @@ fn sidecar_last(key: &[u8; 32], state_path: &str) -> Result<Option<(u64, u64)>, 
     Ok(Some((gen, seq)))
 }
 
-
 /// Measured Boot PCR bank and registers policy for TPM 2.0 object sealing.
 /// Default configuration covers PCRs 0, 1, 2, and 7:
 /// - PCR 0: CRTM, BIOS / UEFI firmware code & embedded measurements
@@ -689,21 +685,27 @@ pub fn seal_seed_to_pcrs(
     tools: &ToolPaths,
 ) -> Result<(), NvError> {
     let temp_dir = std::env::temp_dir().join(format!("tpm_seal_{}", std::process::id()));
-    std::fs::create_dir_all(&temp_dir).map_err(|e| NvError::Tools(format!("temp dir creation: {e}")))?;
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| NvError::Tools(format!("temp dir creation: {e}")))?;
 
     let primary_ctx = temp_dir.join("primary.ctx");
     let pcr_bin = temp_dir.join("pcr.bin");
     let policy_file = temp_dir.join("pcr.policy");
     let seed_file = temp_dir.join("seed.dat");
 
-    std::fs::write(&seed_file, seed).map_err(|e| NvError::Tools(format!("seed file write: {e}")))?;
+    std::fs::write(&seed_file, seed)
+        .map_err(|e| NvError::Tools(format!("seed file write: {e}")))?;
 
     let pcr_spec = policy.pcr_spec();
     let primary_args = vec![
-        "-C".to_string(), owner.to_string(),
-        "-g".to_string(), "sha256".to_string(),
-        "-G".to_string(), "rsa".to_string(),
-        "-c".to_string(), primary_ctx.to_string_lossy().to_string(),
+        "-C".to_string(),
+        owner.to_string(),
+        "-g".to_string(),
+        "sha256".to_string(),
+        "-G".to_string(),
+        "rsa".to_string(),
+        "-c".to_string(),
+        primary_ctx.to_string_lossy().to_string(),
     ];
     if let Err(e) = run_tool(&tools.createprimary, &primary_args) {
         let _ = purge_temp_dir(&temp_dir, &seed_file);
@@ -711,8 +713,10 @@ pub fn seal_seed_to_pcrs(
     }
 
     let pcrread_args = vec![
-        "-l".to_string(), pcr_spec.clone(),
-        "-o".to_string(), pcr_bin.to_string_lossy().to_string(),
+        "-l".to_string(),
+        pcr_spec.clone(),
+        "-o".to_string(),
+        pcr_bin.to_string_lossy().to_string(),
     ];
     if let Err(e) = run_tool(&tools.pcrread, &pcrread_args) {
         let _ = purge_temp_dir(&temp_dir, &seed_file);
@@ -721,9 +725,12 @@ pub fn seal_seed_to_pcrs(
 
     let policy_args = vec![
         "--policy-pcr".to_string(),
-        "-l".to_string(), pcr_spec,
-        "-f".to_string(), pcr_bin.to_string_lossy().to_string(),
-        "-L".to_string(), policy_file.to_string_lossy().to_string(),
+        "-l".to_string(),
+        pcr_spec,
+        "-f".to_string(),
+        pcr_bin.to_string_lossy().to_string(),
+        "-L".to_string(),
+        policy_file.to_string_lossy().to_string(),
     ];
     if let Err(e) = run_tool(&tools.createpolicy, &policy_args) {
         let _ = purge_temp_dir(&temp_dir, &seed_file);
@@ -731,15 +738,23 @@ pub fn seal_seed_to_pcrs(
     }
 
     let create_args = vec![
-        "-C".to_string(), primary_ctx.to_string_lossy().to_string(),
-        "-L".to_string(), policy_file.to_string_lossy().to_string(),
-        "-u".to_string(), out_pub.to_string(),
-        "-r".to_string(), out_priv.to_string(),
-        "-i".to_string(), seed_file.to_string_lossy().to_string(),
+        "-C".to_string(),
+        primary_ctx.to_string_lossy().to_string(),
+        "-L".to_string(),
+        policy_file.to_string_lossy().to_string(),
+        "-u".to_string(),
+        out_pub.to_string(),
+        "-r".to_string(),
+        out_priv.to_string(),
+        "-i".to_string(),
+        seed_file.to_string_lossy().to_string(),
     ];
     let res = run_tool(&tools.create, &create_args);
 
-    let _ = run_tool(&tools.flushcontext, &[primary_ctx.to_string_lossy().to_string()]);
+    let _ = run_tool(
+        &tools.flushcontext,
+        &[primary_ctx.to_string_lossy().to_string()],
+    );
     let _ = purge_temp_dir(&temp_dir, &seed_file);
 
     res.map(|_| ())
@@ -759,17 +774,22 @@ pub fn unseal_seed_from_pcrs(
     tools: &ToolPaths,
 ) -> Result<LockedKey32, NvError> {
     let temp_dir = std::env::temp_dir().join(format!("tpm_unseal_{}", std::process::id()));
-    std::fs::create_dir_all(&temp_dir).map_err(|e| NvError::Tools(format!("temp dir creation: {e}")))?;
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| NvError::Tools(format!("temp dir creation: {e}")))?;
 
     let primary_ctx = temp_dir.join("primary.ctx");
     let seal_ctx = temp_dir.join("seal.ctx");
     let pcr_spec = policy.pcr_spec();
 
     let primary_args = vec![
-        "-C".to_string(), owner.to_string(),
-        "-g".to_string(), "sha256".to_string(),
-        "-G".to_string(), "rsa".to_string(),
-        "-c".to_string(), primary_ctx.to_string_lossy().to_string(),
+        "-C".to_string(),
+        owner.to_string(),
+        "-g".to_string(),
+        "sha256".to_string(),
+        "-G".to_string(),
+        "rsa".to_string(),
+        "-c".to_string(),
+        primary_ctx.to_string_lossy().to_string(),
     ];
     let p_res = run_tool(&tools.createprimary, &primary_args);
     if let Err(e) = p_res {
@@ -778,26 +798,41 @@ pub fn unseal_seed_from_pcrs(
     }
 
     let load_args = vec![
-        "-C".to_string(), primary_ctx.to_string_lossy().to_string(),
-        "-u".to_string(), pub_path.to_string(),
-        "-r".to_string(), priv_path.to_string(),
-        "-c".to_string(), seal_ctx.to_string_lossy().to_string(),
+        "-C".to_string(),
+        primary_ctx.to_string_lossy().to_string(),
+        "-u".to_string(),
+        pub_path.to_string(),
+        "-r".to_string(),
+        priv_path.to_string(),
+        "-c".to_string(),
+        seal_ctx.to_string_lossy().to_string(),
     ];
     let load_res = run_tool(&tools.load, &load_args);
     if let Err(e) = load_res {
-        let _ = run_tool(&tools.flushcontext, &[primary_ctx.to_string_lossy().to_string()]);
+        let _ = run_tool(
+            &tools.flushcontext,
+            &[primary_ctx.to_string_lossy().to_string()],
+        );
         let _ = std::fs::remove_dir_all(&temp_dir);
         return Err(e);
     }
 
     let unseal_args = vec![
-        "-c".to_string(), seal_ctx.to_string_lossy().to_string(),
-        "-p".to_string(), format!("pcr:{}", pcr_spec),
+        "-c".to_string(),
+        seal_ctx.to_string_lossy().to_string(),
+        "-p".to_string(),
+        format!("pcr:{}", pcr_spec),
     ];
     let unseal_res = run_tool_bytes(&tools.unseal, &unseal_args);
 
-    let _ = run_tool(&tools.flushcontext, &[seal_ctx.to_string_lossy().to_string()]);
-    let _ = run_tool(&tools.flushcontext, &[primary_ctx.to_string_lossy().to_string()]);
+    let _ = run_tool(
+        &tools.flushcontext,
+        &[seal_ctx.to_string_lossy().to_string()],
+    );
+    let _ = run_tool(
+        &tools.flushcontext,
+        &[primary_ctx.to_string_lossy().to_string()],
+    );
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     let raw_bytes = unseal_res?;
@@ -895,7 +930,10 @@ impl MockTpmPcrSimulator {
             ));
         }
 
-        let ct = self.sealed_ciphertext.as_ref().ok_or(NvError::Uninitialized)?;
+        let ct = self
+            .sealed_ciphertext
+            .as_ref()
+            .ok_or(NvError::Uninitialized)?;
         let mut pt = [0u8; 32];
         for i in 0..32 {
             pt[i] = ct[i] ^ current_policy_digest[i];
@@ -918,8 +956,113 @@ impl MockTpmPcrSimulator {
     }
 }
 
+/// Default TPM 2.0 NV index for CRL sequence anti-rollback guard.
+pub const DEFAULT_TPM_CRL_INDEX: u64 = 0x1500017;
+
+/// TPM 2.0 CRL hardware anti-rollback guard.
+/// Enforces monotonic sequence numbers for in-band Certificate Revocation Lists.
+/// Replay or rollback of older/equal CRL sequence numbers is rejected fail-closed
+/// by hardware anti-rollback counters.
+pub fn guard_crl_sequence_with(t: &dyn NvTransport, crl_seq: u64) -> Result<(), String> {
+    let live = counter_value(t)?;
+    match live {
+        Some(v) => {
+            if crl_seq <= v {
+                return Err(format!(
+                    "CRL sequence rollback refused by hardware TPM 2.0 counter: crl_seq={crl_seq} <= live_tpm={v}"
+                ));
+            }
+            let steps = crl_seq.saturating_sub(v);
+            for _ in 0..steps {
+                t.increment().map_err(|e| {
+                    format!(
+                        "TPM NV increment failed advancing CRL counter: {}",
+                        e.describe()
+                    )
+                })?;
+            }
+            Ok(())
+        }
+        None => {
+            let _ = t.define();
+            for _ in 0..crl_seq.max(1) {
+                t.increment().map_err(|e| {
+                    format!(
+                        "TPM NV increment failed initializing CRL counter: {}",
+                        e.describe()
+                    )
+                })?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Check and record a new CRL sequence number against the active TPM 2.0 NV counter.
+/// If `P2P_TPM_CRL_INDEX` is configured (or if `P2P_TPM_NV_INDEX` is set), binds to physical TPM silicon.
+/// In software/test environments without hardware TPM, anchors to sidecar `<state>.crl_seq`.
+pub fn guard_crl_sequence(state_path: Option<&str>, crl_seq: u64) -> Result<(), String> {
+    let index_str = std::env::var("P2P_TPM_CRL_INDEX")
+        .or_else(|_| std::env::var("P2P_TPM_NV_INDEX"))
+        .ok();
+
+    if let Some(s) = index_str {
+        if let Ok(idx) = parse_index(&s) {
+            let crl_idx = if std::env::var("P2P_TPM_CRL_INDEX").is_ok() {
+                idx
+            } else {
+                idx.saturating_add(1)
+            };
+            let owner = std::env::var("P2P_TPM_NV_OWNER").unwrap_or_else(|_| "o".to_string());
+            let transport = ToolsTransport::new(crl_idx, &owner, ToolPaths::from_env());
+            return guard_crl_sequence_with(&transport, crl_seq);
+        }
+    }
+
+    let sidecar_opt = state_path
+        .map(|sp| format!("{sp}.crl_seq"))
+        .or_else(|| std::env::var("ST2027_CRL_SIDECAR").ok());
+
+    if let Some(sidecar) = sidecar_opt {
+        if let Ok(content) = std::fs::read_to_string(&sidecar) {
+            if let Ok(last_seq) = content.trim().parse::<u64>() {
+                if crl_seq <= last_seq {
+                    return Err(format!(
+                        "CRL sequence rollback refused by anti-rollback counter: crl_seq={crl_seq} <= last_seq={last_seq}"
+                    ));
+                }
+            }
+        }
+        let _ = std::fs::write(&sidecar, crl_seq.to_string());
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn crl_sequence_hardware_anti_rollback() {
+        let t = FakeNv::new();
+        // First CRL seq = 5 initializes counter to 5
+        guard_crl_sequence_with(&t, 5).unwrap();
+        assert_eq!(t.value.get(), Some(5));
+
+        // Replay of seq = 5 rejected
+        assert!(guard_crl_sequence_with(&t, 5).is_err());
+
+        // Stale older CRL seq = 4 rejected
+        assert!(guard_crl_sequence_with(&t, 4).is_err());
+
+        // Monotonic higher CRL seq = 8 accepted and advances counter
+        guard_crl_sequence_with(&t, 8).unwrap();
+        assert_eq!(t.value.get(), Some(8));
+
+        // Replay of seq = 8 rejected
+        assert!(guard_crl_sequence_with(&t, 8).is_err());
+    }
+
     use super::*;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1101,7 +1244,6 @@ mod tests {
             _ => panic!("Expected PolicyFailure, got {err:?}"),
         }
     }
-
 
     #[test]
     fn tool_argv_construction() {

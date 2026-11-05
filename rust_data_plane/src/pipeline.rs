@@ -46,7 +46,8 @@ pub fn derive_frame_key_sha512(hybrid_root_key: &[u8; 32]) -> Result<[u8; 32], C
 pub fn derive_war_key_sha512(master_secret: &[u8], info: &[u8]) -> Result<[u8; 32], CoreError> {
     let hk = Hkdf::<Sha512>::new(Some(WAR_KEY_HKDF_SALT), master_secret);
     let mut out = [0u8; 32];
-    hk.expand(info, &mut out).map_err(|_| CoreError::Malformed)?;
+    hk.expand(info, &mut out)
+        .map_err(|_| CoreError::Malformed)?;
     Ok(out)
 }
 
@@ -153,7 +154,11 @@ impl Drop for ZeroGapPipeline {
 
 impl ZeroGapPipeline {
     /// Initialize a new Zero-Gap multi-layer defense pipeline.
-    pub fn new(hybrid_root_key: &[u8; 32], is_initiator: bool, stealth_mode: bool) -> Result<Self, CoreError> {
+    pub fn new(
+        hybrid_root_key: &[u8; 32],
+        is_initiator: bool,
+        stealth_mode: bool,
+    ) -> Result<Self, CoreError> {
         let fk_bytes = derive_frame_key_sha512(hybrid_root_key)?;
         let frame_key = FrameKey::from_bytes(fk_bytes);
 
@@ -173,16 +178,27 @@ impl ZeroGapPipeline {
     }
 
     fn send_dir(&self) -> u8 {
-        if self.is_initiator { DIR_SEND } else { DIR_RECV }
+        if self.is_initiator {
+            DIR_SEND
+        } else {
+            DIR_RECV
+        }
     }
 
     fn recv_dir(&self) -> u8 {
-        if self.is_initiator { DIR_RECV } else { DIR_SEND }
+        if self.is_initiator {
+            DIR_RECV
+        } else {
+            DIR_SEND
+        }
     }
 
     /// Rotate Continuous Epoch Ratchet (CER) for post-compromise security healing.
     pub fn rotate_epoch(&mut self) -> Result<u64, CoreError> {
-        self.current_epoch = self.current_epoch.checked_add(1).ok_or(CoreError::Oversize)?;
+        self.current_epoch = self
+            .current_epoch
+            .checked_add(1)
+            .ok_or(CoreError::Oversize)?;
         let epoch_info = (self.current_epoch as u32).to_be_bytes();
 
         let hk = Hkdf::<Sha512>::new(Some(CER_HKDF_SALT), &self.epoch_root[..]);
@@ -206,7 +222,10 @@ impl ZeroGapPipeline {
         peer_ek: &[u8],
     ) -> Result<(crate::ratchet::RatchetStep, u64), CoreError> {
         let (step, msg_key) = ratchet.send_step(peer_p_pub, peer_ek)?;
-        self.current_epoch = self.current_epoch.checked_add(1).ok_or(CoreError::Oversize)?;
+        self.current_epoch = self
+            .current_epoch
+            .checked_add(1)
+            .ok_or(CoreError::Oversize)?;
         let next_fk = derive_frame_key_sha512(&msg_key)?;
         self.frame_key = Some(FrameKey::from_bytes(next_fk));
         self.epoch_root = Zeroizing::new(msg_key);
@@ -221,7 +240,10 @@ impl ZeroGapPipeline {
         peer_ml_ct: &[u8],
     ) -> Result<u64, CoreError> {
         let msg_key = ratchet.receive_step(peer_eph_p_pub, peer_ml_ct)?;
-        self.current_epoch = self.current_epoch.checked_add(1).ok_or(CoreError::Oversize)?;
+        self.current_epoch = self
+            .current_epoch
+            .checked_add(1)
+            .ok_or(CoreError::Oversize)?;
         let next_fk = derive_frame_key_sha512(&msg_key)?;
         self.frame_key = Some(FrameKey::from_bytes(next_fk));
         self.epoch_root = Zeroizing::new(msg_key);
@@ -277,7 +299,8 @@ impl ZeroGapPipeline {
             crate::frame::FTYPE_MSG,
             padded.len() as u16,
             &padded,
-        ).map_err(|_| CoreError::Malformed)?;
+        )
+        .map_err(|_| CoreError::Malformed)?;
 
         // ── Layer 2: Outer Native AEAD Carrier ───────────────────────────
         let fk = self.frame_key.as_ref().ok_or(CoreError::AuthRequired)?;
@@ -291,7 +314,8 @@ impl ZeroGapPipeline {
             crate::frame::FTYPE_MSG,
             inner_sealed.len() as u16,
             &inner_sealed,
-        ).map_err(|_| CoreError::Malformed)?;
+        )
+        .map_err(|_| CoreError::Malformed)?;
 
         let final_frame = if self.stealth_mode {
             outer_sealed
@@ -321,11 +345,12 @@ impl ZeroGapPipeline {
         }
 
         // ── Step 1: Unwrap outer header if non-stealth ───────────────────
-        let (outer_msg_type, sealed_body) = if !self.stealth_mode && frame.starts_with(PIPELINE_MAGIC) {
-            unwrap_header(frame)?
-        } else {
-            (PIPELINE_TYPE_MSG, frame.to_vec())
-        };
+        let (outer_msg_type, sealed_body) =
+            if !self.stealth_mode && frame.starts_with(PIPELINE_MAGIC) {
+                unwrap_header(frame)?
+            } else {
+                (PIPELINE_TYPE_MSG, frame.to_vec())
+            };
 
         // ── Step 2: Layer 2 Outer AEAD Strip with Anti-Replay Gate ───────
         let fk = self.frame_key.as_ref().ok_or(CoreError::AuthRequired)?;
@@ -352,8 +377,9 @@ impl ZeroGapPipeline {
         let recv_msg_key = ratchet.receive_step(peer_eph_p_pub, peer_ml_ct)?;
         let inner_key = FrameKey::from_bytes(recv_msg_key);
 
-        let (_in_seq, _in_ftype, padded_raw) = aead::open_indexed(&inner_key, DIR_SEND, &inner_sealed)
-            .map_err(|_| CoreError::Malformed)?;
+        let (_in_seq, _in_ftype, padded_raw) =
+            aead::open_indexed(&inner_key, DIR_SEND, &inner_sealed)
+                .map_err(|_| CoreError::Malformed)?;
 
         // ── Step 4: Quantized unpad ──────────────────────────────────────
         let unpadded = quantize_unpad(&padded_raw)?;
@@ -423,21 +449,20 @@ mod tests {
         let (b_x, b_ek) = r_recv.advertise();
 
         let msg = b"AUTHENTICATED TACTICAL COORDINATES";
-        let (step, wire_frame) = p_send.seal(
-            msg,
-            PIPELINE_TYPE_MSG,
-            ClearanceLevel::TopSecret,
-            &mut r_send,
-            &b_x,
-            &b_ek,
-        ).expect("seal");
+        let (step, wire_frame) = p_send
+            .seal(
+                msg,
+                PIPELINE_TYPE_MSG,
+                ClearanceLevel::TopSecret,
+                &mut r_send,
+                &b_x,
+                &b_ek,
+            )
+            .expect("seal");
 
-        let (mtype, opened) = p_recv.open(
-            &wire_frame,
-            &mut r_recv,
-            &step.eph_p_pub,
-            &step.ml_ct,
-        ).expect("open");
+        let (mtype, opened) = p_recv
+            .open(&wire_frame, &mut r_recv, &step.eph_p_pub, &step.ml_ct)
+            .expect("open");
 
         assert_eq!(mtype, PIPELINE_TYPE_MSG);
         assert_eq!(opened, msg);
@@ -451,7 +476,14 @@ mod tests {
         let (x, ek) = r.advertise();
 
         let dirty = b"Please verify PAL code for the ICBM";
-        let res = p.seal(dirty, PIPELINE_TYPE_MSG, ClearanceLevel::TopSecret, &mut r, &x, &ek);
+        let res = p.seal(
+            dirty,
+            PIPELINE_TYPE_MSG,
+            ClearanceLevel::TopSecret,
+            &mut r,
+            &x,
+            &ek,
+        );
         assert_eq!(res.unwrap_err(), CoreError::ZeroTrustViolation);
     }
 
@@ -467,8 +499,12 @@ mod tests {
         let (b_x, b_ek) = r_recv.advertise();
 
         // 1. Asymmetric rekey from send -> recv
-        let (step, new_epoch_send) = p_send.rotate_epoch_asymmetric(&mut r_send, &b_x, &b_ek).unwrap();
-        let new_epoch_recv = p_recv.receive_epoch_asymmetric(&mut r_recv, &step.eph_p_pub, &step.ml_ct).unwrap();
+        let (step, new_epoch_send) = p_send
+            .rotate_epoch_asymmetric(&mut r_send, &b_x, &b_ek)
+            .unwrap();
+        let new_epoch_recv = p_recv
+            .receive_epoch_asymmetric(&mut r_recv, &step.eph_p_pub, &step.ml_ct)
+            .unwrap();
 
         assert_eq!(new_epoch_send, 1);
         assert_eq!(new_epoch_recv, 1);
@@ -477,24 +513,22 @@ mod tests {
 
         // 2. Next message seals and opens under Epoch 1
         let (b_x2, b_ek2) = r_recv.advertise();
-        let (step2, wire_frame) = p_send.seal(
-            b"EPOCH_1_TACTICAL_COMMAND",
-            PIPELINE_TYPE_MSG,
-            ClearanceLevel::TopSecret,
-            &mut r_send,
-            &b_x2,
-            &b_ek2,
-        ).unwrap();
+        let (step2, wire_frame) = p_send
+            .seal(
+                b"EPOCH_1_TACTICAL_COMMAND",
+                PIPELINE_TYPE_MSG,
+                ClearanceLevel::TopSecret,
+                &mut r_send,
+                &b_x2,
+                &b_ek2,
+            )
+            .unwrap();
 
-        let (mtype, opened) = p_recv.open(
-            &wire_frame,
-            &mut r_recv,
-            &step2.eph_p_pub,
-            &step2.ml_ct,
-        ).unwrap();
+        let (mtype, opened) = p_recv
+            .open(&wire_frame, &mut r_recv, &step2.eph_p_pub, &step2.ml_ct)
+            .unwrap();
 
         assert_eq!(mtype, PIPELINE_TYPE_MSG);
         assert_eq!(opened, b"EPOCH_1_TACTICAL_COMMAND");
     }
-
 }

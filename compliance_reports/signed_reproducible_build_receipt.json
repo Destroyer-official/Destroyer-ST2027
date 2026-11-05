@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-05T07:28:32.745617+00:00",
+  "timestamp_utc": "2026-11-05T17:04:16.478860+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 895750,
-      "sha3_512": "10ed6c14fe6ff15129bee87002a9132e515e25ffe97d1c3e00f171668c0466c85b55836eb9db7c0ca4dcfbbf36f667a1b034d3d7c04027c2ce6cfac8b3d92f1c"
+      "size_bytes": 916001,
+      "sha3_512": "7e37767271e6324b8cf3bd95bc0411bf53d8820f361f083c7a7c59968251d8ec40ad66cb930b89cd1c4a388044b2aa0bdcf6bc9ab68a30b24d63bc369f387151"
     }
   },
   "sbom_status": {
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "2a1c51a3f95b1e82bb79b5e1f30860b26f399f060db9089b9056443dbaf743cd3c9ea02ab82fa5b415323a89a0a8642772921f3c01710f4c97b6adee326509e8",
+  "source_tree_merkle_root": "e843b8fbe38faa078b38771a44db86a1253b6781056ac984e5a6f4270983d2ca9daf97731ed71a8b238822cf690cb21f75203442a7c7c4427d34998016420bf6",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "87603a4bdf7d9cd83993edb3de1ea9a696b4dddffba9775cb6d061ee77f318a39f9d2c8f704cad0dbc190b7298daf959f059e5a4055299d8ac739cf0a2f7a71c",
@@ -73,8 +73,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "973898310a603fa4c963b86ad6b71a557de0b845f2328aa6bd51fcdfbe30320b76483049d071e8b6c6155853a7b6cf14718330f0632ad1b4631569ee23b8c917",
-      "actual_sha3_512": "973898310a603fa4c963b86ad6b71a557de0b845f2328aa6bd51fcdfbe30320b76483049d071e8b6c6155853a7b6cf14718330f0632ad1b4631569ee23b8c917",
+      "expected_sha3_512": "88d8e67dffa09154a82577a351b212cc5e79c9debda9a54414ba3cb7017c0470261b8ff4d920be097744bea972def223f6c8085715081421792c88c88f18f568",
+      "actual_sha3_512": "88d8e67dffa09154a82577a351b212cc5e79c9debda9a54414ba3cb7017c0470261b8ff4d920be097744bea972def223f6c8085715081421792c88c88f18f568",
       "matched": true
     },
     "ts_runtime.py": {

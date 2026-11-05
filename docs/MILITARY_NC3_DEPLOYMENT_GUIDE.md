@@ -37,15 +37,27 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
   - `PCR 7`: Secure Boot state, PK, KEK, DB, DBX certificate registries.
 - **PCR-Sealed Storage**: Key schedules are sealed using an HKDF-SHA3-512 derivation keyed to the 64-byte deterministic SHA3-512 composite of PCRs 0, 1, 2, and 7. Any modification to firmware, bootloader, or Secure Boot keys alters the composite, making secret unsealing cryptographically impossible (`PCRMismatchError`).
 
-### 3.2. Phase 2: Two-Person Integrity (TPI) Dual-Custody Protocol
-- **Engines**: `nc3_nuclear_command.py`, `spo_dpo.py`, `secure_transmit_2027.py`, `secure_memory_wiper.py`
-- **Doctrinal Alignment**: DoD Directive S-5210.41M (*Nuclear Weapon Personnel Reliability and Two-Person Rule*) & CJCSI 3265.01.
+### 3.2. Phase 2: Two-Person Integrity (TPI) Dual-Custody Protocol & Hardware Smartcards
+- **Engines**: `rust_data_plane/src/nc3.rs`, `rust_data_plane/src/auth.rs`, `tactical_operator_console.py`, `secure_p2p.py`, `spo_dpo.py`, `secure_memory_wiper.py`
+- **Doctrinal Alignment**: DoD Directive 5210.41M (*Nuclear Weapon Personnel Reliability and Two-Person Rule*), DoDI 5210.42, CJCSI 3265.01, NIST SP 800-73-5 / PIV 2.0.
 - **Core Security Controls**:
-  1. **Dual Persona Operation (DPO)**: Enforced via `spo_dpo.py`. Under DPO mode (`--dpo`), sensitive actions (cryptographic transmission, key re-seeding, emergency zeroization bypass) require two independent authenticated human operators: Primary Officer (SPO) and Verifying Officer (DPO).
-  2. **Verifiable Secret Sharing (VSS)**: In `nc3_nuclear_command.py`, the inner Permissive Action Link (PAL) unlock key is split into a 2-of-2 additive secret share over $GF(2^{256})$. Polynomial commitments are hashed via SHA3-512. Neither officer possesses the complete key in isolation.
-  3. **Distinct Hardware Token Authentication**: Both Officer 1 and Officer 2 must sign independent, cryptographically unpredictable nonces using physically isolated hardware tokens (`token_id_1 != token_id_2`). Single-token dual-authorization is hard-rejected.
-  4. **Physical Temporal Synchronization Window**: Replicating dual physical launch consoles, both officer authorizations must register within a maximum $\Delta t \le 2.000\text{ seconds}$. Any serial authorization by a single operator after the window expires raises `DualCustodySynchronizationError`.
-  5. **Autonomous Emergency Zeroization**: Any protocol failure (signature mismatch, VSS checksum failure, replay attempt, or window expiration) triggers an immediate, unmaskable 7-pass DoD 5220.22-M memory sanitization pass (`secure_wipe_dod_7pass`) and platform zeroization.
+  1. **Dual Persona Operation (DPO)**: Enforced via `spo_dpo.py` and hardware smartcard readers. Under DPO mode (`--dpo`), sensitive actions (cryptographic transmission, key re-seeding, emergency zeroization bypass) require two independent authenticated human operators: Primary Officer (SPO) and Verifying Officer (DPO).
+  2. **Zero-Disk Hardware Key Custody (PKCS#11)**: Completely eliminates disk-based signing seeds (`--auth-sk-file`) and synthetic JSON signature files in production. Keys are contained permanently inside tamper-resistant cryptographic silicon (YubiKey 5 FIPS, Thales Luna PCIe/Network HSM, Nitrokey HSM).
+  3. **Concurrent Dual-Token Reader Architecture**: Workstations interface two independent physical USB CCID smartcard readers (Terminal A / Slot 0 and Terminal B / Slot 1).
+  4. **Split-Knowledge Hardware Signatures**:
+     - Officer 1 inserts Smartcard 1 into Reader 1 and inputs PIN 1.
+     - Officer 2 inserts Smartcard 2 into Reader 2 and inputs PIN 2.
+     - Both smartcard tokens independently compute an ML-DSA-87 signature over the canonical FIPS 202 SHA3-512 directive hash:
+       $$\text{DirectiveHash} = \text{SHA3-512}(\text{BE64}(\text{Timestamp}) \parallel \text{Target} \parallel \text{ActionPayload})$$
+  5. **Constant-Time Physical Separation Enforcement**: The engine validates:
+     - Distinct Reader Slots: $\text{slot}_1 \ne \text{slot}_2$.
+     - Distinct Hardware Token Serials: $\text{serial}_1 \ne \text{serial}_2$ (prevents cloned token exploitation).
+     - Distinct Verifying Public Keys: $\text{ct\_eq}(\text{vk}_1, \text{vk}_2) = 0$ (prevents single-officer reuse).
+  6. **Physical Temporal Synchronization Window**: Replicating dual physical launch consoles, both hardware signatures must be generated within a strict hardware window:
+     $$\Delta t = |t_1 - t_2| \le 2.000\text{ seconds}$$
+     Any serial authorization by a single operator after the window expires or with timestamp skew raises a fail-closed error. Total message age must not exceed 120.0 seconds.
+  7. **High-Assurance Binary Wire Format (`ST-EAM-HW2`)**: Directives are packed into a tamper-evident binary format prefixed with `ST-EAM-HW2`, bearing both 2592-byte public keys and both 4627-byte ML-DSA-87 signatures.
+  8. **Autonomous Emergency Zeroization**: Any protocol failure (signature mismatch, serial collision, replay attempt, or window expiration) triggers an immediate, unmaskable 7-pass DoD 5220.22-M memory sanitization pass (`secure_wipe_dod_7pass`) and platform zeroization. Directives execute strictly in volatile memory and zeroize immediately upon dispatch.
 
 ### 3.3. Phase 3: High-Assurance `#![no_std]` Rust Micro-Core
 - **Engine**: `rust_data_plane/src/nostd_microcore.rs`, `ts_rt/src/lib.rs` (compiled `ts_rt.dll`)
@@ -93,16 +105,23 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
    ```
 4. Verify physical PCR measurements match the baseline manifest signed by the Authorizing Official (AO).
 
-### SOP-02: Transmitting a Dual-Authorized Directive (/nc3-send)
+### SOP-02: Transmitting a Dual-Authorized Directive (/nc3-send or /eam)
 1. Both certified launch officers must be physically present at the command console.
 2. Station Commander issues command:
    ```text
-   /nc3-send DIRECTIVE-AUTH-PLAN TARGET-VECTOR-01 <AUTH_CODE>
+   /eam DIRECTIVE-AUTH-PLAN TARGET-VECTOR-01
    ```
-3. Officer 1 enters Officer ID and inserts Hardware Token 1 to sign nonces.
-4. Officer 2 enters Officer ID and inserts Hardware Token 2 within 2.0 seconds.
-5. System verifies $GF(2^{256})$ VSS split, signs with ML-DSA-87, seals to destination peer identity, and transmits via post-quantum Double Ratchet channel.
-6. Local volatile memory schedules are immediately zeroized via DoD 5220.22-M 7-pass wipe.
+   Or via the standalone Rust data plane:
+   ```bash
+   ./secure-transmit eam-auth-hw \
+       --directive "DEFCON-1-LAUNCH-DIRECTIVE" \
+       --target "STRATCOM-ALPHA" \
+       --max-skew-ms 2000
+   ```
+3. Officer 1 inserts Smartcard 1 into USB Reader Slot 0 and authenticates with PIN 1.
+4. Officer 2 inserts Smartcard 2 into USB Reader Slot 1 and authenticates with PIN 2 within 2.0 seconds.
+5. System verifies physical separation (`slot_1 != slot_2`, `serial_1 != serial_2`, `vk_1 != vk_2`), verifies both in-silicon ML-DSA-87 signatures against `DirectiveHash = SHA3-512(Timestamp || Target || Directive)`, and packages into `ST-EAM-HW2` binary envelope.
+6. Local volatile memory schedules are immediately zeroized via DoD 5220.22-M 7-pass wipe upon dispatch.
 
 ### SOP-03: Authenticating and Unsealing a Dual-Authorized Directive (/nc3-verify)
 1. Inbound EAM arrives at Station Bravo with an audible, high-priority flash alert.
@@ -160,6 +179,8 @@ pytest test_tpm_quote_production.py \
        test_nc3_two_person_integrity.py \
        test_tactical_data_diode.py \
        test_nc3_nuclear_command_readiness.py \
+       test_hardware_key_custody.py \
+       test_hardware_tpi_dual_smartcard.py \
        test_defensive_nc3_audit.py -v
 
 # 5. Live Two-Terminal Socket Drill

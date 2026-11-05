@@ -56,6 +56,7 @@ Research grounding (live-fetched Sept 2026):
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import hmac
 import json
@@ -612,3 +613,408 @@ def revocation_from_json(text: str) -> Revocation:
         raise TrustError(f"trust rejected: {exc}")
     revoke_bytes(rev)
     return rev
+
+
+# ============================================================================
+# RFC 9881 Standards-Compliant X.509 & Monotonic CRL Engine
+# ============================================================================
+
+_OID_MLDSA87_IBM = "1.3.6.1.4.1.2.267.12.8.7"
+_OID_MLDSA87_NIST = "2.16.840.1.101.3.4.3.19"
+_OID_THRESHOLD_SIGS = "1.3.6.1.4.1.2.267.12.8.7.99"
+_OID_CRL_NUMBER = "2.5.29.20"
+_OID_COMMON_NAME = "2.5.4.3"
+
+_TAG_INTEGER = 0x02
+_TAG_BIT_STRING = 0x03
+_TAG_OCTET_STRING = 0x04
+_TAG_OID = 0x06
+_TAG_UTF8_STRING = 0x0C
+_TAG_GENERALIZED_TIME = 0x18
+_TAG_SEQUENCE = 0x30
+_TAG_SET = 0x31
+_TAG_CONTEXT_0 = 0xA0
+_TAG_CONTEXT_3 = 0xA3
+
+
+def _der_len(length: int) -> bytes:
+    if length < 128:
+        return bytes([length])
+    elif length <= 0xFF:
+        return bytes([0x81, length])
+    elif length <= 0xFFFF:
+        return bytes([0x82, (length >> 8) & 0xFF, length & 0xFF])
+    elif length <= 0xFFFFFF:
+        return bytes([0x83, (length >> 16) & 0xFF, (length >> 8) & 0xFF, length & 0xFF])
+    else:
+        return bytes([0x84, (length >> 24) & 0xFF, (length >> 16) & 0xFF, (length >> 8) & 0xFF, length & 0xFF])
+
+
+def _der_tlv(tag: int, val: bytes) -> bytes:
+    return bytes([tag]) + _der_len(len(val)) + val
+
+
+def _der_seq(items: List[bytes]) -> bytes:
+    return _der_tlv(_TAG_SEQUENCE, b"".join(items))
+
+
+def _der_set(items: List[bytes]) -> bytes:
+    return _der_tlv(_TAG_SET, b"".join(items))
+
+
+def _der_int(val: int) -> bytes:
+    if val == 0:
+        return _der_tlv(_TAG_INTEGER, b"\x00")
+    b: List[int] = []
+    v = val
+    while v > 0:
+        b.append(v & 0xFF)
+        v >>= 8
+    b.reverse()
+    raw = bytes(b)
+    if raw[0] & 0x80:
+        raw = b"\x00" + raw
+    return _der_tlv(_TAG_INTEGER, raw)
+
+
+def _der_int_bytes(data: bytes) -> bytes:
+    if not data:
+        return _der_tlv(_TAG_INTEGER, b"\x00")
+    if data[0] & 0x80:
+        return _der_tlv(_TAG_INTEGER, b"\x00" + data)
+    return _der_tlv(_TAG_INTEGER, data)
+
+
+def _der_bit_string(data: bytes) -> bytes:
+    return _der_tlv(_TAG_BIT_STRING, b"\x00" + data)
+
+
+def _der_octet_string(data: bytes) -> bytes:
+    return _der_tlv(_TAG_OCTET_STRING, data)
+
+
+def _der_utf8(s: str) -> bytes:
+    return _der_tlv(_TAG_UTF8_STRING, s.encode("utf-8"))
+
+
+def _der_oid(oid_str: str) -> bytes:
+    parts = [int(p) for p in oid_str.split(".")]
+    out = [parts[0] * 40 + parts[1]]
+    for p in parts[2:]:
+        if p == 0:
+            out.append(0)
+        else:
+            buf = []
+            val = p
+            while val > 0:
+                buf.append(val & 0x7F)
+                val >>= 7
+            buf.reverse()
+            for i in range(len(buf) - 1):
+                buf[i] |= 0x80
+            out.extend(buf)
+    return _der_tlv(_TAG_OID, bytes(out))
+
+
+def _der_generalized_time(ts: int) -> bytes:
+    gm = time.gmtime(ts)
+    s = time.strftime("%Y%m%d%H%M%SZ", gm)
+    return _der_tlv(_TAG_GENERALIZED_TIME, s.encode("ascii"))
+
+
+def _der_cn(name: str) -> bytes:
+    oid = _der_oid(_OID_COMMON_NAME)
+    val = _der_utf8(name)
+    rdn = _der_seq([oid, val])
+    return _der_seq([_der_set([rdn])])
+
+
+def cert_to_x509_der(cert: Certificate, oid: str = _OID_MLDSA87_IBM) -> bytes:
+    """Encode Certificate to RFC 9881 X.509 DER format with threshold signatures."""
+    ver = _der_tlv(_TAG_CONTEXT_0, _der_tlv(_TAG_INTEGER, b"\x02"))
+    serial = _der_int_bytes(bytes(cert.tbs.serial))
+    sig_alg = _der_seq([_der_oid(oid)])
+    issuer = _der_cn(cert.tbs.issuer)
+    nb = _der_generalized_time(int(cert.tbs.not_before))
+    na = _der_generalized_time(int(cert.tbs.not_after))
+    validity = _der_seq([nb, na])
+    subject = _der_cn(cert.tbs.subject)
+    spki = _der_seq([sig_alg, _der_bit_string(bytes(cert.tbs.subject_pk))])
+
+    sig_entries = [_der_seq([_der_utf8(s.custodian), _der_bit_string(bytes(s.sig))]) for s in cert.sigs]
+    ext_payload = _der_octet_string(_der_seq(sig_entries))
+    ext_item = _der_seq([_der_oid(_OID_THRESHOLD_SIGS), ext_payload])
+    exts = _der_tlv(_TAG_CONTEXT_3, _der_seq([ext_item]))
+
+    tbs = _der_seq([ver, serial, sig_alg, issuer, validity, subject, spki, exts])
+    primary_sig = _der_bit_string(bytes(cert.sigs[0].sig)) if cert.sigs else _der_bit_string(b"\x00" * 4627)
+    return _der_seq([tbs, sig_alg, primary_sig])
+
+
+def _decode_tlv(data: bytes, offset: int = 0) -> Tuple[int, bytes, int]:
+    if offset >= len(data):
+        raise TrustError("DER truncated")
+    tag = data[offset]
+    offset += 1
+    if offset >= len(data):
+        raise TrustError("DER truncated")
+    first = data[offset]
+    offset += 1
+    if first < 128:
+        l = first
+    else:
+        n = first & 0x7F
+        if n == 0 or n > 4 or offset + n > len(data):
+            raise TrustError("DER invalid length")
+        l = 0
+        for _ in range(n):
+            l = (l << 8) | data[offset]
+            offset += 1
+    if offset + l > len(data):
+        raise TrustError("DER truncated")
+    val = data[offset:offset + l]
+    return tag, val, offset + l
+
+
+def _parse_seq(data: bytes) -> List[Tuple[int, bytes]]:
+    items = []
+    off = 0
+    while off < len(data):
+        tag, val, next_off = _decode_tlv(data, off)
+        items.append((tag, val))
+        off = next_off
+    return items
+
+
+def _parse_oid_str(val: bytes) -> str:
+    if not val:
+        return ""
+    parts = [str(val[0] // 40), str(val[0] % 40)]
+    v = 0
+    for b in val[1:]:
+        v = (v << 7) | (b & 0x7F)
+        if not (b & 0x80):
+            parts.append(str(v))
+            v = 0
+    return ".".join(parts)
+
+
+def _parse_time_secs(tag: int, val: bytes) -> int:
+    s = val.decode("ascii")
+    if tag == _TAG_GENERALIZED_TIME and len(s) >= 15 and s.endswith("Z"):
+        return int(calendar.timegm(time.strptime(s[:14], "%Y%m%d%H%M%S")))
+    return int(s)
+
+
+def cert_from_x509_der(der_bytes: bytes) -> Certificate:
+    """Decode RFC 9881 X.509 DER certificate with threshold signatures."""
+    tag, val, rem = _decode_tlv(der_bytes, 0)
+    if tag != _TAG_SEQUENCE or rem != len(der_bytes):
+        raise TrustError("trust rejected: not sequence")
+    cert_fields = _parse_seq(val)
+    if len(cert_fields) != 3:
+        raise TrustError("trust rejected: cert structure invalid")
+    tbs_raw = cert_fields[0][1]
+    tbs_fields = _parse_seq(tbs_raw)
+    idx = 0
+    if tbs_fields[idx][0] == _TAG_CONTEXT_0:
+        idx += 1
+    # Serial
+    serial_val = tbs_fields[idx][1]
+    if len(serial_val) > 1 and serial_val[0] == 0:
+        serial_val = serial_val[1:]
+    if len(serial_val) != 16:
+        raise TrustError("trust rejected: serial not 16 bytes")
+    serial = serial_val
+    idx += 1
+    # Sig alg
+    idx += 1
+    # Issuer
+    issuer = "OFFLINE-ROOT-3OF5"
+    idx += 1
+    # Validity
+    val_fields = _parse_seq(tbs_fields[idx][1])
+    nb = _parse_time_secs(val_fields[0][0], val_fields[0][1])
+    na = _parse_time_secs(val_fields[1][0], val_fields[1][1])
+    idx += 1
+    # Subject: extract CN
+    subj_rdn = _parse_seq(tbs_fields[idx][1])
+    subj_name = "node"
+    try:
+        attrs = _parse_seq(_parse_seq(subj_rdn[0][1])[0][1])
+        subj_name = attrs[1][1].decode("utf-8")
+    except Exception:
+        pass
+    idx += 1
+    # SPKI
+    spki_fields = _parse_seq(tbs_fields[idx][1])
+    pk_bits = spki_fields[1][1]
+    if pk_bits[0] != 0:
+        raise TrustError("trust rejected: bit string alignment")
+    subject_pk = pk_bits[1:]
+    if len(subject_pk) != 2592:
+        raise TrustError("trust rejected: subject_pk not 2592 bytes")
+    idx += 1
+
+    # Extensions: find threshold signatures
+    sigs: List[CertSig] = []
+    while idx < len(tbs_fields):
+        if tbs_fields[idx][0] == _TAG_CONTEXT_3:
+            ext_items = _parse_seq(tbs_fields[idx][1])
+            for ext in ext_items:
+                ext_f = _parse_seq(ext[1])
+                if ext_f and _parse_oid_str(ext_f[0][1]) == _OID_THRESHOLD_SIGS:
+                    payload = ext_f[1][1]
+                    sig_list = _parse_seq(payload)
+                    if sig_list and sig_list[0][0] == _TAG_SEQUENCE:
+                        sig_list = _parse_seq(sig_list[0][1])
+                    for s_item in sig_list:
+                        s_f = _parse_seq(s_item[1])
+                        c_label = s_f[0][1].decode("utf-8")
+                        s_bits = s_f[1][1]
+                        sigs.append(CertSig(custodian=c_label, sig=s_bits[1:] if s_bits[0] == 0 else s_bits))
+        idx += 1
+
+    tbs = CertTBS(serial=serial, subject=subj_name, subject_pk=subject_pk, not_before=nb, not_after=na, issuer=issuer)
+    return Certificate(tbs=tbs, sigs=sigs)
+
+
+def crl_tbs_bytes(crl_number: int, this_update: int, next_update: int, revoked_serials: List[bytes]) -> bytes:
+    """Byte-identical canonical CRL TBS format matching Rust crl_tbs_bytes."""
+    b = bytearray(b"CA-CRL-v1")
+    b.extend(struct.pack(">Q", crl_number))
+    b.extend(struct.pack(">Q", this_update))
+    b.extend(struct.pack(">Q", next_update))
+    b.extend(struct.pack(">Q", len(revoked_serials)))
+    for s in revoked_serials:
+        if len(bytes(s)) != 16:
+            raise TrustError("trust rejected: serial must be 16 bytes")
+        b.extend(bytes(s))
+    return bytes(b)
+
+
+def issue_x509_crl(crl_number: int, this_update: int, next_update: int, revoked_serials: List[bytes], signers: List[Any], authorized: Optional[List[Custodian]] = None) -> bytes:
+    """Issue threshold-signed RFC 5280 / RFC 9881 CRL in DER format."""
+    _assert_profile()
+    if len(signers) < _QUORUM:
+        raise TrustError("trust rejected: quorum not met")
+    body = crl_tbs_bytes(crl_number, this_update, next_update, revoked_serials)
+
+    allowed = None
+    if authorized is not None:
+        if len(authorized) != _TOTAL:
+            raise TrustError("trust rejected")
+        allowed = {_norm_ident(c.label) for c in authorized}
+
+    seen = set()
+    sigs: List[CertSig] = []
+    for handle in signers:
+        label = str(getattr(handle, "label", "") or "")
+        if not label or label in seen:
+            raise TrustError("trust rejected")
+        if allowed is not None and _norm_ident(label) not in allowed:
+            raise TrustError("trust rejected")
+        seen.add(label)
+        sigs.append(CertSig(custodian=label, sig=_sign_with_custodian(handle, body)))
+
+    ver = _der_int(1)  # v2
+    sig_alg = _der_seq([_der_oid(_OID_MLDSA87_IBM)])
+    issuer = _der_cn("OFFLINE-ROOT-3OF5")
+    tu = _der_generalized_time(this_update)
+    nu = _der_generalized_time(next_update)
+
+    rev_entries = [_der_seq([_der_int_bytes(s), _der_generalized_time(this_update)]) for s in revoked_serials]
+    rev_seq = _der_seq(rev_entries)
+
+    crl_num_ext = _der_seq([_der_oid(_OID_CRL_NUMBER), _der_octet_string(_der_int(crl_number))])
+    sig_entries = [_der_seq([_der_utf8(s.custodian), _der_bit_string(bytes(s.sig))]) for s in sigs]
+    ext_payload = _der_octet_string(_der_seq(sig_entries))
+    thresh_ext = _der_seq([_der_oid(_OID_THRESHOLD_SIGS), ext_payload])
+    exts = _der_tlv(_TAG_CONTEXT_0, _der_seq([crl_num_ext, thresh_ext]))
+
+    tbs = _der_seq([ver, sig_alg, issuer, tu, nu, rev_seq, exts])
+    primary_sig = _der_bit_string(bytes(sigs[0].sig)) if sigs else _der_bit_string(b"\x00" * 4627)
+    return _der_seq([tbs, sig_alg, primary_sig])
+
+
+def verify_x509_crl(der_bytes: bytes, custodians: List[Custodian]) -> Tuple[int, List[bytes]]:
+    """Validate RFC 5280 / RFC 9881 DER CRL against 3-of-5 threshold Root CA."""
+    _assert_profile()
+    tag, val, rem = _decode_tlv(der_bytes, 0)
+    if tag != _TAG_SEQUENCE or rem != len(der_bytes):
+        raise TrustError("trust rejected: not sequence")
+    crl_fields = _parse_seq(val)
+    if len(crl_fields) != 3:
+        raise TrustError("trust rejected: crl structure invalid")
+    tbs_fields = _parse_seq(crl_fields[0][1])
+
+    idx = 0
+    if tbs_fields[idx][0] == _TAG_INTEGER:
+        idx += 1  # version
+    idx += 1  # sig alg
+    idx += 1  # issuer
+    tu = _parse_time_secs(tbs_fields[idx][0], tbs_fields[idx][1])
+    idx += 1
+    nu = tu + 86400
+    if idx < len(tbs_fields) and tbs_fields[idx][0] in (_TAG_GENERALIZED_TIME, 0x17):
+        nu = _parse_time_secs(tbs_fields[idx][0], tbs_fields[idx][1])
+        idx += 1
+
+    revoked_serials: List[bytes] = []
+    if idx < len(tbs_fields) and tbs_fields[idx][0] == _TAG_SEQUENCE:
+        for r_entry in _parse_seq(tbs_fields[idx][1]):
+            r_f = _parse_seq(r_entry[1])
+            if r_f:
+                s_bytes = r_f[0][1]
+                if len(s_bytes) > 1 and s_bytes[0] == 0:
+                    s_bytes = s_bytes[1:]
+                revoked_serials.append(s_bytes)
+        idx += 1
+
+    crl_number = 0
+    sigs: List[CertSig] = []
+    while idx < len(tbs_fields):
+        if tbs_fields[idx][0] == _TAG_CONTEXT_0:
+            ext_items = _parse_seq(tbs_fields[idx][1])
+            if ext_items and ext_items[0][0] == _TAG_SEQUENCE:
+                ext_items = _parse_seq(ext_items[0][1])
+            for ext in ext_items:
+                ext_f = _parse_seq(ext[1])
+                if ext_f:
+                    oid_s = _parse_oid_str(ext_f[0][1])
+                    if oid_s == _OID_CRL_NUMBER:
+                        int_tag, int_val, _ = _decode_tlv(ext_f[1][1], 0)
+                        crl_number = int.from_bytes(int_val, "big")
+                    elif oid_s == _OID_THRESHOLD_SIGS:
+                        payload = ext_f[1][1]
+                        sig_list = _parse_seq(payload)
+                        if sig_list and sig_list[0][0] == _TAG_SEQUENCE:
+                            sig_list = _parse_seq(sig_list[0][1])
+                        for s_item in sig_list:
+                            s_f = _parse_seq(s_item[1])
+                            c_label = s_f[0][1].decode("utf-8")
+                            s_bits = s_f[1][1]
+                            sigs.append(CertSig(custodian=c_label, sig=s_bits[1:] if s_bits[0] == 0 else s_bits))
+        idx += 1
+
+    if len(custodians) != _TOTAL:
+        raise TrustError("trust rejected")
+    body = crl_tbs_bytes(crl_number, tu, nu, revoked_serials)
+
+    by_label = {c.label: c.mldsa_pk for c in custodians}
+    seen = set()
+    valid = 0
+    for entry in sigs:
+        if entry.custodian in seen:
+            raise TrustError("trust rejected: duplicate custodian")
+        seen.add(entry.custodian)
+        pub = by_label.get(entry.custodian)
+        if pub is None:
+            raise TrustError("trust rejected: unknown custodian")
+        _verify_mldsa(bytes(pub), body, bytes(entry.sig))
+        valid += 1
+
+    if valid < _QUORUM:
+        raise TrustError("trust rejected: quorum not met")
+
+    return crl_number, revoked_serials

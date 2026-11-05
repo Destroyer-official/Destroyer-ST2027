@@ -3,8 +3,8 @@
 //! Encapsulates files into in-band tactical document streams that travel securely across
 //! the zero-gap pipeline and paced cells, verified via SHA-384 against data tampering.
 
-use sha2::{Digest, Sha384};
 use crate::policy::CoreError;
+use sha2::{Digest, Sha384};
 
 /// Document transfer metadata envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,9 +74,21 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     let mut i = 0;
     while i < bytes.len() {
         let b0 = base64_val(bytes[i])?;
-        let b1 = if i + 1 < bytes.len() { base64_val(bytes[i + 1])? } else { 0 };
-        let b2 = if i + 2 < bytes.len() { base64_val(bytes[i + 2])? } else { 0 };
-        let b3 = if i + 3 < bytes.len() { base64_val(bytes[i + 3])? } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            base64_val(bytes[i + 1])?
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            base64_val(bytes[i + 2])?
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() {
+            base64_val(bytes[i + 3])?
+        } else {
+            0
+        };
 
         let n = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
 

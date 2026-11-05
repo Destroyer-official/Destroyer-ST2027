@@ -17,7 +17,9 @@ use ml_kem::{
     kem::{Decapsulate, Encapsulate, Kem, KeyExport, SharedKey},
     EncapsulationKey, MlKem1024,
 };
-use p384::{ecdh::EphemeralSecret, elliptic_curve::Generate, PublicKey as P384PublicKey, Sec1Point};
+use p384::{
+    ecdh::EphemeralSecret, elliptic_curve::Generate, PublicKey as P384PublicKey, Sec1Point,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 /// ML-KEM-1024 encapsulation key size (FIPS 203 Table 3).
@@ -170,7 +172,9 @@ impl EphemeralKeys {
 
 /// Encapsulate to a peer's ML-KEM-1024 public encapsulation key.
 /// Returns (ciphertext 1568 bytes, 32-byte shared secret).
-pub fn encapsulate_mlkem(peer_ml_ek: &[u8]) -> Result<(Vec<u8>, Zeroizing<[u8; MLKEM_SS]>), KemError> {
+pub fn encapsulate_mlkem(
+    peer_ml_ek: &[u8],
+) -> Result<(Vec<u8>, Zeroizing<[u8; MLKEM_SS]>), KemError> {
     use ml_kem::Key;
     if peer_ml_ek.len() != MLKEM_PK {
         return Err(KemError::BadLength);

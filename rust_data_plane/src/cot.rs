@@ -100,8 +100,12 @@ pub fn parse_cot_xml(xml: &str) -> Result<CotEvent, CoreError> {
         return Err(CoreError::Malformed);
     }
 
-    let uid = extract_attr(xml, "uid").ok_or(CoreError::Malformed)?.to_string();
-    let event_type = extract_attr(xml, "type").ok_or(CoreError::Malformed)?.to_string();
+    let uid = extract_attr(xml, "uid")
+        .ok_or(CoreError::Malformed)?
+        .to_string();
+    let event_type = extract_attr(xml, "type")
+        .ok_or(CoreError::Malformed)?
+        .to_string();
     let time_secs: u64 = extract_attr(xml, "time")
         .and_then(|s| s.parse().ok())
         .ok_or(CoreError::Malformed)?;
@@ -126,8 +130,12 @@ pub fn parse_cot_xml(xml: &str) -> Result<CotEvent, CoreError> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10.0);
 
-    let callsign = extract_attr(xml, "callsign").unwrap_or("UNKNOWN").to_string();
-    let status = extract_attr(xml, "readiness").unwrap_or("UNKNOWN").to_string();
+    let callsign = extract_attr(xml, "callsign")
+        .unwrap_or("UNKNOWN")
+        .to_string();
+    let status = extract_attr(xml, "readiness")
+        .unwrap_or("UNKNOWN")
+        .to_string();
 
     Ok(CotEvent {
         uid,
@@ -202,7 +210,8 @@ impl BftTracker {
     /// Remove tracks that have exceeded their stale deadline.
     pub fn remove_stale(&mut self, now_secs: u64) -> usize {
         let initial_len = self.tracks.len();
-        self.tracks.retain(|_, track| track.last_event.stale_secs >= now_secs);
+        self.tracks
+            .retain(|_, track| track.last_event.stale_secs >= now_secs);
         initial_len - self.tracks.len()
     }
 
@@ -274,4 +283,3 @@ mod tests {
         assert_eq!(parse_cot_xml("not valid xml"), Err(CoreError::Malformed));
     }
 }
-

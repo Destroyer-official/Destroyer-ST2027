@@ -184,6 +184,13 @@ peer_discovery_cache.json
 # Scratch, devscripts, and local helper exclusions
 tree.txt
 *.bat
+!launch_native_terminals.bat
+!start_native_terminal_alpha.bat
+!start_native_terminal_bravo.bat
+!launch_two_terminals.bat
+!start_terminal_alpha.bat
+!start_terminal_bravo.bat
+!launch_two_terminals_ipv6.bat
 !launch_tactical_terminals.bat
 !launch_tactical_web.bat
 !start_tactical_alpha.bat

@@ -169,13 +169,21 @@ impl KexSession {
     /// Compute 32-byte responder key confirmation tag:
     /// HKDF-SHA384(session_key, DOMAIN_CONFIRM_RESPONDER || transcript)[..32]
     pub fn responder_confirmation_tag(&self) -> [u8; CONFIRMATION_TAG_LEN] {
-        compute_tag(&self.session_key, DOMAIN_CONFIRM_RESPONDER, &self.transcript)
+        compute_tag(
+            &self.session_key,
+            DOMAIN_CONFIRM_RESPONDER,
+            &self.transcript,
+        )
     }
 
     /// Compute 32-byte initiator key confirmation tag:
     /// HKDF-SHA384(session_key, DOMAIN_CONFIRM_INITIATOR || transcript)[..32]
     pub fn initiator_confirmation_tag(&self) -> [u8; CONFIRMATION_TAG_LEN] {
-        compute_tag(&self.session_key, DOMAIN_CONFIRM_INITIATOR, &self.transcript)
+        compute_tag(
+            &self.session_key,
+            DOMAIN_CONFIRM_INITIATOR,
+            &self.transcript,
+        )
     }
 
     /// Verify peer key confirmation tag in constant time.
@@ -332,7 +340,13 @@ pub fn responder_complete_policy(
             initiator_sig,
         } => {
             // Verify-before-derive: mutual signatures MUST verify before decaps or derivation
-            verify_sig_legs(&raw_t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
+            verify_sig_legs(
+                &raw_t,
+                responder_vk,
+                responder_sig,
+                initiator_vk,
+                initiator_sig,
+            )?;
             let bound = auth_binding(&raw_t, responder_sig, initiator_sig);
             (bound, None)
         }
@@ -344,7 +358,13 @@ pub fn responder_complete_policy(
             initiator_sig,
         } => {
             // Verify-before-derive: mutual signatures MUST verify before decaps or derivation
-            verify_sig_legs(&raw_t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
+            verify_sig_legs(
+                &raw_t,
+                responder_vk,
+                responder_sig,
+                initiator_vk,
+                initiator_sig,
+            )?;
             let bound = auth_binding(&raw_t, responder_sig, initiator_sig);
             (bound, Some(*psk))
         }
@@ -391,7 +411,13 @@ pub fn initiator_finish(
     hybrid: &[u8; HYBRID_SS],
     auth: &AuthMaterial<'_>,
 ) -> Result<KexSession, CoreError> {
-    initiator_finish_policy(responder_bundle, initiator_bundle, hybrid, auth, is_lab_mode())
+    initiator_finish_policy(
+        responder_bundle,
+        initiator_bundle,
+        hybrid,
+        auth,
+        is_lab_mode(),
+    )
 }
 
 /// Initiator phase 2 with explicit policy control (lab vs production).
@@ -420,7 +446,13 @@ pub fn initiator_finish_policy(
             initiator_sig,
         } => {
             // Verify-before-derive
-            verify_sig_legs(&raw_t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
+            verify_sig_legs(
+                &raw_t,
+                responder_vk,
+                responder_sig,
+                initiator_vk,
+                initiator_sig,
+            )?;
             let bound = auth_binding(&raw_t, responder_sig, initiator_sig);
             (bound, None)
         }
@@ -432,7 +464,13 @@ pub fn initiator_finish_policy(
             initiator_sig,
         } => {
             // Verify-before-derive
-            verify_sig_legs(&raw_t, responder_vk, responder_sig, initiator_vk, initiator_sig)?;
+            verify_sig_legs(
+                &raw_t,
+                responder_vk,
+                responder_sig,
+                initiator_vk,
+                initiator_sig,
+            )?;
             let bound = auth_binding(&raw_t, responder_sig, initiator_sig);
             (bound, Some(*psk))
         }
@@ -542,11 +580,17 @@ mod tests {
         // Key confirmation tags mutually verify:
         let resp_tag = s_resp.responder_confirmation_tag();
         let init_tag = s_init.initiator_confirmation_tag();
-        assert!(s_init.verify_peer_tag(&resp_tag, KexRole::Responder).is_ok());
-        assert!(s_resp.verify_peer_tag(&init_tag, KexRole::Initiator).is_ok());
+        assert!(s_init
+            .verify_peer_tag(&resp_tag, KexRole::Responder)
+            .is_ok());
+        assert!(s_resp
+            .verify_peer_tag(&init_tag, KexRole::Initiator)
+            .is_ok());
 
         // Wrong role tag fails verification:
-        assert!(s_init.verify_peer_tag(&init_tag, KexRole::Responder).is_err());
+        assert!(s_init
+            .verify_peer_tag(&init_tag, KexRole::Responder)
+            .is_err());
     }
 
     #[test]
@@ -654,7 +698,10 @@ mod tests {
     fn malformed_bundles_fail_closed() {
         let resp_keys = EphemeralKeys::generate().unwrap();
         let p = psk();
-        assert_eq!(initiator_begin(&[0u8; 10]).err(), Some(CoreError::Malformed));
+        assert_eq!(
+            initiator_begin(&[0u8; 10]).err(),
+            Some(CoreError::Malformed)
+        );
         assert_eq!(
             responder_complete_policy(&resp_keys, &[0u8; 10], &AuthMaterial::Psk(&p), true).err(),
             Some(CoreError::Malformed)

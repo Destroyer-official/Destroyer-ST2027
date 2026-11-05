@@ -515,6 +515,114 @@ pub fn derive_frame_key(
 
 /// Canonical certificate TBS bytes (byte-identical to
 /// `trust_anchor.tbs_bytes`). Exposed for cross-implementation checks.
+
+#[pyfunction]
+pub fn x509_issue_certificate(
+    serial: Vec<u8>,
+    subject: String,
+    subject_pk: Vec<u8>,
+    not_before: u64,
+    not_after: u64,
+    signers: Vec<(String, pyo3::PyRef<CoreMldsaSigner>)>,
+    sig_alg_oid: Option<String>,
+) -> PyResult<Vec<u8>> {
+    if serial.len() != 16 || subject_pk.len() != crate::policy::MLDSA87_PK {
+        return Err(PyValueError::new_err("invalid serial or public key length"));
+    }
+    let mut s = [0u8; 16];
+    s.copy_from_slice(&serial);
+    let mut pk = [0u8; crate::policy::MLDSA87_PK];
+    pk.copy_from_slice(&subject_pk);
+
+    let mut refs: Vec<(&str, &Mldsa87SigningKey)> = Vec::new();
+    for (label, signer) in &signers {
+        let sk = signer
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("signer closed"))?;
+        refs.push((label.as_str(), sk));
+    }
+
+    let cert = crate::x509::issue_x509_certificate(
+        s,
+        &subject,
+        &pk,
+        not_before,
+        not_after,
+        &refs,
+        sig_alg_oid.as_deref(),
+    )
+    .map_err(err)?;
+
+    cert.to_der().map_err(err)
+}
+
+#[pyfunction]
+pub fn x509_verify_certificate(
+    der_bytes: Vec<u8>,
+    custodians_json: String,
+    now: f64,
+) -> PyResult<(Vec<u8>, String, Vec<u8>)> {
+    let cert = crate::x509::PqX509Certificate::from_der(&der_bytes).map_err(err)?;
+    let custodians = crate::pki::parse_custodians_json(&custodians_json).map_err(err)?;
+    cert.verify_threshold(&custodians, now).map_err(err)?;
+    Ok((cert.serial.to_vec(), cert.subject, cert.subject_pk.to_vec()))
+}
+
+#[pyfunction]
+pub fn x509_issue_crl(
+    crl_number: u64,
+    this_update: u64,
+    next_update: u64,
+    revoked_serials: Vec<Vec<u8>>,
+    signers: Vec<(String, pyo3::PyRef<CoreMldsaSigner>)>,
+) -> PyResult<Vec<u8>> {
+    let mut serials_arr = Vec::new();
+    for s in revoked_serials {
+        if s.len() != 16 {
+            return Err(PyValueError::new_err("each serial must be 16 bytes"));
+        }
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(&s);
+        serials_arr.push(arr);
+    }
+    let mut refs: Vec<(&str, &Mldsa87SigningKey)> = Vec::new();
+    for (label, signer) in &signers {
+        let sk = signer
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("signer closed"))?;
+        refs.push((label.as_str(), sk));
+    }
+    let crl =
+        crate::x509::issue_x509_crl(crl_number, this_update, next_update, &serials_arr, &refs)
+            .map_err(err)?;
+
+    crl.to_der().map_err(err)
+}
+
+#[pyfunction]
+pub fn x509_verify_crl(
+    der_bytes: Vec<u8>,
+    custodians_json: String,
+) -> PyResult<(u64, Vec<Vec<u8>>)> {
+    let crl = crate::x509::PqX509Crl::from_der(&der_bytes).map_err(err)?;
+    let custodians = crate::pki::parse_custodians_json(&custodians_json).map_err(err)?;
+    crl.verify_threshold(&custodians).map_err(err)?;
+    let serials = crl
+        .revoked_serials
+        .into_iter()
+        .map(|s| s.to_vec())
+        .collect();
+    Ok((crl.crl_number, serials))
+}
+
+#[pyfunction]
+pub fn tpm_guard_crl_sequence(state_path: Option<String>, crl_seq: u64) -> PyResult<()> {
+    crate::tpm_nv::guard_crl_sequence(state_path.as_deref(), crl_seq)
+        .map_err(|e| PyValueError::new_err(format!("tpm rollback guard: {e}")))
+}
+
 #[pyfunction]
 pub fn pki_tbs_bytes(
     serial: Vec<u8>,
@@ -1187,12 +1295,13 @@ impl CoreGroupRatchet {
     }
 }
 
-
 use crate::cot::{format_cot_xml, new_event, parse_cot_xml};
 use crate::doc_transfer::{package_document, unpack_and_verify_document};
 use crate::fragment::{fragment, Fragment, ReassemblyBuffer, TX_ID_LEN};
 use crate::mmhs::{format_caveats, format_telegram, parse_telegram, Precedence};
-use crate::nc3::{check_nc3_safety_gate, create_eam, verify_eam, verify_two_person_rule, EamDirective};
+use crate::nc3::{
+    check_nc3_safety_gate, create_eam, verify_eam, verify_two_person_rule, EamDirective,
+};
 use crate::pipeline::{derive_war_key_sha512, ZeroGapPipeline};
 
 #[pyclass]
@@ -1201,7 +1310,12 @@ pub struct CoreMmhs;
 #[pymethods]
 impl CoreMmhs {
     #[staticmethod]
-    pub fn format(precedence_label: &str, clearance_u8: u8, caveats: u32, message: Vec<u8>) -> PyResult<Vec<u8>> {
+    pub fn format(
+        precedence_label: &str,
+        clearance_u8: u8,
+        caveats: u32,
+        message: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
         let prec = Precedence::from_label(precedence_label).map_err(err)?;
         let clr = ClearanceLevel::from_u8(clearance_u8).map_err(err)?;
         format_telegram(prec, clr, caveats, &message).map_err(err)
@@ -1240,8 +1354,14 @@ impl CoreNc3 {
         sk1: &CoreMldsaSigner,
         sk2: &CoreMldsaSigner,
     ) -> PyResult<Vec<u8>> {
-        let s1 = sk1.inner.as_ref().ok_or_else(|| PyValueError::new_err("signer 1 consumed"))?;
-        let s2 = sk2.inner.as_ref().ok_or_else(|| PyValueError::new_err("signer 2 consumed"))?;
+        let s1 = sk1
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("signer 1 consumed"))?;
+        let s2 = sk2
+            .inner
+            .as_ref()
+            .ok_or_else(|| PyValueError::new_err("signer 2 consumed"))?;
         let eam = create_eam(&directive_text, s1, s2).map_err(err)?;
         Ok(eam.to_bytes())
     }
@@ -1342,7 +1462,12 @@ pub struct CorePtt;
 #[pymethods]
 impl CorePtt {
     #[staticmethod]
-    pub fn package(callsign: &str, frame_count: u32, duration_ms: u32, audio_payload: Vec<u8>) -> Vec<u8> {
+    pub fn package(
+        callsign: &str,
+        frame_count: u32,
+        duration_ms: u32,
+        audio_payload: Vec<u8>,
+    ) -> Vec<u8> {
         crate::ptt::package_ptt_burst(callsign, frame_count, duration_ms, &audio_payload)
     }
 
@@ -1368,7 +1493,15 @@ impl CoreCot {
         status: &str,
         stale_offset_secs: u64,
     ) -> String {
-        let ev = new_event(callsign, event_type, lat, lon, hae, status, stale_offset_secs);
+        let ev = new_event(
+            callsign,
+            event_type,
+            lat,
+            lon,
+            hae,
+            status,
+            stale_offset_secs,
+        );
         format_cot_xml(&ev)
     }
 
@@ -1405,7 +1538,10 @@ impl CoreZeroGapPipeline {
     }
 
     pub fn rotate_epoch(&mut self) -> PyResult<u64> {
-        let pipe = self.inner.as_mut().ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
+        let pipe = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
         pipe.rotate_epoch().map_err(err)
     }
 
@@ -1425,11 +1561,19 @@ impl CoreZeroGapPipeline {
         let mut px = [0u8; crate::kem::P384_PK];
         px.copy_from_slice(&peer_p);
 
-        let pipe = self.inner.as_mut().ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
-        let r = ratchet.inner.as_mut().ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
+        let pipe = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
+        let r = ratchet
+            .inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
         let clr = ClearanceLevel::from_u8(clearance).map_err(err)?;
 
-        let (step, wire_frame) = pipe.seal(&plaintext, msg_type, clr, r, &px, &peer_ek).map_err(err)?;
+        let (step, wire_frame) = pipe
+            .seal(&plaintext, msg_type, clr, r, &px, &peer_ek)
+            .map_err(err)?;
 
         Ok((
             step.eph_p_pub.to_vec(),
@@ -1454,8 +1598,14 @@ impl CoreZeroGapPipeline {
         let mut px = [0u8; crate::kem::P384_PK];
         px.copy_from_slice(&peer_eph_p);
 
-        let pipe = self.inner.as_mut().ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
-        let r = ratchet.inner.as_mut().ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
+        let pipe = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("pipeline closed"))?;
+        let r = ratchet
+            .inner
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
 
         pipe.open(&wire_frame, r, &px, &peer_ml_ct).map_err(err)
     }
@@ -1494,5 +1644,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(derive_ratchet_root, m)?)?;
     m.add_function(wrap_pyfunction!(pki_tbs_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(pki_revoke_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(x509_issue_certificate, m)?)?;
+    m.add_function(wrap_pyfunction!(x509_verify_certificate, m)?)?;
+    m.add_function(wrap_pyfunction!(x509_issue_crl, m)?)?;
+    m.add_function(wrap_pyfunction!(x509_verify_crl, m)?)?;
+    m.add_function(wrap_pyfunction!(tpm_guard_crl_sequence, m)?)?;
     Ok(())
 }
