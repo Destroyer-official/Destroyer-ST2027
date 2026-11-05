@@ -215,9 +215,10 @@ def _ensure_liboqs_linux(repo_dir: Path) -> Optional[Path]:
             res = subprocess.run(["git", "-C", str(build_dir), "rev-parse", "HEAD"], capture_output=True, text=True, check=True)  # nosec: B603, B607
             if res.stdout.strip() == pin_sha:
                 cmake_b = build_dir / "build"
-                subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
+                min_build = "-DOQS_MINIMAL_BUILD=ML-KEM-1024;ML-DSA-87;Falcon-1024;SLH-DSA-pure-SHA2-256f;SLH-DSA-pure-SHAKE-256f"
+                subprocess.run(["cmake", "-S", str(build_dir), "-B", str(cmake_b), "-DBUILD_SHARED_LIBS=ON", "-DOQS_BUILD_ONLY_LIB=ON", "-DCMAKE_BUILD_TYPE=Release", min_build, "-DCMAKE_INSTALL_PREFIX=/usr/local"], check=True, timeout=60)  # nosec: B603, B607
                 nproc = str(os.cpu_count() or 2)
-                subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=180)  # nosec: B603, B607
+                subprocess.run(["cmake", "--build", str(cmake_b), f"-j{nproc}"], check=True, timeout=300)  # nosec: B603, B607
                 if shutil.which("sudo"):
                     subprocess.run(["sudo", "cmake", "--install", str(cmake_b)], check=True, timeout=30)  # nosec: B603, B607
                     subprocess.run(["sudo", "ldconfig"], check=True, timeout=10)  # nosec: B603, B607
