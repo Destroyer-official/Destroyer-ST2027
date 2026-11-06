@@ -38,26 +38,29 @@ pub fn parse_key_hex(hex: &str) -> Result<LockedKey32, CoreError> {
     LockedKey32::from_hex(hex).map_err(|_| CoreError::Malformed)
 }
 
+/// Check if a path is a symlink or reparse point without following it.
+fn reject_symlink_or_reparse(path: &str) -> Result<(), CoreError> {
+    if let Ok(link_meta) = std::fs::symlink_metadata(path) {
+        if link_meta.file_type().is_symlink() {
+            return Err(CoreError::FilePermissions);
+        }
+        #[cfg(not(unix))]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            if link_meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err(CoreError::FilePermissions);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Read a key file with permission checks (Unix 0600 enforced,
 /// symlinks/reparse points refused). Returns a locked key container; the
 /// file-content copy is wiped after parse.
 pub fn read_key_file(path: &str) -> Result<LockedKey32, CoreError> {
-    // `symlink_metadata` does NOT follow links: a symlink itself is
-    // refused here. (`metadata().is_symlink()` would be dead code — it
-    // always reports false on followed metadata.)
-    let link_meta = std::fs::symlink_metadata(path).map_err(|_| CoreError::Malformed)?;
-    if link_meta.file_type().is_symlink() {
-        return Err(CoreError::FilePermissions);
-    }
-    #[cfg(not(unix))]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // Refuse reparse points (symlinks/mount points/junctions).
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if link_meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(CoreError::FilePermissions);
-        }
-    }
+    reject_symlink_or_reparse(path)?;
     let meta = std::fs::metadata(path).map_err(|_| CoreError::Malformed)?;
     if !meta.is_file() {
         return Err(CoreError::Malformed);
@@ -95,6 +98,7 @@ pub fn write_key_file_exclusive(path: &str, hex: &str) -> Result<(), CoreError> 
     if clean.len() != 64 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(CoreError::Malformed);
     }
+    reject_symlink_or_reparse(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -148,53 +152,69 @@ fn harden_windows_file_dacl(path: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Write `hex` (64 chars + newline) with create+truncate semantics for
-/// explicit rotation paths (KEX `--out-key`, `keygen --out`). Hardening is
-/// identical to the exclusive variant (Unix 0600, Windows share-NONE plus
-/// owner-only `icacls`; ACL failure deletes the file and errors).
-/// Rotation is an explicit operator act — callers never truncate implicitly.
+/// Write `hex` (64 chars + newline) with atomic temporary-file-and-rename
+/// semantics for rotation paths (KEX `--out-key`, `keygen --out`).
+/// Symlinks and reparse points are strictly rejected fail-closed.
+/// Hardening is identical to the exclusive variant (Unix 0600, Windows share-NONE
+/// plus owner-only `icacls`; ACL failure deletes the file and errors).
 pub fn write_key_file_truncate(path: &str, hex: &str) -> Result<(), CoreError> {
     let clean = hex.trim();
     if clean.len() != 64 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(CoreError::Malformed);
     }
+    // Refuse symlinks or reparse points at target path
+    reject_symlink_or_reparse(path)?;
+
+    // Atomic temporary sibling write
+    let mut rnd = [0u8; 8];
+    let _ = getrandom::fill(&mut rnd);
+    let tmp_path = format!("{path}.tmp.{}.{:016x}", std::process::id(), u64::from_le_bytes(rnd));
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         let mut f = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o600)
-            .open(path)
+            .open(&tmp_path)
             .map_err(|_| CoreError::FilePermissions)?;
-        f.write_all(clean.as_bytes())
-            .map_err(|_| CoreError::FilePermissions)?;
-        f.write_all(b"\n").map_err(|_| CoreError::FilePermissions)?;
-        f.sync_all().map_err(|_| CoreError::FilePermissions)?;
-        Ok(())
+        if f.write_all(clean.as_bytes()).and_then(|_| f.write_all(b"\n")).and_then(|_| f.sync_all()).is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(CoreError::FilePermissions);
+        }
     }
     #[cfg(not(unix))]
     {
-        // Residual (documented, unchanged): SSD wear-leveling / swap /
-        // hibernation can retain copies — a facility duty (see trust_anchor
-        // ephemeral doctrine); prefer stdin + locked memory / HSM custody
-        // for TOP SECRET.
         let mut f = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .share_mode(0)
-            .open(path)
+            .open(&tmp_path)
             .map_err(|_| CoreError::FilePermissions)?;
-        f.write_all(clean.as_bytes())
-            .map_err(|_| CoreError::FilePermissions)?;
-        f.write_all(b"\n").map_err(|_| CoreError::FilePermissions)?;
-        f.sync_all().map_err(|_| CoreError::FilePermissions)?;
+        if f.write_all(clean.as_bytes()).and_then(|_| f.write_all(b"\n")).and_then(|_| f.sync_all()).is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(CoreError::FilePermissions);
+        }
         drop(f);
-        harden_windows_file_dacl(path)?;
-        Ok(())
+        if let Err(e) = harden_windows_file_dacl(&tmp_path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
     }
+
+    // Atomic rename over target path
+    if std::fs::rename(&tmp_path, path).is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(CoreError::FilePermissions);
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Verify DACL on destination after rename
+        harden_windows_file_dacl(path)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

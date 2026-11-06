@@ -24,7 +24,7 @@ import ssl
 import secrets
 import datetime
 import ipaddress
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -234,6 +234,8 @@ def parse_and_validate_cac_piv_cert(
             )
         except Exception as e:
             return {"valid": False, "error": f"CA signature verification failed: {e}"}
+    elif _is_production():
+        return {"valid": False, "error": "Missing trusted Defense Root CA for path validation"}
 
     return {
         "valid": True,
@@ -493,6 +495,9 @@ class WebAuthnL3Manager:
         try:
             pub = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
             with self._lock:
+                if credential_id in self._registered_keys:
+                    # Prevent unauthorized credential overwrite (P1-06)
+                    return False
                 self._registered_keys[credential_id] = {
                     "public_key": pub,
                     "sign_count": 0,
@@ -537,8 +542,10 @@ class WebAuthnL3Manager:
         if cd.get("type") != "webauthn.get":
             return False, f"Invalid clientData type '{cd.get('type')}', expected 'webauthn.get'", {}
 
-        origin = cd.get("origin", "")
-        if origin and origin not in ALLOWED_ORIGINS:
+        origin = str(cd.get("origin", "")).strip()
+        if not origin:
+            return False, "Missing origin in clientDataJSON", {}
+        if origin not in ALLOWED_ORIGINS:
             return False, f"Origin '{origin}' not in allowed origins", {}
 
         challenge = str(cd.get("challenge", ""))
@@ -584,8 +591,6 @@ class WebAuthnL3Manager:
         last_count = key_entry.get("sign_count", 0)
         if sign_count > 0 and sign_count <= last_count:
             return False, f"Monotonic sign_count violation: {sign_count} <= {last_count} (replay or cloned token)", {}
-        with self._lock:
-            key_entry["sign_count"] = sign_count
 
         raw_sig = assertion.get("signature") or assertion.get("signature_b64", "")
         if isinstance(raw_sig, str):
@@ -609,6 +614,10 @@ class WebAuthnL3Manager:
             pub_key.verify(sig_bytes, signed_data, ec.ECDSA(hashes.SHA256()))
         except Exception as e:
             return False, f"Signature verification failed: {e}", {}
+
+        # Counter updated ONLY after cryptographic signature verification succeeds (P1-06)
+        with self._lock:
+            key_entry["sign_count"] = sign_count
 
         metadata = {
             "credential_id": cred_id,
@@ -694,11 +703,19 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
 
     def _get_client_cert_info(self) -> dict:
         """Extract and validate CAC / PIV client certificate from connection."""
+        trusted_ca = getattr(getattr(self, "server", None), "trusted_ca_cert", None)
+        if trusted_ca is None:
+            ca_candidate = REPO_ROOT / "cert" / "tactical_web_mtls" / "defense_root_ca.crt"
+            if ca_candidate.exists():
+                try:
+                    trusted_ca = x509.load_pem_x509_certificate(ca_candidate.read_bytes())
+                except Exception:
+                    trusted_ca = None
         try:
             if hasattr(self, "connection") and hasattr(self.connection, "getpeercert"):
                 der = self.connection.getpeercert(binary_form=True)
                 if der:
-                    return parse_and_validate_cac_piv_cert(der)
+                    return parse_and_validate_cac_piv_cert(der, trusted_ca_cert=trusted_ca)
         except Exception:
             pass
         return {

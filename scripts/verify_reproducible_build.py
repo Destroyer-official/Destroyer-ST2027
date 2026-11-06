@@ -282,24 +282,55 @@ def run_reproducible_build_verification():
         all_passed = False
 
     # 4. Final Receipt Output & Cryptographic Signature
-    results["overall_status"] = "PASS" if all_passed else "FAIL"
     receipt_file = reports_dir / "signed_reproducible_build_receipt.json"
+    receipt_sig_file = reports_dir / "signed_reproducible_build_receipt.json.sig"
+
+    # P1-07: Unlink stale signature before generating new receipt
+    if receipt_sig_file.exists():
+        try:
+            receipt_sig_file.unlink()
+        except Exception:
+            pass
+
+    results["overall_status"] = "PASS" if all_passed else "FAIL"
     receipt_bytes = json.dumps(results, indent=2).encode('utf-8')
     with open(receipt_file, "wb") as f:
         f.write(receipt_bytes)
 
     # Sign the receipt with ML-DSA-87 anchor
-    receipt_sig_file = reports_dir / "signed_reproducible_build_receipt.json.sig"
-    try:
-        sk_path = PROJECT_ROOT / "certs" / "sbom_mldsa87_signer.sk"
-        if sk_path.exists():
+    is_prod = os.environ.get("P2P_PRODUCTION") == "1"
+    sk_path = PROJECT_ROOT / "certs" / "sbom_mldsa87_signer.sk"
+    if sk_path.exists():
+        try:
             from liboqs_wrapper import LibOQS_MLDSA_87
             signer = LibOQS_MLDSA_87()
             receipt_sig = signer.sign(sk_path.read_bytes(), receipt_bytes)
             receipt_sig_file.write_bytes(receipt_sig)
             print(f"  [+] Signed receipt with ML-DSA-87 -> {receipt_sig_file.name}")
-    except Exception as e:
-        print(f"  [-] Receipt signing notice: {e}")
+
+            # P1-08: Cryptographically verify generated signature against anchor public key
+            if anchor_pub_path.exists():
+                verifier = LibOQS_MLDSA_87()
+                anchor_pk = anchor_pub_path.read_bytes()
+                if not verifier.verify(anchor_pk, receipt_bytes, receipt_sig):
+                    print("  [-] FAIL: Receipt signature verification against anchor public key failed!")
+                    if receipt_sig_file.exists():
+                        receipt_sig_file.unlink()
+                    all_passed = False
+                else:
+                    print("  [+] Cryptographically verified receipt signature with anchor public key.")
+            elif is_prod:
+                print("  [-] FAIL: Missing anchor public key for receipt signature verification in production.")
+                all_passed = False
+        except Exception as e:
+            print(f"  [-] Receipt signing error: {e}")
+            if receipt_sig_file.exists():
+                receipt_sig_file.unlink()
+            if is_prod:
+                all_passed = False
+    elif is_prod:
+        print("  [-] FAIL: Missing sbom_mldsa87_signer.sk in production environment.")
+        all_passed = False
 
     print("\n" + "=" * 78)
     if all_passed:

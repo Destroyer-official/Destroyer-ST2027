@@ -350,11 +350,12 @@ fn env_flag(name: &str) -> bool {
     }
 }
 
-/// Env-gated guard entry point (no-op while `P2P_TPM_NV_INDEX` is unset unless in production).
-pub fn guard(
+/// Env-gated dual-monotonic guard entry point covering send_seq + recv_hwm.
+pub fn guard_recv(
     state_path: &str,
     key: &[u8; 32],
     send_seq: u64,
+    recv_hwm: u64,
     state_fresh: bool,
 ) -> Result<(), String> {
     let idx = std::env::var("P2P_TPM_NV_INDEX").ok();
@@ -365,14 +366,25 @@ pub fn guard(
     let Some(t) = transport_from_index_str(idx.as_deref())? else {
         return Ok(());
     };
-    guard_with(
+    guard_with_recv(
         &t,
         key,
         state_path,
         send_seq,
+        recv_hwm,
         state_fresh,
         env_flag("P2P_TPM_NV_REPROVISION"),
     )
+}
+
+/// Env-gated guard entry point (no-op while `P2P_TPM_NV_INDEX` is unset unless in production).
+pub fn guard(
+    state_path: &str,
+    key: &[u8; 32],
+    send_seq: u64,
+    state_fresh: bool,
+) -> Result<(), String> {
+    guard_recv(state_path, key, send_seq, 0, state_fresh)
 }
 
 /// Env-gated checkpoint entry point (no-op while `P2P_TPM_NV_INDEX` is unset unless in production).
@@ -398,19 +410,20 @@ pub fn checkpoint_recv(
     checkpoint_with_recv(&t, key, state_path, send_seq, recv_hwm)
 }
 
-/// Policy guard against an explicit transport. Fail-closed: every
-/// inconsistency is an `Err` unless `reprovision` (operator-acknowledged
+/// Policy guard against an explicit transport with dual-monotonic coverage (send_seq + recv_hwm).
+/// Fail-closed: every inconsistency is an `Err` unless `reprovision` (operator-acknowledged
 /// re-anchor) resolves it.
-pub fn guard_with(
+pub fn guard_with_recv(
     t: &dyn NvTransport,
     key: &[u8; 32],
     state_path: &str,
     send_seq: u64,
+    recv_hwm: u64,
     state_fresh: bool,
     reprovision: bool,
 ) -> Result<(), String> {
     let nv = counter_value(t)?;
-    let sc = sidecar_last(key, state_path);
+    let sc = sidecar_last_record(key, state_path);
     let verdict: Result<(), String> = match (&nv, &sc) {
         (None, Ok(None)) => Ok(()),
         (None, Ok(Some(_))) => Err(
@@ -424,14 +437,14 @@ pub fn guard_with(
             "checkpoint sidecar (.nvck) missing while the TPM NV counter is live — restore it or re-provision"
                 .to_string(),
         ),
-        (Some(v), Ok(Some((g, seq)))) => {
-            let (v, g, seq) = (*v, *g, *seq);
+        (Some(v), Ok(Some(rec))) => {
+            let (v, g, seq, hwm) = (*v, rec.gen, rec.send_seq, rec.recv_hwm);
             if g == v {
-                chain_ok(state_fresh, send_seq, seq)
+                chain_ok_recv(state_fresh, send_seq, seq, recv_hwm, hwm)
             } else if v.checked_add(1) == Some(g) {
                 // Crash between sidecar append and nvincrement: finish it.
                 match t.increment() {
-                    Ok(nv2) if nv2 == g => chain_ok(state_fresh, send_seq, seq),
+                    Ok(nv2) if nv2 == g => chain_ok_recv(state_fresh, send_seq, seq, recv_hwm, hwm),
                     Ok(nv2) => Err(format!(
                         "TPM NV counter {nv2} does not match pending checkpoint {g}"
                     )),
@@ -453,7 +466,7 @@ pub fn guard_with(
     };
     match verdict {
         Ok(()) => Ok(()),
-        Err(_) if reprovision => reanchor(t, key, state_path, send_seq, nv),
+        Err(_) if reprovision => reanchor_recv(t, key, state_path, send_seq, recv_hwm, nv),
         Err(msg) => Err(format!(
             "{msg}; refusing (fail-closed). Set P2P_TPM_NV_REPROVISION=1 to explicitly \
              re-anchor this chain after operator verification."
@@ -461,7 +474,27 @@ pub fn guard_with(
     }
 }
 
-fn chain_ok(state_fresh: bool, send_seq: u64, sidecar_seq: u64) -> Result<(), String> {
+/// Policy guard against an explicit transport. Fail-closed: every
+/// inconsistency is an `Err` unless `reprovision` (operator-acknowledged
+/// re-anchor) resolves it.
+pub fn guard_with(
+    t: &dyn NvTransport,
+    key: &[u8; 32],
+    state_path: &str,
+    send_seq: u64,
+    state_fresh: bool,
+    reprovision: bool,
+) -> Result<(), String> {
+    guard_with_recv(t, key, state_path, send_seq, 0, state_fresh, reprovision)
+}
+
+fn chain_ok_recv(
+    state_fresh: bool,
+    send_seq: u64,
+    sidecar_seq: u64,
+    recv_hwm: u64,
+    sidecar_hwm: u64,
+) -> Result<(), String> {
     if state_fresh {
         Err(
             "state file was recreated while an NV checkpoint chain is active — restore the state file or re-provision"
@@ -471,9 +504,18 @@ fn chain_ok(state_fresh: bool, send_seq: u64, sidecar_seq: u64) -> Result<(), St
         Err(format!(
             "state rollback: send_seq {send_seq} is behind NV checkpoint {sidecar_seq}"
         ))
+    } else if recv_hwm < sidecar_hwm {
+        Err(format!(
+            "state rollback: recv_hwm {recv_hwm} is behind NV checkpoint {sidecar_hwm}"
+        ))
     } else {
         Ok(())
     }
+}
+
+#[allow(dead_code)]
+fn chain_ok(state_fresh: bool, send_seq: u64, sidecar_seq: u64) -> Result<(), String> {
+    chain_ok_recv(state_fresh, send_seq, sidecar_seq, 0, 0)
 }
 
 /// Append-then-increment checkpoint. See module docs for the crash window.
@@ -527,13 +569,14 @@ pub fn checkpoint_with_recv(
 }
 
 /// Operator-acknowledged re-anchor (`P2P_TPM_NV_REPROVISION=1`): re-establish
-/// the sidecar at the live counter value (or a freshly initialized one) and
-/// the current `send_seq`.
-fn reanchor(
+/// the sidecar at the live counter value (or a freshly initialized one),
+/// the current `send_seq`, and `recv_hwm`.
+fn reanchor_recv(
     t: &dyn NvTransport,
     key: &[u8; 32],
     state_path: &str,
     send_seq: u64,
+    recv_hwm: u64,
     nv: Option<u64>,
 ) -> Result<(), String> {
     let v = match nv {
@@ -550,7 +593,18 @@ fn reanchor(
             })?
         }
     };
-    sidecar_append(key, state_path, v, send_seq)
+    sidecar_append_recv(key, state_path, v, send_seq, recv_hwm)
+}
+
+#[allow(dead_code)]
+fn reanchor(
+    t: &dyn NvTransport,
+    key: &[u8; 32],
+    state_path: &str,
+    send_seq: u64,
+    nv: Option<u64>,
+) -> Result<(), String> {
+    reanchor_recv(t, key, state_path, send_seq, 0, nv)
 }
 
 /// `Some(v)` once the counter chain is live, `None` when not started.
@@ -624,6 +678,7 @@ fn hex_decode32(s: &str) -> Option<[u8; 32]> {
 
 /// Append one authenticated checkpoint line and sync (O_APPEND is atomic
 /// for small writes; mirrors `seq_journal_append`).
+#[allow(dead_code)]
 fn sidecar_append(key: &[u8; 32], state_path: &str, gen: u64, send_seq: u64) -> Result<(), String> {
     sidecar_append_recv(key, state_path, gen, send_seq, 0)
 }
@@ -740,6 +795,7 @@ pub fn sidecar_last_record(
 
 /// Last authenticated sidecar line. `Ok(None)` = no sidecar; corruption or
 /// a bad tag is `Err` (fail-closed; only the last line is load-bearing).
+#[allow(dead_code)]
 fn sidecar_last(key: &[u8; 32], state_path: &str) -> Result<Option<(u64, u64)>, String> {
     sidecar_last_record(key, state_path).map(|opt| opt.map(|r| (r.gen, r.send_seq)))
 }
@@ -1420,6 +1476,18 @@ mod tests {
         let e = guard_with(&t, &KEY, &path, 50, false, false).unwrap_err();
         assert!(e.contains("behind NV checkpoint"), "{e}");
         assert!(e.contains("REPROVISION"), "{e}");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn recv_hwm_rollback_refused() {
+        let path = tmp_path("rollback_recv");
+        let t = FakeNv::new();
+        checkpoint_with_recv(&t, &KEY, &path, 100, 200).unwrap();
+        let e = guard_with_recv(&t, &KEY, &path, 100, 150, false, false).unwrap_err();
+        assert!(e.contains("recv_hwm 150 is behind NV checkpoint 200"), "{e}");
+        assert!(e.contains("REPROVISION"), "{e}");
+        guard_with_recv(&t, &KEY, &path, 100, 250, false, false).unwrap();
         cleanup(&path);
     }
 

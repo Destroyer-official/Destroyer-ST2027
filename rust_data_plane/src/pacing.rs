@@ -142,13 +142,15 @@ pub fn sample_poisson_interval(
 ) -> Duration {
     let mut buf = [0u8; 8];
     if getrandom::fill(&mut buf).is_err() {
+        // CSPRNG failure: fallback to clamped mean interval (fail-safe)
         let mean_secs = if rate_lambda > 0.001 { 1.0 / rate_lambda } else { 0.05 };
         return Duration::from_secs_f64(mean_secs).clamp(min_delay, max_delay);
     }
-    let val = u64::from_le_bytes(buf);
-    let u = (val as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+    // 53-bit uniform precision to preserve IEEE 754 significand fidelity (P2-04)
+    let val53 = (u64::from_le_bytes(buf) >> 11) + 1;
+    let u = (val53 as f64) / 9007199254740993.0; // Strictly in (0.0, 1.0)
     let lambda = if rate_lambda > 0.001 { rate_lambda } else { 20.0 };
-    let interval_secs = -(1.0 - u).ln() / lambda;
+    let interval_secs = -u.ln() / lambda;
     Duration::from_secs_f64(interval_secs).clamp(min_delay, max_delay)
 }
 
@@ -179,6 +181,7 @@ impl PoissonScheduler {
     }
 
     /// Block until the next Poisson-scheduled tick.
+    /// Eliminates catch-up bursts if clock slipped (P2-02).
     pub fn wait_next_tick(&mut self) {
         let now = Instant::now();
         if self.next_tick > now {
@@ -188,7 +191,7 @@ impl PoissonScheduler {
         let next_interval =
             sample_poisson_interval(self.rate_lambda, self.min_interval, self.max_interval);
         let after = Instant::now();
-        if after > self.next_tick + self.max_interval {
+        if after >= self.next_tick {
             self.next_tick = after + next_interval;
         } else {
             self.next_tick += next_interval;

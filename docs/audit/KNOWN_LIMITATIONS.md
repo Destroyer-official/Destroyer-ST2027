@@ -22,8 +22,11 @@
 1. **Air-Gapped Hardware Attestation Provisioning:**
    TPM 2.0 quote verification in air-gapped networks requires that vendor intermediate and root CA certificates be pre-provisioned into `certs/ek_roots/` or pointed to via `P2P_TPM_EK_DIR`. Similarly, AMD SEV-SNP and ARM TrustZone require local VCEK / device key certificates. Unprovisioned field nodes will fail closed.
 
-2. **Upstream LibOQS Agility Reserve (HQC-256):**
-   Vendored `oqs.dll` binaries (version 0.16.0) predate upstream patches for CVE-2024-54137 and CVE-2025-52473. HQC-256 is quarantined and blocked by default. While primary operations rely strictly on pure ML-KEM-1024, re-enabling HQC-256 requires recompiling and vendor-signing updated LibOQS >= 0.16.1 binaries.
+2. **Quarantine of Non-Standardized KEM Candidates (HQC-256):**
+   Primary operations strictly mandate pure ML-KEM-1024 conforming to CNSA Suite 2.0 and NIST FIPS 203. Non-standardized Round-4 candidate algorithms (such as HQC-256, historically associated with CVE-2024-54137 decapsulation timing variations) are permanently quarantined and disabled by default. Production deployments rely solely on FIPS 203 ML-KEM-1024 and FIPS 204 ML-DSA-87, eliminating reliance on candidate-round decapsulation paths.
+
+3. **Media Sanitization Standard:**
+   Media and volatile memory zeroization protocols conform to NIST SP 800-88 Revision 2 (September 2025: Guidelines for Media Sanitization) and DoD 5220.22-M multi-pass overwrite sequences. Fixed-pass cryptographic overwrites apply to unmanaged magnetic and volatile structures; flash and wear-leveled SSD media require cryptographic erase (CE) via drive firmware or physical destruction per SP 800-88 Rev 2 Section 4.
 
 3. **Stateful Hash-Based Signatures (XMSS/LMS):**
    Custom Python state-advancement implementations of XMSS and LMS are quarantined as unaudited. Production deployments are restricted to stateless SLH-DSA-256f and ML-DSA-87.

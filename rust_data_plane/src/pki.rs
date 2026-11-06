@@ -40,31 +40,28 @@ pub const MAX_LIFETIME: u64 = 48 * 3600;
 /// Future-skew tolerance, seconds.
 pub const MAX_SKEW_FUTURE: f64 = 5.0;
 
-/// Normalize an identifier: alphanumerics + `-`/`_`, max 64 chars.
-/// Mirrors `trust_anchor._norm_ident`.
+/// Normalize an identifier: alphanumerics + `-`/`_`/`:`/`.`, max 64 chars.
+/// Strictly validates characters to prevent identity collision (P1-01).
 pub fn norm_ident(value: &str) -> Result<String, CoreError> {
-    let norm: String = value
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .take(64)
-        .collect();
-    if norm.is_empty() {
+    if value.is_empty() || value.len() > 64 {
         return Err(CoreError::Malformed);
     }
-    Ok(norm)
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':' || c == '.') {
+        return Err(CoreError::Malformed);
+    }
+    Ok(value.to_string())
 }
 
 /// Normalize a revocation reason: alphanumerics + `-`/`_`, max 32 chars.
+/// Strictly validates characters (P1-01).
 pub fn norm_reason(value: &str) -> Result<String, CoreError> {
-    let norm: String = value
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .take(32)
-        .collect();
-    if norm.is_empty() {
+    if value.is_empty() || value.len() > 32 {
         return Err(CoreError::Malformed);
     }
-    Ok(norm)
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(CoreError::Malformed);
+    }
+    Ok(value.to_string())
 }
 
 /// Canonical certificate TBS bytes (identical to `trust_anchor.tbs_bytes`).
@@ -263,64 +260,38 @@ impl RevocationCache {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustodianEntry {
+    label: String,
+    mldsa_pk: String,
+}
+
 /// Load enrolled 3-of-5 Root CA custodians from a JSON string or file.
 /// Expected format: `[{"label": "custodian-0", "mldsa_pk": "<hex 2592 bytes>"}, ...]`
+/// Strictly enforces schema, no unknown fields, exactly 5 custodians, and unique labels (P1-02).
 pub fn parse_custodians_json(raw: &str) -> Result<Vec<Custodian>, CoreError> {
-    let mut out = Vec::new();
-    let trimmed = raw.trim();
-    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+    let entries: Vec<CustodianEntry> = serde_json::from_str(raw).map_err(|_| CoreError::Malformed)?;
+    if entries.len() != TOTAL {
         return Err(CoreError::Malformed);
     }
-    for block in trimmed.split('{').skip(1) {
-        if let Some(end) = block.find('}') {
-            let obj = &block[..end];
-            let label = if let Some(l_idx) = obj.find("\"label\"") {
-                let rest = &obj[l_idx + 7..];
-                if let Some(start_q) = rest.find('"') {
-                    let after_q = &rest[start_q + 1..];
-                    if let Some(end_q) = after_q.find('"') {
-                        &after_q[..end_q]
-                    } else {
-                        return Err(CoreError::Malformed);
-                    }
-                } else {
-                    return Err(CoreError::Malformed);
-                }
-            } else {
-                return Err(CoreError::Malformed);
-            };
-
-            let pk_hex = if let Some(pk_idx) = obj.find("\"mldsa_pk\"") {
-                let rest = &obj[pk_idx + 10..];
-                if let Some(start_q) = rest.find('"') {
-                    let after_q = &rest[start_q + 1..];
-                    if let Some(end_q) = after_q.find('"') {
-                        &after_q[..end_q]
-                    } else {
-                        return Err(CoreError::Malformed);
-                    }
-                } else {
-                    return Err(CoreError::Malformed);
-                }
-            } else {
-                return Err(CoreError::Malformed);
-            };
-
-            if pk_hex.len() != MLDSA87_PK * 2 {
-                return Err(CoreError::Malformed);
-            }
-            let mut pk_bytes = Vec::with_capacity(MLDSA87_PK);
-            for i in 0..MLDSA87_PK {
-                let byte = u8::from_str_radix(&pk_hex[i * 2..i * 2 + 2], 16)
-                    .map_err(|_| CoreError::Malformed)?;
-                pk_bytes.push(byte);
-            }
-
-            out.push(Custodian::new(label, pk_bytes)?);
+    let mut seen = HashSet::with_capacity(TOTAL);
+    let mut out = Vec::with_capacity(TOTAL);
+    for entry in entries {
+        if !seen.insert(entry.label.clone()) {
+            return Err(CoreError::Malformed);
         }
-    }
-    if out.len() != TOTAL {
-        return Err(CoreError::Malformed);
+        let pk_hex = entry.mldsa_pk.trim();
+        if pk_hex.len() != MLDSA87_PK * 2 {
+            return Err(CoreError::Malformed);
+        }
+        let mut pk_bytes = Vec::with_capacity(MLDSA87_PK);
+        for i in 0..MLDSA87_PK {
+            let byte = u8::from_str_radix(&pk_hex[i * 2..i * 2 + 2], 16)
+                .map_err(|_| CoreError::Malformed)?;
+            pk_bytes.push(byte);
+        }
+        out.push(Custodian::new(&entry.label, pk_bytes)?);
     }
     Ok(out)
 }
@@ -350,6 +321,10 @@ pub fn load_custodians_from_file_or_env(
 mod tests {
     use super::*;
     use crate::auth::Mldsa87SigningKey;
+
+    fn hex_encode(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
 
     struct CA {
         labels: Vec<String>,
@@ -524,8 +499,63 @@ mod tests {
         assert_eq!(&b[26..28], b"ab");
         assert_eq!(&b[b.len() - 16..b.len() - 8], &7u64.to_be_bytes());
         assert_eq!(&b[b.len() - 8..], &9u64.to_be_bytes());
-        // Identifier normalization mirrors the reference (strip + cap).
-        assert_eq!(norm_ident("a/b?c"), Ok("abc".to_string()));
+        // Identifier normalization strictly validates characters (P1-01).
+        assert!(norm_ident("a/b?c").is_err());
+        assert_eq!(norm_ident("alpha-node_01"), Ok("alpha-node_01".to_string()));
         assert!(norm_ident("///").is_err());
+        assert!(norm_reason("bad reason!").is_err());
+        assert_eq!(norm_reason("key-compromise"), Ok("key-compromise".to_string()));
+    }
+
+    #[test]
+    fn parse_custodians_json_strictly_validates() {
+        let ca = test_ca();
+        // Honest 5-custodian JSON
+        let honest_json = format!(
+            "[{}]",
+            ca.custodians
+                .iter()
+                .map(|c| format!(
+                    "{{\"label\":\"{}\",\"mldsa_pk\":\"{}\"}}",
+                    c.label,
+                    hex_encode(&c.mldsa_pk)
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let parsed = parse_custodians_json(&honest_json).unwrap();
+        assert_eq!(parsed.len(), 5);
+
+        // Unknown fields rejected (deny_unknown_fields)
+        let unknown_field_json = format!(
+            "[{{\"label\":\"{}\",\"mldsa_pk\":\"{}\",\"extra_field\":true}}]",
+            ca.custodians[0].label,
+            hex_encode(&ca.custodians[0].mldsa_pk)
+        );
+        assert_eq!(parse_custodians_json(&unknown_field_json).unwrap_err(), CoreError::Malformed);
+
+        // Less than 5 custodians rejected
+        let four_custs_json = format!(
+            "[{}]",
+            ca.custodians[..4]
+                .iter()
+                .map(|c| format!(
+                    "{{\"label\":\"{}\",\"mldsa_pk\":\"{}\"}}",
+                    c.label,
+                    hex_encode(&c.mldsa_pk)
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert_eq!(parse_custodians_json(&four_custs_json).unwrap_err(), CoreError::Malformed);
+
+        // Duplicate label rejected
+        let e0 = format!("{{\"label\":\"dup\",\"mldsa_pk\":\"{}\"}}", hex_encode(&ca.custodians[0].mldsa_pk));
+        let e1 = format!("{{\"label\":\"dup\",\"mldsa_pk\":\"{}\"}}", hex_encode(&ca.custodians[1].mldsa_pk));
+        let e2 = format!("{{\"label\":\"c2\",\"mldsa_pk\":\"{}\"}}", hex_encode(&ca.custodians[2].mldsa_pk));
+        let e3 = format!("{{\"label\":\"c3\",\"mldsa_pk\":\"{}\"}}", hex_encode(&ca.custodians[3].mldsa_pk));
+        let e4 = format!("{{\"label\":\"c4\",\"mldsa_pk\":\"{}\"}}", hex_encode(&ca.custodians[4].mldsa_pk));
+        let dup_label_json = format!("[{e0},{e1},{e2},{e3},{e4}]");
+        assert_eq!(parse_custodians_json(&dup_label_json).unwrap_err(), CoreError::Malformed);
     }
 }

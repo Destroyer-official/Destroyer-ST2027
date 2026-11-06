@@ -134,7 +134,8 @@ impl Endpoint {
         Some(Ok((buf[..n].to_vec(), from)))
     }
 
-    /// Receive one datagram without rate limiting (used for authenticated, dedicated point-to-point enclaves)
+    /// Receive one datagram without rate limiting (gated to lab/test surfaces; dedicated enclaves)
+    #[cfg(any(test, feature = "lab-surfaces"))]
     pub async fn recv_unthrottled(
         &mut self,
         wait: Duration,
@@ -413,7 +414,12 @@ impl ActiveTransmissionLoop {
         let Some(res) = self.endpoint.recv_raw(wait).await else {
             return Ok(None);
         };
-        let (bytes, _from) = res.map_err(|_| CoreError::Malformed)?;
+        let (bytes, from_addr) = res.map_err(|_| CoreError::Malformed)?;
+        // Enforce source address binding: drop packets from non-peer addresses (P1-03 / P2-06)
+        if from_addr != self.peer_addr {
+            self.endpoint.note_auth_drop();
+            return Ok(None);
+        }
         if bytes.len() != self.quantum {
             self.endpoint.note_auth_drop();
             return Ok(None);

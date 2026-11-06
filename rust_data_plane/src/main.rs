@@ -645,7 +645,7 @@ fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -
     let jpath = seq_journal_path(path);
     let mut f = open_locked_state(path);
     let mut st = read_state_locked(&mut f, key, key_id);
-    tpm_nv::guard(path, key, st.send_seq, state_fresh).unwrap_or_else(|e| fail(&e));
+    tpm_nv::guard_recv(path, key, st.send_seq, st.recv_last, state_fresh).unwrap_or_else(|e| fail(&e));
     let journal_hw = seq_journal_high_water(&jpath);
     if st.send_seq < journal_hw {
         fail(
@@ -672,7 +672,7 @@ fn reserve_send_seq(path: &str, key: &[u8; 32], key_id: &[u8; 16], count: u64) -
     // a crash before it leaves the NV chain one checkpoint behind, which the
     // next guard tolerates (state >= sidecar seq) and the next checkpoint
     // catches up.
-    tpm_nv::checkpoint(path, key, end).unwrap_or_else(|e| fail(&e));
+    tpm_nv::checkpoint_recv(path, key, end, st.recv_last).unwrap_or_else(|e| fail(&e));
     // Unlock via drop.
     start
 }
@@ -681,7 +681,7 @@ fn load_recv_window(path: &str, key: &[u8; 32], key_id: &[u8; 16]) -> (File, Ant
     let state_fresh = tpm_nv::state_is_fresh(path);
     let mut f = open_locked_state(path);
     let st = read_state_locked(&mut f, key, key_id);
-    tpm_nv::guard(path, key, st.send_seq, state_fresh).unwrap_or_else(|e| fail(&e));
+    tpm_nv::guard_recv(path, key, st.send_seq, st.recv_last, state_fresh).unwrap_or_else(|e| fail(&e));
     let w = AntiReplayWindow::from_parts(st.recv_last, st.recv_bitmap);
     (f, w)
 }
@@ -2073,7 +2073,7 @@ fn cmd_channel(args: &[String]) {
     let state_fresh = tpm_nv::state_is_fresh(&state);
     let mut state_file = open_locked_state(&state);
     let initial_st = read_state_locked(&mut state_file, &key_bytes, &key_id);
-    tpm_nv::guard(&state, &key_bytes, initial_st.send_seq, state_fresh)
+    tpm_nv::guard_recv(&state, &key_bytes, initial_st.send_seq, initial_st.recv_last, state_fresh)
         .unwrap_or_else(|e| fail(&e));
     let mut next_send_seq = initial_st.send_seq;
     let mut window = AntiReplayWindow::from_parts(initial_st.recv_last, initial_st.recv_bitmap);
@@ -2084,7 +2084,11 @@ fn cmd_channel(args: &[String]) {
     let mut st = read_state_locked(&mut state_file, &key_bytes, &key_id);
     st.send_seq = reserved_limit;
     write_state_locked(&mut state_file, &st, &key_bytes);
-    tpm_nv::checkpoint(&state, &key_bytes, reserved_limit).unwrap_or_else(|e| fail(&e));
+    tpm_nv::checkpoint_recv(&state, &key_bytes, reserved_limit, initial_st.recv_last).unwrap_or_else(|e| fail(&e));
+
+    let zt_peer_id = format!("{:?}", to);
+    let zt_engine = ZeroTrustEngine::new(50);
+    zt_engine.register_peer(&zt_peer_id, SecurityRole::Operator);
 
     let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
     for m in &msgs {
@@ -2241,7 +2245,8 @@ fn cmd_channel(args: &[String]) {
                     if next_send_seq >= reserved_limit {
                         // Persisted send_seq is still the previous limit here
                         // (fresh=false): guard the chain before moving it up.
-                        tpm_nv::guard(&state, &key_bytes, reserved_limit, false)
+                        let (last_check, _) = window.parts();
+                        tpm_nv::guard_recv(&state, &key_bytes, reserved_limit, last_check, false)
                             .unwrap_or_else(|e| fail(&e));
                         reserved_limit = next_send_seq
                             .checked_add(512)
@@ -2254,7 +2259,7 @@ fn cmd_channel(args: &[String]) {
                             recv_bitmap: bitmap,
                         };
                         write_state_locked(&mut state_file, &st, &key_bytes);
-                        tpm_nv::checkpoint(&state, &key_bytes, reserved_limit)
+                        tpm_nv::checkpoint_recv(&state, &key_bytes, reserved_limit, last)
                             .unwrap_or_else(|e| fail(&e));
                     }
 
@@ -2360,6 +2365,11 @@ fn cmd_channel(args: &[String]) {
 
                         window.mark(seq2);
                         if ftype == FTYPE_MSG {
+                            if let Err(e) = zt_engine.evaluate_ingress(&zt_peer_id, &pt, true) {
+                                ep.note_auth_drop();
+                                println!("channel: ZERO_TRUST_INGRESS_DROP seq={seq2} {e:?}");
+                                continue;
+                            }
                             msgs_received += 1;
                             let text = String::from_utf8_lossy(&pt);
                             println!("channel: RECV_MSG seq={seq2} bytes={} payload={text}", pt.len());
@@ -2639,7 +2649,7 @@ fn cmd_channel(args: &[String]) {
         // Final write gives unused reservations back (send_seq may drop to
         // the consumed value): re-anchor the NV chain so the next guard
         // sees sidecar == state instead of a false rollback.
-        tpm_nv::checkpoint(&state, &key_bytes, next_send_seq)
+        tpm_nv::checkpoint_recv(&state, &key_bytes, next_send_seq, last)
             .unwrap_or_else(|e| fail(&e));
 
         println!(
@@ -2707,7 +2717,7 @@ fn cmd_terminal(args: &[String]) {
     let state_fresh = tpm_nv::state_is_fresh(&state);
     let mut term_state_file: Option<std::fs::File> = Some(open_locked_state(&state));
     let initial_st = read_state_locked(term_state_file.as_mut().unwrap(), &key_bytes, &key_id);
-    tpm_nv::guard(&state, &key_bytes, initial_st.send_seq, state_fresh)
+    tpm_nv::guard_recv(&state, &key_bytes, initial_st.send_seq, initial_st.recv_last, state_fresh)
         .unwrap_or_else(|e| fail(&e));
     let mut next_send_seq = initial_st.send_seq;
     let mut window = AntiReplayWindow::from_parts(initial_st.recv_last, initial_st.recv_bitmap);
@@ -2718,7 +2728,11 @@ fn cmd_terminal(args: &[String]) {
     let mut st = read_state_locked(term_state_file.as_mut().unwrap(), &key_bytes, &key_id);
     st.send_seq = reserved_limit;
     write_state_locked(term_state_file.as_mut().unwrap(), &st, &key_bytes);
-    tpm_nv::checkpoint(&state, &key_bytes, reserved_limit).unwrap_or_else(|e| fail(&e));
+    tpm_nv::checkpoint_recv(&state, &key_bytes, reserved_limit, initial_st.recv_last).unwrap_or_else(|e| fail(&e));
+
+    let zt_peer_id = format!("{:?}", to);
+    let zt_engine = ZeroTrustEngine::new(50);
+    zt_engine.register_peer(&zt_peer_id, SecurityRole::Operator);
 
     let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
     let mut i = 0;
@@ -2880,7 +2894,8 @@ fn cmd_terminal(args: &[String]) {
                 }
                 _ = tick_timer.tick() => {
                     if next_send_seq >= reserved_limit {
-                        tpm_nv::guard(&state, &key_bytes, reserved_limit, false)
+                        let (last_check, _) = window.parts();
+                        tpm_nv::guard_recv(&state, &key_bytes, reserved_limit, last_check, false)
                             .unwrap_or_else(|e| fail(&e));
                         reserved_limit = next_send_seq
                             .checked_add(512)
@@ -2895,7 +2910,7 @@ fn cmd_terminal(args: &[String]) {
                         if let Some(ref mut sf) = term_state_file {
                             write_state_locked(sf, &st, &key_bytes);
                         }
-                        tpm_nv::checkpoint(&state, &key_bytes, reserved_limit)
+                        tpm_nv::checkpoint_recv(&state, &key_bytes, reserved_limit, last)
                             .unwrap_or_else(|e| fail(&e));
                     }
 
@@ -2961,6 +2976,11 @@ fn cmd_terminal(args: &[String]) {
                         }
                         window.mark(seq2);
                         if ftype == FTYPE_MSG {
+                            if let Err(e) = zt_engine.evaluate_ingress(&zt_peer_id, &pt, true) {
+                                ep.note_auth_drop();
+                                println!("channel: ZERO_TRUST_INGRESS_DROP seq={seq2} {e:?}");
+                                continue;
+                            }
                             msgs_received += 1;
                             let text = String::from_utf8_lossy(&pt);
                             println!("[INCOMING] {text}");
@@ -2993,7 +3013,7 @@ fn cmd_terminal(args: &[String]) {
             write_state_locked(sf, &st, &key_bytes);
         }
         drop(term_state_file.take());
-        tpm_nv::checkpoint(&state, &key_bytes, next_send_seq)
+        tpm_nv::checkpoint_recv(&state, &key_bytes, next_send_seq, last)
             .unwrap_or_else(|e| fail(&e));
 
         println!(

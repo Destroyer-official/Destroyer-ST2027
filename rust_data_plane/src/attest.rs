@@ -49,11 +49,16 @@ impl TrustAnchorStore {
 
     /// Enroll (or re-enroll) a device pin. `kid` is normalized to
     /// alphanumerics/`-`/`_`, max 64 chars (mirrors `trust_anchor.py`).
+    /// Refuses overwrite if public key differs from existing enrollment.
     pub fn enroll(&mut self, kid: &str, pub_bytes: Vec<u8>) -> Result<(), CoreError> {
         let norm = normalize_kid(kid)?;
         // Validate the pin parses as ML-DSA-87 (fail-closed on garbage).
-        let vk = Mldsa87VerifyingKey::from_bytes(&pub_bytes)?;
-        let _ = vk;
+        let _vk = Mldsa87VerifyingKey::from_bytes(&pub_bytes)?;
+        if let Some(existing) = self.devices.get(&norm) {
+            if !ct_eq(&existing.pub_bytes, &pub_bytes) {
+                return Err(CoreError::KeyMismatch);
+            }
+        }
         self.devices.insert(norm, EnrolledDevice { pub_bytes });
         Ok(())
     }
@@ -64,7 +69,31 @@ impl TrustAnchorStore {
     }
 }
 
-/// Evidence envelope submitted by the attester (parsed, untrusted).
+/// Untrusted evidence envelope submitted by the attester (parsed wire claims).
+pub struct UntrustedEvidence<'a> {
+    /// Key identifier (claimed; must be enrolled).
+    pub kid: &'a str,
+    /// Supplied public key bytes (attacker-controlled; must match enrollment).
+    pub pub_bytes: &'a [u8],
+    /// Signature over `message` (domain-separated by caller).
+    pub sig: &'a [u8],
+    /// Signed message (canonical posture binding; caller-constructed).
+    pub message: &'a [u8],
+    /// Challenge nonce claimed by attester (must equal verifier's expected_nonce).
+    pub nonce: &'a [u8],
+    /// Evidence timestamp claimed by attester, seconds since UNIX epoch.
+    pub ts: f64,
+}
+
+/// Verifier evaluation context and challenge state.
+pub struct VerifierChallenge<'a> {
+    /// Expected challenge nonce (constant-time compared).
+    pub expected_nonce: &'a [u8],
+    /// Verification time, seconds since UNIX epoch (`None` = now).
+    pub now: Option<f64>,
+}
+
+/// Composite evidence struct for API convenience / backward-compatibility.
 pub struct Evidence<'a> {
     /// Key identifier (claimed; must be enrolled).
     pub kid: &'a str,
@@ -82,6 +111,26 @@ pub struct Evidence<'a> {
     pub ts: f64,
     /// Verification time, seconds since UNIX epoch (`None` = now).
     pub now: Option<f64>,
+}
+
+impl<'a> Evidence<'a> {
+    /// Split composite evidence into untrusted attester evidence and verifier challenge state.
+    pub fn split(&self) -> (UntrustedEvidence<'a>, VerifierChallenge<'a>) {
+        (
+            UntrustedEvidence {
+                kid: self.kid,
+                pub_bytes: self.pub_bytes,
+                sig: self.sig,
+                message: self.message,
+                nonce: self.nonce,
+                ts: self.ts,
+            },
+            VerifierChallenge {
+                expected_nonce: self.expected_nonce,
+                now: self.now,
+            },
+        )
+    }
 }
 
 /// Posture claim evaluated by policy (booleans from the attester).
@@ -107,12 +156,11 @@ pub fn evaluate_policy(p: &Posture) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Appraise evidence: enrollment bind → freshness → nonce → signature.
-/// Order matters: identity and freshness are checked BEFORE signature
-/// verification so unauthenticated inputs cannot become oracles.
-pub fn appraise(
+/// Appraise evidence using distinct untrusted evidence and verifier challenge structs.
+pub fn appraise_untrusted(
     store: &TrustAnchorStore,
-    ev: &Evidence<'_>,
+    ev: &UntrustedEvidence<'_>,
+    challenge: &VerifierChallenge<'_>,
     verifier: &Mldsa87VerifyingKey,
     _domain: &[u8],
 ) -> Result<(), CoreError> {
@@ -130,15 +178,15 @@ pub fn appraise(
         return Err(CoreError::KeyMismatch);
     }
     // 2. Freshness (absolute skew ≤ 300 s).
-    let now = ev.now.unwrap_or_else(now_secs);
+    let now = challenge.now.unwrap_or_else(now_secs);
     if (now - ev.ts).abs() > FRESHNESS_S {
         return Err(CoreError::Stale);
     }
     // 3. Nonce equality (constant-time; lengths are public).
-    if ev.nonce.len() != NONCE_LEN || ev.expected_nonce.len() != NONCE_LEN {
+    if ev.nonce.len() != NONCE_LEN || challenge.expected_nonce.len() != NONCE_LEN {
         return Err(CoreError::NonceMismatch);
     }
-    if !ct_eq(ev.nonce, ev.expected_nonce) {
+    if !ct_eq(ev.nonce, challenge.expected_nonce) {
         return Err(CoreError::NonceMismatch);
     }
     // 4. Signature over the caller-constructed message.
@@ -146,18 +194,27 @@ pub fn appraise(
     Ok(())
 }
 
+/// Appraise evidence: enrollment bind → freshness → nonce → signature.
+/// Order matters: identity and freshness are checked BEFORE signature
+/// verification so unauthenticated inputs cannot become oracles.
+pub fn appraise(
+    store: &TrustAnchorStore,
+    ev: &Evidence<'_>,
+    verifier: &Mldsa87VerifyingKey,
+    domain: &[u8],
+) -> Result<(), CoreError> {
+    let (untrusted, challenge) = ev.split();
+    appraise_untrusted(store, &untrusted, &challenge, verifier, domain)
+}
+
 fn normalize_kid(kid: &str) -> Result<String, CoreError> {
     if kid.is_empty() || kid.len() > 64 {
         return Err(CoreError::Malformed);
     }
-    let norm: String = kid
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    if norm.is_empty() || norm.len() > 64 {
+    if !kid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err(CoreError::Malformed);
     }
-    Ok(norm)
+    Ok(kid.to_string())
 }
 
 fn now_secs() -> f64 {
@@ -268,5 +325,58 @@ mod tests {
             appraise(&store, &ev4, &vk, domain).unwrap_err(),
             CoreError::NonceMismatch
         );
+    }
+
+    #[test]
+    fn enroll_duplicate_key_overwrite_refused() {
+        let (mut store, vk, _sk) = enrolled_pair("DEV-01");
+        // Re-enrolling exact same key succeeds (idempotent)
+        assert!(store.enroll("DEV-01", vk.to_bytes()).is_ok());
+
+        // Attempting to overwrite DEV-01 with a new key is strictly refused
+        let (_sk2, vk2) = Mldsa87SigningKey::generate().unwrap();
+        assert_eq!(
+            store.enroll("DEV-01", vk2.to_bytes()).unwrap_err(),
+            CoreError::KeyMismatch
+        );
+    }
+
+    #[test]
+    fn strict_kid_validation_rejects_malformed() {
+        assert!(normalize_kid("valid-node_123").is_ok());
+        assert_eq!(normalize_kid("valid-node_123").unwrap(), "valid-node_123");
+
+        // Disallowed special chars must be rejected, NOT silently stripped
+        assert_eq!(normalize_kid("node#1").unwrap_err(), CoreError::Malformed);
+        assert_eq!(normalize_kid("node 1").unwrap_err(), CoreError::Malformed);
+        assert_eq!(normalize_kid("node/alpha").unwrap_err(), CoreError::Malformed);
+        assert_eq!(normalize_kid("").unwrap_err(), CoreError::Malformed);
+        assert_eq!(
+            normalize_kid(&"a".repeat(65)).unwrap_err(),
+            CoreError::Malformed
+        );
+    }
+
+    #[test]
+    fn appraise_untrusted_direct_invocation() {
+        let (store, vk, sk) = enrolled_pair("DEV-02");
+        let msg = b"posture-untrusted-split";
+        let domain = b"ST2027-ATTEST-v1";
+        let sig = sk.sign(domain, msg);
+        let nonce = [0x55u8; 32];
+
+        let untrusted = UntrustedEvidence {
+            kid: "DEV-02",
+            pub_bytes: &vk.to_bytes(),
+            sig: &sig,
+            message: msg,
+            nonce: &nonce,
+            ts: now_secs(),
+        };
+        let challenge = VerifierChallenge {
+            expected_nonce: &nonce,
+            now: None,
+        };
+        assert!(appraise_untrusted(&store, &untrusted, &challenge, &vk, domain).is_ok());
     }
 }

@@ -121,8 +121,10 @@ _MAX_SKEW_FUTURE = 5.0
 
 
 def _norm_ident(value: str) -> str:
-    return "".join(
-        c for c in str(value or "") if c.isalnum() or c in ("-", "_"))[:64]
+    s = str(value or "")
+    if not s or len(s) > 64 or not all(c.isalnum() or c in ("-", "_", ":", ".") for c in s):
+        raise ValueError(f"Invalid identifier: {value!r} (must be 1-64 chars [a-zA-Z0-9_.:-])")
+    return s
 
 
 @dataclass
