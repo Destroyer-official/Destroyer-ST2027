@@ -1,6 +1,6 @@
 # Phase 0 - In-Scope File Inventory
 
-Scope is `git ls-files` at audit time: 719 tracked files. Untracked, ignored, build-output, cache, and secret files are excluded.
+Scope is `git ls-files` at audit baseline: 849 tracked files (481 Python, 151 Markdown, 48 JSON, 46 Rust, 30 Public Keys, 30 Signatures, 64 Configuration & Scripting artifacts across 61 directories). Untracked, ignored, build-output, cache, and secret files are excluded. Synchronized with `docs/current_audit_inventory.json`.
 
 Line counts are computed from the tracked bytes; a file without a trailing newline counts its final partial line. Purposes for source files are taken from the module docstring or leading comment, not inferred from the filename. Restricted or promotional terms inside quoted purposes are replaced with `[restricted-term]`; terms inside tracked file paths are left unchanged and cataloged in `discrepancies.md`.
 

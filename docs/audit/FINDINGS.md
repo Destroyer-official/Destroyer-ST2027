@@ -70,11 +70,30 @@
 ### FINDING-20261104-03: Pre-Existing Uncommitted Working Tree Modifications
 - **Classification:** Informational
 - **Category:** Workspace State
-- **Affected Files:**
-  - 37 tracked files modified (`secure_p2p.py`, `cnsa2_policy_engine.py`, `rust_data_plane/src/*.rs`, etc.)
-  - 17 untracked files (`test_real_uses_dual_terminal_ipv6.py`, `tests/test_military_five_pillars_operational.py`, etc.)
-- **Root Cause:**
-  Uncommitted development work from previous sessions.
-- **Protocol Action:**
-  Preserved untouched per the audit rules. Excluded from audit branch commits unless user explicitly authorizes committing them.
+- **Status:** Resolved / Reconciled on `main`
+
+---
+
+## 3. Forensic Technical Audit Remediation Register (Baseline 8e2f5fd -> Verified e2cfae7, 6 November 2026)
+
+| Finding ID | Severity | Description | Remediated In | Verification Status |
+|---|---|---|---|---|
+| **P0-01** | Block | Missing `Union` typing import in `tactical_web_console.py` causing pytest collection failure | `tactical_web_console.py:27` | **RESOLVED & VERIFIED** (26/26 tests passing) |
+| **P0-02** | Block | `default = ["lab-surfaces"]` compiling diagnostic commands into release builds | `rust_data_plane/Cargo.toml:18` | **RESOLVED & VERIFIED** (`default = []`, production binary clean) |
+| **P0-03** | Block | TPM anti-rollback failing to persist live receive high-water mark | `rust_data_plane/src/tpm_nv.rs`, `main.rs` | **RESOLVED & VERIFIED** (dual-monotonic `(send_seq, recv_hwm)` verified) |
+| **P0-04** | Block | Symlink vulnerability & non-atomic truncate write in key custody | `rust_data_plane/src/keystore.rs` | **RESOLVED & VERIFIED** (atomic tempfile rename, 0600 DACL verified) |
+| **P1-01** | High | Silent character stripping in identifier normalization | `pki.rs`, `attest.rs`, `trust_anchor.py` | **RESOLVED & VERIFIED** (strict validation `[a-zA-Z0-9_.:-]` enforced) |
+| **P1-02** | High | Manual string scanning in security-critical PKI custodian JSON parser | `rust_data_plane/src/pki.rs` | **RESOLVED & VERIFIED** (`serde_json` + `deny_unknown_fields` enforced) |
+| **P1-03** | High | Zero-Trust ingress evaluation inactive in primary receive path | `rust_data_plane/src/main.rs` | **RESOLVED & VERIFIED** (`ZeroTrustEngine` active in `cmd_channel`) |
+| **P1-04** | High | Untrusted attestation evidence merged with verifier challenge state | `rust_data_plane/src/attest.rs` | **RESOLVED & VERIFIED** (`UntrustedEvidence` / `VerifierChallenge` separated) |
+| **P1-05** | High | CAC/PIV certificate validation path without mandatory Defense Root CA | `tactical_web_console.py` | **RESOLVED & VERIFIED** (fail-closed Root CA path validation) |
+| **P1-06** | High | WebAuthn origin bypass, counter update before sig verify, overwrite | `tactical_web_console.py` | **RESOLVED & VERIFIED** (strict origin check, atomic counter update) |
+| **P1-07** | High | Stale `.sig` files and non-fail-closed receipt generation in CI | `scripts/verify_reproducible_build.py` | **RESOLVED & VERIFIED** (stale `.sig` unlinked, fail-closed on prod) |
+| **P1-08** | High | Unverified receipt signature in reproducible build script | `scripts/verify_reproducible_build.py` | **RESOLVED & VERIFIED** (cryptographic verification against anchor) |
+| **P2-01** | Medium | Unsafe RNG fallback in Poisson interval generator | `rust_data_plane/src/pacing.rs` | **RESOLVED & VERIFIED** (53-bit precision, fail-safe clamped fallback) |
+| **P2-02** | Medium | Catch-up bursts in Poisson scheduler on delayed tick | `rust_data_plane/src/pacing.rs` | **RESOLVED & VERIFIED** (`next_tick` resynced on late tick) |
+| **P2-05** | Medium | UDP source address unbound in `recv_packet`; `recv_unthrottled` exposed | `rust_data_plane/src/net.rs` | **RESOLVED & VERIFIED** (`from_addr == peer_addr`, unthrottled gated) |
+| **P3-07** | Low | Outdated NIST SP 800-88 Rev 1 citations | `docs/audit/KNOWN_LIMITATIONS.md` | **RESOLVED & VERIFIED** (updated to SP 800-88 Rev 2, Sept 2025) |
+| **P3-08** | Low | Unclear quarantine status of candidate algorithms (HQC-256) | `docs/audit/KNOWN_LIMITATIONS.md` | **RESOLVED & VERIFIED** (quarantine clarified; FIPS 203 mandated) |
+
 

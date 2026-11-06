@@ -163,6 +163,9 @@ def run_reproducible_build_verification():
     full_source_merkle_root = full_merkle_hasher.hexdigest()
     results["full_source_merkle_root"] = full_source_merkle_root
     results["full_source_file_count"] = len(all_source_files)
+    results["full_source_scope_description"] = (
+        "Authoritative Sovereign Data Plane (46 pure Rust modules) + Python Core Security Engine + Production Configuration"
+    )
     print(f"  [+] Audited {len(all_source_files)} source modules across Rust data plane and Python runtime.")
     print(f"  [=] Comprehensive Merkle Root (SHA3-512): {full_source_merkle_root[:24]}...")
 
