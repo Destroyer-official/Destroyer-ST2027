@@ -32,7 +32,7 @@ However, high-consequence command-and-control (C2), isolated tactical enclaves, 
 | **Anti-Replay Persistence** | Memory-backed window | Memory-backed window | Server-managed sequence numbers | Stream counter in memory | **Atomic 48-byte Monotonic File Lock** (`STSTATE1` via OS `fs2` lock); zero nonce reuse |
 | **Central Infrastructure Dependency** | Requires Signal discovery servers & APNs/FCM | Requires Meta central servers & APNs/FCM | Centralized cloud infrastructure | Dedicated point-to-point hardware link | **Serverless Peer-to-Peer** (Direct IPv6 or direct single-fiber simplex link) |
 | **Key Agreement & Identity Assurance** | PQXDH + SPQR; Safety Numbers | Signal Protocol; Key Transparency (KT) | Classical DH with visual emojis | Static pre-shared configuration | **Direct ML-KEM-1024 + X25519 Hybrid**; transcript-bound HKDF-SHA384; mutual HMAC tags; SAS verify; `--psk-file` |
-| **Emergency Zeroization / Media Purge** | Volatile OS app-delete only | App-delete only | Server-side wipe; leaves client remnants | Specialized tamper switches | **NIST SP 800-88 Rev 1 3-Pass Overwrite** (CSPRNG, inverted complement, zeros, sync_all, truncation, unlink) |
+| **Emergency Zeroization / Media Purge** | Volatile OS app-delete only | App-delete only | Server-side wipe; leaves client remnants | Specialized tamper switches | **NIST SP 800-88 Rev 2 3-Pass Overwrite** (CSPRNG, inverted complement, zeros, sync_all, truncation, unlink) |
 | **Formal Verification Boundary** | Published formal proofs for PQXDH & ratchets | None published | None | Common Criteria EAL 4+ (hardware functional) | **Dual-Tier Formal Verification**: ProVerif 2.05 Symbolic Models + Kani Bounded Memory Verification |
 | **Supply Chain & SLSA Provenance** | Standard CI/CD binaries | Proprietary app store binaries | Proprietary app store binaries | Proprietary hardware vendor supply chain | **SLSA Level 3+ Reproducible Build** with Ed25519 DLL pinning and signed ML-DSA-87 receipts |
 
@@ -70,7 +70,7 @@ However, high-consequence command-and-control (C2), isolated tactical enclaves, 
 * **The ST2027 Implementation:** All confidential data plane logic executes inside a native Rust binary (`secure-transmit`):
   - Page-level locking via `VirtualLock` on Windows and `mlock` on POSIX systems prevents operating system paging of secret material.
   - Data containers implement `zeroize::ZeroizeOnDrop` with volatile write memory barriers, ensuring immediate zeroization when frames exit scope.
-  - **Emergency Cryptographic Purge (`secure-transmit zeroize`):** Executes 3-pass sanitization conforming to NIST SP 800-88 Rev 1:
+  - **Emergency Cryptographic Purge (`secure-transmit zeroize`):** Executes 3-pass sanitization conforming to NIST SP 800-88 Rev 2:
     1. Pass 1: Cryptographic pseudo-random bytes from CSPRNG (`getrandom`).
     2. Pass 2: Inverted complement pattern (`0xFF`).
     3. Pass 3: All-zeros (`0x00`).

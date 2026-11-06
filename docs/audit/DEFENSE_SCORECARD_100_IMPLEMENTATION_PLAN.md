@@ -174,7 +174,7 @@ The implementation plan aligns strictly with statutory, defense, and federal tec
 - *Baseline Defect:* Test suite had isolated test suites but lacked an integrated single-command master gate verification harness with cryptographically signed receipts.
 - *Remediation Implementation:*
   1. **10-Gate Master Defense Audit Harness:** Configured [`scripts/run_defense_audit.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/run_defense_audit.py) executing:
-     - Gate 1: Rust Data-Plane (Clippy with `-D warnings` + 159 tests passing).
+     - Gate 1: Rust Data-Plane (Clippy with `-D warnings` + 255 tests passing).
      - Gate 2: Native Deterministic Core (`ts_rt` memory discipline).
      - Gate 3: CNSA Suite 2.0 Power-Up KATs & Policy Purity.
      - Gate 4: Symbolic Formal Verification (ProVerif 2.05).

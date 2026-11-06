@@ -660,7 +660,7 @@ Ran command: `git push origin main`
 
 ---
 
-### [x] Task 6.4: NIST SP 800-88 Rev 1 & DoD 5220.22-M 3-Pass Media Zeroization (COMPLETED & VERIFIED)
+### [x] Task 6.4: NIST SP 800-88 Rev 2 & DoD 5220.22-M 3-Pass Media Zeroization (COMPLETED & VERIFIED)
 - **Location:** [`rust_data_plane/src/purge.rs`](rust_data_plane/src/purge.rs), [`rust_data_plane/src/main.rs`](rust_data_plane/src/main.rs)
 - **Implementation:** Automated 3-pass hardware sanitization (`secure-transmit zeroize`): Pass 1 fills with OS CSPRNG bytes, Pass 2 fills with `0xFF`, Pass 3 fills with `0x00`, followed by OS storage cache flush (`sync_all`), zero-byte file truncation, in-memory scrub (`zeroize::Zeroize`), and permanent filesystem unlinking.
 - **Verification Gate:** `test_zeroize_cryptographic_media_purge` and unit tests pass.

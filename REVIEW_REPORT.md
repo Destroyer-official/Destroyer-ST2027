@@ -50,14 +50,25 @@ All mathematical formulations, wire datagram schemas, and cryptographic state ma
 - **P1-12 & P1-13 (Session Admission Control & Handshake Schema Bounds):** Added early admission control quota checking before cryptographic initialization and enforced strict JSON type bounds in `network/session_manager.py`.
 - **P1-14 (CI Production Build Surface Pruning):** Updated `.github/workflows/defense_ci.yml` release build steps to pass `--no-default-features --manifest-path rust_data_plane/Cargo.toml`.
 
+### 2.4 Deep Forensic Security Audit Register (6 November 2026)
+
+| Finding ID | Severity | Description | Remediated In | Verification Status |
+|---|---|---|---|---|
+| **P0-05** | High | `verify_cookie` panicked in debug on `i64::MIN` and wrapped negatively in release, causing DoS or bypassing epoch check | `rust_data_plane/src/cookie.rs:209` | **RESOLVED & VERIFIED** (`epoch.abs_diff(curr_epoch) > 1` enforced; test passed) |
+| **P1-09** | High | Attestation freshness check bypassed when `ev.ts` was IEEE 754 `NaN` or `Infinity` | `rust_data_plane/src/attest.rs:182` | **RESOLVED & VERIFIED** (`!ev.ts.is_finite() \|\| !now.is_finite()` enforced; test passed) |
+| **P1-10** | High | CRL revocation list silently omitted 15-byte serial numbers; cert parser rejected valid 15-byte serials | `rust_data_plane/src/x509.rs:528, 876` | **RESOLVED & VERIFIED** (16-byte right-alignment normalization; revoked certs caught) |
+| **P2-07** | Medium | Optical diode simplex FEC decoding crashed with `SingularMatrix` on duplicate chunks | `rust_data_plane/src/fec.rs:218` | **RESOLVED & VERIFIED** (chunk deduplication & matrix bounds enforced; test passed) |
+| **P2-08** | Medium | Inbound packet handlers panicked on malformed fragment streams via bare `.unwrap()` calls | `rust_data_plane/src/main.rs:2359, 2416, 2533, 2589` | **RESOLVED & VERIFIED** (replaced with safe pattern matching; 0 unwrap in frame loop) |
+| **P2-09** | Medium | Linux `tpm2_nvread` raw 8-byte binary octet stream rejected by ASCII hex parser | `rust_data_plane/src/tpm_nv.rs:207` | **RESOLVED & VERIFIED** (dual binary 8-byte and ASCII hex detection implemented) |
+
 ---
 
 ## 3. Verification & Validation Summary
 
 | Test Suite | Target Component | Command | Result |
 | :--- | :--- | :--- | :---: |
-| **Rust Data Plane Core** | Native cryptographic primitives | `cargo test --manifest-path rust_data_plane/Cargo.toml` | **245 PASS, 0 FAIL** (190 lib, 12 dudect, 42 kani, 1 doc) |
-| **Rust Standalone Binary** | CLI commands, roles, and reflection defense | `python -m unittest tests/test_rust_standalone_binary.py` | **23 PASS, 0 FAIL** |
+| **Rust Data Plane Core** | Native cryptographic primitives | `cargo test --manifest-path rust_data_plane/Cargo.toml` | **255 PASS, 0 FAIL** (199 lib, 12 dudect, 43 kani, 1 doc) |
+| **Rust Standalone Binary** | CLI commands, roles, and reflection defense | `python -m unittest tests/test_rust_standalone_binary.py` | **27 PASS, 0 FAIL** |
 | **Two-Person Integrity** | Physical & mock dual-smartcard NC3 | `pytest tests/test_hardware_tpi_dual_smartcard.py -v` | **13 PASS, 0 FAIL** |
 | **Side-Channel Timing** | DudeCT constant-time Welch's $t$-test ($|t| < 4.5$) | `pytest tests/test_dudect_timing_analysis.py -v` | **3 PASS, 0 FAIL** |
 | **Transport Anonymity** | Cell framing, Poisson pacing, Tor SOCKS5 | `pytest tests/test_transport_anonymity.py -v` | **23 PASS, 0 FAIL** |

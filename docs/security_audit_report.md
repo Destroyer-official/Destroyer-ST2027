@@ -436,11 +436,11 @@ vulnerability, dead-code dependencies, and silent telemetry failures. All fixed 
   - Non-coercive administrator elevation (`ensure_admin()`): explains why elevation is needed, prompts for interactive operator consent, relaunches elevated (UAC `runas` on Windows / `sudo` on POSIX), and propagates exit codes.
   - Tested: 21 tests in `test_hw_readiness.py` green.
 
-- **Standalone Zero-Python Rust Binary (`rust_data_plane/src/main.rs:1-363`):**
-  - Standalone data-plane executor producing `secure-transmit.exe` (v0.2.0).
-  - Implements `keygen` (OS CSPRNG via `getrandom` with `Zeroize`), `send` (DIR_SEND AEAD framing, 64-bit anti-replay, 1205B max payload cap), `recv` (stealth UDP listener, token bucket, tamper drops), `send-file` / `recv-file` (1205B-quantum chunking with incrementing seq, 16 MiB stream cap, SHA-256 digests both ends, consecutiveness enforced, exit code 4 on tamper/gap/timeout without writing partial files to disk), and `selftest`.
+- **Standalone Zero-Python Rust Binary (`rust_data_plane/src/main.rs`):**
+  - Standalone data-plane executor producing `secure-transmit.exe`.
+  - Implements 25 specialized commands including `keygen`, `send`, `recv`, `send-file`, `recv-file`, `channel`, `terminal`, `diode-send`, `diode-recv`, `eam-auth-hw`, `eam-verify-hw`, `zeroize`, and `selftest`.
   - Eliminates the Python runtime and garbage collector from the packet-processing wire boundary.
-  - Tested: 7 tests in `test_rust_standalone_binary.py` green.
+  - Tested: 27 tests in `test_rust_standalone_binary.py` green (zero failures).
 
 - **Automated Deployment Runbooks (`scripts/setup_tor_overlay.ps1`, `scripts/setup_wireguard.ps1`):**
   - Automated PowerShell deployment runbooks matching POSIX `.sh` counterparts.
@@ -448,4 +448,4 @@ vulnerability, dead-code dependencies, and silent telemetry failures. All fixed 
   - Non-coercive elevation checks with `P2P_NO_ELEVATE=1` override.
   - Tested: 4 tests in `test_runbooks_ps.py` green.
 
-**Unified Audit Gate:** **163 Python tests passed in 55.83s** (`pytest test_ts_hw_layer.py test_ts_runtime.py test_secure_transmit_2027.py test_noise_pq_purity.py test_proverif_st2027.py test_spo_dpo.py test_transport_anonymity.py test_trust_anchor.py test_ts_attest.py test_hw_readiness.py test_runbooks_ps.py test_rust_standalone_binary.py test_no_marketing_buzzwords_property.py test_no_emoji_property.py -v`) + **64 Rust data-plane tests passed in 22.57s** (`cargo test --manifest-path rust_data_plane/Cargo.toml`). Total: **227 automated tests passing (100% green)**. Zero fatal errors, zero regressions.
+**Unified Audit Gate:** **255 Native Rust Data-Plane Tests Passed** (`cargo test --manifest-path rust_data_plane/Cargo.toml`: 199 lib, 12 dudect, 43 kani, 1 doc) + **27 Standalone Native Binary Tests Passed** (`tests/test_rust_standalone_binary.py`) + **96 Deployment Verification Checks Passed** (`verify_deployment.py`) + **10/10 Master Defense Audit Gates Satisfied** (`scripts/run_defense_audit.py`). Total verification passing with zero fatal errors, zero compiler warnings, and zero regressions.

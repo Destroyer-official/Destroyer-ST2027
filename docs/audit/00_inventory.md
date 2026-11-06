@@ -436,7 +436,7 @@ Line counts are computed from the tracked bytes; a file without a trailing newli
 | `rust_data_plane/src/pki.rs` | Rust | 448 | 3-of-5 threshold ML-DSA-87 PKI verification (Rust secure core). | `rust_data_plane` |
 | `rust_data_plane/src/policy.rs` | Rust | 161 | Secure-core policy: single source of fail-closed truth. | `rust_data_plane` |
 | `rust_data_plane/src/ptt.rs` | Rust | 145 | Push-to-talk encrypted voice packet stream processor | `rust_data_plane` |
-| `rust_data_plane/src/purge.rs` | Rust | 127 | Cryptographic media sanitization & emergency zeroization (NIST SP 800-88 Rev 1 / DoD 5220.22-M). | `rust_data_plane` |
+| `rust_data_plane/src/purge.rs` | Rust | 127 | Cryptographic media sanitization & emergency zeroization (NIST SP 800-88 Rev 2 / DoD 5220.22-M). | `rust_data_plane` |
 | `rust_data_plane/src/ratchet.rs` | Rust | 301 | Project-specific fresh-KEM ratchet inspired by SPQR/Triple Ratchet. | `rust_data_plane` |
 | `rust_data_plane/src/replay.rs` | Rust | 361 | 1024-packet sequence sliding window per RFC 6479 (Decoupled IPsec/WireGuard mechanism). | `rust_data_plane` |
 | `rust_data_plane/src/session.rs` | Rust | 257 | Post-handshake transport + session pipeline (Rust secure core). | `rust_data_plane` |
