@@ -286,7 +286,7 @@ pub fn compute_directive_hash(
 ) -> [u8; 64] {
     use sha3::{Digest, Sha3_512};
     let mut hasher = Sha3_512::new();
-    hasher.update(&timestamp_secs.to_be_bytes());
+    hasher.update(timestamp_secs.to_be_bytes());
     hasher.update(target.as_bytes());
     hasher.update(action_payload);
     let res = hasher.finalize();
@@ -307,11 +307,7 @@ pub fn validate_temporal_hardware_window(
     max_skew_millis: u64,
     max_age_secs: u64,
 ) -> Result<(), CoreError> {
-    let skew = if t1_millis >= t2_millis {
-        t1_millis - t2_millis
-    } else {
-        t2_millis - t1_millis
-    };
+    let skew = t1_millis.abs_diff(t2_millis);
 
     if skew > max_skew_millis {
         eprintln!(
@@ -588,7 +584,7 @@ impl HardwareEamPackage {
             self.timestamp_secs,
             self.t1_millis,
             self.t2_millis,
-            if self.t1_millis >= self.t2_millis { self.t1_millis - self.t2_millis } else { self.t2_millis - self.t1_millis },
+            self.t1_millis.abs_diff(self.t2_millis),
             self.target,
             self.directive_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
             self.officer1_vk.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
@@ -691,6 +687,7 @@ impl OfficerRoster {
 }
 
 /// Execute physical dual-smartcard split-knowledge ceremony across two independent PKCS#11 sessions.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_dual_smartcard_ceremony(
     session1: &HsmSession,
     key_handle1: ObjectHandle,

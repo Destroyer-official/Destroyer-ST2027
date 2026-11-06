@@ -110,10 +110,10 @@ def main():
         code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
         import re
         passed_matches = [int(m) for m in re.findall(r"(\d+) passed; 0 failed", out2) if int(m) > 0]
-        passed = (code2 == 0 and "0 failed" in out2 and len(passed_matches) >= 2 and passed_matches[0] >= 110 and passed_matches[1] >= 30)
         total_passed = sum(passed_matches) if passed_matches else 0
+        passed = (code2 == 0 and "0 failed" in out2 and len(passed_matches) >= 2 and passed_matches[0] >= 110 and total_passed >= 200)
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         f"{total_passed} tests passed ({passed_matches[0] if passed_matches else 0} lib incl. TPM 2.0 NV rollback guard, S-01/S-02 replay protection, Noise-XXhfs, 3-of-5 PKI, cookie-gate, ACD, zero-trust MLS, memory-guard + {passed_matches[1] if len(passed_matches) > 1 else 0} kani harness); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
+                         f"{total_passed} tests passed ({passed_matches[0] if passed_matches else 0} lib, {passed_matches[1] if len(passed_matches) > 1 else 0} dudect, {passed_matches[2] if len(passed_matches) > 2 else 0} kani); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
 
     # Gate 2: Native Top-Secret Runtime (ts_rt)
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")

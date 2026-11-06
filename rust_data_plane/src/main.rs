@@ -2174,9 +2174,11 @@ fn cmd_channel(args: &[String]) {
                         } else {
                             let _ = prev_frame_key.take();
                         }
-                    }                    if rekey_interval > 0
+                    }
+
+                    if rekey_interval > 0
                         && ticks_emitted > 0
-                        && (ticks_emitted % rekey_interval == 0)
+                        && ticks_emitted.is_multiple_of(rekey_interval)
                         && role == "initiator"
                         && pcs_ratchet.peer_bundle().is_some()
                         && pending_frame_key.is_none()
@@ -2189,7 +2191,7 @@ fn cmd_channel(args: &[String]) {
                         && pcs_ratchet.peer_bundle().is_none()
                         && outbound_rekeys.is_empty()
                         && ticks_emitted > 0
-                        && (ticks_emitted % 8 == 0)
+                        && ticks_emitted.is_multiple_of(8)
                     {
                         let my_adv = pcs_ratchet.advertise_bundle();
                         let adv_wire = ratchet::RekeyMessage::Advert(my_adv).to_wire();
@@ -3160,7 +3162,7 @@ fn cmd_kex_listen(args: &[String]) {
                     let mut init_cert_len_buf = [0u8; 4];
                     socket.read_exact(&mut init_cert_len_buf).await.map_err(|_| "read init cert len failed")?;
                     let init_cert_len = u32::from_be_bytes(init_cert_len_buf) as usize;
-                    if init_cert_len < 100 || init_cert_len > 65536 {
+                    if !(100..=65536).contains(&init_cert_len) {
                         return Err("invalid initiator certificate length");
                     }
                     let mut init_cert_der = vec![0u8; init_cert_len];
@@ -3392,7 +3394,7 @@ fn cmd_kex_connect(args: &[String]) {
                     let mut resp_cert_len_buf = [0u8; 4];
                     socket.read_exact(&mut resp_cert_len_buf).await.map_err(|_| "read resp cert len failed")?;
                     let resp_cert_len = u32::from_be_bytes(resp_cert_len_buf) as usize;
-                    if resp_cert_len < 100 || resp_cert_len > 65536 {
+                    if !(100..=65536).contains(&resp_cert_len) {
                         return Err("invalid responder certificate length");
                     }
                     let mut resp_cert_der = vec![0u8; resp_cert_len];
@@ -4172,11 +4174,7 @@ fn cmd_eam_auth_hw(args: &[String]) {
             .unwrap_or_else(|e| fail(&format!("{e:?}")));
         let wire = pkg.to_bytes();
         let hash = hex_of(&pkg.directive_hash);
-        let skew = if pkg.t1_millis >= pkg.t2_millis {
-            pkg.t1_millis - pkg.t2_millis
-        } else {
-            pkg.t2_millis - pkg.t1_millis
-        };
+        let skew = pkg.t1_millis.abs_diff(pkg.t2_millis);
         (hex_of(&wire), hash, skew)
     } else {
         let p1 = pin1.as_deref().unwrap_or_else(|| fail("missing officer 1 PIN (--pin1 or --token1-pin)"));
@@ -4264,11 +4262,7 @@ fn cmd_eam_auth_hw(args: &[String]) {
             .sign(k2, &directive_hash)
             .unwrap_or_else(|e| fail(&format!("Officer 2 silicon sign failed: {e}")));
 
-        let skew_ms = if t1_millis >= t2_millis {
-            t1_millis - t2_millis
-        } else {
-            t2_millis - t1_millis
-        };
+        let skew_ms = t1_millis.abs_diff(t2_millis);
 
         if skew_ms > max_skew_ms {
             fail(&format!("Hardware temporal skew {skew_ms}ms exceeds maximum allowed {max_skew_ms}ms"));
@@ -4340,11 +4334,7 @@ fn cmd_eam_verify_hw(args: &[String]) {
             .unwrap_or_else(|e| fail(&format!("hardware EAM verification failed: {e:?}")));
     }
 
-    let skew_ms = if pkg.t1_millis >= pkg.t2_millis {
-        pkg.t1_millis - pkg.t2_millis
-    } else {
-        pkg.t2_millis - pkg.t1_millis
-    };
+    let skew_ms = pkg.t1_millis.abs_diff(pkg.t2_millis);
     let action_str = String::from_utf8_lossy(&pkg.action_payload);
     let hash_hex = hex_of(&pkg.directive_hash);
 

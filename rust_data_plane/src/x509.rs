@@ -182,7 +182,7 @@ pub fn encode_generalized_time(timestamp_secs: u64) -> Vec<u8> {
     let mut y = 1970u64;
     let mut d = days;
     loop {
-        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
         let days_in_year = if leap { 366 } else { 365 };
         if d >= days_in_year {
             d -= days_in_year;
@@ -191,7 +191,7 @@ pub fn encode_generalized_time(timestamp_secs: u64) -> Vec<u8> {
             break;
         }
     }
-    let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let mdays = [
         31,
         if leap { 29 } else { 28 },
@@ -427,7 +427,7 @@ pub fn parse_time_secs(el: &DerElement<'_>) -> Result<u64, CoreError> {
             let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
             days += if leap { 366 } else { 365 };
         }
-        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
         let mdays = [
             31,
             if leap { 29 } else { 28 },

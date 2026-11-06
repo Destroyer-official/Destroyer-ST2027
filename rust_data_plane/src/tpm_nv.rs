@@ -1006,10 +1006,10 @@ impl MockTpmPcrSimulator {
     pub fn compute_composite_pcr_digest(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        hasher.update(&self.pcr_0);
-        hasher.update(&self.pcr_1);
-        hasher.update(&self.pcr_2);
-        hasher.update(&self.pcr_7);
+        hasher.update(self.pcr_0);
+        hasher.update(self.pcr_1);
+        hasher.update(self.pcr_2);
+        hasher.update(self.pcr_7);
         hasher.finalize().into()
     }
 
