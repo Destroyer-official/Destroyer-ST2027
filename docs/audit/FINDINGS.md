@@ -96,4 +96,18 @@
 | **P3-07** | Low | Outdated NIST SP 800-88 Rev 1 citations | `docs/audit/KNOWN_LIMITATIONS.md` | **RESOLVED & VERIFIED** (updated to SP 800-88 Rev 2, Sept 2025) |
 | **P3-08** | Low | Unclear quarantine status of candidate algorithms (HQC-256) | `docs/audit/KNOWN_LIMITATIONS.md` | **RESOLVED & VERIFIED** (quarantine clarified; FIPS 203 mandated) |
 
+---
+
+## 4. Deep Forensic Security Audit Register (6 November 2026)
+
+| Finding ID | Severity | Description | Remediated In | Verification Status |
+|---|---|---|---|---|
+| **P0-05** | High | `verify_cookie` panics in debug on `i64::MIN` and wraps negatively in release, causing DoS or bypassing epoch check | `rust_data_plane/src/cookie.rs:209` | **RESOLVED & VERIFIED** (`epoch.abs_diff(curr_epoch) > 1` enforced; test passed) |
+| **P1-09** | High | Attestation freshness check bypassed when `ev.ts` is IEEE 754 `NaN` or `Infinity` | `rust_data_plane/src/attest.rs:182` | **RESOLVED & VERIFIED** (`!ev.ts.is_finite() \|\| !now.is_finite()` enforced; test passed) |
+| **P1-10** | High | CRL revocation list silently omits 15-byte serial numbers; cert parser rejects valid 15-byte serials | `rust_data_plane/src/x509.rs:528, 876` | **RESOLVED & VERIFIED** (16-byte right-alignment normalization; revoked certs caught) |
+| **P2-07** | Medium | Optical diode simplex FEC decoding crashes with `SingularMatrix` on duplicate chunks | `rust_data_plane/src/fec.rs:218` | **RESOLVED & VERIFIED** (chunk deduplication & matrix bounds enforced; test passed) |
+| **P2-08** | Medium | Inbound packet handlers panic on malformed fragment streams via bare `.unwrap()` calls | `rust_data_plane/src/main.rs:2359, 2416, 2533, 2589` | **RESOLVED & VERIFIED** (replaced with safe pattern matching; 0 unwrap in frame loop) |
+| **P2-09** | Medium | Linux `tpm2_nvread` raw 8-byte binary octet stream rejected by ASCII hex parser | `rust_data_plane/src/tpm_nv.rs:207` | **RESOLVED & VERIFIED** (dual binary 8-byte and ASCII hex detection implemented) |
+
+
 

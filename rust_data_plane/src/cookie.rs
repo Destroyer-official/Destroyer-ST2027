@@ -206,8 +206,7 @@ impl StatelessCookieGate {
         let epoch = u64::from_be_bytes(epoch_bytes);
 
         let curr_epoch = self.epoch();
-        let diff = (epoch as i64).saturating_sub(curr_epoch as i64).abs();
-        if diff > 1 {
+        if epoch.abs_diff(curr_epoch) > 1 {
             return false;
         }
 
@@ -431,5 +430,21 @@ mod tests {
         let challenge = gate.create_challenge(ip, port, pfx, 0);
         let solution = StatelessCookieGate::solve_challenge(&challenge, 1000).expect("solved");
         assert!(gate.verify_response(&solution, ip, port, pfx, 0));
+    }
+
+    #[test]
+    fn test_cookie_epoch_overflow_immunity() {
+        let mut gate = StatelessCookieGate::new(120, 1024);
+        let ip = "192.168.1.50";
+        let port = 51820;
+        let pfx = b"sample_m1_prefix_bytes_test_data";
+
+        let mut cookie = gate.create_cookie(ip, port, pfx);
+        // Inject extreme epoch values that previously caused i64 signed overflow panics
+        cookie[6..14].copy_from_slice(&0x8000_0000_0000_0000u64.to_be_bytes());
+        assert!(!gate.verify_cookie(&cookie, ip, port, pfx));
+
+        cookie[6..14].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(!gate.verify_cookie(&cookie, ip, port, pfx));
     }
 }

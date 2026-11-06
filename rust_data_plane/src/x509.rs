@@ -525,13 +525,13 @@ impl PqX509Certificate {
             idx += 1;
         }
 
-        // Serial Number
+        // Serial Number (RFC 5280: positive integer up to 20 octets, normalized to 16 bytes via right-alignment)
         let serial_raw = parse_integer_bytes(&tbs_items[idx])?;
-        if serial_raw.len() != 16 {
+        if serial_raw.is_empty() || serial_raw.len() > 16 {
             return Err(CoreError::Malformed);
         }
         let mut serial = [0u8; 16];
-        serial.copy_from_slice(&serial_raw);
+        serial[16 - serial_raw.len()..].copy_from_slice(&serial_raw);
         idx += 1;
 
         // TBS Signature Alg
@@ -873,9 +873,9 @@ impl PqX509Crl {
                 if let Ok(fields) = parse_sequence_from_el(&rev_entry) {
                     if !fields.is_empty() {
                         let s_raw = parse_integer_bytes(&fields[0])?;
-                        if s_raw.len() == 16 {
+                        if !s_raw.is_empty() && s_raw.len() <= 16 {
                             let mut arr = [0u8; 16];
-                            arr.copy_from_slice(&s_raw);
+                            arr[16 - s_raw.len()..].copy_from_slice(&s_raw);
                             revoked_serials.push(arr);
                         }
                     }

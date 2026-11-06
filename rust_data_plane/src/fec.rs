@@ -208,15 +208,31 @@ impl CauchyReedSolomon {
     /// Decodes any K chunks (data or parity) to recover all K original data chunks.
     /// `received`: Slice of (chunk_index, chunk_data) where chunk_index in 0..(K+M).
     pub fn decode(&self, received: &[(usize, &[u8])]) -> Result<Vec<Vec<u8>>, FecError> {
-        if received.len() < self.k {
+        // Deduplicate received chunks by chunk_idx, ignoring duplicates from optical diode or network retransmissions
+        let mut unique_chunks: Vec<(usize, &[u8])> = Vec::with_capacity(self.k);
+        let mut seen_indices = std::collections::HashSet::new();
+
+        for &(idx, data) in received {
+            if idx >= self.n() {
+                return Err(FecError::InvalidChunkIndex);
+            }
+            if seen_indices.insert(idx) {
+                unique_chunks.push((idx, data));
+                if unique_chunks.len() == self.k {
+                    break;
+                }
+            }
+        }
+
+        if unique_chunks.len() < self.k {
             return Err(FecError::InsufficientChunks {
                 needed: self.k,
-                got: received.len(),
+                got: unique_chunks.len(),
             });
         }
 
         // Take exactly the first K distinct chunks received
-        let k_recv = &received[..self.k];
+        let k_recv = &unique_chunks[..self.k];
         let chunk_len = k_recv[0].1.len();
         for (_, data) in k_recv {
             if data.len() != chunk_len {
@@ -424,5 +440,30 @@ mod tests {
         for i in 0..5 {
             assert_eq!(decoded[i], data_chunks[i], "Mismatch at chunk {i}");
         }
+    }
+
+    #[test]
+    fn test_fec_duplicate_chunks_deduplication() {
+        let crs = CauchyReedSolomon::new(3, 2).expect("CRS init failed");
+        let d0 = b"Chunk Zero Content!!".to_vec();
+        let d1 = b"Chunk One Content!!!".to_vec();
+        let d2 = b"Chunk Two Content!!!".to_vec();
+
+        let data = [&d0[..], &d1[..], &d2[..]];
+        let parity = crs.encode(&data).expect("Encode failed");
+
+        // Input contains duplicate chunk 0 and duplicate chunk 1 (simulating optical diode retransmission)
+        let recv_with_dups = vec![
+            (0, &d0[..]),
+            (0, &d0[..]), // Duplicate of chunk 0
+            (1, &d1[..]),
+            (1, &d1[..]), // Duplicate of chunk 1
+            (3, &parity[0][..]), // Parity chunk 0 (global index 3)
+        ];
+
+        let decoded = crs.decode(&recv_with_dups).expect("Deduplicated decode should succeed");
+        assert_eq!(decoded[0], d0);
+        assert_eq!(decoded[1], d1);
+        assert_eq!(decoded[2], d2);
     }
 }

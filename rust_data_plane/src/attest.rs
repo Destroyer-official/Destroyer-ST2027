@@ -177,9 +177,9 @@ pub fn appraise_untrusted(
     if !supplied.ct_pin_eq(&verifier.to_bytes()) {
         return Err(CoreError::KeyMismatch);
     }
-    // 2. Freshness (absolute skew ≤ 300 s).
+    // 2. Freshness (absolute skew ≤ 300 s; non-finite floats rejected fail-closed).
     let now = challenge.now.unwrap_or_else(now_secs);
-    if (now - ev.ts).abs() > FRESHNESS_S {
+    if !ev.ts.is_finite() || !now.is_finite() || (now - ev.ts).abs() > FRESHNESS_S {
         return Err(CoreError::Stale);
     }
     // 3. Nonce equality (constant-time; lengths are public).
@@ -378,5 +378,46 @@ mod tests {
             now: None,
         };
         assert!(appraise_untrusted(&store, &untrusted, &challenge, &vk, domain).is_ok());
+    }
+
+    #[test]
+    fn nan_and_infinite_timestamps_fail_closed() {
+        let (store, vk, sk) = enrolled_pair("DEV-03");
+        let msg = b"posture-nan-timestamp";
+        let domain = b"ST2027-ATTEST-v1";
+        let sig = sk.sign(domain, msg);
+        let nonce = [0x55u8; 32];
+
+        // NaN timestamp must fail closed with CoreError::Stale
+        let untrusted_nan = UntrustedEvidence {
+            kid: "DEV-03",
+            pub_bytes: &vk.to_bytes(),
+            sig: &sig,
+            message: msg,
+            nonce: &nonce,
+            ts: f64::NAN,
+        };
+        let challenge = VerifierChallenge {
+            expected_nonce: &nonce,
+            now: Some(1000.0),
+        };
+        assert_eq!(
+            appraise_untrusted(&store, &untrusted_nan, &challenge, &vk, domain).unwrap_err(),
+            CoreError::Stale
+        );
+
+        // Infinite timestamp must fail closed with CoreError::Stale
+        let untrusted_inf = UntrustedEvidence {
+            kid: "DEV-03",
+            pub_bytes: &vk.to_bytes(),
+            sig: &sig,
+            message: msg,
+            nonce: &nonce,
+            ts: f64::INFINITY,
+        };
+        assert_eq!(
+            appraise_untrusted(&store, &untrusted_inf, &challenge, &vk, domain).unwrap_err(),
+            CoreError::Stale
+        );
     }
 }

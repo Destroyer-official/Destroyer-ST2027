@@ -5,9 +5,9 @@
     "sha3_512": "87603a4bdf7d9cd83993edb3de1ea9a696b4dddffba9775cb6d061ee77f318a39f9d2c8f704cad0dbc190b7298daf959f059e5a4055299d8ac739cf0a2f7a71c"
   },
   "rust_data_plane/src/main.rs": {
-    "size_bytes": 206333,
-    "sha512": "001b32b03777084058362e5752eca60463af229bdeaa0b4619d37bc76e1ff36f4703de1fd4bb5fbfbfd575f52d48a31c711b2ad2d1e35aa5456fc32da4130cc5",
-    "sha3_512": "b90d3f92a1a4d6d4a6e8e7f6bdf78a52bab1ef4767a9c109a7072146fe0a8de7e5f9df42ca72e5bf32fa3e9fbc9b872495d06ecf1a8b059ad1e03de876ebe507"
+    "size_bytes": 208280,
+    "sha512": "77cfd0da34a12dbb6e8c25897eb98c2ddfd154aec49f2b5b16e8dcfb5f8aad202f8e9a76654417dac1af3485bb8ba64bd4f0b95c00f56697ba6091503c4c4d15",
+    "sha3_512": "7d1c5ad27172729f2f9e523b6f32fd3b7b4d339874ee0d205f5a5de1a3a43b6fde155fceaaf36f4ca59aea5b15e82700f42fe491be4e47b2013cdc9116e3da3a"
   },
   "ts_runtime.py": {
     "size_bytes": 48603,

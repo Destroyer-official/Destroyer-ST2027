@@ -206,8 +206,16 @@ impl ToolsTransport {
 impl NvTransport for ToolsTransport {
     fn read(&self) -> Result<u64, NvError> {
         let (prog, argv) = self.read_argv();
-        let out = run_tool(&prog, &argv)?;
-        parse_nvread_hex(&out)
+        let out_bytes = run_tool_raw(&prog, &argv)?;
+        if out_bytes.len() == 8 {
+            return Ok(u64::from_be_bytes(
+                out_bytes
+                    .try_into()
+                    .map_err(|_| NvError::Tools("8-byte slice conversion failed".into()))?,
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&out_bytes);
+        parse_nvread_hex(&stdout)
     }
 
     fn increment(&self) -> Result<u64, NvError> {
@@ -230,6 +238,19 @@ impl NvTransport for ToolsTransport {
             Err(e) => Err(e),
         }
     }
+}
+
+fn run_tool_raw(prog: &str, argv: &[String]) -> Result<Vec<u8>, NvError> {
+    let out = std::process::Command::new(prog)
+        .args(argv)
+        .output()
+        .map_err(|e| NvError::Tools(format!("{prog}: {e}")))?;
+    if out.status.success() {
+        return Ok(out.stdout);
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Err(classify_failure(&format!("{stderr}{stdout}")))
 }
 
 fn run_tool(prog: &str, argv: &[String]) -> Result<String, NvError> {

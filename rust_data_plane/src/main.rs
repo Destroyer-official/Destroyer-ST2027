@@ -2356,11 +2356,12 @@ fn cmd_channel(args: &[String]) {
                         };
 
                         if matched_key_is_pending {
-                            let pfk = pending_frame_key.take().unwrap();
-                            let epoch = pcs_ratchet.epoch();
-                            prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
-                            prev_key_remaining_ticks = rekey_grace_ticks;
-                            println!("channel: EPOCH_ADVANCED epoch={epoch}");
+                            if let Some(pfk) = pending_frame_key.take() {
+                                let epoch = pcs_ratchet.epoch();
+                                prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
+                                prev_key_remaining_ticks = rekey_grace_ticks;
+                                println!("channel: EPOCH_ADVANCED epoch={epoch}");
+                            }
                         }
 
                         window.mark(seq2);
@@ -2412,9 +2413,19 @@ fn cmd_channel(args: &[String]) {
                                     if inbound_rekey_buffers.len() > 16 {
                                         inbound_rekey_buffers.clear();
                                     }
-                                    let buffer = inbound_rekey_buffers.entry(tx_id).or_insert_with(|| {
-                                        fragment::ReassemblyBuffer::new(tx_id, total).unwrap()
-                                    });
+                                    let maybe_buffer = match inbound_rekey_buffers.entry(tx_id) {
+                                        std::collections::hash_map::Entry::Occupied(o) => Ok(o.into_mut()),
+                                        std::collections::hash_map::Entry::Vacant(v) => {
+                                            fragment::ReassemblyBuffer::new(tx_id, total).map(|b| v.insert(b))
+                                        }
+                                    };
+                                    let buffer = match maybe_buffer {
+                                        Ok(b) => b,
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                            continue;
+                                        }
+                                    };
                                     match buffer.insert(frag) {
                                         Ok(is_done) => {
                                             if is_done {
@@ -2529,9 +2540,19 @@ fn cmd_channel(args: &[String]) {
                                     if inbound_attestation_buffers.len() > 16 {
                                         inbound_attestation_buffers.clear();
                                     }
-                                    let buffer = inbound_attestation_buffers.entry(tx_id).or_insert_with(|| {
-                                        fragment::ReassemblyBuffer::new(tx_id, total).unwrap()
-                                    });
+                                    let maybe_buffer = match inbound_attestation_buffers.entry(tx_id) {
+                                        std::collections::hash_map::Entry::Occupied(o) => Ok(o.into_mut()),
+                                        std::collections::hash_map::Entry::Vacant(v) => {
+                                            fragment::ReassemblyBuffer::new(tx_id, total).map(|b| v.insert(b))
+                                        }
+                                    };
+                                    let buffer = match maybe_buffer {
+                                        Ok(b) => b,
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                            continue;
+                                        }
+                                    };
                                     match buffer.insert(frag) {
                                         Ok(is_done) => {
                                             if is_done {
@@ -2585,9 +2606,19 @@ fn cmd_channel(args: &[String]) {
                                     if inbound_revocation_buffers.len() > 16 {
                                         inbound_revocation_buffers.clear();
                                     }
-                                    let buffer = inbound_revocation_buffers.entry(tx_id).or_insert_with(|| {
-                                        fragment::ReassemblyBuffer::new(tx_id, total).unwrap()
-                                    });
+                                    let maybe_buffer = match inbound_revocation_buffers.entry(tx_id) {
+                                        std::collections::hash_map::Entry::Occupied(o) => Ok(o.into_mut()),
+                                        std::collections::hash_map::Entry::Vacant(v) => {
+                                            fragment::ReassemblyBuffer::new(tx_id, total).map(|b| v.insert(b))
+                                        }
+                                    };
+                                    let buffer = match maybe_buffer {
+                                        Ok(b) => b,
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                            continue;
+                                        }
+                                    };
                                     match buffer.insert(frag) {
                                         Ok(is_done) => {
                                             if is_done {
