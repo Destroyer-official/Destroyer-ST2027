@@ -612,6 +612,23 @@ R10. **Flake register.** Loopback/socket timing under load can flake
 live-harness tests (documented family); gates are re-run, never edited
 to pass. Interpreter-shutdown native teardown noise may swallow the
 final pytest summary line — JUnit XML is the authoritative tally.
+R11. **CPython immutable bytes memory boundary.** In CPython, `bytes` objects
+are immutable and managed via `obmalloc` arenas; garbage collection copies
+and deferred reclaims prevent deterministic zeroization. Operational
+command-and-control loops and message handling must execute exclusively in
+the native Rust binary (`secure-transmit node` / `terminal`), which uses
+`VirtualLock` / `mlock`, `ZeroizeOnDrop`, and `compiler_fence(Ordering::SeqCst)`.
+The Python runtime is restricted to offline orchestration and testing,
+strictly prohibiting network or cryptographic key transit in production (`P2P_PRODUCTION=1`).
+R12. **Tactical web console quarantine and mTLS 1.3 / FIDO2 L3 boundary.**
+The browser-based console (`tactical_web_console.py`, port 8443) introduces
+DOM and browser memory retention surfaces. It is quarantined to `--lab` mode
+and blocked fail-closed when `P2P_PRODUCTION=1`. When launched, it binds
+strictly to an mTLS 1.3 listener requiring CAC / PIV smartcard client
+certificates (NIST SP 800-217 / FIPS 201-3), enforces WebAuthn / FIDO2 Level 3
+hardware security key presence (UP=1, UV=1, monotonic sign_count) for
+operator control actions, and applies Content Security Policy Level 3
+(`default-src 'self'; object-src 'none'`) with zero external CDNs.
 
 ---
 

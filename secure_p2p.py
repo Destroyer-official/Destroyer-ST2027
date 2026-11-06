@@ -15187,13 +15187,19 @@ class TacticalP2PNode:
                 ]
                 if not (self.token1_module or self.token2_module) and os.environ.get("P2P_MOCK_DUAL_SMARTCARD") == "1":
                     cmd.append("--mock-dual-smartcard")
+                pin1 = self.token1_pin or os.environ.get("P2P_TOKEN1_PIN")
+                pin2 = self.token2_pin or os.environ.get("P2P_TOKEN2_PIN")
+                if not pin1 and os.environ.get("P2P_MOCK_DUAL_SMARTCARD") == "1":
+                    pin1 = "123456"
+                if not pin2 and os.environ.get("P2P_MOCK_DUAL_SMARTCARD") == "1":
+                    pin2 = "654321"
                 if self.token1_module: cmd.extend(["--token1-module", self.token1_module])
                 if self.token1_slot is not None: cmd.extend(["--token1-slot", str(self.token1_slot)])
-                if self.token1_pin: cmd.extend(["--token1-pin", self.token1_pin])
+                if pin1: cmd.extend(["--token1-pin", pin1])
                 if self.token1_key_label: cmd.extend(["--token1-key-label", self.token1_key_label])
                 if self.token2_module: cmd.extend(["--token2-module", self.token2_module])
                 if self.token2_slot is not None: cmd.extend(["--token2-slot", str(self.token2_slot)])
-                if self.token2_pin: cmd.extend(["--token2-pin", self.token2_pin])
+                if pin2: cmd.extend(["--token2-pin", pin2])
                 if self.token2_key_label: cmd.extend(["--token2-key-label", self.token2_key_label])
 
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -15901,6 +15907,21 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
         print(f"{YELLOW}[HW READINESS] Unable to evaluate hardware posture: {e}{RESET}")
         if require_hw:
             sys.exit(1)
+
+    if _production():
+        print(f"{RED}[PRODUCTION CONTROL-PLANE BOUNDARY] Operational command-and-control "
+              f"loops and key transit are strictly prohibited in the Python runtime "
+              f"under P2P_PRODUCTION=1 due to non-deterministic immutable bytes retention.\n"
+              f"All operational node loops must execute via the standalone native Rust executable:\n"
+              f"  secure-transmit node --bind {bind}:{channel_port} --to {peer}:{peer_channel_port} "
+              f"--role {role} --psk-file {psk_file}\n"
+              f"Python runtime is restricted solely to offline build orchestration and automated testing.{RESET}")
+        try:
+            from production_gate import enforce_control_plane_boundary
+            enforce_control_plane_boundary("secure_p2p_node")
+        except Exception:
+            pass
+        sys.exit(2)
 
     node = TacticalP2PNode(
         name=name,

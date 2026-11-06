@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ST2027 Accredited TEMPEST Facility & Chassis Registry",
+  "description": "Accredited TEMPEST facility zoning and enclosure certifications conforming to NATO SDIP-27/3, SDIP-28/2, and SDIP-29/2.",
+  "certs": [
+    {
+      "facility": "MIL-ENCLAVE-SITE-ALPHA",
+      "zone": 0,
+      "level": "A",
+      "standard": "SDIP-27/3",
+      "nta_ref": "NTA-EMSEC-2026-0881",
+      "vendor_niapc_ref": "NIAPC-SEC-ENCL-449",
+      "issued": "2026-01-15",
+      "expires": "2028-12-31",
+      "zone_report_ref": "SDIP-28-ZR-2026-004",
+      "install_ref": "SDIP-29-IR-2026-019",
+      "classifications": [
+        "CONFIDENTIAL",
+        "SECRET",
+        "TOP SECRET"
+      ]
+    },
+    {
+      "facility": "DEFENSE-OPERATIONS-CENTER-BRAVO",
+      "zone": 1,
+      "level": "A",
+      "standard": "SDIP-27/3",
+      "nta_ref": "NTA-EMSEC-2026-0914",
+      "vendor_niapc_ref": "NIAPC-SEC-ENCL-512",
+      "issued": "2026-03-01",
+      "expires": "2029-03-01",
+      "zone_report_ref": "SDIP-28-ZR-2026-011",
+      "install_ref": "SDIP-29-IR-2026-042",
+      "classifications": [
+        "CONFIDENTIAL",
+        "SECRET",
+        "TOP SECRET"
+      ]
+    },
+    {
+      "facility": "TACTICAL-MOBILE-STATION-CHARLIE",
+      "zone": 1,
+      "level": "B",
+      "standard": "SDIP-27/3",
+      "nta_ref": "NTA-EMSEC-2025-0421",
+      "vendor_niapc_ref": "NIAPC-SEC-TACTICAL-208",
+      "issued": "2025-11-10",
+      "expires": "2028-11-10",
+      "zone_report_ref": "SDIP-28-ZR-2025-099",
+      "install_ref": "SDIP-29-IR-2025-103",
+      "classifications": [
+        "CONFIDENTIAL",
+        "SECRET"
+      ]
+    }
+  ]
+}

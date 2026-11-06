@@ -353,16 +353,44 @@ impl ZeroGapPipeline {
             };
 
         // ── Step 2: Layer 2 Outer AEAD Strip with Anti-Replay Gate ───────
-        let fk = self.frame_key.as_ref().ok_or(CoreError::AuthRequired)?;
+        let mut fk = self.frame_key.clone().ok_or(CoreError::AuthRequired)?;
 
-        // Read-only peek for replay verification before auth
-        let peeked = aead::peek_seq(fk, &sealed_body).ok_or(CoreError::Malformed)?;
+        // Peek with current frame key; if that fails or seq is in a future epoch, attempt epoch synchronization
+        let mut peeked = aead::peek_seq(&fk, &sealed_body);
+        if peeked.is_none() || peeked.map(|s| s > 0 && (s - 1) / CER_EPOCH_INTERVAL > self.current_epoch).unwrap_or(false) {
+            let mut trial_epoch = self.current_epoch;
+            let mut trial_root = *self.epoch_root;
+            for _ in 0..8 {
+                trial_epoch += 1;
+                let epoch_info = (trial_epoch as u32).to_be_bytes();
+                let hk = Hkdf::<Sha512>::new(Some(CER_HKDF_SALT), &trial_root[..]);
+                let mut next_root = [0u8; 32];
+                if hk.expand(&epoch_info, &mut next_root).is_ok() {
+                    if let Ok(next_fk_bytes) = derive_frame_key_sha512(&next_root) {
+                        let candidate_fk = FrameKey::from_bytes(next_fk_bytes);
+                        if let Some(s) = aead::peek_seq(&candidate_fk, &sealed_body) {
+                            if s > 0 && (s - 1) / CER_EPOCH_INTERVAL == trial_epoch {
+                                self.current_epoch = trial_epoch;
+                                self.epoch_root = Zeroizing::new(next_root);
+                                self.frame_key = Some(candidate_fk.clone());
+                                fk = candidate_fk;
+                                peeked = Some(s);
+                                break;
+                            }
+                        }
+                    }
+                    trial_root = next_root;
+                }
+            }
+        }
+
+        let peeked = peeked.ok_or(CoreError::Malformed)?;
         if !self.replay.check(peeked) {
             self.replay.note_drop();
             return Err(CoreError::Malformed);
         }
 
-        let (seq, _ftype, inner_sealed) = aead::open_indexed(fk, self.recv_dir(), &sealed_body)
+        let (seq, _ftype, inner_sealed) = aead::open_indexed(&fk, self.recv_dir(), &sealed_body)
             .map_err(|_| CoreError::Malformed)?;
 
         if seq != peeked {
@@ -383,6 +411,11 @@ impl ZeroGapPipeline {
 
         // ── Step 4: Quantized unpad ──────────────────────────────────────
         let unpadded = quantize_unpad(&padded_raw)?;
+
+        self.seal_count += 1;
+        if self.seal_count.is_multiple_of(CER_EPOCH_INTERVAL) {
+            let _ = self.rotate_epoch();
+        }
 
         // ── Step 5: Inner Header Unwrap ──────────────────────────────────
         if self.stealth_mode {
@@ -530,5 +563,41 @@ mod tests {
 
         assert_eq!(mtype, PIPELINE_TYPE_MSG);
         assert_eq!(opened, b"EPOCH_1_TACTICAL_COMMAND");
+    }
+
+    #[test]
+    fn pipeline_auto_epoch_rotation_and_sync() {
+        let root = [0xAAu8; 32];
+        let mut p_send = ZeroGapPipeline::new(&root, true, true).expect("init send");
+        let mut p_recv = ZeroGapPipeline::new(&root, false, true).expect("init recv");
+
+        let mut r_send = PcsRatchet::new(&root).expect("ratchet send");
+        let mut r_recv = PcsRatchet::new(&root).expect("ratchet recv");
+
+        // Send 130 messages across the 128 CER_EPOCH_INTERVAL threshold
+        for i in 1..=130 {
+            let (b_x, b_ek) = r_recv.advertise();
+            let payload = format!("TACTICAL_PAYLOAD_{}", i);
+            let (step, wire_frame) = p_send
+                .seal(
+                    payload.as_bytes(),
+                    PIPELINE_TYPE_MSG,
+                    ClearanceLevel::TopSecret,
+                    &mut r_send,
+                    &b_x,
+                    &b_ek,
+                )
+                .expect("seal");
+
+            let (mtype, opened) = p_recv
+                .open(&wire_frame, &mut r_recv, &step.eph_p_pub, &step.ml_ct)
+                .expect("open");
+
+            assert_eq!(mtype, PIPELINE_TYPE_MSG);
+            assert_eq!(opened, payload.as_bytes());
+        }
+
+        assert_eq!(p_send.current_epoch(), 1);
+        assert_eq!(p_recv.current_epoch(), 1);
     }
 }

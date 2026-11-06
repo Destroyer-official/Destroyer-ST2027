@@ -111,6 +111,7 @@ fn usage() -> ! {
          stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
          channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          terminal --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--sas TEXT] [--callsign TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
+         node   --role initiator|responder --bind ADDR --to ADDR [--key-file PATH] [--psk-file PATH] [--state PATH] [--interval-ms MS] [--quantum 256|512|1232] [--headless]\n\
          cookie-challenge [--ip IP] [--port PORT] [--payload TEXT] [--difficulty N]  generate anti-amplification micro-PoW challenge\n\
          cookie-solve --challenge HEX [--max-iters N]                                solve anti-amplification PoW challenge\n\
          cookie-verify --solution HEX [--ip IP] [--port PORT] [--payload TEXT]        verify solved PoW cookie challenge\n\
@@ -859,7 +860,18 @@ fn write_key_file(out: &str, hex: &str) {
     });
 }
 
+fn get_role_dirs(args: &[String], is_sender: bool) -> (u8, u8) {
+    let default_role = if is_sender { "initiator" } else { "responder" };
+    let role = get_flag(args, "--role").unwrap_or_else(|| default_role.to_string());
+    match role.as_str() {
+        "initiator" => (DIR_SEND, DIR_RECV),
+        "responder" => (DIR_RECV, DIR_SEND),
+        other => fail(&format!("invalid --role '{other}': must be 'initiator' or 'responder'")),
+    }
+}
+
 fn cmd_send(args: &[String]) {
+    let (tx_dir, _) = get_role_dirs(args, true);
     let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let to: SocketAddr = get_flag(args, "--to")
@@ -895,7 +907,7 @@ fn cmd_send(args: &[String]) {
         padded.extend_from_slice(&pad_bytes);
     }
     let msg_len = u16::try_from(msg.len()).unwrap_or_else(|_| fail("message length exceeds u16"));
-    let frame = aead::seal_with_len(&key, seq, DIR_SEND, FTYPE_MSG, msg_len, &padded)
+    let frame = aead::seal_with_len(&key, seq, tx_dir, FTYPE_MSG, msg_len, &padded)
         .unwrap_or_else(|_| fail("seal failed"));
     if frame.len() != quantum {
         fail("sealed frame length mismatch with expected quantum");
@@ -922,6 +934,7 @@ fn cmd_send(args: &[String]) {
 }
 
 fn cmd_recv(args: &[String]) {
+    let (_, rx_dir) = get_role_dirs(args, false);
     let (kb, key_id) = load_key_material(args);
     let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
@@ -984,7 +997,7 @@ fn cmd_recv(args: &[String]) {
                         ep.note_auth_drop();
                         continue;
                     }
-                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes) else {
+                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
                         ep.note_auth_drop();
                         continue;
                     };
@@ -1018,6 +1031,8 @@ fn cmd_selftest() {
     let (t, pt) = aead::open(&key, DIR_SEND, &f).expect("open");
     assert_eq!(t, FTYPE_MSG);
     assert_eq!(&pt[..], b"selftest-vector");
+    // Reflection test (F-01 regression): frame sealed with DIR_SEND MUST fail to open under DIR_RECV
+    assert!(aead::open(&key, DIR_RECV, &f).is_err(), "reflection frame accepted under inverted direction");
     let mut bad = f.clone();
     let n = bad.len();
     bad[n - 1] ^= 0x01;
@@ -1268,6 +1283,7 @@ fn cmd_selftest() {
 }
 
 fn cmd_send_file(args: &[String]) {
+    let (tx_dir, _) = get_role_dirs(args, true);
     let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let to: SocketAddr = get_flag(args, "--to")
@@ -1320,7 +1336,7 @@ fn cmd_send_file(args: &[String]) {
             let frame = aead::seal_with_len(
                 &key,
                 seq0.wrapping_add(i as u64),
-                DIR_SEND,
+                tx_dir,
                 FTYPE_MSG,
                 chunk_len,
                 &padded,
@@ -1348,6 +1364,7 @@ fn cmd_send_file(args: &[String]) {
 }
 
 fn cmd_recv_file(args: &[String]) {
+    let (_, rx_dir) = get_role_dirs(args, false);
     let (kb, key_id) = load_key_material(args);
     let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
@@ -1410,7 +1427,7 @@ fn cmd_recv_file(args: &[String]) {
                         ep.note_auth_drop();
                         continue;
                     }
-                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes) else {
+                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
                         ep.note_auth_drop();
                         continue;
                     };
@@ -1519,6 +1536,7 @@ impl DiodeHeader {
 }
 
 fn cmd_diode_send(args: &[String]) {
+    let (tx_dir, _) = get_role_dirs(args, true);
     let (kb, key_id) = load_key_material(args);
     let state = state_path(args);
     let to: SocketAddr = get_flag(args, "--to")
@@ -1630,7 +1648,7 @@ fn cmd_diode_send(args: &[String]) {
             let frame = aead::seal(
                 &key,
                 seq0.wrapping_add(chunk_idx as u64),
-                DIR_SEND,
+                tx_dir,
                 FTYPE_MSG,
                 &chunk_packet,
             )
@@ -1653,6 +1671,7 @@ fn cmd_diode_send(args: &[String]) {
 }
 
 fn cmd_diode_recv(args: &[String]) {
+    let (_, rx_dir) = get_role_dirs(args, false);
     let (kb, key_id) = load_key_material(args);
     let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
@@ -1720,7 +1739,7 @@ fn cmd_diode_recv(args: &[String]) {
                         ep.note_auth_drop();
                         continue;
                     }
-                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, DIR_SEND, &bytes) else {
+                    let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
                         ep.note_auth_drop();
                         continue;
                     };
@@ -1831,6 +1850,7 @@ fn cmd_diode_recv(args: &[String]) {
 
 fn cmd_stream_chaff(args: &[String]) {
     reject_forbidden_cli(args);
+    let (tx_dir, _) = get_role_dirs(args, true);
     let (kb, key_id) = load_key_material(args);
     let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
@@ -1876,7 +1896,7 @@ fn cmd_stream_chaff(args: &[String]) {
         while count == 0 || emitted < count {
             scheduler.wait_next_tick();
             let seq = reserve_send_seq(&state, &key_bytes, &key_id, 1);
-            let frame = pacing::build_chaff_frame(&key, seq, quantum)
+            let frame = pacing::build_chaff_frame_directed(&key, seq, tx_dir, quantum)
                 .unwrap_or_else(|_| fail("build chaff failed"));
             if ep.send_raw(&frame, to).await.is_err() {
                 fail("chaff send failed");
@@ -2222,7 +2242,7 @@ fn cmd_channel(args: &[String]) {
                     }
 
                 }
-                recv_opt = ep.recv_unthrottled(Duration::from_millis(50)) => {
+                recv_opt = ep.recv_raw(Duration::from_millis(50)) => {
                     if let Some(Ok((bytes, _from))) = recv_opt {
                         if bytes.len() != quantum {
                             ep.note_auth_drop();
@@ -2857,7 +2877,7 @@ fn cmd_terminal(args: &[String]) {
                         break;
                     }
                 }
-                recv_opt = ep.recv_unthrottled(Duration::from_millis(50)) => {
+                recv_opt = ep.recv_raw(Duration::from_millis(50)) => {
                     if let Some(Ok((bytes, _from))) = recv_opt {
                         if bytes.len() != quantum {
                             ep.note_auth_drop();
@@ -2929,6 +2949,56 @@ fn cmd_terminal(args: &[String]) {
             ep.drops
         );
     });
+}
+
+fn cmd_node(args: &[String]) {
+    reject_forbidden_cli(args);
+    if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("secure-transmit node — standalone native post-quantum operational C2 node");
+        println!();
+        println!("Usage: secure-transmit node --role <initiator|responder> --bind ADDR --to ADDR [OPTIONS]");
+        println!();
+        println!("Options:");
+        println!("  --role <initiator|responder>   P2P role (initiator establishes, responder listens)");
+        println!("  --bind ADDR                    Local UDP socket address to bind (e.g. 127.0.0.1:9060)");
+        println!("  --to ADDR                      Remote peer UDP socket address (e.g. 127.0.0.1:9061)");
+        println!("  --key-file PATH                Pre-shared/session symmetric 32B key file (0600)");
+        println!("  --psk-file PATH                Pre-shared key file for authenticated KEX");
+        println!("  --auth-sk-file PATH            Local ML-DSA-87 signing key seed file (32B hex, 0600)");
+        println!("  --peer-auth-pk-file PATH       Pinned peer ML-DSA-87 public key file (2592B hex)");
+        println!("  --state PATH                   Path to sequence state file (default: session.state)");
+        println!("  --quantum BYTES                Wire quantization size (256, 512, or 1232, default: 1232)");
+        println!("  --interval-ms MS               Constant-rate wire pacing interval in ms (default: 20)");
+        println!("  --headless                     Run headless background operational daemon (no TTY)");
+        println!("  --callsign TEXT                Tactical station callsign (default: TACTICAL-NODE)");
+        return;
+    }
+
+    let role = get_flag(args, "--role").unwrap_or_else(|| fail("--role <initiator|responder> is required"));
+    if role != "initiator" && role != "responder" {
+        fail("--role must be either 'initiator' or 'responder'");
+    }
+
+    let mut forwarded: Vec<String> = args.to_vec();
+    if get_flag(&forwarded, "--state").is_none() {
+        forwarded.push("--state".to_string());
+        forwarded.push(format!("node_{role}.state"));
+    }
+    if get_flag(&forwarded, "--key-file").is_none() && !has_flag(&forwarded, "--key-stdin") {
+        if let Some(psk) = get_flag(&forwarded, "--psk-file") {
+            forwarded.push("--key-file".to_string());
+            forwarded.push(psk);
+        } else {
+            fail("missing --key-file PATH (or --psk-file PATH) for authenticated operational node");
+        }
+    }
+
+    let is_headless = get_flag(args, "--headless").is_some() || args.iter().any(|a| a == "--headless");
+    if is_headless {
+        cmd_channel(&forwarded);
+    } else {
+        cmd_terminal(&forwarded);
+    }
 }
 
 fn require_kex_auth(psk_present: bool) {
@@ -4022,15 +4092,22 @@ fn cmd_eam_auth_hw(args: &[String]) {
     let slot1: usize = get_flag(args, "--token1-slot")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let pin1 = get_flag(args, "--token1-pin");
+    let pin1 = get_flag(args, "--pin1")
+        .or_else(|| get_flag(args, "--token1-pin"));
     let label1 = get_flag(args, "--token1-key-label");
 
     let mod2 = get_flag(args, "--token2-module");
     let slot2: usize = get_flag(args, "--token2-slot")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
-    let pin2 = get_flag(args, "--token2-pin");
+    let pin2 = get_flag(args, "--pin2")
+        .or_else(|| get_flag(args, "--token2-pin"));
     let label2 = get_flag(args, "--token2-key-label");
+
+    let mock_skew_ms: Option<u64> = get_flag(args, "--mock-skew-ms")
+        .and_then(|s| s.parse().ok());
+    let mock_same_slot = has_flag(args, "--mock-same-slot");
+    let mock_same_serial = has_flag(args, "--mock-same-serial");
 
     let is_production = std::env::var("P2P_PRODUCTION").as_deref() == Ok("1")
         || std::env::var("SECURE_P2P_PRODUCTION").as_deref() == Ok("1")
@@ -4041,13 +4118,22 @@ fn cmd_eam_auth_hw(args: &[String]) {
     }
 
     let (wire_hex, hash_hex, skew_ms) = if is_mock {
-        let p1 = pin1.as_deref().unwrap_or("123456");
-        let p2 = pin2.as_deref().unwrap_or("654321");
-        let sim = destroyer_core::nc3::MockDualSmartcardSimulator::new(p1, p2)
+        let p1 = pin1.as_deref().unwrap_or_else(|| fail("missing officer 1 PIN (--pin1)"));
+        let p2 = pin2.as_deref().unwrap_or_else(|| fail("missing officer 2 PIN (--pin2)"));
+        let mut sim = destroyer_core::nc3::MockDualSmartcardSimulator::new("123456", "654321")
             .unwrap_or_else(|e| fail(&format!("Mock dual smartcard simulator init failed: {e:?}")));
+        if let Some(skew) = mock_skew_ms {
+            sim = sim.with_skew_millis(skew);
+        }
+        if mock_same_slot {
+            sim = sim.with_token2_slot(0);
+        }
+        if mock_same_serial {
+            sim = sim.with_token2_serial("NORAD-CCID-READER1-CARD01");
+        }
         let pkg = sim
             .sign_eam(&target, directive.as_bytes(), p1, p2, max_skew_ms)
-            .unwrap_or_else(|e| fail(&format!("Mock dual smartcard signing failed: {e:?}")));
+            .unwrap_or_else(|e| fail(&format!("{e:?}")));
         let wire = pkg.to_bytes();
         let hash = hex_of(&pkg.directive_hash);
         let skew = if pkg.t1_millis >= pkg.t2_millis {
@@ -4057,12 +4143,14 @@ fn cmd_eam_auth_hw(args: &[String]) {
         };
         (hex_of(&wire), hash, skew)
     } else {
+        let p1 = pin1.as_deref().unwrap_or_else(|| fail("missing officer 1 PIN (--pin1 or --token1-pin)"));
+        let p2 = pin2.as_deref().unwrap_or_else(|| fail("missing officer 2 PIN (--pin2 or --token2-pin)"));
         let mut cfg1 = destroyer_core::auth::HsmConfig::default();
         if let Some(m) = mod1 {
             cfg1.module_path = Some(std::path::PathBuf::from(m));
         }
         cfg1.slot_index = Some(slot1);
-        cfg1.pin = pin1;
+        cfg1.pin = Some(p1.to_string());
         cfg1.key_label = label1;
 
         let mut cfg2 = destroyer_core::auth::HsmConfig::default();
@@ -4070,7 +4158,7 @@ fn cmd_eam_auth_hw(args: &[String]) {
             cfg2.module_path = Some(std::path::PathBuf::from(m));
         }
         cfg2.slot_index = Some(slot2);
-        cfg2.pin = pin2;
+        cfg2.pin = Some(p2.to_string());
         cfg2.key_label = label2;
 
         let hsm1 = destroyer_core::auth::HsmSession::open(&cfg1)
@@ -4085,32 +4173,90 @@ fn cmd_eam_auth_hw(args: &[String]) {
             .find_private_key(cfg2.key_label.as_deref(), None)
             .unwrap_or_else(|e| fail(&format!("Officer 2 key handle lookup failed: {e}")));
 
+        let pub_k1 = hsm1
+            .find_public_key(cfg1.key_label.as_deref(), None)
+            .unwrap_or_else(|e| fail(&format!("Officer 1 public key handle lookup failed: {e}")));
+        let pub_k2 = hsm2
+            .find_public_key(cfg2.key_label.as_deref(), None)
+            .unwrap_or_else(|e| fail(&format!("Officer 2 public key handle lookup failed: {e}")));
+
+        let vk1 = hsm1
+            .get_public_key_bytes(pub_k1)
+            .unwrap_or_else(|e| fail(&format!("Officer 1 public key read failed: {e}")));
+        let vk2 = hsm2
+            .get_public_key_bytes(pub_k2)
+            .unwrap_or_else(|e| fail(&format!("Officer 2 public key read failed: {e}")));
+
+        let serial1 = hsm1.token_serial();
+        let serial2 = hsm2.token_serial();
+
+        destroyer_core::nc3::validate_smartcard_separation(
+            slot1,
+            slot2,
+            serial1,
+            serial2,
+            &vk1,
+            &vk2,
+        ).unwrap_or_else(|e| fail(&format!("Physical smartcard separation validation failed: {e:?}")));
+
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let tbs = destroyer_core::nc3::compute_eam_tbs(directive.as_bytes(), now_secs);
+        let directive_hash = destroyer_core::nc3::compute_directive_hash(
+            now_secs,
+            &target,
+            directive.as_bytes(),
+        );
+
+        let t1_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         let sig1 = hsm1
-            .sign(k1, &tbs)
+            .sign(k1, &directive_hash)
             .unwrap_or_else(|e| fail(&format!("Officer 1 silicon sign failed: {e}")));
+
+        let t2_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
         let sig2 = hsm2
-            .sign(k2, &tbs)
+            .sign(k2, &directive_hash)
             .unwrap_or_else(|e| fail(&format!("Officer 2 silicon sign failed: {e}")));
 
-        let directive_obj = destroyer_core::nc3::EamDirective {
-            directive_text: directive.as_bytes().to_vec(),
-            officer1_sig: sig1,
-            officer2_sig: sig2,
-            timestamp_secs: now_secs,
+        let skew_ms = if t1_millis >= t2_millis {
+            t1_millis - t2_millis
+        } else {
+            t2_millis - t1_millis
         };
 
-        let wire_bytes = directive_obj.to_bytes();
-        (hex_of(&wire_bytes), String::new(), 0)
+        if skew_ms > max_skew_ms {
+            fail(&format!("Hardware temporal skew {skew_ms}ms exceeds maximum allowed {max_skew_ms}ms"));
+        }
+
+        let pkg = destroyer_core::nc3::HardwareEamPackage {
+            timestamp_secs: now_secs,
+            t1_millis,
+            t2_millis,
+            target: target.clone(),
+            action_payload: directive.as_bytes().to_vec(),
+            directive_hash,
+            officer1_vk: vk1,
+            officer1_sig: sig1,
+            officer2_vk: vk2,
+            officer2_sig: sig2,
+        };
+
+        let wire_bytes = pkg.to_bytes();
+        (hex_of(&wire_bytes), hex_of(&directive_hash), skew_ms)
     };
 
     println!("eam-auth-hw SUCCESS: DoD 5210.41M DUAL-OFFICER HARDWARE INTEGRITY VERIFIED");
+    println!("target: {target}");
     println!("eam_wire_hex: {}", wire_hex.trim());
     if !hash_hex.is_empty() {
         println!("directive_hash_sha3_512: {}", hash_hex.trim());
@@ -4127,6 +4273,7 @@ fn cmd_eam_verify_hw(args: &[String]) {
     let max_age_secs: u64 = get_flag(args, "--max-age-secs")
         .and_then(|s| s.parse().ok())
         .unwrap_or(destroyer_core::nc3::EAM_FRESHNESS_WINDOW_SECS);
+    let roster_path = get_flag(args, "--officer-roster");
 
     let wire_bytes = decode_hex(&wire_hex).unwrap_or_else(|_| fail("invalid hex in --wire-hex"));
 
@@ -4138,8 +4285,24 @@ fn cmd_eam_verify_hw(args: &[String]) {
         .unwrap_or_default()
         .as_millis() as u64;
 
-    pkg.verify(now_millis, max_skew_ms, max_age_secs)
-        .unwrap_or_else(|e| fail(&format!("hardware EAM verification failed: {e:?}")));
+    let is_prod = std::env::var("P2P_PRODUCTION").map(|v| v == "1").unwrap_or(false)
+        || std::env::var("SECURE_P2P_PRODUCTION").map(|v| v == "1").unwrap_or(false);
+
+    if is_prod && roster_path.is_none() {
+        fail("production mode (P2P_PRODUCTION=1) strictly requires --officer-roster <PATH> to verify authorized officers");
+    }
+
+    if let Some(r_path) = roster_path {
+        let content = std::fs::read_to_string(&r_path)
+            .unwrap_or_else(|e| fail(&format!("failed to read officer roster from {r_path}: {e}")));
+        let roster = destroyer_core::nc3::OfficerRoster::from_json(&content)
+            .unwrap_or_else(|e| fail(&format!("failed to parse officer roster JSON in {r_path}: {e:?}")));
+        pkg.verify_with_roster(&roster, now_millis, max_skew_ms, max_age_secs)
+            .unwrap_or_else(|e| fail(&format!("hardware EAM verification failed against officer roster: {e:?}")));
+    } else {
+        pkg.verify(now_millis, max_skew_ms, max_age_secs)
+            .unwrap_or_else(|e| fail(&format!("hardware EAM verification failed: {e:?}")));
+    }
 
     let skew_ms = if pkg.t1_millis >= pkg.t2_millis {
         pkg.t1_millis - pkg.t2_millis
@@ -4149,7 +4312,7 @@ fn cmd_eam_verify_hw(args: &[String]) {
     let action_str = String::from_utf8_lossy(&pkg.action_payload);
     let hash_hex = hex_of(&pkg.directive_hash);
 
-    println!("eam-verify-hw SUCCESS: HARDWARE TPI INTEGRITY AND REPLAY FRESHNESS VERIFIED");
+    println!("eam-verify-hw SUCCESS: DoD 5210.41M HARDWARE TPI PACKAGE VERIFIED");
     println!("target: {}", pkg.target);
     println!("action_payload: {}", action_str);
     println!("directive_hash_sha3_512: {}", hash_hex.trim());
@@ -4177,6 +4340,7 @@ fn main() {
         "stream-chaff" => cmd_stream_chaff(&args[2..]),
         "channel" => cmd_channel(&args[2..]),
         "terminal" => cmd_terminal(&args[2..]),
+        "node" => cmd_node(&args[2..]),
         "cookie-challenge" => cmd_cookie_challenge(&args[2..]),
         "cookie-solve" => cmd_cookie_solve(&args[2..]),
         "cookie-verify" => cmd_cookie_verify(&args[2..]),

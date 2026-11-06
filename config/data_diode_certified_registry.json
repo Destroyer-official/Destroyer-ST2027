@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ST2027 Certified Hardware Simplex Optical Data Diode Registry",
+  "description": "Certified commercial simplex optical data diode hardware specifications conforming to Common Criteria ISO/IEC 15408 EAL4+/EAL7+.",
+  "devices": [
+    {
+      "device_id": "DIODE-OWL-1000G",
+      "vendor": "Owl Cyber Defense",
+      "model": "DualDiode Communication Interconnect 1000G",
+      "cc_cert": "EAL4+AVA_VAN.5",
+      "cc_id": "CCEVS-VR-VID11089-2024",
+      "tx_only_attested": true,
+      "install_ref": "OE.NETWORK-SOLO-INTERCONNECT-001",
+      "valid_through": "2028-12-31",
+      "direction": "low-to-high"
+    },
+    {
+      "device_id": "DIODE-FOXIT-EAL7",
+      "vendor": "Fox-IT",
+      "model": "Fox DataDiode 10G Simplex Optical Boundary",
+      "cc_cert": "EAL7+",
+      "cc_id": "NSCIB-CC-19-48210-CR3",
+      "tx_only_attested": true,
+      "install_ref": "OE.NETWORK-SOLO-INTERCONNECT-002",
+      "valid_through": "2029-06-30",
+      "direction": "low-to-high"
+    },
+    {
+      "device_id": "DIODE-ADVENICA-SECURI",
+      "vendor": "Advenica",
+      "model": "SecuriCDS DD1000A Hardware Data Diode",
+      "cc_cert": "EAL5+",
+      "cc_id": "CSEC-CC-2022-008",
+      "tx_only_attested": true,
+      "install_ref": "OE.NETWORK-SOLO-INTERCONNECT-003",
+      "valid_through": "2028-09-30",
+      "direction": "low-to-high"
+    }
+  ]
+}

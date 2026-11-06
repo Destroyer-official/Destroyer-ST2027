@@ -126,6 +126,30 @@ def _recv_absolute_wait_s(max_payload: int = 50 * 1024 * 1024) -> float:
     return (cells + 2) * TICK_S + 300.0
 
 
+def sample_poisson_interval(rate_lambda: float = 20.0,
+                            min_s: float = 0.005,
+                            max_s: float = 0.150) -> float:
+    """Sample an exponential inter-arrival interval for memoryless Poisson pacing.
+
+    Delta t = -ln(1 - U) / lambda
+
+    Research grounding (2024-2027 literature):
+      Loopix (USENIX Security 2017): Poisson-distributed traffic mixing to resist
+        global passive adversaries (GPA).
+      Maybenot Framework (PETS 2024 / Tor Project): probabilistic state-machine
+        traffic shaping to neutralize deep learning flow correlation (DeepCorr,
+        ESPRESSO, SUMo).
+      TARANET: constant-rate / Poisson sending to defeat cross-AS correlation.
+
+    Prevents deep learning traffic analysis and autonomous system timing correlation
+    by destroying periodic packet arrival timing signatures.
+    """
+    import math
+    u = secrets.SystemRandom().uniform(0.0001, 0.9999)
+    raw = -math.log(1.0 - u) / max(rate_lambda, 0.001)
+    return max(min_s, min(max_s, raw))
+
+
 def _compare(a: bytes, b: bytes) -> bool:
     return hmac.compare_digest(a, b)
 
@@ -263,7 +287,7 @@ def require_overlay(host: str, port: int) -> Dict[str, Any]:
             raise OverlayError("overlay rejected")
         return {"path": "tor", "host": peer, "port": port,
                 "proxy": "%s:%d" % tor_proxy_endpoint()}
-    if mode in ("private_apn", "wireguard", "air_gapped"):
+    if mode in ("private_apn", "wireguard", "air_gapped", "dark_fiber", "dsn"):
         if not overlay_active_flag():
             raise OverlayError("overlay rejected")
         try:
@@ -375,7 +399,7 @@ def open_overlay_socket(host: str, port: int,
     """Open the accepted overlay path. Direct sockets only in lab."""
     accepted = require_overlay(host, port)
     path = accepted.get("path", "")
-    if path in ("lab-direct", "private_apn", "wireguard", "air_gapped"):
+    if path in ("lab-direct", "private_apn", "wireguard", "air_gapped", "dark_fiber", "dsn"):
         try:
             return socket.create_connection((host.strip().strip("[]"), port),
                                             timeout=timeout)
@@ -584,12 +608,14 @@ class ShaperRx:
 
 
 class ConstantRateSession:
-    """Fixed-tick pump over a reliable overlay socket. Cover always flows."""
+    """Fixed-tick or Poisson-paced pump over a reliable overlay socket. Cover always flows."""
 
     def __init__(self, sock: socket.socket, obfs_key: bytes,
                  direction_out: int = 0xA5, direction_in: int = 0x5A,
                  start_seq_out: Optional[int] = None,
-                 peer_start_seq_in: int = 0) -> None:
+                 peer_start_seq_in: int = 0,
+                 poisson_pacing: Optional[bool] = None,
+                 rate_lambda: float = 20.0) -> None:
         self._sock = sock
         self.tx = ShaperTx(obfs_key, direction_out, start_seq_out)
         self.rx = ShaperRx(obfs_key, direction_in, peer_start_seq_in)
@@ -599,6 +625,11 @@ class ConstantRateSession:
         self.delivered: List[bytes] = []
         self._send_lock = threading.Lock()
         self._rx_buf = bytearray()
+        if poisson_pacing is None:
+            self._poisson = _env_true("P2P_POISSON_CHAFF")
+        else:
+            self._poisson = bool(poisson_pacing)
+        self._rate_lambda = float(rate_lambda)
 
     @property
     def tx_seq(self) -> int:
@@ -625,16 +656,19 @@ class ConstantRateSession:
         tick = TICK_S
         nxt = time.monotonic()
         while not self._stop.is_set():
-            nxt += tick
+            if self._poisson:
+                delay = sample_poisson_interval(self._rate_lambda)
+            else:
+                nxt += tick
+                delay = nxt - time.monotonic()
             try:
                 with self._send_lock:
                     self._sock.sendall(self.tx.next_cell())
             except Exception:
                 break
-            delay = nxt - time.monotonic()
             if delay > 0:
                 self._stop.wait(timeout=delay)
-            else:
+            elif not self._poisson:
                 nxt = time.monotonic()
 
     def pump_once_for_test(self) -> bytes:

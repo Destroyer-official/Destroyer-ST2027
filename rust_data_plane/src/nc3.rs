@@ -551,6 +551,25 @@ impl HardwareEamPackage {
         Ok(())
     }
 
+    /// Full cryptographic verification of hardware EAM package with trusted officer roster enforcement.
+    pub fn verify_with_roster(
+        &self,
+        roster: &OfficerRoster,
+        now_millis: u64,
+        max_skew_millis: u64,
+        max_age_secs: u64,
+    ) -> Result<(), CoreError> {
+        if !roster.is_authorized(&self.officer1_vk) {
+            eprintln!("NC3 ROSTER REJECTION: Officer 1 verifying key is not in authorized officer roster");
+            return Err(CoreError::AuthRequired);
+        }
+        if !roster.is_authorized(&self.officer2_vk) {
+            eprintln!("NC3 ROSTER REJECTION: Officer 2 verifying key is not in authorized officer roster");
+            return Err(CoreError::AuthRequired);
+        }
+        self.verify(now_millis, max_skew_millis, max_age_secs)
+    }
+
     /// Convert to classic EamDirective for backwards compatibility.
     pub fn to_classic_eam_directive(&self) -> EamDirective {
         EamDirective {
@@ -578,6 +597,96 @@ impl HardwareEamPackage {
             self.officer2_sig.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
             self.action_payload.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
         )
+    }
+}
+
+/// Authorized military officer profile in the trusted roster.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OfficerRecord {
+    pub callsign: String,
+    pub role: String,
+    pub verifying_key_hex: String,
+    pub authorized: bool,
+}
+
+/// Cryptographically pinned roster of authorized NC3 release officers.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OfficerRoster {
+    pub officers: Vec<OfficerRecord>,
+}
+
+impl OfficerRoster {
+    pub fn new() -> Self {
+        Self { officers: Vec::new() }
+    }
+
+    pub fn add_officer(&mut self, callsign: &str, role: &str, vk_bytes: &[u8], authorized: bool) {
+        let hex = vk_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        self.officers.push(OfficerRecord {
+            callsign: callsign.to_string(),
+            role: role.to_string(),
+            verifying_key_hex: hex,
+            authorized,
+        });
+    }
+
+    pub fn is_authorized(&self, vk_bytes: &[u8]) -> bool {
+        let hex = vk_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        self.officers.iter().any(|o| o.authorized && o.verifying_key_hex.eq_ignore_ascii_case(&hex))
+    }
+
+    pub fn from_json(json_str: &str) -> Result<Self, CoreError> {
+        let mut roster = Self::new();
+        let parts: Vec<&str> = json_str.split('{').collect();
+        for part in parts {
+            if !part.contains("verifying_key_hex") && !part.contains("vk") {
+                continue;
+            }
+            let mut vk_hex = String::new();
+            let mut callsign = "OFFICER".to_string();
+            let mut role = "OPERATOR".to_string();
+            let mut authorized = true;
+
+            for token in part.split(',') {
+                let kv: Vec<&str> = token.split(':').collect();
+                if kv.len() >= 2 {
+                    let k = kv[0].trim().trim_matches(|c| c == '"' || c == '\'' || c == ' ' || c == '\n' || c == '\r');
+                    let v = kv[1].trim().trim_matches(|c| c == '"' || c == '\'' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r');
+                    match k {
+                        "verifying_key_hex" | "vk_hex" | "vk" => vk_hex = v.to_string(),
+                        "callsign" => callsign = v.to_string(),
+                        "role" => role = v.to_string(),
+                        "authorized" => authorized = v == "true" || v == "1",
+                        _ => {}
+                    }
+                }
+            }
+            if !vk_hex.is_empty() {
+                roster.officers.push(OfficerRecord {
+                    callsign,
+                    role,
+                    verifying_key_hex: vk_hex,
+                    authorized,
+                });
+            }
+        }
+        if roster.officers.is_empty() {
+            return Err(CoreError::Malformed);
+        }
+        Ok(roster)
+    }
+
+    pub fn to_json(&self) -> String {
+        let mut out = String::from("[\n");
+        for (i, o) in self.officers.iter().enumerate() {
+            out.push_str(&format!(
+                "  {{\"callsign\": \"{}\", \"role\": \"{}\", \"verifying_key_hex\": \"{}\", \"authorized\": {}}}{}\n",
+                o.callsign, o.role, o.verifying_key_hex, o.authorized,
+                if i + 1 < self.officers.len() { "," } else { "" }
+            ));
+        }
+        out.push(']');
+        out
     }
 }
 
@@ -1056,6 +1165,49 @@ mod tests {
         tampered_target_pkg.target = "UNAUTHORIZED_TARGET".to_string();
         assert_eq!(
             tampered_target_pkg.verify(now_millis, 2000, 120),
+            Err(CoreError::AuthRequired)
+        );
+    }
+
+    #[test]
+    fn officer_roster_verification_flow() {
+        let sim = MockDualSmartcardSimulator::new("123456", "654321").expect("simulator setup");
+        let target = "STRATCOM_BURROWS";
+        let payload = b"DIRECTIVE-DEFCON-1-AUTHORIZATION-PAYLOAD";
+        let pkg = sim
+            .sign_eam(target, payload, "123456", "654321", 2000)
+            .expect("sign_eam");
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // 1. Authorized roster with both officers passes
+        let mut roster = OfficerRoster::new();
+        roster.add_officer("MAJOR_ALICE", "AUTH_OFFICER", &pkg.officer1_vk, true);
+        roster.add_officer("CAPTAIN_BOB", "AUTH_OFFICER", &pkg.officer2_vk, true);
+
+        pkg.verify_with_roster(&roster, now_millis, 2000, 120).expect("verify with valid roster");
+
+        // JSON roundtrip
+        let json_rep = roster.to_json();
+        let parsed_roster = OfficerRoster::from_json(&json_rep).expect("from_json");
+        pkg.verify_with_roster(&parsed_roster, now_millis, 2000, 120).expect("verify with parsed roster");
+
+        // 2. Roster missing Officer 2 fails closed
+        let mut incomplete_roster = OfficerRoster::new();
+        incomplete_roster.add_officer("MAJOR_ALICE", "AUTH_OFFICER", &pkg.officer1_vk, true);
+        assert_eq!(
+            pkg.verify_with_roster(&incomplete_roster, now_millis, 2000, 120),
+            Err(CoreError::AuthRequired)
+        );
+
+        // 3. Officer 2 marked unauthorized fails closed
+        let mut revoked_roster = OfficerRoster::new();
+        revoked_roster.add_officer("MAJOR_ALICE", "AUTH_OFFICER", &pkg.officer1_vk, true);
+        revoked_roster.add_officer("CAPTAIN_BOB", "AUTH_OFFICER", &pkg.officer2_vk, false);
+        assert_eq!(
+            pkg.verify_with_roster(&revoked_roster, now_millis, 2000, 120),
             Err(CoreError::AuthRequired)
         );
     }

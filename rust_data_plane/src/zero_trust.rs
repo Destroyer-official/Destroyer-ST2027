@@ -59,6 +59,28 @@ pub const CAVEAT_REL_TO_COALITION: u32 = 0x02;
 pub const CAVEAT_EYES_ONLY: u32 = 0x04;
 pub const CAVEAT_SI_TK_G: u32 = 0x08;
 
+/// Structured Cryptographic Security Label with constant-time equality check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecurityLabel {
+    pub clearance: ClearanceLevel,
+    pub caveats: u32,
+    pub compartment_tag: [u8; 16],
+}
+
+impl SecurityLabel {
+    pub const fn new(clearance: ClearanceLevel, caveats: u32, compartment_tag: [u8; 16]) -> Self {
+        Self { clearance, caveats, compartment_tag }
+    }
+
+    /// Constant-time validation of security labels against expected clearance and compartment.
+    pub fn constant_time_eq(&self, other: &SecurityLabel) -> bool {
+        let class_match = (self.clearance as u8) == (other.clearance as u8);
+        let caveat_match = (self.caveats & other.caveats) == other.caveats;
+        let tag_match = crate::ct::ct_eq(&self.compartment_tag, &other.compartment_tag);
+        class_match && caveat_match && tag_match
+    }
+}
+
 /// Bell-LaPadula Simple Security Property (No Read Up) + Caveat Authorization.
 pub fn can_read(
     subject_clearance: ClearanceLevel,
@@ -318,6 +340,93 @@ impl ZeroTrustEngine {
     pub fn inspect_content(&self, payload: &[u8]) -> Result<(), CoreError> {
         inspect_content_rtb(payload).map_err(|_| CoreError::ZeroTrustViolation)
     }
+
+    /// Ingress continuous evaluation: validates authentication outcome, checks peer authorization,
+    /// evaluates NSA RTB content filter / security labels, and updates trust score.
+    pub fn evaluate_ingress(&self, peer_id: &str, payload: &[u8], is_auth_valid: bool) -> Result<(), CoreError> {
+        if !is_auth_valid {
+            let _ = self.record_penalty(peer_id, 25);
+            return Err(CoreError::ZeroTrustViolation);
+        }
+        self.authorize(peer_id, PERM_READ_ONLY)?;
+        self.inspect_content(payload)?;
+        let _ = self.record_success(peer_id);
+        Ok(())
+    }
+
+    /// Load authorized peer profiles from structured JSON roster.
+    pub fn load_profiles_from_json(&self, json_str: &str) -> Result<usize, CoreError> {
+        let mut count = 0;
+        let parts: Vec<&str> = json_str.split('{').collect();
+        for part in parts {
+            if !part.contains("peer_id") {
+                continue;
+            }
+            let mut peer_id = String::new();
+            let mut role = SecurityRole::Operator;
+            let mut trust_score = DEFAULT_INITIAL_TRUST;
+
+            for token in part.split(',') {
+                let kv: Vec<&str> = token.split(':').collect();
+                if kv.len() >= 2 {
+                    let k = kv[0].trim().trim_matches(|c| c == '"' || c == '\'' || c == ' ' || c == '\n' || c == '\r');
+                    let v = kv[1].trim().trim_matches(|c| c == '"' || c == '\'' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r');
+                    match k {
+                        "peer_id" => peer_id = v.to_string(),
+                        "role" => {
+                            if v.eq_ignore_ascii_case("admin") {
+                                role = SecurityRole::Admin;
+                            } else if v.eq_ignore_ascii_case("viewer") {
+                                role = SecurityRole::Viewer;
+                            } else {
+                                role = SecurityRole::Operator;
+                            }
+                        }
+                        "trust_score" => {
+                            if let Ok(ts) = v.parse::<u32>() {
+                                trust_score = ts;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if !peer_id.is_empty() {
+                if let Ok(mut map) = self.profiles.write() {
+                    let mut prof = PeerTrustProfile::new(peer_id.clone(), role);
+                    prof.trust_score = trust_score;
+                    map.insert(peer_id, prof);
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    }
+
+    /// Export active profiles to JSON.
+    pub fn to_json(&self) -> Result<String, CoreError> {
+        let guard = self.profiles.read().map_err(|_| CoreError::ZeroTrustViolation)?;
+        let mut out = String::from("{\"profiles\": [");
+        let mut first = true;
+        for (id, prof) in guard.iter() {
+            if !first {
+                out.push_str(", ");
+            }
+            first = false;
+            let role_str = match prof.role {
+                SecurityRole::Admin => "admin",
+                SecurityRole::Operator => "operator",
+                SecurityRole::Viewer => "viewer",
+            };
+            out.push_str(&format!(
+                "{{\"peer_id\": \"{}\", \"role\": \"{}\", \"trust_score\": {}, \"revoked\": {}}}",
+                id, role_str, prof.trust_score, prof.revoked
+            ));
+        }
+        out.push_str("]}");
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -419,5 +528,47 @@ mod tests {
 
         let dirty_payload_2 = b"COORDINATES FOR SI-TK-G SATELLITE PASS";
         assert!(zt.inspect_content(dirty_payload_2).is_err());
+    }
+
+    #[test]
+    fn test_zero_trust_evaluate_ingress_and_json_roster() {
+        let zt = ZeroTrustEngine::default();
+        let json_roster = r#"{
+            "profiles": [
+                {"peer_id": "alpha_1", "role": "operator", "trust_score": 80},
+                {"peer_id": "beta_2", "role": "admin", "trust_score": 90}
+            ]
+        }"#;
+
+        let loaded = zt.load_profiles_from_json(json_roster).unwrap();
+        assert_eq!(loaded, 2);
+        assert_eq!(zt.trust_score("alpha_1"), Some(80));
+        assert_eq!(zt.trust_score("beta_2"), Some(90));
+
+        // Evaluate ingress with valid payload
+        let valid_payload = b"STATUS NORMAL";
+        assert!(zt.evaluate_ingress("alpha_1", valid_payload, true).is_ok());
+
+        // Ingress with auth failure penalizes
+        assert!(zt.evaluate_ingress("alpha_1", valid_payload, false).is_err());
+        assert_eq!(zt.trust_score("alpha_1"), Some(55));
+
+        // Ingress with RTB violation fails
+        let rtb_violation = b"SECRET TRANSMISSION: NOFORN EYES ONLY";
+        assert!(zt.evaluate_ingress("beta_2", rtb_violation, true).is_err());
+    }
+
+    #[test]
+    fn test_security_label_constant_time_eq() {
+        let tag1 = [0x42u8; 16];
+        let tag2 = [0x43u8; 16];
+        let l1 = SecurityLabel::new(ClearanceLevel::Secret, CAVEAT_NOFORN, tag1);
+        let l2 = SecurityLabel::new(ClearanceLevel::Secret, CAVEAT_NOFORN, tag1);
+        let l3 = SecurityLabel::new(ClearanceLevel::TopSecret, CAVEAT_NOFORN, tag1);
+        let l4 = SecurityLabel::new(ClearanceLevel::Secret, CAVEAT_NOFORN, tag2);
+
+        assert!(l1.constant_time_eq(&l2));
+        assert!(!l1.constant_time_eq(&l3));
+        assert!(!l1.constant_time_eq(&l4));
     }
 }

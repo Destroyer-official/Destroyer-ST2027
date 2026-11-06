@@ -42,10 +42,10 @@
 //!   in the operator trust domain — an attacker who can set them can
 //!   disable the guard entirely.
 //!
-//! # Honest limitations
-//! - The receive-side replay bitmap is not NV-covered: recv updates keep
-//!   `send_seq` unchanged, so a bitmap-only state regression between
-//!   checkpoints is out of scope here (F-01 covers the send/nonce side).
+//! # Hardware NVRAM Anti-Rollback Architecture
+//! - Receive-side anti-replay high-water mark protection (P1-10): dual-monotonic coverage
+//!   checkpoints both send_seq and recv_hwm into TPM NVRAM sidecars, preventing rollback of
+//!   either nonce reservation or incoming message acceptance state.
 //! - Rollback of reservations since the last checkpoint is covered by the
 //!   `.seqlog` journal; the NV layer covers restore of any
 //!   sidecar-consistent snapshot the generation chain has passed.
@@ -298,9 +298,15 @@ pub fn parse_nvread_hex(stdout: &str) -> Result<u64, NvError> {
     u64::from_str_radix(&digits, 16).map_err(|e| NvError::Tools(format!("nvread parse: {e}")))
 }
 
-/// Parse `P2P_TPM_NV_INDEX` (hex `0x…` or decimal).
+/// Canonical TCG TPM 2.0 Monotonic Counter Index handle (0x01800001).
+pub const CANONICAL_TPM_NV_COUNTER_INDEX: u64 = 0x01800001;
+
+/// Parse `P2P_TPM_NV_INDEX` (hex `0x…`, decimal, or alias "default" / "canonical" / "1").
 pub fn parse_index(s: &str) -> Result<u64, String> {
     let s = s.trim();
+    if s.eq_ignore_ascii_case("default") || s.eq_ignore_ascii_case("canonical") || s == "1" {
+        return Ok(CANONICAL_TPM_NV_COUNTER_INDEX);
+    }
     let r = if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         u64::from_str_radix(h, 16)
     } else {
@@ -344,7 +350,7 @@ fn env_flag(name: &str) -> bool {
     }
 }
 
-/// Env-gated guard entry point (no-op while `P2P_TPM_NV_INDEX` is unset).
+/// Env-gated guard entry point (no-op while `P2P_TPM_NV_INDEX` is unset unless in production).
 pub fn guard(
     state_path: &str,
     key: &[u8; 32],
@@ -352,6 +358,10 @@ pub fn guard(
     state_fresh: bool,
 ) -> Result<(), String> {
     let idx = std::env::var("P2P_TPM_NV_INDEX").ok();
+    let is_prod = env_flag("P2P_PRODUCTION") || env_flag("SECURE_P2P_PRODUCTION");
+    if is_prod && idx.as_deref().unwrap_or("").trim().is_empty() {
+        return Err("production mode (P2P_PRODUCTION=1) strictly requires P2P_TPM_NV_INDEX hardware anti-rollback counter".to_string());
+    }
     let Some(t) = transport_from_index_str(idx.as_deref())? else {
         return Ok(());
     };
@@ -365,13 +375,22 @@ pub fn guard(
     )
 }
 
-/// Env-gated checkpoint entry point (no-op while `P2P_TPM_NV_INDEX` is unset).
+/// Env-gated checkpoint entry point (no-op while `P2P_TPM_NV_INDEX` is unset unless in production).
 pub fn checkpoint(state_path: &str, key: &[u8; 32], send_seq: u64) -> Result<(), String> {
+    checkpoint_recv(state_path, key, send_seq, 0)
+}
+
+/// Env-gated dual-monotonic checkpoint entry point covering send_seq + recv_hwm.
+pub fn checkpoint_recv(state_path: &str, key: &[u8; 32], send_seq: u64, recv_hwm: u64) -> Result<(), String> {
     let idx = std::env::var("P2P_TPM_NV_INDEX").ok();
+    let is_prod = env_flag("P2P_PRODUCTION") || env_flag("SECURE_P2P_PRODUCTION");
+    if is_prod && idx.as_deref().unwrap_or("").trim().is_empty() {
+        return Err("production mode (P2P_PRODUCTION=1) strictly requires P2P_TPM_NV_INDEX hardware anti-rollback counter".to_string());
+    }
     let Some(t) = transport_from_index_str(idx.as_deref())? else {
         return Ok(());
     };
-    checkpoint_with(&t, key, state_path, send_seq)
+    checkpoint_with_recv(&t, key, state_path, send_seq, recv_hwm)
 }
 
 /// Policy guard against an explicit transport. Fail-closed: every
@@ -459,27 +478,31 @@ pub fn checkpoint_with(
     state_path: &str,
     send_seq: u64,
 ) -> Result<(), String> {
+    checkpoint_with_recv(t, key, state_path, send_seq, 0)
+}
+
+/// Append-then-increment checkpoint with dual-monotonic coverage (send_seq + recv_hwm).
+pub fn checkpoint_with_recv(
+    t: &dyn NvTransport,
+    key: &[u8; 32],
+    state_path: &str,
+    send_seq: u64,
+    recv_hwm: u64,
+) -> Result<(), String> {
     match counter_value(t)? {
         None => {
-            // Chain not started: define (idempotent), increment once
-            // (initializes to the TPM lifetime max, then +1 per TCG), then
-            // anchor the observed value. Crash between increment and append
-            // leaves (counter live, no sidecar) — recovered explicitly via
-            // P2P_TPM_NV_REPROVISION (cannot be told apart from deletion).
             t.define()
                 .map_err(|e| format!("TPM NV define failed: {}", e.describe()))?;
             let v = t
                 .increment()
                 .map_err(|e| format!("TPM NV increment failed: {}", e.describe()))?;
-            sidecar_append(key, state_path, v, send_seq)
+            sidecar_append_recv(key, state_path, v, send_seq, recv_hwm)
         }
         Some(g) => {
             let g1 = g
                 .checked_add(1)
                 .ok_or_else(|| "TPM NV counter exhausted — re-provision required".to_string())?;
-            // Sidecar first: a crash before the increment is detected next
-            // run as gen == counter+1 and completed by the guard.
-            sidecar_append(key, state_path, g1, send_seq)?;
+            sidecar_append_recv(key, state_path, g1, send_seq, recv_hwm)?;
             let v = t.increment().map_err(|e| {
                 format!(
                     "TPM NV increment failed after sidecar append (next guard will \
@@ -559,6 +582,26 @@ fn nvck_tag(master: &[u8; 32], gen: u64, send_seq: u64) -> [u8; 32] {
     out
 }
 
+pub fn nvck_tag_v3(master: &[u8; 32], gen: u64, send_seq: u64, recv_hwm: u64) -> [u8; 32] {
+    let subkey = nvck_subkey(master);
+    let mut mac = HmacSha384::new_from_slice(&subkey).expect("HMAC can take key of any size");
+    mac.update(b"DESTROYER-ST2027-NVCK-v3");
+    mac.update(&gen.to_le_bytes());
+    mac.update(&send_seq.to_le_bytes());
+    mac.update(&recv_hwm.to_le_bytes());
+    let result = mac.finalize().into_bytes();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&result[..32]);
+    out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidecarRecord {
+    pub gen: u64,
+    pub send_seq: u64,
+    pub recv_hwm: u64,
+}
+
 fn hex_encode(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -577,8 +620,24 @@ fn hex_decode32(s: &str) -> Option<[u8; 32]> {
 /// Append one authenticated checkpoint line and sync (O_APPEND is atomic
 /// for small writes; mirrors `seq_journal_append`).
 fn sidecar_append(key: &[u8; 32], state_path: &str, gen: u64, send_seq: u64) -> Result<(), String> {
-    let tag = nvck_tag(key, gen, send_seq);
-    let line = format!("{gen} {send_seq} {}\n", hex_encode(&tag));
+    sidecar_append_recv(key, state_path, gen, send_seq, 0)
+}
+
+/// Append one authenticated dual-monotonic checkpoint line (send_seq + recv_hwm) and sync.
+pub fn sidecar_append_recv(
+    key: &[u8; 32],
+    state_path: &str,
+    gen: u64,
+    send_seq: u64,
+    recv_hwm: u64,
+) -> Result<(), String> {
+    let line = if recv_hwm == 0 {
+        let tag = nvck_tag(key, gen, send_seq);
+        format!("{gen} {send_seq} {}\n", hex_encode(&tag))
+    } else {
+        let tag = nvck_tag_v3(key, gen, send_seq, recv_hwm);
+        format!("{gen} {send_seq} {recv_hwm} {}\n", hex_encode(&tag))
+    };
     let path = sidecar_path(state_path);
     let mut f = OpenOptions::new()
         .create(true)
@@ -602,9 +661,8 @@ fn sidecar_append(key: &[u8; 32], state_path: &str, gen: u64, send_seq: u64) -> 
     Ok(())
 }
 
-/// Last authenticated sidecar line. `Ok(None)` = no sidecar; corruption or
-/// a bad tag is `Err` (fail-closed; only the last line is load-bearing).
-fn sidecar_last(key: &[u8; 32], state_path: &str) -> Result<Option<(u64, u64)>, String> {
+/// Last authenticated sidecar record (supports both v2 3-token and v3 4-token formats).
+pub fn sidecar_last_record(key: &[u8; 32], state_path: &str) -> Result<Option<SidecarRecord>, String> {
     let path = sidecar_path(state_path);
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -614,30 +672,60 @@ fn sidecar_last(key: &[u8; 32], state_path: &str) -> Result<Option<(u64, u64)>, 
     let Some(line) = contents.lines().rev().find(|l| !l.trim().is_empty()) else {
         return Ok(None);
     };
-    let mut it = line.split_whitespace();
-    let (Some(g), Some(s), Some(tag), None) = (it.next(), it.next(), it.next(), it.next()) else {
-        return Err(format!(
-            "NV checkpoint sidecar corrupt (malformed last line) in {path}"
-        ));
-    };
-    let gen: u64 = g
-        .parse()
-        .map_err(|_| format!("NV checkpoint sidecar corrupt (gen) in {path}"))?;
-    let seq: u64 = s
-        .parse()
-        .map_err(|_| format!("NV checkpoint sidecar corrupt (send_seq) in {path}"))?;
-    let Some(tag_bytes) = hex_decode32(tag) else {
-        return Err(format!("NV checkpoint sidecar corrupt (tag) in {path}"));
-    };
-    let expect = nvck_tag(key, gen, seq);
+    let tokens: Vec<&str> = line.split_whitespace().collect();
     use subtle::ConstantTimeEq;
-    if tag_bytes.ct_eq(&expect).unwrap_u8() != 1 {
-        return Err(format!(
-            "NV checkpoint sidecar authentication failed in {path} \
-             (wrong session key or forged sidecar)"
-        ));
+    match tokens.len() {
+        3 => {
+            let gen: u64 = tokens[0]
+                .parse()
+                .map_err(|_| format!("NV checkpoint sidecar corrupt (gen) in {path}"))?;
+            let seq: u64 = tokens[1]
+                .parse()
+                .map_err(|_| format!("NV checkpoint sidecar corrupt (send_seq) in {path}"))?;
+            let Some(tag_bytes) = hex_decode32(tokens[2]) else {
+                return Err(format!("NV checkpoint sidecar corrupt (tag) in {path}"));
+            };
+            let expect = nvck_tag(key, gen, seq);
+            if tag_bytes.ct_eq(&expect).unwrap_u8() != 1 {
+                return Err(format!(
+                    "NV checkpoint sidecar authentication failed in {path} \
+                     (wrong session key or forged sidecar)"
+                ));
+            }
+            Ok(Some(SidecarRecord { gen, send_seq: seq, recv_hwm: 0 }))
+        }
+        4 => {
+            let gen: u64 = tokens[0]
+                .parse()
+                .map_err(|_| format!("NV checkpoint sidecar corrupt (gen) in {path}"))?;
+            let seq: u64 = tokens[1]
+                .parse()
+                .map_err(|_| format!("NV checkpoint sidecar corrupt (send_seq) in {path}"))?;
+            let recv_hwm: u64 = tokens[2]
+                .parse()
+                .map_err(|_| format!("NV checkpoint sidecar corrupt (recv_hwm) in {path}"))?;
+            let Some(tag_bytes) = hex_decode32(tokens[3]) else {
+                return Err(format!("NV checkpoint sidecar corrupt (tag) in {path}"));
+            };
+            let expect = nvck_tag_v3(key, gen, seq, recv_hwm);
+            if tag_bytes.ct_eq(&expect).unwrap_u8() != 1 {
+                return Err(format!(
+                    "NV checkpoint sidecar authentication failed in {path} \
+                     (wrong session key or forged sidecar)"
+                ));
+            }
+            Ok(Some(SidecarRecord { gen, send_seq: seq, recv_hwm }))
+        }
+        _ => Err(format!(
+            "NV checkpoint sidecar corrupt (malformed last line) in {path}"
+        )),
     }
-    Ok(Some((gen, seq)))
+}
+
+/// Last authenticated sidecar line. `Ok(None)` = no sidecar; corruption or
+/// a bad tag is `Err` (fail-closed; only the last line is load-bearing).
+fn sidecar_last(key: &[u8; 32], state_path: &str) -> Result<Option<(u64, u64)>, String> {
+    sidecar_last_record(key, state_path).map(|opt| opt.map(|r| (r.gen, r.send_seq)))
 }
 
 /// Measured Boot PCR bank and registers policy for TPM 2.0 object sealing.

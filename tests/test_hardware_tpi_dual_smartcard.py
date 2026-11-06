@@ -117,6 +117,73 @@ def test_cli_hardware_eam_verify_success():
     assert "action_payload: VERIFIED COMMAND PAYLOAD" in vout
 
 
+def test_cli_officer_roster_pinning_and_production_enforcement(tmp_path):
+    """P0-01/P0-08: Roster pinning validates officer identities; production requires roster."""
+    auth_res = subprocess.run([
+        str(BIN), "eam-auth-hw",
+        "--mock-dual-smartcard",
+        "--pin1", "123456",
+        "--pin2", "654321",
+        "--target", "NORAD_BUNKER",
+        "--directive", "ROSTER PINNED DIRECTIVE",
+    ], capture_output=True, text=True)
+    assert auth_res.returncode == 0, auth_res.stderr
+
+    wire_hex = None
+    for line in auth_res.stdout.splitlines():
+        if line.startswith("eam_wire_hex:"):
+            wire_hex = line.split(":", 1)[1].strip()
+            break
+    assert wire_hex is not None
+
+    wire_bytes = bytes.fromhex(wire_hex)
+    # Extract embedded officer verifying keys
+    vk1 = wire_bytes[98 : 98 + 2592]
+    vk2 = wire_bytes[98 + 2592 + 4627 : 98 + 2592 + 4627 + 2592]
+
+    # 1. Valid roster with both authorized officers
+    valid_roster = [
+        {"callsign": "OFFICER1", "role": "OPERATOR", "verifying_key_hex": vk1.hex(), "authorized": True},
+        {"callsign": "OFFICER2", "role": "OPERATOR", "verifying_key_hex": vk2.hex(), "authorized": True},
+    ]
+    roster_file = tmp_path / "officer_roster.json"
+    roster_file.write_text(json.dumps(valid_roster), encoding="utf-8")
+
+    res_valid = subprocess.run([
+        str(BIN), "eam-verify-hw",
+        "--wire-hex", wire_hex,
+        "--officer-roster", str(roster_file),
+    ], capture_output=True, text=True)
+    assert res_valid.returncode == 0, f"Valid roster verify failed:\n{res_valid.stderr}"
+    assert "DoD 5210.41M HARDWARE TPI PACKAGE VERIFIED" in res_valid.stdout
+
+    # 2. Rogue/unauthorized officer roster fails closed
+    revoked_roster = [
+        {"callsign": "OFFICER1", "role": "OPERATOR", "verifying_key_hex": vk1.hex(), "authorized": True},
+        {"callsign": "OFFICER2", "role": "OPERATOR", "verifying_key_hex": vk2.hex(), "authorized": False},
+    ]
+    revoked_file = tmp_path / "revoked_roster.json"
+    revoked_file.write_text(json.dumps(revoked_roster), encoding="utf-8")
+
+    res_revoked = subprocess.run([
+        str(BIN), "eam-verify-hw",
+        "--wire-hex", wire_hex,
+        "--officer-roster", str(revoked_file),
+    ], capture_output=True, text=True)
+    assert res_revoked.returncode != 0
+    assert "not in authorized officer roster" in res_revoked.stderr
+
+    # 3. Production mode strictly requires --officer-roster
+    prod_env = os.environ.copy()
+    prod_env["P2P_PRODUCTION"] = "1"
+    res_prod_missing = subprocess.run([
+        str(BIN), "eam-verify-hw",
+        "--wire-hex", wire_hex,
+    ], capture_output=True, text=True, env=prod_env)
+    assert res_prod_missing.returncode != 0
+    assert "strictly requires --officer-roster" in res_prod_missing.stderr
+
+
 def test_cli_temporal_hardware_window_violation_fail_closed():
     """Temporal Hardware Window Gate: Δt > 2.0s must trigger fail-closed rejection."""
     res = subprocess.run([

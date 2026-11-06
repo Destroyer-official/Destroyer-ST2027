@@ -299,3 +299,93 @@ def test_shaper_tx_queue_accounting_releases_capacity():
     assert not tx._frame_remaining  # nosec: B101
     tx.enqueue_frame(b"z")
     assert tx._queued_frames == 1  # nosec: B101
+
+
+def test_overlay_strict_dark_fiber_and_dsn_accepted(monkeypatch):
+    """Mitigation 1 (Topology 6): Dark fiber and DSN dedicated circuits accepted with pinned IPv6 prefix."""
+    _lab(monkeypatch)
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    monkeypatch.setenv("P2P_OVERLAY_ACTIVE", "1")
+    monkeypatch.setenv("P2P_PEER_PREFIX", "fd00:2027::/64")
+
+    # Dark fiber
+    monkeypatch.setenv("P2P_TRANSPORT_MODE", "dark_fiber")
+    accepted_df = ta.require_overlay("fd00:2027::1", 5000)
+    assert accepted_df["path"] == "dark_fiber"
+    assert accepted_df["prefix"] == "fd00:2027::/64"
+
+    # DSN (Defense Switched Network)
+    monkeypatch.setenv("P2P_TRANSPORT_MODE", "dsn")
+    accepted_dsn = ta.require_overlay("fd00:2027::2", 5000)
+    assert accepted_dsn["path"] == "dsn"
+    assert accepted_dsn["prefix"] == "fd00:2027::/64"
+
+
+def test_overlay_strict_dark_fiber_uncovered_refused(monkeypatch):
+    """Mitigation 1 (Topology 6): Dark fiber / DSN fail-closed when peer prefix is violated."""
+    _lab(monkeypatch)
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    monkeypatch.setenv("P2P_OVERLAY_ACTIVE", "1")
+    monkeypatch.setenv("P2P_PEER_PREFIX", "fd00:2027::/64")
+    monkeypatch.setenv("P2P_TRANSPORT_MODE", "dark_fiber")
+
+    # Outside pinned IPv6 prefix -> fail closed
+    with pytest.raises(ta.OverlayError):
+        ta.require_overlay("fd00:9999::1", 5000)
+
+    # Overlay inactive -> fail closed
+    monkeypatch.setenv("P2P_OVERLAY_ACTIVE", "0")
+    with pytest.raises(ta.OverlayError):
+        ta.require_overlay("fd00:2027::1", 5000)
+
+
+def test_poisson_interval_sampling_statistics():
+    """Mitigation 2 (Topology 2): Poisson inter-arrival intervals are bounded and memoryless."""
+    samples = [ta.sample_poisson_interval(rate_lambda=20.0, min_s=0.005, max_s=0.150) for _ in range(100)]
+    for s in samples:
+        assert 0.005 <= s <= 0.150
+    mean = sum(samples) / len(samples)
+    variance = sum((x - mean) ** 2 for x in samples) / len(samples)
+    assert variance > 0.00001
+
+
+def test_constant_rate_session_poisson_pacing():
+    """Mitigation 2 (Topology 2): ConstantRateSession delivers data under Poisson chaff pacing."""
+    s_a, s_b = socket.socketpair()
+    try:
+        key = os.urandom(32)
+        sess = ta.ConstantRateSession(
+            s_a, key, direction_out=0xA5, direction_in=0x5A,
+            start_seq_out=100, peer_start_seq_in=200,
+            poisson_pacing=True, rate_lambda=100.0  # Fast rate for test
+        )
+        rx = ta.ShaperRx(key, direction=0xA5, peer_start_seq=100)
+
+        test_msg = b"TOP_SECRET_POISSON_TEST_PAYLOAD"
+        sess.send_frame(test_msg)
+        sess.start()
+
+        # Collect cells on receiving socket
+        s_b.settimeout(1.0)
+        delivered = []
+        raw_buf = bytearray()
+        start_t = time.monotonic()
+        while time.monotonic() - start_t < 2.0 and not delivered:
+            try:
+                chunk = s_b.recv(ta.CELL_SIZE * 2)
+                if chunk:
+                    raw_buf += chunk
+                    while len(raw_buf) >= ta.CELL_SIZE:
+                        cell = bytes(raw_buf[:ta.CELL_SIZE])
+                        del raw_buf[:ta.CELL_SIZE]
+                        delivered.extend(rx.feed_wire(cell))
+            except socket.timeout:
+                break
+
+        sess.stop()
+        assert test_msg in delivered
+        assert rx.received_cover >= 0  # May have emitted cover cells as well
+    finally:
+        s_a.close()
+        s_b.close()
+

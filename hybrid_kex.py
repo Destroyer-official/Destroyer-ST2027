@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 # Backward compatibility for legacy callers.
 try:
@@ -56,9 +56,17 @@ def _hkdf_sha384(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> byte
 class HybridKeyExchange2027:
     """Modern hybrid KEX: P-384 + ML-KEM-1024 (+ optional HQC-256) + PSK."""
 
-    def __init__(self, psk: Optional[bytes] = None, enable_hqc: bool = False, authorized_peer_fingerprints: Optional[Any] = None):
+    def __init__(
+        self,
+        psk: Optional[bytes] = None,
+        enable_hqc: bool = False,
+        authorized_peer_fingerprints: Optional[Any] = None,
+        identity: Optional[str] = None,
+        **kwargs: Any,
+    ):
         self._psk = psk if psk is not None else b""
         self._enable_hqc = enable_hqc
+        self.identity = identity
         self.authorized_peer_fingerprints = None
         if authorized_peer_fingerprints is not None:
             if isinstance(authorized_peer_fingerprints, (list, tuple, set)):
@@ -96,28 +104,38 @@ class HybridKeyExchange2027:
             format=serialization.PublicFormat.UncompressedPoint,
         )
         bundle = {
-            "p384": p384_bytes,
-            "mlkem": self._mlkem_pk,
+            "p384": p384_bytes.hex(),
+            "mlkem": self._mlkem_pk.hex(),
+            "algorithm": "CNSA-2027-P384-MLKEM1024",
         }
         if self._hqc is not None:
-            bundle["hqc"] = self._hqc_pk
+            bundle["hqc"] = self._hqc_pk.hex()
         return bundle
 
-    def encapsulate_to_peer(self, peer_bundle: dict, transcript: bytes = b"") -> Tuple[bytes, bytes]:
+    def encapsulate_to_peer(self, peer_bundle: dict, transcript: bytes = b"") -> Tuple[bytes, dict, bytes]:
         # P-384 ECDH
+        p384_raw = peer_bundle["p384"]
+        if isinstance(p384_raw, str):
+            p384_raw = bytes.fromhex(p384_raw)
         peer_p384 = ec.EllipticCurvePublicKey.from_encoded_point(
-            ec.SECP384R1(), peer_bundle["p384"]
+            ec.SECP384R1(), p384_raw
         )
         p384_ss = self._p384_private.exchange(ec.ECDH(), peer_p384)
 
         # ML-KEM encaps
-        ml_ct, ml_ss = self._mlkem.encaps(peer_bundle["mlkem"])
+        mlkem_raw = peer_bundle["mlkem"]
+        if isinstance(mlkem_raw, str):
+            mlkem_raw = bytes.fromhex(mlkem_raw)
+        ml_ct, ml_ss = self._mlkem.encaps(mlkem_raw)
 
         # Optional HQC encaps
         hqc_ct = b""
         hqc_ss = b""
         if self._hqc is not None and "hqc" in peer_bundle:
-            hqc_ct, hqc_ss = self._hqc.encaps(peer_bundle["hqc"])
+            hqc_raw = peer_bundle["hqc"]
+            if isinstance(hqc_raw, str):
+                hqc_raw = bytes.fromhex(hqc_raw)
+            hqc_ct, hqc_ss = self._hqc.encaps(hqc_raw)
 
         ikm = p384_ss + ml_ss
         if hqc_ss:
@@ -138,16 +156,24 @@ class HybridKeyExchange2027:
         return eph_pub, ct_bundle, ss
 
     def decapsulate_from_peer(self, peer_eph_p384: bytes, peer_cts: dict, transcript: bytes = b"") -> bytes:
+        if isinstance(peer_eph_p384, str):
+            peer_eph_p384 = bytes.fromhex(peer_eph_p384)
         peer_p384 = ec.EllipticCurvePublicKey.from_encoded_point(
             ec.SECP384R1(), peer_eph_p384
         )
         p384_ss = self._p384_private.exchange(ec.ECDH(), peer_p384)
 
-        ml_ss = self._mlkem.decaps(self._mlkem_sk, peer_cts["mlkem"])
+        mlkem_ct = peer_cts["mlkem"]
+        if isinstance(mlkem_ct, str):
+            mlkem_ct = bytes.fromhex(mlkem_ct)
+        ml_ss = self._mlkem.decaps(self._mlkem_sk, mlkem_ct)
 
         hqc_ss = b""
         if self._hqc is not None and "hqc" in peer_cts:
-            hqc_ss = self._hqc.decaps(self._hqc_sk, peer_cts["hqc"])
+            hqc_ct = peer_cts["hqc"]
+            if isinstance(hqc_ct, str):
+                hqc_ct = bytes.fromhex(hqc_ct)
+            hqc_ss = self._hqc.decaps(self._hqc_sk, hqc_ct)
 
         ikm = p384_ss + ml_ss
         if hqc_ss:
@@ -157,6 +183,52 @@ class HybridKeyExchange2027:
 
         salt = hashlib.sha384(b"ST2027-HYBRID-KEX-2027" + transcript).digest()[:32]
         return _hkdf_sha384(ikm, salt, b"ST2027-HYBRID-SESSION-KEY", 32)
+
+    def verify_public_bundle(self, bundle: dict) -> bool:
+        if not isinstance(bundle, dict):
+            return False
+        if "p384" not in bundle or "mlkem" not in bundle:
+            return False
+        try:
+            p384_raw = bundle["p384"]
+            if isinstance(p384_raw, str):
+                p384_raw = bytes.fromhex(p384_raw)
+            if len(p384_raw) not in (49, 97):
+                return False
+            ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP384R1(), p384_raw)
+            mlkem_raw = bundle["mlkem"]
+            if isinstance(mlkem_raw, str):
+                mlkem_raw = bytes.fromhex(mlkem_raw)
+            if len(mlkem_raw) != 1568:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def initiate_handshake(self, peer_bundle: dict) -> Tuple[dict, bytes]:
+        eph_pub, ct_bundle, ss = self.encapsulate_to_peer(peer_bundle)
+        handshake_msg = {
+            "eph_p384": eph_pub.hex(),
+            "mlkem_ct": ct_bundle["mlkem"].hex(),
+        }
+        if "hqc" in ct_bundle:
+            handshake_msg["hqc_ct"] = ct_bundle["hqc"].hex()
+        return handshake_msg, ss
+
+    def respond_to_handshake(self, handshake_message: dict, peer_bundle: Optional[dict] = None) -> bytes:
+        peer_eph = handshake_message["eph_p384"]
+        peer_cts = {"mlkem": handshake_message["mlkem_ct"]}
+        if "hqc_ct" in handshake_message:
+            peer_cts["hqc"] = handshake_message["hqc_ct"]
+        return self.decapsulate_from_peer(peer_eph, peer_cts)
+
+    def secure_cleanup(self) -> None:
+        self._psk = b""
+        self._mlkem_sk = b""
+        self._hqc_sk = b""
+
+    def cleanup(self) -> None:
+        self.secure_cleanup()
 
 
 __all__ = [

@@ -22,7 +22,7 @@ Operational Release   : Baseline 2027.2 (Pre-Evaluation Research Baseline)
 
 This technical manual presents the architectural baseline, protocol specifications, symbolic verification models, and operational runbooks for **Secure Transmit 2027 (ST2027)**. Engineered for high-assurance National Security Systems (NSS), ST2027 replaces legacy non-hybridized classical schemes (RSA, standalone non-hybrid ECDH, ECDSA) with **NSA CNSA Suite 2.0** algorithms: **NIST FIPS 203 ML-KEM-1024**, **NIST FIPS 204 ML-DSA-87**, **AES-256-GCM**, and **SHA-384**. During the sovereign transition window, a classical leg is retained strictly inside standards-track hybrid key exchanges: the Python orchestrator uses `SecP384r1MLKEM1024` (NIST P-384 combined with ML-KEM-1024, Category 5 path per RFC 10024 and OpenSSL 3.5); the standalone native Rust data plane enforces the identical `SecP384r1MLKEM1024` pairing, rendering classical-only operation structurally unrepresentable.
 
-The platform provides complete physical and mathematical immunity against Cryptanalytically Relevant Quantum Computers (CRQCs) executing Shor's or Grover's algorithms, defeats traffic-flow analysis via constant-rate 50ms cell pacing and continuous Poisson chaff streams, enforces physical and logical separation across RED/BLACK boundaries via unidirectional simplex optical data diodes with Cauchy-Reed-Solomon erasure coding ($K=8, M=4$), and mandates physical dual-smartcard split knowledge for high-consequence Nuclear Command and Control (NC3) directives.
+The platform implements quantum-resistant cryptographic algorithms designed to resist cryptanalysis by Cryptanalytically Relevant Quantum Computers (CRQCs) executing Shor's or Grover's algorithms (CNSA Suite 2.0 Level 5 strength), defeats traffic-flow analysis via constant-rate 50ms cell pacing and continuous Poisson chaff streams, enforces physical and logical separation across RED/BLACK boundaries via unidirectional simplex optical data diodes with Cauchy-Reed-Solomon erasure coding ($K=8, M=4$), and mandates physical dual-smartcard split knowledge for high-consequence Nuclear Command and Control (NC3) directives.
 
 ---
 
@@ -35,8 +35,10 @@ To maintain absolute scientific transparency and prevent unearned accreditation 
 > This software is an engineering baseline designed to meet the technical specifications of CNSA 2.0. It has not undergone accredited laboratory evaluation (FIPS 140-3 CMVP / Common Criteria) and does not possess a government Authority to Operate (ATO). All cryptographic and security claims in this repository are subject to the evaluation boundaries, mathematical assumptions, and threat models explicitly documented herein.
 
 > [!IMPORTANT]
-> **NATIVE DATA-PLANE VS. RUNTIME MEMORY RESIDUALS:**  
-> Python immutable `bytes` objects cannot be wiped deterministically due to runtime garbage collector copies. High-assurance operational deployments must execute via the standalone native Rust data-plane (`secure-transmit`). The Python control plane is strictly quarantined as an orchestration and laboratory reference surface.
+> **NATIVE DATA-PLANE VS. RUNTIME MEMORY RESIDUALS (CPYTHON IMMUTABLE BYTES OBJECT RETENTION):**  
+> Python immutable `bytes` objects cannot be wiped deterministically due to runtime garbage collector copies. High-assurance operational deployments must execute via the standalone native Rust data-plane (`secure-transmit`).  
+> In the CPython runtime, `bytes` objects are immutable and allocated through internal memory pools (`obmalloc` arenas). When Python handles cryptographic plaintext or keys, the garbage collector may copy or defer freeing these buffers, making deterministic zeroization impossible in Python.
+> **Fix & Control-Plane Boundary:** All operational command-and-control loops and active traffic transit run strictly in the native Rust binary (`secure-transmit node`, `secure-transmit terminal`, `secure-transmit channel`). Native Rust enforces memory-locking (`VirtualLock` on Windows / `mlock` on POSIX), `ZeroizeOnDrop`, and explicit compiler barriers (`compiler_fence(Ordering::SeqCst)`). The Python runtime is restricted solely to offline build orchestration, automated testing, and non-transit utilities, strictly prohibiting any network or key transit through Python in production (`P2P_PRODUCTION=1`).
 
 > [!WARNING]
 > **STATISTICAL TRAFFIC ANALYSIS RESISTANCE SCOPE:**  
@@ -53,7 +55,7 @@ The ST2027 Trusted Computing Base (TCB) maintains strict physical and logical is
 |                                    REPOSITORY ARCHITECTURAL REALITY                                     |
 +---------------------------------------------------------------------------------------------------------+
 |                                                                                                         |
-|  [PLANE 1: HIGH-ASSURANCE STANDALONE RUST DATA PLANE] (Accredited Production Path)                      |
+|  [PLANE 1: HIGH-ASSURANCE STANDALONE RUST DATA PLANE] (High-Assurance Production Core Target)           |
 |  * Directory: rust_data_plane/ (Standalone compiled binary: secure-transmit)                            |
 |  * Toolchain: Pure native Rust, zero Python runtime dependency, zero ChaCha20/Poly1305                  |
 |  * Cryptography: Pure-Rust ML-DSA-87 + ML-KEM-1024, AES-256-GCM (NIST SP 800-38D)                       |
@@ -585,6 +587,25 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 +---------------------------------------------------------------------------------------------------------+
 ```
 
+### 9.1 Three-Tiered Verification Hierarchy & Implementation Bridging
+
+To bridge the gap between symbolic protocol logic (Dolev-Yao model in ProVerif 2.05) and physical machine execution, ST2027 establishes a three-tiered verification hierarchy:
+
+1. **Tier 1 — Symbolic Protocol Logic (ProVerif 2.05 Applied Pi-Calculus)**:
+   Proves secrecy, mutual authentication (`S_Accepts ==> C_Accepts`), M2 authenticity (`C_VerifiedM2 ==> S_SentM2`), record layer integrity (`R_Receives ==> C_Sends`), and initiator identity privacy against unbounded active adversaries (`docs/formal/st2027_handshake.pv`). Proves Post-Compromise Security (PCS) healing after an upfront session key disclosure (`docs/formal/st2027_pcs.pv`).
+2. **Tier 2 — Bit-Precise Software Verification (Kani Rust Bounded Model Checker)**:
+   The 6 `#[kani::proof]` harnesses in `rust_data_plane/tests/kani_harness.rs` prove memory safety, buffer bounds, panic freedom on arbitrary wire frames, and anti-replay sliding window monotonicity. In local development environments, 8 deterministic property sweeps execute under `cargo test`. In CI (`.github/workflows/kani-proofs.yml`), the official `model-checking/kani-github-action@v1` executes Kani with CBMC, uploading SARIF reports to GitHub Code Scanning.
+3. **Tier 3 — Side-Channel & Timing Attack Freedom (DudeCT Welch's t-test Statistical Leakage)**:
+   Evaluates constant-time execution distributions under Welch's two-sample $t$-test (Reparaz et al. IEEE S&P / ePrint 2016/1123). Verified via `cargo test --test dudect_ct` (Rust native) and `pytest tests/test_dudect_timing_analysis.py` (Python runtime). Requires $|t| < 4.5$ ($p > 99.999\%$ confidence) on production primitives (`ct::ct_eq`, `StackSecretBuffer::ct_eq`, and `hmac.compare_digest`), with positive-control leaky comparators triggering $|t| > 4.5$ to guarantee detector sensitivity.
+
+### 9.2 Machine-Checked Formal Verification Certificate
+
+The verification pipeline generates signed, machine-checked mathematical certificates via:
+```sh
+python tools/formal_verification_orchestrator.py --strict
+```
+Outputs cryptographic SHA-512 sealed verification manifest at `docs/formal/formal_verification_certificate.json` and `docs/formal/formal_verification_certificate.json.sha512`. Cross-platform gate execution is verified via `python docs/formal/check.py --strict`.
+
 ---
 
 ## 10. Master Documentation Compendium & The 7 Research Tracks
@@ -784,9 +805,38 @@ The session key is cryptographically bound to the hybrid KEM transcript, both ML
   --count 0
 ```
 
-### 11.9 Standalone Native Tactical Terminal Interface (`secure-transmit terminal`)
+### 11.9 Standalone Native Operational Loops (`secure-transmit node` / `terminal`) & Hardened Web Console
 
-High-assurance tactical deployments operate exclusively via the standalone native Rust terminal interface (`secure-transmit terminal`). Browser-based web consoles (`destroyer_tactical_p2p.py web`) and legacy Python chat scripts are strictly quarantined laboratory and development tools; they are blocked from production National Security Systems (NSS) environments due to browser/WebSocket attack surfaces and non-deterministic memory retention in the Python runtime.
+High-assurance tactical deployments operate exclusively via native Rust binaries (`secure-transmit node`, `secure-transmit terminal`, `secure-transmit channel`). 
+
+#### Native Rust Operational Node Loop (`secure-transmit node`)
+To eliminate the CPython runtime memory boundary (immutable `bytes` retention in `obmalloc` arenas), operational node loops run entirely in compiled native Rust:
+- Page-locked memory via `LockedKey32` (`VirtualLock` on Windows / `mlock` on POSIX)
+- Automated deterministic zeroization on drop (`ZeroizeOnDrop`)
+- Sequential consistency compiler memory barriers (`compiler_fence(Ordering::SeqCst)`)
+- Continuous constant-rate pacing (1232-byte uniform quantization, configurable 20ms/50ms cadence)
+- In production (`P2P_PRODUCTION=1`), the Python runtime strictly prohibits any network or cryptographic key transit (`ControlPlaneBoundaryViolation`).
+
+```bash
+# Standalone native Rust production node (Initiator):
+./rust_data_plane/target/release/secure-transmit node \
+  --role initiator \
+  --bind 127.0.0.1:9061 \
+  --to 127.0.0.1:9060 \
+  --psk-file keys/psk.key \
+  --auth-sk-file keys/alpha_mldsa87.sk \
+  --peer-auth-pk-file keys/bravo_mldsa87.pk \
+  --interval-ms 20 \
+  --headless
+```
+
+#### Legacy Browser Web Console Vulnerabilities & Defense-in-Depth Hardening
+The interactive browser console (`launch_tactical_web.bat`, port 8443) runs via local HTTP/WebSockets, exposing workstations to browser memory retention, DOM-based attacks, and lacking hardware-backed smartcard mutual TLS.
+**Production Safeguard & Hardening Implementation:**
+1. **Quarantine Fail-Closed Gate:** Quarantined to `--lab` mode only; strictly blocked fail-closed when `P2P_PRODUCTION=1`. High-assurance operational communications mandate native `secure-transmit`.
+2. **Strict mTLS 1.3 Smartcard Listener:** The web console server binds strictly to a TLS 1.3 mutual authentication listener (`CERT_REQUIRED`) requiring DoD / NIST SP 800-217 / FIPS 201-3 CAC / PIV client certificates carrying PIV Authentication OID `2.16.840.1.101.3.6.7`, clientAuth extended key usage, and digital signatures.
+3. **WebAuthn / FIDO2 Level 3 Hardware Security Key Verification:** All operator control actions (`/api/send`, `/api/eam`, `/api/zgdp`, `/api/cot`, `/api/diode/send`, `/api/zeroize`) require WebAuthn / FIDO2 Level 3 hardware security key presence verification (User Presence `UP=1`, User Verification `UV=1`, monotonic signature counter check, and cryptographic ECDSA P-256 signature verification over authenticator data and client data hash).
+4. **Strict Content Security Policy Level 3:** Enforces `default-src 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` with zero external CDNs.
 
 The native tactical terminal provides direct operator-to-operator text transit over constant-rate paced channels:
 

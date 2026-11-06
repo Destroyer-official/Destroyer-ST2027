@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-05T17:04:16.478860+00:00",
+  "timestamp_utc": "2026-11-06T05:31:20.536888+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -27,12 +27,12 @@
   },
   "core_modules": {
     "platform_hsm_interface.py": {
-      "size_bytes": 526899,
-      "sha3_512": "1d037a9696f68898a811949e247361defdff6a5d1c403e3910450ecddb2851c0efcf419c1ebfd7cf989c2bb74baa88df1ae35c6c3d33fb84f99af197a7aedd30"
+      "size_bytes": 528120,
+      "sha3_512": "d55a7f2bbda96c0732c0468e9625b81f77706311c6398f35c6841c545d0e364953caec9f14bd93b2dc648d43947e283d41b80bcf52cc23f1061c0192958f8dec"
     },
     "cnsa2_policy_engine.py": {
-      "size_bytes": 31039,
-      "sha3_512": "1e721962db7c002b4310b920c804e253747708260e9643673ab7cfa7cb171cdc59621b3c226e518e69ba5f9a603eafa2b5c86a5f001dda8b86e15f705ad0acff"
+      "size_bytes": 36704,
+      "sha3_512": "1feffb08027f19b1e35f6cad3508fbad2db7e12ab34e6378dd284b4721c01359241e30a14a587bd56cff0c4378fdaa4e2a69dbea57f8a1035e71f02ec0441971"
     },
     "audit_logging_system.py": {
       "size_bytes": 55302,
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 916001,
-      "sha3_512": "7e37767271e6324b8cf3bd95bc0411bf53d8820f361f083c7a7c59968251d8ec40ad66cb930b89cd1c4a388044b2aa0bdcf6bc9ab68a30b24d63bc369f387151"
+      "size_bytes": 917241,
+      "sha3_512": "67a64f2fa14b9562ca24ed8e319d4790ef02cc987ca7e735653a096135271e093c050b1d7c0ec890b352bb627144ea17e278a86187c9561df46615ee5e8c4a4c"
     }
   },
   "sbom_status": {
@@ -65,7 +65,7 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "e843b8fbe38faa078b38771a44db86a1253b6781056ac984e5a6f4270983d2ca9daf97731ed71a8b238822cf690cb21f75203442a7c7c4427d34998016420bf6",
+  "source_tree_merkle_root": "a02116e0ddc70db3b36714a41847591d2f6c44f86c39f6c884e1988e12524e701702fa75507860faa7d70bbcd03cb2018705bb6a16e011c2349c8e7a08e634a8",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "87603a4bdf7d9cd83993edb3de1ea9a696b4dddffba9775cb6d061ee77f318a39f9d2c8f704cad0dbc190b7298daf959f059e5a4055299d8ac739cf0a2f7a71c",
@@ -73,18 +73,18 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "88d8e67dffa09154a82577a351b212cc5e79c9debda9a54414ba3cb7017c0470261b8ff4d920be097744bea972def223f6c8085715081421792c88c88f18f568",
-      "actual_sha3_512": "88d8e67dffa09154a82577a351b212cc5e79c9debda9a54414ba3cb7017c0470261b8ff4d920be097744bea972def223f6c8085715081421792c88c88f18f568",
+      "expected_sha3_512": "a41bf6443a059d7871b88e68bc80ced0a2bdb3dac8839116ffc5dd9d9e334146db6aecb33681e93c11e641fe10868f9c9a752db4e9158c3b460a22418d514567",
+      "actual_sha3_512": "a41bf6443a059d7871b88e68bc80ced0a2bdb3dac8839116ffc5dd9d9e334146db6aecb33681e93c11e641fe10868f9c9a752db4e9158c3b460a22418d514567",
       "matched": true
     },
     "ts_runtime.py": {
-      "expected_sha3_512": "ccb9399d2805cd6db8db8521abb43e2cc30fcd86d8fe2e360c7783cfa013c527fb16dac77af0e9bb09545e66a8c45e83353263ae3249a413182702ac29fd3152",
-      "actual_sha3_512": "ccb9399d2805cd6db8db8521abb43e2cc30fcd86d8fe2e360c7783cfa013c527fb16dac77af0e9bb09545e66a8c45e83353263ae3249a413182702ac29fd3152",
+      "expected_sha3_512": "36dbbda4f04e298612eeadf65d90d1ce86ea59eb36e9f2dfded4dad2cd987073b4292c8e94b310895c7d1cb13131db5cdeda0540077528f3bd4a15fdf73d91cd",
+      "actual_sha3_512": "36dbbda4f04e298612eeadf65d90d1ce86ea59eb36e9f2dfded4dad2cd987073b4292c8e94b310895c7d1cb13131db5cdeda0540077528f3bd4a15fdf73d91cd",
       "matched": true
     },
     "dependency_security_verifier.py": {
-      "expected_sha3_512": "face21501ac7642594f19a36211651f0697abc7c88093e4cf20a2cb52650e759cd5b0d6f1036f5e4bd84a263cfa04630ea748a4666bf46c82c2e927a8671e1ce",
-      "actual_sha3_512": "face21501ac7642594f19a36211651f0697abc7c88093e4cf20a2cb52650e759cd5b0d6f1036f5e4bd84a263cfa04630ea748a4666bf46c82c2e927a8671e1ce",
+      "expected_sha3_512": "79d05c0a5dde12df38e50c188d9604b7fdbf402ef69bd613e9b786b71abd27ce52021dc4521c33e93ab974c08a3fc241bff81683686018bc5bcb198d03c7b34e",
+      "actual_sha3_512": "79d05c0a5dde12df38e50c188d9604b7fdbf402ef69bd613e9b786b71abd27ce52021dc4521c33e93ab974c08a3fc241bff81683686018bc5bcb198d03c7b34e",
       "matched": true
     }
   }

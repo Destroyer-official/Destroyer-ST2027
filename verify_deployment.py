@@ -797,8 +797,20 @@ class DeploymentVerifier:
             self._add_result("Host Posture: TPM", level,
                              "no TPM device found" + (" (prod fail-closed)" if prod else ""))
             ok = ok and not prod
+        dma = posture.get("dma_capable")
+        if dma is True:
+            self._add_result("Host Posture: DMA Protection", VerificationStatus.PASS,
+                             "Kernel DMA / IOMMU bus protection active")
+        elif dma is False:
+            level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+            self._add_result("Host Posture: DMA Protection", level,
+                             "Kernel DMA Protection inactive" + (" (prod fail-closed)" if prod else ""))
+            ok = ok and not prod
+        else:
+            self._add_result("Host Posture: DMA Protection", VerificationStatus.WARN,
+                             "DMA Protection state unknown")
         extras = []
-        for key in ("vbs", "hvci", "cred_guard", "kernel_lockdown", "tpm_tools", "tbs_available"):
+        for key in ("vbs", "hvci", "cred_guard", "kernel_lockdown", "dma_capable", "tpm_tools", "tbs_available"):
             extras.append(f"{key}={posture.get(key)}")
         self._add_result("Host Posture: detail", VerificationStatus.PASS,
                          "os=%s; %s" % (posture.get("os"), "; ".join(extras)))

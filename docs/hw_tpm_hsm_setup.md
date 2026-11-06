@@ -97,3 +97,56 @@ Provider labels never claim hardware on fallback paths
 - `tpm2_pcrread` empty output: bank name wrong — code now uses `sha256`.
 - Slow first key ops on Windows: McEliece-8192128f keygen is seconds;
   deferred to first use by design.
+
+---
+
+## Hardware Dependencies & Physical Isolation (2026/2027 Production Baseline)
+
+### 1. Host Hardening & Hypervisor Isolation (UEFI Secure Boot, VBS, HVCI, DMA)
+To eliminate pre-flight warnings (`SecureBoot DISABLED`, `VBS=False`, `HVCI=False`) and satisfy fail-closed production gates:
+- **Windows Deployment Hosts**:
+  1. Enable UEFI Secure Boot and IOMMU (Intel VT-d / AMD-Vi) in the motherboard firmware.
+  2. Run the automated DISA STIG / Device Guard configuration script:
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File scripts/apply_host_hardening_windows.ps1
+     ```
+  3. Verify with `python scripts/verify_host_hardening.py --strict`.
+- **Linux Deployment Hosts**:
+  1. Enable IOMMU and Kernel Lockdown via GRUB:
+     ```bash
+     sudo bash scripts/apply_host_hardening_linux.sh
+     ```
+  2. Verify with `python scripts/verify_host_hardening.py --strict`.
+
+### 2. TPM 2.0 Monotonic Counter (Index `0x01800001`) Provisioning
+TCG standard handle `0x01800001` provides a hardware-enforced rollback barrier in discrete TPM 2.0 silicon (`nt=counter`), permanently eliminating file-based `.nvck` state sidecars:
+- **Provision the Counter**:
+  ```bash
+  python scripts/provision_tpm2_nv_counter.py --provision --index 0x01800001
+  ```
+  Or via `tpm2-tools`:
+  ```bash
+  tpm2_nvdefine -C o -s 8 -a "ownerread|ownerwrite|authread|authwrite|nt=counter" 0x01800001
+  ```
+- **Verify Monotonic Increment**:
+  ```bash
+  python scripts/provision_tpm2_nv_counter.py --verify --index 0x01800001
+  ```
+- **Bind Data Plane**:
+  Set environment variable `P2P_TPM_NV_INDEX=0x01800001`.
+
+### 3. DoD 5210.41M Two-Person Integrity (TPI) Hardware Tokens
+In production (`P2P_PRODUCTION=1`), software simulation is refused fail-closed (`AuthorizationError`). Operations require two physical cryptographic tokens (YubiKey 5 FIPS / Nitrokey HSM) across distinct USB CCID slots:
+- **Attach Physical Tokens**: Connect Officer 1 and Officer 2 hardware smartcards to distinct USB ports.
+- **Verify Dual-Token Posture**:
+  ```bash
+  python scripts/verify_hardware_tokens.py --strict
+  ```
+
+### 4. Physical TEMPEST & Optical Data Diode Boundaries
+- **TEMPEST SDIP-28/29 Accreditation**: Stations processing TOP SECRET data in NATO Zone 0/1 must be housed in accredited Level A/B enclosures. Certification records are managed in `config/tempest_accredited_registry.json`.
+- **Certified Simplex Optical Data Diodes**: Cross-domain transfers must traverse Common Criteria EAL4+ / EAL7+ certified hardware simplex diodes (Owl Cyber Defense / Fox-IT) using Cauchy Reed-Solomon (K=8, M=4) forward error correction. Device records are managed in `config/data_diode_certified_registry.json`.
+- **Run Master Isolation Verification**:
+  ```bash
+  python scripts/verify_physical_isolation.py
+  ```

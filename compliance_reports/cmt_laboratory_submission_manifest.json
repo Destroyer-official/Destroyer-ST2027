@@ -1,0 +1,281 @@
+{
+  "cmt_laboratory_submittal_manifest": {
+    "manifest_id": "CMT-SUBMITTAL-a9d31dee-1f7f-49a8-ab51-dd4baf5da9f8",
+    "schema_version": "2027.1.0-CNSA2-MIL",
+    "published_utc": "2026-11-06T04:19:40.286600+00:00",
+    "submittal_type": "Cryptographic Module Testing (CMT) Laboratory Evaluation Dossier & Authorizing Official (AO) Authorization Package",
+    "module_identification": {
+      "module_name": "Secure P2P Sovereign Cryptographic Module",
+      "module_version": "2.0.0-CNSA2-2027",
+      "target_overall_security_level": "FIPS 140-3 Level 4 Overall (ISO/IEC 19790:2012 / ISO/IEC 24759:2014) [TARGET - not assessed]",
+      "module_type": "Multi-Chip Standalone / Hardware-Bound Software Cryptographic Boundary",
+      "primary_programming_languages": [
+        "Rust (Native Data Plane)",
+        "Python 3.12+ (Quarantined Control Plane)",
+        "C (Native Library Bindings)"
+      ],
+      "cryptographic_boundary_definition": "Physical host enclosure enclosing physical TPM 2.0 (Win32 TBS / ISO/IEC 11889) or PKCS#11 Level 4 HSM; logical boundary enclosing oqs.dll, libsodium.dll, rust_data_plane, and strict CNSA 2.0 policy engines."
+    },
+    "regulatory_and_accreditation_pathway": {
+      "target_testing_laboratory": "NVLAP-Accredited Cryptographic and Security Testing (CST) Laboratory (to be contracted by acquiring agency or vendor)",
+      "validation_authorities": [
+        "NIST Cryptographic Module Validation Program (CMVP)",
+        "Canadian Centre for Cyber Security (CCCS)",
+        "National Information Assurance Partnership (NIAP / Common Criteria)",
+        "Department of Defense Authorizing Official (DoD AO / cATO Framework)"
+      ],
+      "truthful_compliance_disclosure": "MANDATORY DISCLOSURE: This codebase is an engineering baseline engineered to meet NSA CNSA 2.0, FIPS 140-3 Level 4, and Common Criteria EAL4+ specifications. It has not undergone formal testing by an accredited laboratory and does not possess a government Authority to Operate (ATO). This manifest and the bundled artifacts constitute the complete, turnkey formal submission packet prepared for formal ingestion and testing by an accredited CST laboratory."
+    },
+    "applicable_standards": [
+      "NIST FIPS PUB 140-3: Security Requirements for Cryptographic Modules (ISO/IEC 19790:2012)",
+      "NIST SP 800-140A through SP 800-140F: FIPS 140-3 Documentation Series",
+      "NSA Commercial National Security Algorithm Suite 2.0 (CNSA 2.0)",
+      "NIST FIPS PUB 203: Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM)",
+      "NIST FIPS PUB 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)",
+      "NIST FIPS PUB 205: Stateless Hash-Based Digital Signature Standard (SLH-DSA)",
+      "NIST FIPS PUB 197: Advanced Encryption Standard (AES)",
+      "NIST SP 800-38D: Galois/Counter Mode (AES-256-GCM)",
+      "NIST SP 800-53 Rev 5 / CNSSI 1253: Security and Privacy Controls for NSS (High-High-High Baseline)",
+      "DoD Instruction 8510.01: Risk Management Framework (RMF) for DoD Systems & Continuous ATO (cATO)",
+      "NIAP Collaborative Protection Profile for Network Devices (NDcPP) v3.0 (EAL4+)"
+    ],
+    "artifact_inventory_summary": {
+      "total_artifacts_cataloged": 14,
+      "signed_pqc_artifacts": 10,
+      "unsigned_policy_specifications": 4,
+      "tampered_or_failed_artifacts": 0
+    },
+    "artifacts": [
+      {
+        "artifact_id": "cmsp-policy",
+        "relative_path": "docs/FIPS_140_3_SECURITY_POLICY.md",
+        "category": "FIPS 140-3 Cryptographic Module Security Policy (CMSP)",
+        "standard": "ISO/IEC 19790:2012 \u00a77.2 / NIST SP 800-140B",
+        "description": "Non-proprietary cryptographic module security policy detailing physical/logical boundaries, roles, services, CSP lifecycle, self-tests, and zeroization.",
+        "file_size_bytes": 20016,
+        "sha384": "31d002452d4caaff4a9ae80e0e467d1e1be2f8e85767b709bfa3189d8e331d83c4a6616c74d947f6e8d9a1d2372a29c3",
+        "sha512": "7609114291b8304da379063b17b52a1a1b0da63a992833efba66d0e82428a31d2fbc266e793531a44e7249f091ead690ddd494238c35b17ad8a5be34d84961d7",
+        "cryptographic_signature": {
+          "algorithm": "N/A",
+          "status": "N/A",
+          "signature_file": null,
+          "public_key_file": null
+        }
+      },
+      {
+        "artifact_id": "cmvp-manifest",
+        "relative_path": "compliance_reports/cmvp_fips140_3_submittal.json",
+        "category": "CMVP Module Questionnaire & Submittal Manifest",
+        "standard": "ISO/IEC 19790:2012 / NIST FIPS 140-3 Management Manual",
+        "description": "Machine-readable module profile, roles/services matrix, security levels by section, and CSTL engagement instructions.",
+        "file_size_bytes": 3937,
+        "sha384": "435cc3c8107195334e3497781a19e25387dc2a441ff0c0a14a5120f6531f48db2f83bcc8df82b1e2cea60268e09552fd",
+        "sha512": "f1c6c5db4ede599bad960320be563ded9f549d15c89a3fc4929d81829214ba3991106a24e1ba0dc85b8ad6a9fe86fd0874e0aa1e8f6cab3f0da6d8e03f31e070",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/cmvp_fips140_3_submittal.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/cmvp_fips140_3_submittal.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "acvp-cavp-report",
+        "relative_path": "compliance_reports/acvp_cavp_validation_report.json",
+        "category": "NIST ACVP / CAVP Algorithm Validation Evidence",
+        "standard": "NIST SP 800-140C / FIPS 203, 204, 205, 197, 180-4, 202",
+        "description": "Cryptographic Algorithm Validation Program test evidence: 13/13 passing vectors for ML-KEM-1024, ML-DSA-87, SLH-DSA-256f, AES-256-GCM, and SHA-384/512.",
+        "file_size_bytes": 5060,
+        "sha384": "cae629b8fb2df44c2cbda460eb3dfb18c2e0eb15891a347b20db792dfd0295e5207043db5cf5d426e81cbb7e814fbbf5",
+        "sha512": "40a56271e11d05e4b377c85e08afe473a27783bf7748df7435cdbd7381e32e80bb373b1ce86d1402c0e3ae42320d765c331db3810ea4f6c5eca71aee1e1bd57b",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/acvp_cavp_validation_report.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/acvp_cavp_validation_report.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "oscal-ssp",
+        "relative_path": "compliance_reports/oscal_ssp_cnsa2.json",
+        "category": "NIST OSCAL v1.1.0 System Security Plan (SSP)",
+        "standard": "NIST SP 800-53 Rev 5 / CNSSI 1253 / DoD RMF High-High-High",
+        "description": "Machine-readable System Security Plan mapped to 12 implemented boundary security controls, signed with ML-DSA-87.",
+        "file_size_bytes": 11229,
+        "sha384": "a44c239e3175c66723fffb2314450fe2c9381db6394e737163e28de045646be5e2a9a6a7942cd7d9b4d98668d50ba98d",
+        "sha512": "a47359d92c4bff5cb40b4f1ccb91c238da9753c0f68d3e4814f8e794b83ef74cf8f1291435f1018299d55e1e4ddd6f624453f22031a6b708588e18a866314661",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/oscal_ssp_cnsa2.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/oscal_ssp_cnsa2.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "oscal-sar",
+        "relative_path": "compliance_reports/oscal_sar_cato.json",
+        "category": "NIST OSCAL v1.1.0 Security Assessment Report (SAR) & POA&M",
+        "standard": "NIST SP 800-53A Rev 5 / DoD cATO Continuous Monitoring",
+        "description": "Automated security assessment findings, control satisfaction evidence, and zero-defect Plan of Action and Milestones (POA&M).",
+        "file_size_bytes": 10722,
+        "sha384": "b47aaceeb3f135bce012b93daacb2450337b71d4f3d899b13954772020de9f5c41c829ee36845f6d0e0372708d2120a4",
+        "sha512": "22894d429744fc1a3a1e70ed2287a59da245e2720d5054909b9446516259b23a325725f0b327c232496e619544e75236f31aab7d1ec97614aae12ef91f9bab6a",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/oscal_sar_cato.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/oscal_sar_cato.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "cyclonedx-cbom",
+        "relative_path": "compliance_reports/cyclonedx_cbom.json",
+        "category": "CycloneDX 1.6 Cryptographic Bill of Materials (CBOM)",
+        "standard": "CycloneDX v1.6 CBOM Standard / NIST SP 800-161 Rev 1",
+        "description": "Full cryptographic inventory cataloging algorithms, key lengths, parameter sets, primitive implementations, and crypto-dependencies.",
+        "file_size_bytes": 10761,
+        "sha384": "5a7dc8fbfca45a3be86ed9f2ad7c6e159dc4be6cf53111c7416c7aa5e489abc14e0dce90405b8038fbc7f24692f09ddd",
+        "sha512": "03b8675659f235c624b4532b35ad8d3c903fea529a80b4afedb41d8957746f86141a7b58da4f882eeb97d1c020a17811eb33b1975f76addb7136dc3ed1d9113a",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/cyclonedx_cbom.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/cyclonedx_cbom.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "cyclonedx-sbom",
+        "relative_path": "compliance_reports/cyclonedx_sbom.json",
+        "category": "CycloneDX 1.6 Software Bill of Materials (SBOM)",
+        "standard": "CycloneDX v1.6 SBOM Standard / Executive Order 14028",
+        "description": "Software component inventory and dependency supply chain metadata with Post-Quantum ML-DSA-87 digital signature.",
+        "file_size_bytes": 5271,
+        "sha384": "29eff2f0f9af1d330692a010e574be5416cde84c73004527dcd1df1eb1728c9b204ec2c4c203d6e302a7c114474bb52d",
+        "sha512": "b24e670e1baf519e56d9b6316a162508a20c02398f777a95eedde1c2b03b8e2c34d79370510a383a32ec4508a22e58de3d0598d1f7f3b3d8b5cb25690517ee8a",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/cyclonedx_sbom.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/cyclonedx_sbom.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "spdx-sbom",
+        "relative_path": "compliance_reports/spdx_sbom.json",
+        "category": "SPDX 2.3 Software Bill of Materials (SBOM)",
+        "standard": "ISO/IEC 5230:2020 / SPDX v2.3 Specification",
+        "description": "ISO-standard software package and file-level license and hash provenance verification bill of materials.",
+        "file_size_bytes": 10445,
+        "sha384": "c58cb993870a7604652ea1f3c8653ed9cf9fcb3c222fa2741dffce9060c358d29777975905daf6b399f4770a6eda2a39",
+        "sha512": "48341cddff03b38df16ef36a2abbf63e568f61c3d0ca7327ba0acadb999aae858694c3686ed51bf84c6f95a271c456dabe63ff96eb1f1afd4f82ae24ab37bc9f",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/spdx_sbom.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/spdx_sbom.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "niap-matrix",
+        "relative_path": "compliance_reports/niap_common_criteria_matrix.json",
+        "category": "NIAP Common Criteria Security Target & SFR Traceability Matrix",
+        "standard": "NIAP NDcPP v3.0 / Common Criteria ISO/IEC 15408 EAL4+",
+        "description": "Security Functional Requirements (SFRs) traceability matrix covering FCS_CKM.1, FCS_COP.1, FAU_STG.1, and FPT_TST_EXT.1.",
+        "file_size_bytes": 5701,
+        "sha384": "923b866200ee29eea2023012e5c4b1a8a7a16b751345ef274d1bf240437a050ce2927577f214dd91719551ea667baa3b",
+        "sha512": "e44bc7fadc44100bf9062a26d4c61394d64ed378a95a1758a6224378fb2e88a968bcb68628df94a62c63f11286444a41df128fb1c3cdf9d3fe4036ef0dcb38a5",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/niap_common_criteria_matrix.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/niap_common_criteria_matrix.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "zero-trust-assessment",
+        "relative_path": "compliance_reports/dod_zero_trust_assessment.json",
+        "category": "DoD Zero Trust Architecture Strategy 2027 Assessment",
+        "standard": "DoD Zero Trust Reference Architecture v2.0 (7 Pillars)",
+        "description": "Rigorous automated assessment report verifying 100% satisfaction across User, Device, Network, Environment, Workload, Data, and Visibility pillars.",
+        "file_size_bytes": 12722,
+        "sha384": "f642e8056c33f862b5df8ac16f0ffa971addbe5771a985a8dde066bbd3f9f034768eb382f6a8cc57307961625088518c",
+        "sha512": "716054d1b866b0179b6d5d4b39391703be57e2f8ea22147f15f72da0b7d147a898ba7356dc5b0e851343908e84a13c7bf6934fca1d45d428e444655ab46bb35d",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/dod_zero_trust_assessment.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/dod_zero_trust_assessment.json.mldsa87.pub"
+        }
+      },
+      {
+        "artifact_id": "key-management-plan",
+        "relative_path": "compliance_reports/key_management_plan.json",
+        "category": "NIST SP 800-57 Key Management Plan (KMP)",
+        "standard": "NIST SP 800-57 Part 1 Rev 5 / NSA CNSA 2.0",
+        "description": "Cryptographic key inventory, lifecycle transition rules, generation ceremonies, rotation intervals, and revocation policies.",
+        "file_size_bytes": 2648,
+        "sha384": "4ac90233c307f3cd12568bb7000c769ccc1abbd354abc0a773212b1cea5a79784052575b5300b6c938d8ba60dc5ade26",
+        "sha512": "8f65631d9c854ed537e8dcae2025750b07ee3edb4cbfa8b5e84f456d0e9486792fd9e934058735bfc75677084adcab3c5bf28682e77d8ec6ca22afc9d0c530af",
+        "cryptographic_signature": {
+          "algorithm": "N/A",
+          "status": "N/A",
+          "signature_file": null,
+          "public_key_file": null
+        }
+      },
+      {
+        "artifact_id": "conops-profile",
+        "relative_path": "compliance_reports/conops_operational_profile.json",
+        "category": "Tactical Concept of Operations (CONOPS) Profile",
+        "standard": "MIL-STD-961E / DoD Joint Publication 6-0",
+        "description": "Operational deployment environments, communications topology, threat boundaries, and operator privilege matrices.",
+        "file_size_bytes": 4225,
+        "sha384": "53f3ef8422ab77693c21d31bd444fa9c9c1b879b008bbcb0b289b7e5a9af0ac9bc1fc688bac2351989eb54da76cf77f4",
+        "sha512": "f6130404f34afa33ebeaf7faf2f87abb5c533bec849e240a2e19f73e0d53a91151709bea01f90ebead76d1e513b137bddec08f67f91660688ec52619db13171c",
+        "cryptographic_signature": {
+          "algorithm": "N/A",
+          "status": "N/A",
+          "signature_file": null,
+          "public_key_file": null
+        }
+      },
+      {
+        "artifact_id": "canary-iscm-telemetry",
+        "relative_path": "compliance_reports/canary_pilot_telemetry.json",
+        "category": "Information System Continuous Monitoring (ISCM) Telemetry",
+        "standard": "NIST SP 800-137 / DoD cATO Active Telemetry",
+        "description": "Continuous monitoring telemetry probes confirming 99.99% operational availability and real-time posture reporting.",
+        "file_size_bytes": 1599,
+        "sha384": "ef6b6a5876ac0aee8da097bd2c35cdef92a19bb88385180d4211cd089d47ee8db4e01fa94b8937adfaf676cb28d3d1b8",
+        "sha512": "f0963c5686507b05adfbf90312c414affdebed5068dfcc79d18912b69878fa93175dce30c3591d807f8c03e5498f2bca675bbc90ae8ba5ad77de264fc67e284f",
+        "cryptographic_signature": {
+          "algorithm": "N/A",
+          "status": "N/A",
+          "signature_file": null,
+          "public_key_file": null
+        }
+      },
+      {
+        "artifact_id": "active-cyber-defense",
+        "relative_path": "compliance_reports/active_cyber_defense_report.json",
+        "category": "Active Cyber Defense (ACD) Automated Response Report",
+        "standard": "DoD cATO Pillar 2 (ACD) / NIST SP 800-160 Vol 2",
+        "description": "Automated defensive response telemetry against active adversary probes, timing attacks, and jamming attempts.",
+        "file_size_bytes": 2001,
+        "sha384": "446dd2b40db284c826dfd53e46e877d54c6d27fc47a62b4995520f270e49884cd172b8ee51245d29c858f8cd548ef320",
+        "sha512": "f593dc1e4468228bb104606456e16372f4824a2b24683a82ae91ff6128cf457db2b1611a58143c7cb7e0f41c0d7533ad27e2b29db5d073b2c386604c99470011",
+        "cryptographic_signature": {
+          "algorithm": "ML-DSA-87 (FIPS 204)",
+          "status": "PASS",
+          "signature_file": "compliance_reports/active_cyber_defense_report.json.mldsa87.sig",
+          "public_key_file": "compliance_reports/active_cyber_defense_report.json.mldsa87.pub"
+        }
+      }
+    ],
+    "cstl_evaluator_guidance": {
+      "verification_procedure": "Execute `python scripts/package_cmt_laboratory_submittal.py --verify` to re-audit all cryptographic signatures and bit-for-bit SHA-384/SHA-512 parity.",
+      "security_policy_reference": "Review docs/FIPS_140_3_SECURITY_POLICY.md for the 12 required ISO/IEC 19790 sections.",
+      "acvp_cavp_harness_reference": "Review compliance_reports/acvp_cavp_validation_report.json for the 13 verified KAT test vectors.",
+      "oscal_ssp_ingestion_reference": "Import compliance_reports/oscal_ssp_cnsa2.json directly into eMASS or OSCAL-compliant GRC tools."
+    }
+  }
+}

@@ -7647,6 +7647,7 @@ def get_host_security_posture() -> dict:
         "hvci": None,
         "cred_guard": None,
         "kernel_lockdown": None,
+        "dma_capable": None,
         "tbs_available": False,
         "detail": {},
     }
@@ -7686,6 +7687,23 @@ def get_host_security_posture() -> dict:
             _cg = _reg_dword(r"SYSTEM\CurrentControlSet\Control\Lsa", "LsaCfgFlags")
             posture["cred_guard"] = (None if _cg is None else _cg in (1, 2))
             posture["detail"]["lsa_cfg_flags"] = _cg
+            _dma = _reg_dword(r"SYSTEM\CurrentControlSet\Control\Session Manager\Kernel",
+                              "KernelDMAProtection")
+            dma_flag = (_dma == 1) if _dma is not None else None
+            try:
+                from ts_runtime import _cim_device_guard
+                dg = _cim_device_guard()
+                avail = dg.get("available") or []
+                if 3 in avail:
+                    dma_flag = True
+                if posture["vbs"] is None and dg.get("vbs_status") is not None:
+                    posture["vbs"] = (dg.get("vbs_status") == 2)
+                if posture["hvci"] is None and dg.get("running") is not None:
+                    posture["hvci"] = (2 in dg.get("running", []))
+            except Exception:
+                pass
+            posture["dma_capable"] = dma_flag
+
             posture["tbs_available"] = bool(_WINDOWS_TBS_AVAILABLE)
             try:
                 import shutil as _sh
@@ -7714,6 +7732,12 @@ def get_host_security_posture() -> dict:
             # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
             except Exception:  # nosec: B110
                 pass
+            try:
+                with open("/proc/cmdline", "r", encoding="utf-8", errors="replace") as f:
+                    cmdline = f.read()
+                posture["dma_capable"] = any(x in cmdline for x in ("intel_iommu=on", "amd_iommu=on", "iommu=force"))
+            except Exception:
+                posture["dma_capable"] = None
             try:
                 with open("/sys/kernel/security/lockdown", "r",
                           encoding="utf-8", errors="replace") as f:

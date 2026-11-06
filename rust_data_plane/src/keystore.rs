@@ -122,8 +122,30 @@ pub fn write_key_file_exclusive(path: &str, hex: &str) -> Result<(), CoreError> 
             .map_err(|_| CoreError::FilePermissions)?;
         f.write_all(b"\n").map_err(|_| CoreError::FilePermissions)?;
         f.sync_all().map_err(|_| CoreError::FilePermissions)?;
+        drop(f);
+        harden_windows_file_dacl(path)?;
         Ok(())
     }
+}
+
+#[cfg(not(unix))]
+fn harden_windows_file_dacl(path: &str) -> Result<(), CoreError> {
+    let user = std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string());
+    let acl_ok = std::process::Command::new("icacls")
+        .args([
+            path,
+            "/inheritance:r",
+            "/grant:r",
+            &format!("{}:F", user),
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !acl_ok {
+        let _ = std::fs::remove_file(path);
+        return Err(CoreError::FilePermissions);
+    }
+    Ok(())
 }
 
 /// Write `hex` (64 chars + newline) with create+truncate semantics for
@@ -170,23 +192,7 @@ pub fn write_key_file_truncate(path: &str, hex: &str) -> Result<(), CoreError> {
         f.write_all(b"\n").map_err(|_| CoreError::FilePermissions)?;
         f.sync_all().map_err(|_| CoreError::FilePermissions)?;
         drop(f);
-        let acl_ok = std::process::Command::new("icacls")
-            .args([
-                path,
-                "/inheritance:r",
-                "/grant:r",
-                &format!(
-                    "{}:F",
-                    std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string())
-                ),
-            ])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !acl_ok {
-            let _ = std::fs::remove_file(path);
-            return Err(CoreError::FilePermissions);
-        }
+        harden_windows_file_dacl(path)?;
         Ok(())
     }
 }

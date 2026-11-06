@@ -545,8 +545,10 @@ class CNSA2PolicyEngine:
 
         Approved transport modes in production:
         - 'private_apn' (Cellular 5G Core Network Slicing / Tactical APN)
-        - 'tor' (Tor v3 Onion routing via SOCKS5)
+        - 'tor' (Tor v3 Onion routing via SOCKS5 with Poisson chaff / Topology 2)
         - 'air_gapped' / 'wireguard' (Tactical P2P overlay)
+        - 'dark_fiber' (Private dedicated optical dark fiber / Topology 6 GPA mitigation)
+        - 'dsn' (Defense Switched Network / DISN dedicated circuit / Topology 6 GPA mitigation)
 
         Raises:
             SecurityPolicyViolation: If unencapsulated direct public IP is used in production mode.
@@ -564,7 +566,7 @@ class CNSA2PolicyEngine:
             return True
 
         # Check authorized defense transport modes
-        if mode in ("tor", "private_apn", "air_gapped", "wireguard"):
+        if mode in ("tor", "private_apn", "air_gapped", "wireguard", "dark_fiber", "dsn"):
             return True
 
         # Check if destination IP is private / loopback / RFC 1918 / CGNAT
@@ -584,6 +586,114 @@ class CNSA2PolicyEngine:
             f"2027+ Defense Production mode. Transport mode '{mode}' rejected.",
             operation="network_transport"
         )
+
+    def validate_control_plane_boundary(self, context: str = "operational_c2") -> bool:
+        """
+        Enforce strict control-plane and memory boundary isolation (CNSA 2.0 / DoD Level 5).
+        In production (P2P_PRODUCTION=1), CPython runtime immutable bytes retention
+        precludes deterministic zeroization. Operational C2 loops and live key transit
+        must execute entirely within native Rust (secure-transmit).
+        """
+        try:
+            from production_gate import is_production
+            prod = is_production()
+        except Exception:
+            prod = self.is_cnsa_2027_strict
+
+        if prod:
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                f"CONTROL-PLANE BOUNDARY VIOLATION in '{context}': Operational C2 loops and key transit "
+                f"are strictly prohibited in CPython in production (P2P_PRODUCTION=1). "
+                f"All operational loops must execute via native Rust binary ('secure-transmit node').",
+                operation="control_plane_boundary"
+            )
+        return True
+
+    def validate_web_console_mtls(self, client_cert_info: Optional[Dict[str, Any]], is_production: bool = False) -> bool:
+        """
+        Validate CAC / PIV Smartcard Client Certificate under DoD / NIST SP 800-217 / FIPS 201-3.
+        In production or high-assurance mode, the web console listener requires:
+        - Mutual TLS (mTLS 1.3)
+        - Extended Key Usage: Client Authentication or PIV Authentication (2.16.840.1.101.3.6.7)
+        - Key Usage: digitalSignature
+        - DoD Subject Identifier / EDIPI in SAN or Subject CN
+        """
+        if not client_cert_info:
+            if is_production or self.is_cnsa_2027_strict:
+                self._violation_count += 1
+                raise SecurityPolicyViolation(
+                    "WEB CONSOLE ACCESS REFUSAL: Missing CAC / PIV smartcard client certificate. "
+                    "mTLS 1.3 with DoD/PIV hardware smartcard authentication is mandatory in production.",
+                    operation="web_console_mtls"
+                )
+            return False
+
+        if not client_cert_info.get("valid", False):
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                f"WEB CONSOLE CERTIFICATE REJECTED: {client_cert_info.get('error', 'invalid certificate')}",
+                operation="web_console_mtls"
+            )
+
+        if not client_cert_info.get("has_piv_auth", False) and not client_cert_info.get("has_client_auth", False):
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                "WEB CONSOLE CERTIFICATE REJECTED: Client certificate lacks PIV Authentication (2.16.840.1.101.3.6.7) "
+                "or Client Authentication (1.3.6.1.5.5.7.3.2) Extended Key Usage.",
+                operation="web_console_mtls"
+            )
+
+        if not client_cert_info.get("has_digital_signature", False):
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                "WEB CONSOLE CERTIFICATE REJECTED: Client certificate Key Usage must assert digitalSignature.",
+                operation="web_console_mtls"
+            )
+
+        return True
+
+    def validate_webauthn_l3_presence(self, assertion_info: Optional[Dict[str, Any]], is_production: bool = False) -> bool:
+        """
+        Validate WebAuthn / FIDO2 Level 3 hardware security key presence verification (W3C WebAuthn Level 3).
+        Mandates:
+        - User Presence (UP bit 0x01 set): physical touch/presence.
+        - User Verification (UV bit 0x04 set): on-token PIN or biometric verification for Level 3.
+        - Monotonic sign_count strictly greater than previous (replay/cloning rejection).
+        - Valid signature over authenticatorData + sha256(clientDataJSON).
+        """
+        if not assertion_info:
+            if is_production or self.is_cnsa_2027_strict:
+                self._violation_count += 1
+                raise SecurityPolicyViolation(
+                    "OPERATOR ACTION REFUSAL: Missing WebAuthn / FIDO2 Level 3 hardware security key assertion. "
+                    "Operator control actions require hardware token user presence (UP) and verification (UV).",
+                    operation="webauthn_l3_presence"
+                )
+            return False
+
+        if not assertion_info.get("verified", False):
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                f"WEBAUTHN L3 ASSERTION REJECTED: {assertion_info.get('error', 'signature or validation failure')}",
+                operation="webauthn_l3_presence"
+            )
+
+        if not assertion_info.get("user_presence", False):
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                "WEBAUTHN L3 REJECTED: User Presence (UP) flag not asserted on hardware authenticator.",
+                operation="webauthn_l3_presence"
+            )
+
+        if not assertion_info.get("user_verified", False):
+            self._violation_count += 1
+            raise SecurityPolicyViolation(
+                "WEBAUTHN L3 REJECTED: Level 3 mandates User Verification (UV) on hardware authenticator.",
+                operation="webauthn_l3_presence"
+            )
+
+        return True
 
 
 # Global policy engine instance

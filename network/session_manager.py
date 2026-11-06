@@ -38,11 +38,15 @@ except ImportError:
     logging.warning("DoubleRatchet not available")
 
 try:
-    from hybrid_kex import HybridKeyExchange
+    from hybrid_kex import HybridKeyExchange2027 as HybridKeyExchange
     HYBRID_KEX_AVAILABLE = True
 except ImportError:
-    HYBRID_KEX_AVAILABLE = False
-    logging.warning("HybridKeyExchange not available")
+    try:
+        from hybrid_kex import HybridKeyExchange
+        HYBRID_KEX_AVAILABLE = True
+    except ImportError:
+        HYBRID_KEX_AVAILABLE = False
+        logging.warning("HybridKeyExchange not available")
 
 try:
     from audit_logging_system import AuditLogger, AuditEventType, AuditSeverity
@@ -109,7 +113,13 @@ async def _recv_frame(r: asyncio.StreamReader, timeout: float = 120.0) -> Dict[s
         if frame_len > _MAX_HANDSHAKE_FRAME:
             raise SecurityError(f"Handshake frame exceeded size limit: {frame_len} > {_MAX_HANDSHAKE_FRAME}")
         body = await asyncio.wait_for(r.readexactly(frame_len), timeout=timeout)
-        return json.loads(body.decode('utf-8'))
+        parsed = json.loads(body.decode('utf-8'))
+        if not isinstance(parsed, dict):
+            raise SecurityError("Handshake frame root payload must be a JSON object")
+        ftype = parsed.get('type')
+        if ftype is not None and not isinstance(ftype, str):
+            raise SecurityError("Handshake frame type field must be a string")
+        return parsed
     except asyncio.TimeoutError as e:
         raise SecurityError(f"Handshake frame receive timed out ({timeout}s)") from e
     except asyncio.IncompleteReadError as e:
@@ -372,6 +382,11 @@ class SessionManager:
                 if "TACTICAL CLOAK VIOLATION" in str(e_cloak):
                     raise SecurityError(f"MILITARY FATAL: {e_cloak}") from e_cloak
         
+        # P1-12: Early admission control quota check before expensive cryptographic initialization
+        async with self._lock:
+            if peer_id not in self.sessions and len(self.sessions) >= self._max_sessions:
+                raise RuntimeError(f"Session table full ({len(self.sessions)}/{self._max_sessions}) - rejecting new session (DoS protection)")
+
         # Check if session already exists
         if peer_id in self.sessions:
             logger.warning(f"Session already exists for {peer_id}, terminating old session")
@@ -682,7 +697,7 @@ class SessionManager:
                     'peer_id': peer_id,
                     'is_initiator': is_initiator,
                     'timestamp': datetime.now().isoformat(),
-                    'algorithm': 'HybridKeyExchange (X25519 + ML-KEM-1024)'
+                    'algorithm': 'CNSA-2027 (P-384 + ML-KEM-1024)'
                 }
             )
 
@@ -782,23 +797,6 @@ class SessionManager:
                 if not peer_bundle:
                     raise SecurityError("Initiator did not provide public key bundle")
 
-                # Verify initiator's TPM quote if required.  The quote must be
-                # bound to a challenge WE issued (tpm_challenge in the offer),
-                # never to the quote's own embedded nonce.
-                if tpm_quote_required:
-                    peer_quote = offer.get('tpm_quote')
-                    if not peer_quote:
-                        raise SecurityError(f"Initiator {peer_id} omitted required TPM attestation quote")
-                    from tpm_quote import validate_handshake_quote
-                    from utils.helpers import is_env_true
-                    is_prod = is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK") or is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
-                    allow_deg = not is_prod
-                    challenge = bytes.fromhex(offer.get('tpm_challenge', ''))
-                    trusted = _load_trusted_ak_pubs()
-                    if not validate_handshake_quote(peer_quote, expected_nonce=challenge,
-                                                    trusted_pubs=trusted, allow_degraded=allow_deg):
-                        raise SecurityError(f"Initiator {peer_id} TPM attestation quote validation failed")
-
                 # 2. Send our public bundle.  Our quote is bound to the
                 #    initiator's challenge; we also issue a fresh challenge the
                 #    initiator must echo in its HANDSHAKE_INIT quote.
@@ -849,7 +847,7 @@ class SessionManager:
                     AuditSeverity.INFO,
                     {
                         'peer_id': peer_id,
-                        'algorithm': 'HybridKeyExchange (X25519 + ML-KEM-1024)',
+                        'algorithm': 'CNSA-2027 (P-384 + ML-KEM-1024)',
                         'success': True,
                         'timestamp': datetime.now().isoformat(),
                         'is_initiator': is_initiator,

@@ -201,6 +201,8 @@ pub struct ActiveTransmissionLoop {
     pub quantum: usize,
     pub outbound_rekey_frags: VecDeque<Vec<u8>>,
     pub active_reassembly: Option<ReassemblyBuffer>,
+    pub zero_trust: Option<std::sync::Arc<crate::zero_trust::ZeroTrustEngine>>,
+    pub peer_id: String,
 }
 
 impl ActiveTransmissionLoop {
@@ -232,7 +234,15 @@ impl ActiveTransmissionLoop {
             quantum,
             outbound_rekey_frags: VecDeque::new(),
             active_reassembly: None,
+            zero_trust: None,
+            peer_id: format!("{:?}", peer_addr),
         })
+    }
+
+    /// Attach a ZeroTrust continuous evaluation engine to this transmission loop.
+    pub fn with_zero_trust(mut self, zt: std::sync::Arc<crate::zero_trust::ZeroTrustEngine>) -> Self {
+        self.zero_trust = Some(zt);
+        self
     }
 
     /// Set peer's advertised bundle (used for autonomous ML-KEM-1024 encapsulation).
@@ -397,7 +407,7 @@ impl ActiveTransmissionLoop {
         &mut self,
         wait: Duration,
     ) -> Result<Option<(u64, u8, Vec<u8>)>, CoreError> {
-        let Some(res) = self.endpoint.recv_unthrottled(wait).await else {
+        let Some(res) = self.endpoint.recv_raw(wait).await else {
             return Ok(None);
         };
         let (bytes, _from) = res.map_err(|_| CoreError::Malformed)?;
@@ -441,16 +451,30 @@ impl ActiveTransmissionLoop {
         };
 
         let Ok((seq2, ftype, pt)) = open_res else {
+            if let Some(ref zt) = self.zero_trust {
+                let _ = zt.record_penalty(&self.peer_id, 25);
+            }
             self.endpoint.note_auth_drop();
             return Ok(None);
         };
 
         if seq2 != seq {
+            if let Some(ref zt) = self.zero_trust {
+                let _ = zt.record_penalty(&self.peer_id, 25);
+            }
             self.endpoint.note_auth_drop();
             return Ok(None);
         }
 
         self.replay_window.mark(seq2);
+
+        // Continuous Zero-Trust Ingress Evaluation (P1-06)
+        if let Some(ref zt) = self.zero_trust {
+            if zt.evaluate_ingress(&self.peer_id, &pt, true).is_err() {
+                self.endpoint.note_auth_drop();
+                return Ok(None);
+            }
+        }
 
         if ftype == FTYPE_IN_BAND_EPOCH_REKEY {
             // Process rekey payload (either direct 1588 bytes or fragmented)

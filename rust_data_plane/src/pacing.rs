@@ -58,6 +58,93 @@ impl PacedScheduler {
     }
 }
 
+/// Sample an exponential inter-arrival interval for memoryless Poisson pacing:
+/// \Delta t = -\ln(1 - U) / \lambda
+///
+/// Research grounding:
+/// - Loopix (USENIX Security 2017): Poisson-distributed traffic mixing to resist
+///   global passive adversaries (GPA).
+/// - Maybenot Framework (PETS 2024 / Tor Project): probabilistic state-machine
+///   traffic shaping to neutralize deep learning flow correlation (DeepCorr, ESPRESSO, SUMo).
+///
+/// Uses OS CSPRNG (`getrandom`) to sample uniform random variable U in (0.00001, 0.99999).
+pub fn sample_poisson_interval(
+    rate_lambda: f64,
+    min_delay: Duration,
+    max_delay: Duration,
+) -> Duration {
+    let mut buf = [0u8; 8];
+    if getrandom::fill(&mut buf).is_err() {
+        let mean_secs = if rate_lambda > 0.001 { 1.0 / rate_lambda } else { 0.05 };
+        return Duration::from_secs_f64(mean_secs).clamp(min_delay, max_delay);
+    }
+    let val = u64::from_le_bytes(buf);
+    let u = (val as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+    let lambda = if rate_lambda > 0.001 { rate_lambda } else { 20.0 };
+    let interval_secs = -(1.0 - u).ln() / lambda;
+    Duration::from_secs_f64(interval_secs).clamp(min_delay, max_delay)
+}
+
+/// Memoryless Poisson-distributed traffic pacing engine.
+///
+/// Neutralizes Global Passive Adversary (GPA) traffic analysis and deep learning
+/// flow correlation by modulating cell inter-arrival times according to an exponential
+/// distribution, eliminating periodic transmission spikes and autocorrelation signatures.
+#[derive(Debug)]
+pub struct PoissonScheduler {
+    rate_lambda: f64,
+    min_interval: Duration,
+    max_interval: Duration,
+    next_tick: Instant,
+    ticks_emitted: u64,
+}
+
+impl PoissonScheduler {
+    pub fn new(rate_lambda: f64, min_interval: Duration, max_interval: Duration) -> Self {
+        let first_interval = sample_poisson_interval(rate_lambda, min_interval, max_interval);
+        Self {
+            rate_lambda,
+            min_interval,
+            max_interval,
+            next_tick: Instant::now() + first_interval,
+            ticks_emitted: 0,
+        }
+    }
+
+    /// Block until the next Poisson-scheduled tick.
+    pub fn wait_next_tick(&mut self) {
+        let now = Instant::now();
+        if self.next_tick > now {
+            std::thread::sleep(self.next_tick - now);
+        }
+        self.ticks_emitted += 1;
+        let next_interval =
+            sample_poisson_interval(self.rate_lambda, self.min_interval, self.max_interval);
+        let after = Instant::now();
+        if after > self.next_tick + self.max_interval {
+            self.next_tick = after + next_interval;
+        } else {
+            self.next_tick += next_interval;
+        }
+    }
+
+    pub fn ticks_emitted(&self) -> u64 {
+        self.ticks_emitted
+    }
+
+    pub fn rate_lambda(&self) -> f64 {
+        self.rate_lambda
+    }
+
+    pub fn min_interval(&self) -> Duration {
+        self.min_interval
+    }
+
+    pub fn max_interval(&self) -> Duration {
+        self.max_interval
+    }
+}
+
 /// Build a cryptographically indistinguishable synthetic chaff frame.
 /// Uses OS CSPRNG to fill payload, seals under active AEAD key with FTYPE_CHAFF.
 /// The resulting wire length will exactly equal the requested `quantum`.
@@ -347,5 +434,39 @@ mod tests {
             burst_entropy > 7.95,
             "chaff sanity: burst entropy too low ({burst_entropy:.4} bits/byte), pattern leakage in cover"
         );
+    }
+
+    #[test]
+    fn test_poisson_interval_distribution_bounds() {
+        let min_d = Duration::from_millis(5);
+        let max_d = Duration::from_millis(150);
+        let rate_lambda = 20.0; // 50ms mean
+
+        let mut samples = Vec::with_capacity(100);
+        for _ in 0..100 {
+            let sample = sample_poisson_interval(rate_lambda, min_d, max_d);
+            assert!(sample >= min_d, "sample below min bound: {:?}", sample);
+            assert!(sample <= max_d, "sample above max bound: {:?}", sample);
+            samples.push(sample.as_secs_f64());
+        }
+
+        // Verify non-zero variance (true memoryless variation, not constant)
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let variance = samples.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / samples.len() as f64;
+        assert!(variance > 0.00001, "poisson intervals lack variance: {variance}");
+    }
+
+    #[test]
+    fn test_poisson_scheduler_progression() {
+        let min_d = Duration::from_millis(2);
+        let max_d = Duration::from_millis(8);
+        let mut scheduler = PoissonScheduler::new(200.0, min_d, max_d);
+        assert_eq!(scheduler.ticks_emitted(), 0);
+        assert_eq!(scheduler.rate_lambda(), 200.0);
+
+        for _ in 0..3 {
+            scheduler.wait_next_tick();
+        }
+        assert_eq!(scheduler.ticks_emitted(), 3);
     }
 }

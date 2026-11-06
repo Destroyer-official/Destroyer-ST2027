@@ -1,0 +1,121 @@
+{
+  "schema_version": "ST2027-FORMAL-CERT-V1",
+  "generated_at": "2026-11-06T04:45:36.634289+00:00",
+  "overall_status": "VERIFIED",
+  "cryptographic_source_hashes_sha512": {
+    "st2027_handshake.pv": "c4a242b7383fd2b214c904d915ae4378293ed08d4f57438b39ac3d1dbf3209e0e16ceb930c456096b21cf2cbc82ce318f712d13d401afa01680aca0562f59292",
+    "st2027_pcs.pv": "7ddb17f85648ab98053c0dbd61f8544f280ab235113ee57a701fde46aa76a8f9897fb8d3a3cd54a0b746a2d204f549b79e1cce92b622fc640a88827165ed5946",
+    "kani_harness.rs": "fa0ef40fbaa47cbcb5de08068772193aacd475aa8f419f59a833624aa2a02024619ec799619a0fc09958d8d31fdb9ce31610a6a8590e9c6e6cdd42c726046db5",
+    "ct.rs": "ceaeba052b86b3e110a4ac2971b7658a5e51beed6124dc10e444f688c5a42e6ddbcfbac3f3df7ce4f1e52767d6bf5dfc8bcf8d70521f39926068c3318c29537d",
+    "nostd_microcore.rs": "43cb73c65208037f0f416065cec0ce9e3839659990abe5f2eaa7600610c9dafef72adfb47d76c73de527e861da25f18d8249e6331d4ad278e36e529f9cd85c2e",
+    "dudect_ct.rs": "4f4f3581efda8da88aacd3e46a2747bc8d450d9a680c535cbfe3589021c0587e423b225cbd57bd4abf67ca39653917f1db37df163114c54c72a1443ec6816e4f"
+  },
+  "tier1_symbolic_protocol_proverif": {
+    "proverif_version": "2.05",
+    "handshake_model": {
+      "file": "docs/formal/st2027_handshake.pv",
+      "verified": true,
+      "queries": [
+        {
+          "query": "not attacker_p1(secret_payload[])",
+          "result": "true",
+          "verified": true
+        },
+        {
+          "query": "inj-event(S_Accepts(k_2,tr_2,pk(sksC[]))) ==> inj-event(C_Accepts(k_2,tr_2))",
+          "result": "true",
+          "verified": true
+        },
+        {
+          "query": "event(C_VerifiedM2(trpre)) ==> event(S_SentM2(trpre))",
+          "result": "true",
+          "verified": true
+        },
+        {
+          "query": "inj-event(R_Receives(k_2,s,m,pk(sksC[]))) ==> inj-event(C_Sends(k_2,s,m))",
+          "result": "true",
+          "verified": true
+        },
+        {
+          "query": "not attacker_p1(pk(sksC2[]))",
+          "result": "true",
+          "verified": true
+        }
+      ]
+    },
+    "pcs_model": {
+      "file": "docs/formal/st2027_pcs.pv",
+      "verified": true,
+      "queries": [
+        {
+          "query": "not attacker(secret_payload2[])",
+          "result": "true",
+          "verified": true
+        }
+      ]
+    }
+  },
+  "tier2_bounded_model_checking_kani": {
+    "harness_source": "rust_data_plane/tests/kani_harness.rs",
+    "proof_harnesses_defined": [
+      "kani_cookie_gate_stateless_verification",
+      "kani_frame_split_reassemble_roundtrip",
+      "kani_max_stream_bytes_cap",
+      "kani_nonce_domain_separation",
+      "kani_nostd_frame_parse_never_panics",
+      "kani_replay_window_monotonic"
+    ],
+    "property_doubles_executed": {
+      "passed_property_doubles": [
+        "cookie_gate_stateless_verification",
+        "ct_eq_and_select_no_secret_branch",
+        "frame_split_reassemble_roundtrip_bounded",
+        "max_stream_bytes_cap_enforced",
+        "nonce_domain_separation",
+        "nostd_frame_parse_never_panics_property_sweep",
+        "nostd_stack_secret_ct_eq_property_sweep",
+        "replay_window_monotonic_and_drops"
+      ],
+      "total_expected_doubles": 8,
+      "exit_code": 0,
+      "all_doubles_verified": true
+    },
+    "kani_toolchain_execution": {
+      "execution_mode": "DEFINED_HARNESSES_AND_PROPERTY_DOUBLES",
+      "defined_proofs": [
+        "kani_frame_split_reassemble_roundtrip",
+        "kani_nonce_domain_separation",
+        "kani_replay_window_monotonic",
+        "kani_max_stream_bytes_cap",
+        "kani_nostd_frame_parse_never_panics",
+        "kani_cookie_gate_stateless_verification"
+      ],
+      "total_harnesses": 6,
+      "harness_definitions_valid": true,
+      "ci_runner": ".github/workflows/kani-proofs.yml"
+    }
+  },
+  "tier3_side_channel_timing_resistance": {
+    "standard": "Reparaz et al. DudeCT (Welch's two-sample t-test |t| < 4.5)",
+    "decision_threshold": 4.5,
+    "rust_dataplane_results": {
+      "ct_eq_t_statistic": 2.1058,
+      "stack_secret_ct_eq_t_statistic": 0.3725,
+      "positive_control_leaky_comparator_t_statistic": 13.3167,
+      "all_tests_passed": true
+    },
+    "python_runtime_results": {
+      "hmac_compare_digest_t_statistic": 1.1518,
+      "positive_control_leaky_comparator_t_statistic": 20.5596,
+      "all_tests_passed": true
+    },
+    "verified_constant_time": true
+  },
+  "defense_compliance": {
+    "cnsa_2_0": true,
+    "fips_203_ml_kem_1024": true,
+    "fips_204_ml_dsa_87": true,
+    "constant_time_discipline": "ct.rs / nostd_microcore.rs with volatile reads + black_box",
+    "evaluation_truth": "Software baseline for formal evaluation; not a statutory ATO."
+  }
+}

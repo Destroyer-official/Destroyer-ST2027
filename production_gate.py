@@ -52,6 +52,9 @@ __all__ = [
     "force_production",
     "TRUTHY",
     "PRODUCTION_VARS",
+    "ControlPlaneBoundaryViolation",
+    "enforce_control_plane_boundary",
+    "prohibit_python_key_transit",
 ]
 
 # Canonical truthy spellings. Keep in sync with config._env_wants_prod.
@@ -182,6 +185,51 @@ def reset_for_tests() -> None:
         _sticky = False
         _sticky_reason = ""
         _unset_logged = False
+
+
+class ControlPlaneBoundaryViolation(RuntimeError):
+    """Raised when operational network transit or key material is handled in CPython in production."""
+    pass
+
+
+def enforce_control_plane_boundary(context: str = "operational_c2") -> None:
+    """Enforces that operational C2 loops and socket transit never run in CPython under production posture.
+
+    In CPython runtime, `bytes` objects are immutable and allocated through obmalloc pools.
+    Deterministic zeroization is impossible. Operational execution must take place
+    in the standalone native Rust executable (`secure-transmit`). CPython is restricted
+    solely to offline build orchestration and automated testing.
+    """
+    if is_production():
+        msg = (
+            f"production_gate: CONTROL-PLANE BOUNDARY VIOLATION in {context}. "
+            "Operational C2 loops and network transit are strictly prohibited in the "
+            "Python runtime under P2P_PRODUCTION=1 due to immutable bytes memory retention. "
+            "Use native Rust 'secure-transmit node' or 'secure-transmit terminal'."
+        )
+        _log.critical(msg)
+        try:
+            _audit.critical(msg)
+        except Exception:
+            pass
+        raise ControlPlaneBoundaryViolation(msg)
+
+
+def prohibit_python_key_transit(material: object = None, context: str = "") -> None:
+    """Prohibits live operational key or plaintext transit through CPython runtime in production."""
+    if is_production():
+        msg = (
+            f"production_gate: RUNTIME MEMORY BOUNDARY VIOLATION ({context}). "
+            "Cryptographic key transit through CPython runtime is prohibited in production "
+            "(P2P_PRODUCTION=1). Deterministic zeroization of immutable bytes is impossible. "
+            "Use native Rust 'secure-transmit' locked buffers (VirtualLock/mlock) with ZeroizeOnDrop."
+        )
+        _log.critical(msg)
+        try:
+            _audit.critical(msg)
+        except Exception:
+            pass
+        raise ControlPlaneBoundaryViolation(msg)
 
 
 # Import-time evaluation arms the latch before callers can create a lab
