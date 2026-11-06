@@ -381,7 +381,12 @@ pub fn checkpoint(state_path: &str, key: &[u8; 32], send_seq: u64) -> Result<(),
 }
 
 /// Env-gated dual-monotonic checkpoint entry point covering send_seq + recv_hwm.
-pub fn checkpoint_recv(state_path: &str, key: &[u8; 32], send_seq: u64, recv_hwm: u64) -> Result<(), String> {
+pub fn checkpoint_recv(
+    state_path: &str,
+    key: &[u8; 32],
+    send_seq: u64,
+    recv_hwm: u64,
+) -> Result<(), String> {
     let idx = std::env::var("P2P_TPM_NV_INDEX").ok();
     let is_prod = env_flag("P2P_PRODUCTION") || env_flag("SECURE_P2P_PRODUCTION");
     if is_prod && idx.as_deref().unwrap_or("").trim().is_empty() {
@@ -662,7 +667,10 @@ pub fn sidecar_append_recv(
 }
 
 /// Last authenticated sidecar record (supports both v2 3-token and v3 4-token formats).
-pub fn sidecar_last_record(key: &[u8; 32], state_path: &str) -> Result<Option<SidecarRecord>, String> {
+pub fn sidecar_last_record(
+    key: &[u8; 32],
+    state_path: &str,
+) -> Result<Option<SidecarRecord>, String> {
     let path = sidecar_path(state_path);
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -692,7 +700,11 @@ pub fn sidecar_last_record(key: &[u8; 32], state_path: &str) -> Result<Option<Si
                      (wrong session key or forged sidecar)"
                 ));
             }
-            Ok(Some(SidecarRecord { gen, send_seq: seq, recv_hwm: 0 }))
+            Ok(Some(SidecarRecord {
+                gen,
+                send_seq: seq,
+                recv_hwm: 0,
+            }))
         }
         4 => {
             let gen: u64 = tokens[0]
@@ -714,7 +726,11 @@ pub fn sidecar_last_record(key: &[u8; 32], state_path: &str) -> Result<Option<Si
                      (wrong session key or forged sidecar)"
                 ));
             }
-            Ok(Some(SidecarRecord { gen, send_seq: seq, recv_hwm }))
+            Ok(Some(SidecarRecord {
+                gen,
+                send_seq: seq,
+                recv_hwm,
+            }))
         }
         _ => Err(format!(
             "NV checkpoint sidecar corrupt (malformed last line) in {path}"

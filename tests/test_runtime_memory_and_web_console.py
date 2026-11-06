@@ -503,6 +503,57 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
         for cdn in prohibited_cdns:
             self.assertNotIn(cdn, content, f"External CDN dependency detected: {cdn}")
 
+    def test_ensure_cac_piv_mtls_credentials_with_string_path(self):
+        """Verify ensure_cac_piv_mtls_credentials functions with string paths."""
+        with tempfile.TemporaryDirectory() as td:
+            creds = ensure_cac_piv_mtls_credentials(td)
+            for k in ["ca_cert", "server_cert", "server_key", "client_cert", "client_key"]:
+                self.assertIn(k, creds)
+                self.assertTrue(os.path.exists(creds[k]), f"Missing credential file: {creds[k]}")
+
+    def test_native_rust_node_loopback_e2e_communication(self):
+        """Verify two standalone native secure-transmit node processes communicate via UDP."""
+        exe_path = Path("rust_data_plane/target/release/secure-transmit.exe")
+        if not exe_path.exists():
+            exe_path = Path("rust_data_plane/target/debug/secure-transmit.exe")
+        self.assertTrue(exe_path.exists(), f"Compiled binary not found: {exe_path}")
+
+        with tempfile.TemporaryDirectory() as td:
+            psk_path = os.path.join(td, "shared.key")
+            with open(psk_path, "wb") as f:
+                f.write(b"42" * 32 + b"\n")
+
+            # Responder: listen on 127.0.0.1:19878, peer 127.0.0.1:19879
+            cmd_resp = [
+                str(exe_path), "node", "--role", "responder",
+                "--bind", "127.0.0.1:19878", "--to", "127.0.0.1:19879",
+                "--psk-file", psk_path,
+                "--state", os.path.join(td, "resp.state"),
+                "--headless", "--recv-count", "1", "--interval-ms", "10", "--timeout-ms", "4000"
+            ]
+
+            # Initiator: listen on 127.0.0.1:19879, peer 127.0.0.1:19878
+            cmd_init = [
+                str(exe_path), "node", "--role", "initiator",
+                "--bind", "127.0.0.1:19879", "--to", "127.0.0.1:19878",
+                "--psk-file", psk_path,
+                "--state", os.path.join(td, "init.state"),
+                "--headless", "--msg", "ALPHA-BRAVO-VERIFIED", "--interval-ms", "10", "--count", "15"
+            ]
+
+            p_resp = subprocess.Popen(cmd_resp, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(0.15)
+            p_init = subprocess.Popen(cmd_init, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+            out_i, err_i = p_init.communicate(timeout=6)
+            out_r, err_r = p_resp.communicate(timeout=6)
+
+            self.assertEqual(p_init.returncode, 0, f"Initiator failed: {err_i}")
+            self.assertEqual(p_resp.returncode, 0, f"Responder failed: {err_r}")
+            self.assertIn("EMIT_MSG", out_i)
+            self.assertIn("RECV_MSG", out_r)
+            self.assertIn("ALPHA-BRAVO-VERIFIED", out_r)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -89,6 +89,17 @@ Provider labels never claim hardware on fallback paths
 
 ## Troubleshooting
 
+## Unified Hardware Credential Policy (P2-09)
+
+To ensure cryptographic compliance under DoD 5210.41M and NIST SP 800-161:
+1. **Operator PIN Precedence:**
+   - Explicit CLI parameter (`--token1-pin`, `--token2-pin`) > Environment variables (`P2P_HSM_PIN`, `P2P_PKCS11_PIN`, `P2P_TOKEN1_PIN`).
+   - In production mode (`P2P_PRODUCTION=1`), default or hardcoded PINs (`1234`, `123456`) are strictly rejected fail-closed.
+2. **Lockout Policy & Retries:**
+   - Cryptographic smartcards enforce hardware retry caps (typically 3 attempts). Exceeding this limit returns `CKR_PIN_LOCKED`, locking the cryptographic silicon until physical security officer unblocking.
+3. **Zero-Disk Secret Custody:**
+   - Authentication PINs and private keys are held in volatile memory locked with `mlock` (Linux) or `VirtualLock` (Windows) via `StackSecretBuffer` / `LockedKey32`. Secrets are zeroized immediately upon drop (`ZeroizeOnDrop`) and are never written to disk or audit logs.
+
 - `ImportError: DLL load failed ... digital signature` for
   `destroyer_core._native`: stale maturin install in site-packages;
   rebuild with `maturin develop -r -m rust_data_plane/Cargo.toml`.

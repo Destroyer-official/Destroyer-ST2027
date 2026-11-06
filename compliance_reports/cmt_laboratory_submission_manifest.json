@@ -1,8 +1,8 @@
 {
   "cmt_laboratory_submittal_manifest": {
-    "manifest_id": "CMT-SUBMITTAL-a9d31dee-1f7f-49a8-ab51-dd4baf5da9f8",
+    "manifest_id": "CMT-SUBMITTAL-786f79fc-65c1-4f68-a47a-f8c8fb2ae712",
     "schema_version": "2027.1.0-CNSA2-MIL",
-    "published_utc": "2026-11-06T04:19:40.286600+00:00",
+    "published_utc": "2026-11-06T06:02:40.311603+00:00",
     "submittal_type": "Cryptographic Module Testing (CMT) Laboratory Evaluation Dossier & Authorizing Official (AO) Authorization Package",
     "module_identification": {
       "module_name": "Secure P2P Sovereign Cryptographic Module",

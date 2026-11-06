@@ -274,7 +274,7 @@ pub fn open_indexed(
         },
     )?;
     let len = u16::from_be_bytes([header[8], header[9]]) as usize;
-    if len > pt.len() {
+    if len > pt.len() || len > crate::frame::MAX_PAYLOAD {
         return Err(AeadError);
     }
     Ok((seq, ftype, pt[..len].to_vec()))

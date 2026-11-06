@@ -100,13 +100,13 @@ Manages generation, storage, rotation, and cryptographic unlinkability checks.
 |---|---|---|---|---|
 | `0..7` | Sequence Number (`seq`) | uint64 | Big-endian (`>Q`) | Monotonically increasing cell sequence counter ([transport_anonymity.py:100](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L100)). |
 | `8` | Cell Flags (`flags`) | uint8 | Raw byte | `0x01` (`FLAG_DATA`) or `0xFF` (`FLAG_COVER`) ([transport_anonymity.py:97-98](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L97-L98)). |
-| `9..10` | Chunk Length (`chunk_len`) | uint16 | Big-endian (`>H`) | Length of application payload fragment ($0 \le \text{chunk\_len} \le 1205$) ([transport_anonymity.py:101](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L101)). |
+| `9..10` | Chunk Length (`chunk_len`) | uint16 | Big-endian (`>H`) | Length of application payload fragment ($0 \le \mathrm{chunk\_len} \le 1205$) ([transport_anonymity.py:101](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L101)). |
 | `11..11+chunk_len` | Payload Chunk | bytes | Binary | Application frame slice (empty in cover cells) ([transport_anonymity.py:445-446](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L445-L446)). |
 | `11+chunk_len..1215` | Tail Padding | bytes | `0x00` fill | Zero-padding filling plain cell to exactly 1216 bytes ([transport_anonymity.py:449](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L449)). |
 
 **Header Overhead and Capacity:**
 - Header Length: $8 + 1 + 2 = 11$ bytes (`CELL_HEADER_LEN = 11`, [transport_anonymity.py:95](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L95)).
-- Maximum Payload Capacity: $\text{CHUNK\_MAX} = 1216 - 11 = 1205$ bytes ([transport_anonymity.py:96](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L96)).
+- Maximum Payload Capacity: $\mathrm{CHUNK\_MAX} = 1216 - 11 = 1205$ bytes ([transport_anonymity.py:96](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L96)).
 
 #### 2. Authenticated Wire Cell Layout (`CELL_SIZE = 1232` bytes, [transport_anonymity.py:92](file:///d:/code/Main_projects/p2p/p2p_6_1-26/transport_anonymity.py#L92))
 
@@ -145,10 +145,10 @@ $$\text{Total Wire Cell Size} = 1216 + 16 = 1232\text{ bytes}$$
 
 Derived from a randomly generated Ed25519 public key per Tor Rendezvous Specification v3:
 1. Public Key: 32 bytes raw Ed25519 public key bytes (`public_key_ed`).
-2. Checksum: First 2 bytes of $\text{SHA3-256}(b\text{".onion checksum"} \parallel \text{public\_key\_ed} \parallel b\text{"\x03"})$ ([anonymous_identity_manager.py:490-491](file:///d:/code/Main_projects/p2p/p2p_6_1-26/anonymous_identity_manager.py#L490-L491)).
+2. Checksum: First 2 bytes of $\text{SHA3-256}(b\text{".onion checksum"} \parallel \mathrm{public\_key\_ed} \parallel b\text{"\x03"})$ ([anonymous_identity_manager.py:490-491](file:///d:/code/Main_projects/p2p/p2p_6_1-26/anonymous_identity_manager.py#L490-L491)).
 3. Version: Single byte `b"\x03"` ([anonymous_identity_manager.py:494](file:///d:/code/Main_projects/p2p/p2p_6_1-26/anonymous_identity_manager.py#L494)).
 4. Binary Sum: $32 + 2 + 1 = 35$ bytes.
-5. Base32 String: $\text{Base32}(\text{onion\_bytes})$ produces 56 lowercase characters, appended with `".onion"` ([anonymous_identity_manager.py:498-500](file:///d:/code/Main_projects/p2p/p2p_6_1-26/anonymous_identity_manager.py#L498-L500)).
+5. Base32 String: $\text{Base32}(\mathrm{onion\_bytes})$ produces 56 lowercase characters, appended with `".onion"` ([anonymous_identity_manager.py:498-500](file:///d:/code/Main_projects/p2p/p2p_6_1-26/anonymous_identity_manager.py#L498-L500)).
 
 ---
 

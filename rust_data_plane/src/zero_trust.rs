@@ -69,7 +69,11 @@ pub struct SecurityLabel {
 
 impl SecurityLabel {
     pub const fn new(clearance: ClearanceLevel, caveats: u32, compartment_tag: [u8; 16]) -> Self {
-        Self { clearance, caveats, compartment_tag }
+        Self {
+            clearance,
+            caveats,
+            compartment_tag,
+        }
     }
 
     /// Constant-time validation of security labels against expected clearance and compartment.
@@ -343,7 +347,12 @@ impl ZeroTrustEngine {
 
     /// Ingress continuous evaluation: validates authentication outcome, checks peer authorization,
     /// evaluates NSA RTB content filter / security labels, and updates trust score.
-    pub fn evaluate_ingress(&self, peer_id: &str, payload: &[u8], is_auth_valid: bool) -> Result<(), CoreError> {
+    pub fn evaluate_ingress(
+        &self,
+        peer_id: &str,
+        payload: &[u8],
+        is_auth_valid: bool,
+    ) -> Result<(), CoreError> {
         if !is_auth_valid {
             let _ = self.record_penalty(peer_id, 25);
             return Err(CoreError::ZeroTrustViolation);
@@ -369,8 +378,18 @@ impl ZeroTrustEngine {
             for token in part.split(',') {
                 let kv: Vec<&str> = token.split(':').collect();
                 if kv.len() >= 2 {
-                    let k = kv[0].trim().trim_matches(|c| c == '"' || c == '\'' || c == ' ' || c == '\n' || c == '\r');
-                    let v = kv[1].trim().trim_matches(|c| c == '"' || c == '\'' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r');
+                    let k = kv[0].trim().trim_matches(|c| {
+                        c == '"' || c == '\'' || c == ' ' || c == '\n' || c == '\r'
+                    });
+                    let v = kv[1].trim().trim_matches(|c| {
+                        c == '"'
+                            || c == '\''
+                            || c == '}'
+                            || c == ']'
+                            || c == ' '
+                            || c == '\n'
+                            || c == '\r'
+                    });
                     match k {
                         "peer_id" => peer_id = v.to_string(),
                         "role" => {
@@ -406,7 +425,10 @@ impl ZeroTrustEngine {
 
     /// Export active profiles to JSON.
     pub fn to_json(&self) -> Result<String, CoreError> {
-        let guard = self.profiles.read().map_err(|_| CoreError::ZeroTrustViolation)?;
+        let guard = self
+            .profiles
+            .read()
+            .map_err(|_| CoreError::ZeroTrustViolation)?;
         let mut out = String::from("{\"profiles\": [");
         let mut first = true;
         for (id, prof) in guard.iter() {
@@ -550,7 +572,9 @@ mod tests {
         assert!(zt.evaluate_ingress("alpha_1", valid_payload, true).is_ok());
 
         // Ingress with auth failure penalizes
-        assert!(zt.evaluate_ingress("alpha_1", valid_payload, false).is_err());
+        assert!(zt
+            .evaluate_ingress("alpha_1", valid_payload, false)
+            .is_err());
         assert_eq!(zt.trust_score("alpha_1"), Some(55));
 
         // Ingress with RTB violation fails

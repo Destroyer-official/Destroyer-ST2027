@@ -250,10 +250,12 @@ def parse_and_validate_cac_piv_cert(
     }
 
 
-def ensure_cac_piv_mtls_credentials(cert_dir: Optional[Path] = None) -> dict:
+def ensure_cac_piv_mtls_credentials(cert_dir: Optional[Union[str, Path]] = None) -> dict:
     """Ensure Defense Root CA, Server TLS 1.3 cert, and Operator CAC/PIV credentials exist."""
     if cert_dir is None:
         cert_dir = REPO_ROOT / "cert" / "tactical_web_mtls"
+    else:
+        cert_dir = Path(cert_dir)
     cert_dir.mkdir(parents=True, exist_ok=True)
 
     ca_crt_path = cert_dir / "defense_root_ca.crt"
@@ -1402,15 +1404,15 @@ def launch_tactical_web_server(
         scheme = "https"
 
     url = f"{scheme}://{host}:{port}/"
-    print("\n" + "=" * 80)
-    print("  [DEFCON-1 TACTICAL P2P WEB COMMAND CENTER ONLINE]")
-    print(f"  SERVER URL : {url}")
-    print(f"  ASSETS DIR : {WEB_DIR}")
-    print(f"  mTLS 1.3   : {'MANDATORY (CAC/PIV DoD FIPS 201-3 Smartcard)' if mtls else 'DISABLED (LAB HTTP ONLY)'}")
-    print(f"  WEBAUTHN   : {'FIDO2 LEVEL 3 HARDWARE REQUIRED (UP=1, UV=1)' if server.require_webauthn else 'ARMED (ACTIVE ON MUTATING ACTIONS)'}")
-    print(f"  CSP L3     : ENFORCED (default-src 'self'; object-src 'none'; 0 external CDNs)")
-    print("  ZERO-TRUST : 100% Air-Gapped, No Cloud Relays, Pure Sovereign P2P")
-    print("=" * 80 + "\n")
+    print("\n" + "=" * 80, flush=True)
+    print("  [DEFCON-1 TACTICAL P2P WEB COMMAND CENTER ONLINE]", flush=True)
+    print(f"  SERVER URL : {url}", flush=True)
+    print(f"  ASSETS DIR : {WEB_DIR}", flush=True)
+    print(f"  mTLS 1.3   : {'MANDATORY (CAC/PIV DoD FIPS 201-3 Smartcard)' if mtls else 'DISABLED (LAB HTTP ONLY)'}", flush=True)
+    print(f"  WEBAUTHN   : {'FIDO2 LEVEL 3 HARDWARE REQUIRED (UP=1, UV=1)' if server.require_webauthn else 'ARMED (ACTIVE ON MUTATING ACTIONS)'}", flush=True)
+    print(f"  CSP L3     : ENFORCED (default-src 'self'; object-src 'none'; 0 external CDNs)", flush=True)
+    print("  ZERO-TRUST : 100% Air-Gapped, No Cloud Relays, Pure Sovereign P2P", flush=True)
+    print("=" * 80 + "\n", flush=True)
 
     if auto_open:
         try:

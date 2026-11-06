@@ -80,9 +80,17 @@ class HybridKeyExchange2027:
         self._p384_private = ec.generate_private_key(ec.SECP384R1())
         self._p384_public = self._p384_private.public_key()
 
-        # ML-KEM-1024
-        self._mlkem = LibOQS_MLKEM_1024()
-        self._mlkem_pk, self._mlkem_sk = self._mlkem.keygen()
+        # ML-KEM-1024 (Fail-closed: no silent classical fallback per P2-08)
+        try:
+            self._mlkem = LibOQS_MLKEM_1024()
+            self._mlkem_pk, self._mlkem_sk = self._mlkem.keygen()
+            if not self._mlkem_pk or not self._mlkem_sk:
+                raise RuntimeError("ML-KEM-1024 keygen failed to produce valid keypair")
+        except Exception as e_kem:
+            raise RuntimeError(
+                f"MILITARY FATAL: CNSA 2.0 ML-KEM-1024 initialization failed: {e_kem}. "
+                "Silent classical fallback is strictly prohibited."
+            ) from e_kem
 
         # Optional HQC-256 (gated)
         self._hqc = None
@@ -231,8 +239,17 @@ class HybridKeyExchange2027:
         self.secure_cleanup()
 
 
+# Unambiguous normative aliases (P2-15)
+HybridKexCnsa2 = HybridKeyExchange2027
+try:
+    LegacyKexX25519 = HybridKeyExchange
+except NameError:
+    LegacyKexX25519 = None
+
 __all__ = [
     "HybridKeyExchange2027",
+    "HybridKexCnsa2",
+    "LegacyKexX25519",
 ]
 try:
     from hybrid_kex_legacy import __all__ as _legacy_all  # type: ignore

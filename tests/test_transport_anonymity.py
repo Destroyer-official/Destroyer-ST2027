@@ -389,3 +389,32 @@ def test_constant_rate_session_poisson_pacing():
         s_a.close()
         s_b.close()
 
+
+def test_constant_rate_session_poisson_env_var_override(monkeypatch):
+    """Verify P2P_POISSON_CHAFF=1 activates Poisson pacing across sessions."""
+    monkeypatch.setenv("P2P_POISSON_CHAFF", "1")
+    s_a, s_b = socket.socketpair()
+    try:
+        sess = ta.ConstantRateSession(
+            s_a, os.urandom(32), direction_out=0xA5, direction_in=0x5A,
+            start_seq_out=1, peer_start_seq_in=2
+        )
+        assert sess._poisson_pacing is True
+    finally:
+        s_a.close()
+        s_b.close()
+
+
+def test_anonymous_send_recv_parameter_signature():
+    """Verify anonymous_send and anonymous_recv expose Poisson pacing controls."""
+    import inspect
+    sig_send = inspect.signature(ta.anonymous_send)
+    sig_recv = inspect.signature(ta.anonymous_recv)
+    assert "poisson_pacing" in sig_send.parameters
+    assert "rate_lambda" in sig_send.parameters
+    assert "poisson_pacing" in sig_recv.parameters
+    assert "rate_lambda" in sig_recv.parameters
+    assert sig_send.parameters["poisson_pacing"].default is None
+    assert sig_recv.parameters["poisson_pacing"].default is None
+
+

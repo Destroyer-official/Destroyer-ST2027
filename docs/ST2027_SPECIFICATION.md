@@ -106,7 +106,7 @@ Initiator (Alice)                                    Responder (Bob)
 1. **M1 Generation (Initiator):**
    - Generate ephemeral P-384 pair $(d_e, Q_e)$ and ML-KEM-1024 pair $(sk_{kem}, ek_{kem})$.
    - Transmit in clear: $M_1 = Q_e \parallel ek_{kem}$ (Total: 1,665 bytes).
-   - Handshake hash: $h_1 = \text{SHA-384}(\text{PROTOCOL\_NAME} \parallel M_1)$.
+   - Handshake hash: $h_1 = \text{SHA-384}(\mathrm{PROTOCOL\_NAME} \parallel M_1)$.
 2. **M2 Generation (Responder):**
    - Generate ephemeral P-384 pair $(d_{er}, Q_{er})$ and encapsulate $ct_{kem}, ss_{kem} = \text{ML-KEM-Encaps}(ek_{kem})$.
    - Derive classical DH shared secret: $ss_{dh} = \text{ECDH}(d_{er}, Q_e)$.

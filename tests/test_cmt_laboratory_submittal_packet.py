@@ -192,3 +192,11 @@ class TestCMTLaboratorySubmittalPacket:
         """Execute CMTLaboratorySubmittalPackager.verify_submittal_packet() and assert True."""
         packager = CMTLaboratorySubmittalPackager(verbose=False)
         assert packager.verify_submittal_packet() is True
+
+    def test_packager_cli_verify_mode(self):
+        """Execute package_cmt_laboratory_submittal.py with --verify and assert returncode 0."""
+        import subprocess
+        script_path = REPO_ROOT / "scripts" / "package_cmt_laboratory_submittal.py"
+        res = subprocess.run([sys.executable, str(script_path), "--verify"], capture_output=True, text=True)
+        assert res.returncode == 0, f"CLI verification failed: {res.stderr}"
+        assert "[SUCCESS] All 14 submittal artifacts" in res.stdout

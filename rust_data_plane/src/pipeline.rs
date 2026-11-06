@@ -357,7 +357,11 @@ impl ZeroGapPipeline {
 
         // Peek with current frame key; if that fails or seq is in a future epoch, attempt epoch synchronization
         let mut peeked = aead::peek_seq(&fk, &sealed_body);
-        if peeked.is_none() || peeked.map(|s| s > 0 && (s - 1) / CER_EPOCH_INTERVAL > self.current_epoch).unwrap_or(false) {
+        if peeked.is_none()
+            || peeked
+                .map(|s| s > 0 && (s - 1) / CER_EPOCH_INTERVAL > self.current_epoch)
+                .unwrap_or(false)
+        {
             let mut trial_epoch = self.current_epoch;
             let mut trial_root = *self.epoch_root;
             for _ in 0..8 {

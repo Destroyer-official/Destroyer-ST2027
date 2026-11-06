@@ -52,7 +52,7 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
   5. **Constant-Time Physical Separation Enforcement**: The engine validates:
      - Distinct Reader Slots: $\text{slot}_1 \ne \text{slot}_2$.
      - Distinct Hardware Token Serials: $\text{serial}_1 \ne \text{serial}_2$ (prevents cloned token exploitation).
-     - Distinct Verifying Public Keys: $\text{ct\_eq}(\text{vk}_1, \text{vk}_2) = 0$ (prevents single-officer reuse).
+     - Distinct Verifying Public Keys: ct_eq(vk_1, vk_2) == 0 (prevents single-officer reuse).
   6. **Physical Temporal Synchronization Window**: Replicating dual physical launch consoles, both hardware signatures must be generated within a strict hardware window:
      $$\Delta t = |t_1 - t_2| \le 2.000\text{ seconds}$$
      Any serial authorization by a single operator after the window expires or with timestamp skew raises a fail-closed error. Total message age must not exceed 120.0 seconds.
@@ -73,13 +73,13 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
 - **Verifier Engine**: ProVerif 2.05 (Dolev-Yao symbolic attacker model)
 - **Status**: **VERIFIED & MACHINE-CHECKED PASSING** in automated CI (`test_proverif_st2027.py` in ~15.2s):
   1. **Secrecy of Transmitted Payload**:
-     $$\text{Query: } \mathbf{not} \ \text{attacker}(\text{secret\_payload\_A}[]) \implies \mathbf{true}$$
+     $$\text{Query: } \mathbf{not} \ \text{attacker}(\mathrm{secret\_payload\_A}[]) \implies \mathbf{true}$$
      Proved: An attacker controlling the entire network fabric cannot derive or invert the plaintext payload protected by the `SecP384r1MLKEM1024` hybrid combiner and `AES-256-GCM`.
   2. **Injective Mutual Authentication**:
-     $$\text{Query: } \text{inj-event}(\text{endB}(kA, kB, sess)) \implies \text{inj-event}(\text{beginA}(kA, kB, sess)) \implies \mathbf{true}$$
+     $$\text{Query: } \mathrm{inj}\text{-}\mathrm{event}(\text{endB}(kA, kB, sess)) \implies \mathrm{inj}\text{-}\mathrm{event}(\text{beginA}(kA, kB, sess)) \implies \mathbf{true}$$
      Proved: Replay, message-reordering, and man-in-the-middle impersonation attacks are mathematically impossible within the modeled protocol boundary.
   3. **Post-Compromise Security (PCS) Healing**:
-     $$\text{Query: } \mathbf{not} \ \text{attacker}(\text{post\_ratchet\_secret}[]) \implies \mathbf{true}$$
+     $$\text{Query: } \mathbf{not} \ \text{attacker}(\mathrm{post\_ratchet\_secret}[]) \implies \mathbf{true}$$
      Proved: Even when an attacker completely captures an ephemeral ratchet key in Epoch $N$, their compromise capability is terminated upon the next hybrid ratchet step in Epoch $N+1$.
 
 ### 3.5. Phase 5: Air-Gapped Simplex Tactical Data Diode

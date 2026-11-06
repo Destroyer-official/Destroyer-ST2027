@@ -1,0 +1,55 @@
+# Destroyer-ST2027: Authoritative Production Profile Configuration
+# Conforms to NSA CNSA Suite 2.0, NIST SP 800-207 Zero Trust, and DoD 5210.41M
+
+[profile]
+name = "cnsa-2.0-production-strict"
+environment = "production"
+version = "2027.1.0"
+audit_classification = "TOP_SECRET_RELEASABLE"
+
+[cryptography]
+# NSA CNSA Suite 2.0 Pure Mandate
+primary_kem = "ML-KEM-1024"            # NIST FIPS 203 (NIST Level 5)
+primary_signature = "ML-DSA-87"        # NIST FIPS 204 (NIST Level 5)
+classical_kex_curve = "P-384"          # NIST FIPS 186-5 (secp384r1)
+hybrid_standard = "RFC 10024"          # SecP384r1MLKEM1024 (IANA 0x11ED)
+pki_standard = "RFC 9881"             # Pure ML-DSA-87 X.509 PKIX
+symmetric_cipher = "AES-256-GCM"       # NIST SP 800-38D
+hash_standard = "SHA-384"              # CNSA Suite 2.0
+secondary_hash = "SHA-512"             # CNSSP-15
+kdf_standard = "HKDF-SHA384"           # RFC 5869
+allow_software_fallback = false        # Fail-closed security model
+
+[transport]
+default_wire_quantum = 1232            # IPv6 Min MTU (1280) - IPv6 (40) - UDP (8)
+max_datagram_bytes = 1500
+burst_bucket_capacity = 64
+token_refill_rate_per_sec = 200
+chaff_rate_hz = 20.0                   # 50 ms constant-rate transmission tick
+rekey_epoch_interval_packets = 128     # ZeroGap Continuous Epoch Ratchet (CER)
+rekey_grace_ticks = 40                 # 2000 ms adaptive rekey window for DDIL links
+max_concurrent_sessions = 16
+
+[zero_trust]
+min_trust_threshold = 50               # Score below 50 immediately revokes session
+default_initial_trust = 75             # Enrolled peer starting score
+max_trust_score = 100
+auth_failure_penalty = 25              # 2 authentication failures revoke peer
+reward_interval_packets = 10           # +1 trust score per 10 consecutive authentic datagrams
+mls_enforcement = true                 # Bell-LaPadula Simple Security (No Read Up) & Star-Property (No Write Down)
+content_inspection_rtb = true          # NSA Raise the Bar classified dirty-word filter
+
+[two_person_integrity]
+temporal_skew_max_ms = 2000            # Co-signing hardware timestamps must match within 2.0 seconds
+strict_physical_separation = true      # Independent PKCS#11 slots, distinct card serial numbers
+require_officer_roster_pinning = true  # Verifying keys must exist in pre-authenticated roster
+allow_disk_synthetic_keys = false      # Synthetic JSON signatures prohibited in production
+
+[hardware_anti_rollback]
+require_tpm2_nv_counter = true         # Production gates fail closed without provisioned NV counter
+nv_counter_index = "0x1500016"          # Canonical NV monotonic counter index
+checkpoint_frequency_reservations = 512 # Monotonic hardware increment per 512 sequence block
+cover_receive_replay_hwm = true        # Dual-monotonic hardware protection (send_seq + recv_hwm)
+pcr_bank = "sha256"
+pcr_registers = [0, 1, 2, 7]            # Firmware, Platform, Option ROMs, Secure Boot
+

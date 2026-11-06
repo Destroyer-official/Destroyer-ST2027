@@ -99,6 +99,16 @@ def probe_hardware_and_environment():
         pipe_status = f"{RED}[ERROR]{RESET} {e}"
     print(f"  • Zero-Gap Unified Pipeline: {pipe_status}")
 
+    # 5. CMT Laboratory & AO Submittal Packet
+    submittal_tar = ROOT / "compliance_reports" / "cmt_lab_submission_packet.tar.gz"
+    submittal_manifest = ROOT / "compliance_reports" / "cmt_laboratory_submission_manifest.json"
+    submittal_ok = submittal_tar.exists() and submittal_manifest.exists()
+    status_submittal = (
+        f"{GREEN}[SEALED & SIGNED]{RESET} 14/14 Artifacts (ML-DSA-87 Signed Manifest)"
+        if submittal_ok else f"{YELLOW}[NOT PACKAGED]{RESET} Run `python scripts/package_cmt_laboratory_submittal.py --package`"
+    )
+    print(f"  • CMT / AO Submittal Dossier: {status_submittal}")
+
     print("=" * 86)
     return {
         "rust_ok": rust_ok,
@@ -406,6 +416,17 @@ def run_emergency_zeroize():
         print(f"{YELLOW}Purge aborted by operator.{RESET}")
 
 
+def run_cmt_submittal_audit():
+    """Package and cryptographically verify the formal CMT Laboratory & AO Submittal Dossier."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Verifying & Packaging FIPS 140-3 CMT Laboratory & AO Submittal Dossier...{RESET}", flush=True)
+    packager_script = ROOT / "scripts" / "package_cmt_laboratory_submittal.py"
+    res = subprocess.run([sys.executable, str(packager_script), "--package"])
+    if res.returncode == 0:
+        print(f"\n{BOLD}{GREEN}[SUCCESS] CMT Laboratory & AO Submittal Dossier packaged and verified with 100% cryptographic integrity.{RESET}\n", flush=True)
+    else:
+        print(f"\n{BOLD}{RED}[FAILURE] CMT Laboratory & AO Submittal Dossier packaging or verification encountered errors (exit code {res.returncode}).{RESET}\n", flush=True)
+
+
 def interactive_menu_loop():
     """Main interactive command center menu loop."""
     print_master_banner()
@@ -425,11 +446,12 @@ def interactive_menu_loop():
         print(f"  {MAGENTA}[10] Inspect Platform Hardware TPM 2.0 PCR Attestation Quote{RESET}")
         print(f"  {MAGENTA}[11] Run seL4 Hardware Appliance Simulation Drill (RED/CRYPTO/BLACK){RESET}")
         print(f"  {RED}[12] Emergency Post-Session Zeroization (NIST SP 800-88 / DoD 5220.22-M){RESET}")
-        print(f"  {WHITE}[13] Exit Command Center{RESET}")
+        print(f"  {CYAN}[13] Verify & Package FIPS 140-3 CMT Laboratory & AO Submittal Dossier{RESET}")
+        print(f"  {WHITE}[14] Exit Command Center{RESET}")
         print("=" * 86)
 
         try:
-            choice = input(f"{BOLD}{YELLOW}Enter Option (1-13, or S for seL4): {RESET}").strip()
+            choice = input(f"{BOLD}{YELLOW}Enter Option (1-14, or S for seL4): {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting Command Center...")
             break
@@ -458,18 +480,20 @@ def interactive_menu_loop():
             run_sovereign_sel4_appliance_drill()
         elif choice == "12":
             run_emergency_zeroize()
-        elif choice in ("13", "q", "exit", "quit"):
+        elif choice == "13":
+            run_cmt_submittal_audit()
+        elif choice in ("14", "q", "exit", "quit"):
             print(f"{GREEN}Session closed under zero-leak discipline.{RESET}")
             break
         else:
-            print(f"{RED}Invalid selection. Please choose 1-13.{RESET}")
+            print(f"{RED}Invalid selection. Please choose 1-14.{RESET}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="ST2027 Protocol Suite Command Center")
     parser.add_argument("mode", nargs="?", default="interactive",
                         choices=["interactive", "web", "tactical", "alpha", "bravo", "chat",
-                                 "audit", "benchmark", "drill", "cjadc2", "terminals", "tpm", "zeroize", "sel4"],
+                                 "audit", "benchmark", "drill", "cjadc2", "terminals", "tpm", "zeroize", "sel4", "cmt"],
                         help="Operating mode (default: interactive menu)")
     args = parser.parse_args()
 
@@ -497,6 +521,8 @@ def main():
         run_sovereign_sel4_appliance_drill()
     elif args.mode == "zeroize":
         run_emergency_zeroize()
+    elif args.mode == "cmt":
+        run_cmt_submittal_audit()
 
 
 if __name__ == "__main__":

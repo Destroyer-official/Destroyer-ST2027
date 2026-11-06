@@ -38,7 +38,7 @@ Outbound messages are quantized into discrete block sizes to prevent traffic ana
 - Arithmetic verification of wire frame:
   - Header: 4-byte big-endian payload length $L_{plain}$ (`:128`).
   - Payload: $L_{plain}$ bytes (`:130`).
-  - Quantized Padding: $L_{pad} = Q - (L_{plain} + 4)$ random bytes where $Q \in \text{PAD\_QUANTA}$ (`:132`).
+  - Quantized Padding: $L_{pad} = Q - (L_{plain} + 4)$ random bytes where $Q \in \mathrm{PAD\_QUANTA}$ (`:132`).
   - Inner Ratchet Tag: 16 bytes Poly1305 / AES-GCM (`:142`).
   - Outer Layer 2 Header: 8-byte big-endian frame sequence counter (`:158`).
   - Outer Layer 2 AEAD Tag: 16 bytes AES-256-GCM (`:172`).

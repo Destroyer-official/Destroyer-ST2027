@@ -240,7 +240,10 @@ impl ActiveTransmissionLoop {
     }
 
     /// Attach a ZeroTrust continuous evaluation engine to this transmission loop.
-    pub fn with_zero_trust(mut self, zt: std::sync::Arc<crate::zero_trust::ZeroTrustEngine>) -> Self {
+    pub fn with_zero_trust(
+        mut self,
+        zt: std::sync::Arc<crate::zero_trust::ZeroTrustEngine>,
+    ) -> Self {
         self.zero_trust = Some(zt);
         self
     }

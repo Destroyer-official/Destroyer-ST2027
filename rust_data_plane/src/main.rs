@@ -44,7 +44,7 @@ use destroyer_core::keystore;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
-use destroyer_core::pacing::{self, PacedScheduler};
+use destroyer_core::pacing::{self, PacedScheduler, PoissonScheduler};
 use destroyer_core::pki::{self, CertSig, Custodian};
 use destroyer_core::policy::{DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
 use destroyer_core::purge;
@@ -108,8 +108,8 @@ fn usage() -> ! {
          recv-file --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH --count K [--timeout-ms MS]\n\
          diode-send --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH [--parity-ratio FLOAT]\n\
          diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
-         stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232]\n\
-         channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
+         stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232] [--poisson]\n\
+         channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--poisson] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          terminal --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--sas TEXT] [--callsign TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          node   --role initiator|responder --bind ADDR --to ADDR [--key-file PATH] [--psk-file PATH] [--state PATH] [--interval-ms MS] [--quantum 256|512|1232] [--headless]\n\
          cookie-challenge [--ip IP] [--port PORT] [--payload TEXT] [--difficulty N]  generate anti-amplification micro-PoW challenge\n\
@@ -1885,7 +1885,14 @@ fn cmd_stream_chaff(args: &[String]) {
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
     let bind_addr = if to.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
-    let mut scheduler = PacedScheduler::new(Duration::from_millis(interval_ms));
+    let use_poisson = has_flag(args, "--poisson")
+        || std::env::var("P2P_POISSON_CHAFF").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    let mut paced_scheduler = PacedScheduler::new(Duration::from_millis(interval_ms));
+    let mut poisson_scheduler = PoissonScheduler::new(
+        1000.0 / interval_ms.max(1) as f64,
+        Duration::from_millis(5),
+        Duration::from_millis((interval_ms * 3).max(15)),
+    );
 
     rt.block_on(async {
         let ep = Endpoint::bind(bind_addr)
@@ -1894,7 +1901,11 @@ fn cmd_stream_chaff(args: &[String]) {
 
         let mut emitted = 0u64;
         while count == 0 || emitted < count {
-            scheduler.wait_next_tick();
+            if use_poisson {
+                poisson_scheduler.wait_next_tick();
+            } else {
+                paced_scheduler.wait_next_tick();
+            }
             let seq = reserve_send_seq(&state, &key_bytes, &key_id, 1);
             let frame = pacing::build_chaff_frame_directed(&key, seq, tx_dir, quantum)
                 .unwrap_or_else(|_| fail("build chaff failed"));
@@ -1903,7 +1914,8 @@ fn cmd_stream_chaff(args: &[String]) {
             }
             emitted += 1;
         }
-        println!("stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms");
+        let mode_suffix = if use_poisson { " (poisson pacing)" } else { "" };
+        println!("stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms{mode_suffix}");
     });
 }
 
@@ -1955,6 +1967,8 @@ fn cmd_channel(args: &[String]) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let use_stdin = has_flag(args, "--stdin");
+    let use_poisson = has_flag(args, "--poisson")
+        || std::env::var("P2P_POISSON_CHAFF").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
 
     let mut msgs = Vec::new();
     let mut i = 0;
@@ -1980,6 +1994,9 @@ fn cmd_channel(args: &[String]) {
     let mut pending_frame_key: Option<FrameKey> = None;
     let mut prev_frame_key: Option<FrameKey> = None;
     let mut prev_key_remaining_ticks: u32 = 0;
+    let rekey_grace_ticks: u32 = get_flag(args, "--rekey-grace-ticks")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
     let rekey_chunk_size =
         (quantum.saturating_sub(frame::FRAME_OVERHEAD + fragment::FRAGMENT_HEADER_LEN)).min(600);
     let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> =
@@ -2090,11 +2107,20 @@ fn cmd_channel(args: &[String]) {
         }
 
         let start_time = Instant::now();
-        let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
-        tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut next_tick_delay = if use_poisson {
+            pacing::sample_poisson_interval(
+                1000.0 / interval_ms.max(1) as f64,
+                Duration::from_millis(5),
+                Duration::from_millis((interval_ms * 3).max(15)),
+            )
+        } else {
+            Duration::from_millis(interval_ms)
+        };
+        let mut tick_sleep = std::pin::pin!(tokio::time::sleep(next_tick_delay));
 
+        let mode_suffix = if use_poisson { " (poisson pacing)" } else { "" };
         println!(
-            "channel: ACTIVE role={role} bind={bind} to={to} interval={interval_ms}ms quantum={quantum}B"
+            "channel: ACTIVE role={role} bind={bind} to={to} interval={interval_ms}ms quantum={quantum}B{mode_suffix}"
         );
 
         loop {
@@ -2131,7 +2157,17 @@ fn cmd_channel(args: &[String]) {
                         }
                     }
                 }
-                _ = tick_timer.tick() => {
+                _ = &mut tick_sleep => {
+                    let next_d = if use_poisson {
+                        pacing::sample_poisson_interval(
+                            1000.0 / interval_ms.max(1) as f64,
+                            Duration::from_millis(5),
+                            Duration::from_millis((interval_ms * 3).max(15)),
+                        )
+                    } else {
+                        Duration::from_millis(interval_ms)
+                    };
+                    tick_sleep.as_mut().reset(tokio::time::Instant::now() + next_d);
                     if let Some(ref _old_key) = prev_frame_key {
                         if prev_key_remaining_ticks > 0 {
                             prev_key_remaining_ticks -= 1;
@@ -2302,7 +2338,7 @@ fn cmd_channel(args: &[String]) {
                             let pfk = pending_frame_key.take().unwrap();
                             let epoch = pcs_ratchet.epoch();
                             prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
-                            prev_key_remaining_ticks = 15;
+                            prev_key_remaining_ticks = rekey_grace_ticks;
                             println!("channel: EPOCH_ADVANCED epoch={epoch}");
                         }
 
@@ -2378,7 +2414,7 @@ fn cmd_channel(args: &[String]) {
                                                 println!("channel: IN_BAND_EPOCH_REKEY_RECV epoch={new_epoch}");
                                                 if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
                                                     prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
-                                                    prev_key_remaining_ticks = 20;
+                                                    prev_key_remaining_ticks = rekey_grace_ticks;
                                                     println!("channel: EPOCH_ADVANCED epoch={new_epoch}");
                                                 }
                                             }

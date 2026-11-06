@@ -56,13 +56,16 @@ All mathematical formulations, wire datagram schemas, and cryptographic state ma
 
 | Test Suite | Target Component | Command | Result |
 | :--- | :--- | :--- | :---: |
-| **Rust Data Plane Core** | Native cryptographic primitives | `cargo test --manifest-path rust_data_plane/Cargo.toml` | **184 PASS, 0 FAIL** |
+| **Rust Data Plane Core** | Native cryptographic primitives | `cargo test --manifest-path rust_data_plane/Cargo.toml` | **245 PASS, 0 FAIL** (190 lib, 12 dudect, 42 kani, 1 doc) |
 | **Rust Standalone Binary** | CLI commands, roles, and reflection defense | `python -m unittest tests/test_rust_standalone_binary.py` | **23 PASS, 0 FAIL** |
 | **Two-Person Integrity** | Physical & mock dual-smartcard NC3 | `pytest tests/test_hardware_tpi_dual_smartcard.py -v` | **13 PASS, 0 FAIL** |
 | **Side-Channel Timing** | DudeCT constant-time Welch's $t$-test ($|t| < 4.5$) | `pytest tests/test_dudect_timing_analysis.py -v` | **3 PASS, 0 FAIL** |
-| **Transport Anonymity** | Cell framing, Poisson pacing, Tor SOCKS5 | `pytest tests/test_transport_anonymity.py -v` | **21 PASS, 0 FAIL** |
-| **CMT Laboratory Package** | FIPS 140-3 submittal manifest & tarball | `pytest tests/test_cmt_laboratory_submittal_packet.py -v` | **7 PASS, 0 FAIL** |
-| **Deployment Gate** | Full system readiness & algorithm approval | `python verify_deployment.py` | **93 PASS, 0 FAIL** |
+| **Transport Anonymity** | Cell framing, Poisson pacing, Tor SOCKS5 | `pytest tests/test_transport_anonymity.py -v` | **23 PASS, 0 FAIL** |
+| **CMT Laboratory Package** | FIPS 140-3 submittal manifest & tarball | `pytest tests/test_cmt_laboratory_submittal_packet.py -v` | **8 PASS, 0 FAIL** |
+| **Runtime Memory & Web Console** | Hardware memory boundary & CAC/PIV mTLS | `pytest tests/test_runtime_memory_and_web_console.py -v` | **26 PASS, 0 FAIL** |
+| **Hardware Dependencies & Isolation** | Host posture, TPM monotonic counter & CCID | `pytest tests/test_hardware_dependencies_and_isolation.py -v` | **16 PASS, 0 FAIL** |
+| **Session Config & Context Audit** | Tier 5 cryptographic cleanup & atomic save | `pytest tests/test_production_tier5_session_config_audit.py -v` | **6 PASS, 0 FAIL** |
+| **Deployment Gate** | Full system readiness & algorithm approval | `python verify_deployment.py` | **96 PASS, 0 FAIL** |
 | **Truth-in-Claims Audit** | Honest disclosures & attribution | `pytest tests/test_docs_truth_in_claims.py -v` | **4 PASS, 0 FAIL** |
 | **Reproducible Build** | SLSA-aligned cryptographic Merkle verification | `python scripts/verify_reproducible_build.py` | **100% VERIFIED** |
 | **Production Build Check** | Strict `--no-default-features` compilation | `cargo check --no-default-features` | **0 WARNINGS** |

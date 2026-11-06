@@ -925,6 +925,7 @@ Deploying Emergency Action Messages (`/eam`) in production requires physical spl
 | **ISO/IEC 11889:2015** | TPM 2.0 Hardware Root of Trust & PCR Measurement | [`platform_hsm_interface.py`](platform_hsm_interface.py), [`tpm_quote.py`](tpm_quote.py) | [`docs/hw_tpm_hsm_setup.md`](docs/hw_tpm_hsm_setup.md) |
 | **DoD 5220.22-M** | Multi-Pass Volatile Memory Sanitization Pattern | [`enhanced_secure_memory.py`](enhanced_secure_memory.py), [`ts_rt/src/lib.rs`](ts_rt/src/lib.rs) | [`docs/modules/memory_hsm.md`](docs/modules/memory_hsm.md) |
 | **FIPS 140-3 (design target, NOT lab-certified)** | Hardware Security, Self-Tests, Volatile Wiping | [`ts_hw_layer.py`](ts_hw_layer.py), [`crypto_selftest.py`](crypto_selftest.py) | [`docs/FIPS_140_3_SECURITY_POLICY.md`](docs/FIPS_140_3_SECURITY_POLICY.md) |
+| **FIPS 140-3 Submittal Dossier (pre-evaluation)** | 14-Artifact CMT Laboratory & AO Submittal Packet | [`scripts/package_cmt_laboratory_submittal.py`](scripts/package_cmt_laboratory_submittal.py) | [`compliance_reports/cmt_laboratory_submission_manifest.json`](compliance_reports/cmt_laboratory_submission_manifest.json) |
 | **NATO SDIP-27/28/29** | Emissions-Security Records & Zoning Registry | [`ts_hw_layer.py:TEMPESTRegistry`](ts_hw_layer.py) | [`docs/hw_tpm_hsm_setup.md`](docs/hw_tpm_hsm_setup.md) |
 | **Two-Person Rule (TPA)** | Cryptographic Dual-Person Authorization co-signing | [`spo_dpo.py`](spo_dpo.py), [`rust_data_plane/src/nc3.rs`](rust_data_plane/src/nc3.rs) | [`compliance_reports/oscal_ssp_cnsa2.json`](compliance_reports/oscal_ssp_cnsa2.json) |
 | **IETF RATS (RFC 9334)** | Platform Attestation & Evidence Architecture | [`ts_attest.py`](ts_attest.py) | [`compliance_reports/oscal_sar_cato.json`](compliance_reports/oscal_sar_cato.json) |
@@ -970,6 +971,9 @@ python scripts/verify_reproducible_build.py
 
 # 11. Master Pre-Flight Deployment Gate:
 python verify_deployment.py
+
+# 12. FIPS 140-3 CMT Laboratory & AO Submittal Packet Verification:
+python scripts/package_cmt_laboratory_submittal.py --verify
 ```
 
 ---
@@ -978,7 +982,7 @@ python verify_deployment.py
 
 In compliance with defense engineering ethics, the following boundaries are explicitly disclosed:
 1. **Physical Hardware Independence:** The software platform cannot certify physical tamper-resistance or RF attenuation. Physical FIPS 140-3 Level 3/4 enclosures, TEMPEST SDIP-28 facilities, and physical optical data diodes must be procured from accredited hardware vendors.
-2. **Authorizing Official (AO) Accreditation:** Execution of automated tests and generation of OSCAL artifacts does not constitute a formal government Authority to Operate (ATO). Formal accreditation requires evaluation by an accredited testing laboratory and approval by the designated Authorizing Official.
+2. **Authorizing Official (AO) Accreditation & CMT Laboratory Evaluation:** Execution of automated tests and generation of OSCAL artifacts does not constitute a formal government Authority to Operate (ATO). Formal accreditation requires evaluation by an accredited testing laboratory and approval by the designated Authorizing Official. To operationalize this transition, the repository provides `scripts/package_cmt_laboratory_submittal.py` which compiles the 12-section Cryptographic Module Security Policy (`docs/FIPS_140_3_SECURITY_POLICY.md`), machine-readable OSCAL SSP/SAR, ACVP test evidence, and signed CBOM/SBOMs into a sealed, ML-DSA-87 signed submittal packet (`compliance_reports/cmt_lab_submission_packet.tar.gz`) for laboratory ingestion.
 3. **Draft Standards Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards are intentionally excluded until finalization and inclusion in NSA CNSA guidance.
 
 ---

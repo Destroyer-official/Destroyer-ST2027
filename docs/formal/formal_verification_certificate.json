@@ -1,6 +1,6 @@
 {
   "schema_version": "ST2027-FORMAL-CERT-V1",
-  "generated_at": "2026-11-06T04:45:36.634289+00:00",
+  "generated_at": "2026-11-06T06:00:02.633048+00:00",
   "overall_status": "VERIFIED",
   "cryptographic_source_hashes_sha512": {
     "st2027_handshake.pv": "c4a242b7383fd2b214c904d915ae4378293ed08d4f57438b39ac3d1dbf3209e0e16ceb930c456096b21cf2cbc82ce318f712d13d401afa01680aca0562f59292",
@@ -99,14 +99,14 @@
     "standard": "Reparaz et al. DudeCT (Welch's two-sample t-test |t| < 4.5)",
     "decision_threshold": 4.5,
     "rust_dataplane_results": {
-      "ct_eq_t_statistic": 2.1058,
-      "stack_secret_ct_eq_t_statistic": 0.3725,
-      "positive_control_leaky_comparator_t_statistic": 13.3167,
+      "ct_eq_t_statistic": 0.2715,
+      "stack_secret_ct_eq_t_statistic": 1.3671,
+      "positive_control_leaky_comparator_t_statistic": 75.247,
       "all_tests_passed": true
     },
     "python_runtime_results": {
-      "hmac_compare_digest_t_statistic": 1.1518,
-      "positive_control_leaky_comparator_t_statistic": 20.5596,
+      "hmac_compare_digest_t_statistic": 0.1347,
+      "positive_control_leaky_comparator_t_statistic": 16.0661,
       "all_tests_passed": true
     },
     "verified_constant_time": true

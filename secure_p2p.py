@@ -10914,13 +10914,15 @@ class SecureP2PChat:
         elif cmd in ('/chaff', '/wire-camouflage'):
             print("\r" + " " * 100)
             tokens = (cmd_parts[1] if len(cmd_parts) > 1 else "").split()
-            if len(tokens) < 2:
-                print(f"{RED}Usage: /chaff <target_ip> <target_port> [interval_ms=15] [count=100]{RESET}")
+            use_poisson = any(t.lower() in ("--poisson", "-p", "poisson") for t in tokens) or os.environ.get("P2P_POISSON_CHAFF", "0").strip().lower() in ("1", "true", "yes")
+            clean_tokens = [t for t in tokens if t.lower() not in ("--poisson", "-p", "poisson")]
+            if len(clean_tokens) < 2:
+                print(f"{RED}Usage: /chaff <target_ip> <target_port> [interval_ms=15] [count=100] [--poisson]{RESET}")
                 print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
                 return
-            tgt_ip, tgt_port = tokens[0], int(tokens[1])
-            interval = int(tokens[2]) if len(tokens) > 2 else 15
-            count = int(tokens[3]) if len(tokens) > 3 else 100
+            tgt_ip, tgt_port = clean_tokens[0], int(clean_tokens[1])
+            interval = int(clean_tokens[2]) if len(clean_tokens) > 2 else 15
+            count = int(clean_tokens[3]) if len(clean_tokens) > 3 else 100
             try:
                 native_bin = os.path.join(_REPO_ROOT, "rust_data_plane", "target", "release", "secure-transmit.exe" if os.name == "nt" else "secure-transmit")
                 if not os.path.exists(native_bin):
@@ -10936,16 +10938,25 @@ class SecureP2PChat:
                         "--interval-ms", str(interval),
                         "--count", str(count)
                     ]
+                    if use_poisson:
+                        cmd_arr.append("--poisson")
                     subprocess.Popen(cmd_arr)
-                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Streaming {count} CSPRNG chaff frames at {interval}ms intervals to {tgt_ip}:{tgt_port}")
+                    mode_label = " (Poisson memoryless pacing)" if use_poisson else ""
+                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Streaming {count} CSPRNG chaff frames at {interval}ms mean intervals{mode_label} to {tgt_ip}:{tgt_port}")
                 else:
                     from destroyer_node import DestroyerNode
                     node = getattr(self, '_rust_node', None) or DestroyerNode()
                     node.bind_udp()
                     for _ in range(count):
                         node.send_udp_msg(b"", (tgt_ip, tgt_port), chaff=True)
-                        time.sleep(interval / 1000.0)
-                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Injected {count} CSPRNG chaff frames via native DestroyerNode to {tgt_ip}:{tgt_port}")
+                        if use_poisson:
+                            import transport_anonymity as _ta
+                            d = _ta.sample_poisson_interval(1000.0 / max(1, interval), min_s=0.005, max_s=max(0.150, (interval * 3) / 1000.0))
+                            time.sleep(d)
+                        else:
+                            time.sleep(interval / 1000.0)
+                    mode_label = " (Poisson memoryless pacing)" if use_poisson else ""
+                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Injected {count} CSPRNG chaff frames via native DestroyerNode{mode_label} to {tgt_ip}:{tgt_port}")
             except Exception as e_chaff:
                 print(f"{RED}[CHAFF ERROR] {e_chaff}{RESET}")
             print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)

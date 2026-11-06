@@ -69,14 +69,14 @@
      - If not started: return (valid initial sequence).
      - If $\text{seq} < \text{self.base}$: raise `SecurityError("replay rejected")`.
      - Compute offset: $\text{off} = \text{seq} - \text{self.base}$.
-     - If $\text{off} < \text{REPLAY\_WINDOW}$ and $(\text{self.bitmap} \gg \text{off}) \ \& \ 1$: raise `SecurityError("replay rejected")`.
+     - If $\text{off} < \mathrm{REPLAY\_WINDOW}$ and $(\text{self.bitmap} \gg \text{off}) \ \& \ 1$: raise `SecurityError("replay rejected")`.
      - DO NOT mutate `self.base` or `self.bitmap`.
    - `mark(self, seq: int) -> None`:
      - If not started: set `self.base = seq`, `self.bitmap = 1`, `self.started = True`, return.
      - If $\text{seq} < \text{self.base}$: return (already validated by check).
      - Compute offset: $\text{off} = \text{seq} - \text{self.base}$.
-     - If $\text{off} < \text{REPLAY\_WINDOW}$: set `self.bitmap |= (1 << off)`.
-     - Else: slide window by $\text{shift} = \text{off} - (\text{REPLAY\_WINDOW} - 1)$. If $\text{shift} \ge \text{REPLAY\_WINDOW}$, `self.bitmap = 0`, else `self.bitmap >>= shift`. Update `self.base += shift`, set MSB in bitmap.
+     - If $\text{off} < \mathrm{REPLAY\_WINDOW}$: set `self.bitmap |= (1 << off)`.
+     - Else: slide window by $\text{shift} = \text{off} - (\mathrm{REPLAY\_WINDOW} - 1)$. If $\text{shift} \ge \mathrm{REPLAY\_WINDOW}$, `self.bitmap = 0`, else `self.bitmap >>= shift`. Update `self.base += shift`, set MSB in bitmap.
 4. Locate `Channel.open(self, wire: bytes)` (lines 621–640).
 5. Modify execution sequence:
    ```python

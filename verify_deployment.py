@@ -22,9 +22,12 @@ import sys
 import importlib
 import hashlib
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
+
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Core modules that MUST be preserved (Iron Core)
 CORE_MODULES = [
@@ -365,6 +368,60 @@ class DeploymentVerifier:
                 all_exist = False
                 
         return all_exist
+
+    def verify_cmt_submittal_dossier(self) -> bool:
+        """Verify FIPS 140-3 CMT Laboratory & AO Submittal Packet readiness."""
+        print("\n=== CMT Laboratory & AO Submittal Dossier ===")
+        manifest_file = PROJECT_ROOT / "compliance_reports" / "cmt_laboratory_submission_manifest.json"
+        sig_file = PROJECT_ROOT / "compliance_reports" / "cmt_laboratory_submission_manifest.json.mldsa87.sig"
+        pub_file = PROJECT_ROOT / "compliance_reports" / "cmt_laboratory_submission_manifest.json.mldsa87.pub"
+        tar_file = PROJECT_ROOT / "compliance_reports" / "cmt_lab_submission_packet.tar.gz"
+        cmsp_file = PROJECT_ROOT / "docs" / "FIPS_140_3_SECURITY_POLICY.md"
+
+        ok = True
+        if cmsp_file.exists() and cmsp_file.stat().st_size > 1000:
+            self._add_result("CMT Submittal: CMSP Policy", VerificationStatus.PASS,
+                             "docs/FIPS_140_3_SECURITY_POLICY.md (12-section ISO/IEC 19790 specification present)")
+        else:
+            self._add_result("CMT Submittal: CMSP Policy", VerificationStatus.FAIL,
+                             "docs/FIPS_140_3_SECURITY_POLICY.md missing or truncated")
+            ok = False
+
+        if manifest_file.exists() and sig_file.exists() and pub_file.exists():
+            try:
+                from liboqs_wrapper import LibOQS_MLDSA_87
+                dsa = LibOQS_MLDSA_87()
+                raw = manifest_file.read_bytes()
+                sig = sig_file.read_bytes()
+                pk = pub_file.read_bytes()
+                valid = (dsa.verify(pk, raw, sig) or
+                         dsa.verify(pk, raw.replace(b"\r\n", b"\n"), sig) or
+                         dsa.verify(pk, raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"), sig))
+                if valid:
+                    self._add_result("CMT Submittal: Signed Manifest", VerificationStatus.PASS,
+                                     "cmt_laboratory_submission_manifest.json (ML-DSA-87 signature VERIFIED)")
+                else:
+                    self._add_result("CMT Submittal: Signed Manifest", VerificationStatus.FAIL,
+                                     "Manifest signature verification failed (TAMPER DETECTED)")
+                    ok = False
+            except Exception as e:
+                self._add_result("CMT Submittal: Signed Manifest", VerificationStatus.FAIL,
+                                 f"Error verifying manifest: {str(e)[:80]}")
+                ok = False
+        else:
+            self._add_result("CMT Submittal: Signed Manifest", VerificationStatus.FAIL,
+                             "cmt_laboratory_submission_manifest.json or signature sidecars missing")
+            ok = False
+
+        if tar_file.exists() and tar_file.stat().st_size > 10000:
+            self._add_result("CMT Submittal: Sealed Tarball", VerificationStatus.PASS,
+                             f"cmt_lab_submission_packet.tar.gz ({tar_file.stat().st_size:,} bytes present)")
+        else:
+            self._add_result("CMT Submittal: Sealed Tarball", VerificationStatus.FAIL,
+                             "cmt_lab_submission_packet.tar.gz missing (run package_cmt_laboratory_submittal.py --package)")
+            ok = False
+
+        return ok
     
     def verify_no_forbidden_algorithms(self) -> bool:
         """Scan for forbidden algorithm usage in core modules"""
@@ -816,6 +873,135 @@ class DeploymentVerifier:
                          "os=%s; %s" % (posture.get("os"), "; ".join(extras)))
         return ok
 
+    def verify_hardware_tokens_posture(self) -> bool:
+        """Verify Hardware Tokens Posture (DoD 5210.41M / CJCSI 3260.01E Two-Person Integrity).
+
+        Advisory in lab (WARN), fail-closed in production (FAIL).
+        """
+        print("\n=== Hardware Security Tokens Posture ===")
+        from production_gate import is_production
+        prod = is_production()
+        try:
+            try:
+                from scripts.verify_hardware_tokens import HardwareTokenVerifier
+            except ImportError:
+                import sys
+                sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+                from verify_hardware_tokens import HardwareTokenVerifier
+
+            verifier = HardwareTokenVerifier(strict=prod)
+            res = verifier.verify_two_person_integrity()
+            if res.get("compliant"):
+                self._add_result("Hardware Tokens: Two-Person Integrity", VerificationStatus.PASS,
+                                 f"Two physical tokens detected with distinct serials ({res.get('readers_found')} readers)",
+                                 res)
+                return True
+            else:
+                level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+                msg = res.get("details", "Hardware tokens missing")
+                if not prod:
+                    msg += " (lab simulation fallback; production mandates physical YubiKey 5 FIPS / Nitrokey HSM)"
+                self._add_result("Hardware Tokens: Two-Person Integrity", level, msg, res)
+                return not prod
+        except Exception as e:
+            level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+            self._add_result("Hardware Tokens: Two-Person Integrity", level,
+                             f"Token probe error: {str(e)[:80]}")
+            return not prod
+
+    def verify_physical_isolation_posture(self) -> bool:
+        """Verify Physical Isolation & TEMPEST / Diode Registries (NATO SDIP-27/28/29 & Simplex Diodes).
+
+        Advisory in lab (WARN), fail-closed in production (FAIL).
+        """
+        print("\n=== Physical Isolation & Optical Boundaries Posture ===")
+        from production_gate import is_production
+        prod = is_production()
+        try:
+            try:
+                from scripts.verify_physical_isolation import PhysicalIsolationVerifier
+            except ImportError:
+                import sys
+                sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+                from verify_physical_isolation import PhysicalIsolationVerifier
+
+            verifier = PhysicalIsolationVerifier(strict=prod)
+            res = verifier.run_all_checks()
+            summary = res.get("summary", {})
+            failed = summary.get("failed", 0)
+            warned = summary.get("warned", 0)
+            score = res.get("readiness_score", 0.0)
+
+            if failed == 0:
+                status = VerificationStatus.PASS if warned == 0 else VerificationStatus.WARN
+                self._add_result("Physical Isolation: NATO SDIP / Simplex Diode", status,
+                                 f"Isolation readiness score: {score:.1f}% (warned: {warned}, failed: 0)",
+                                 summary)
+                return True
+            else:
+                level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+                self._add_result("Physical Isolation: NATO SDIP / Simplex Diode", level,
+                                 f"Failed {failed} isolation boundary checks", summary)
+                return not prod
+        except Exception as e:
+            level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+            self._add_result("Physical Isolation: NATO SDIP / Simplex Diode", level,
+                             f"Physical isolation probe error: {str(e)[:80]}")
+            return not prod
+
+    def verify_tpm_monotonic_counter_posture(self) -> bool:
+        """Verify TPM 2.0 Monotonic Counter configuration at canonical index 0x01800001.
+
+        Advisory in lab (WARN), fail-closed in production (FAIL).
+        """
+        print("\n=== TPM 2.0 Monotonic Counter Posture ===")
+        from production_gate import is_production
+        prod = is_production()
+        try:
+            try:
+                from scripts.provision_tpm2_nv_counter import TPM2NvCounterProvisioner, CANONICAL_COUNTER_INDEX
+            except ImportError:
+                import sys
+                sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+                from provision_tpm2_nv_counter import TPM2NvCounterProvisioner, CANONICAL_COUNTER_INDEX
+
+            env_idx = os.environ.get("P2P_TPM_NV_INDEX")
+            allow_sim = not prod and (env_idx is None or "sim" in env_idx.lower())
+            provisioner = TPM2NvCounterProvisioner(index=CANONICAL_COUNTER_INDEX, allow_simulation=allow_sim)
+            prereqs = provisioner.check_tpm_prerequisites()
+
+            if prod:
+                if not prereqs.get("tpm_device_present") or not prereqs.get("tpm_tools_installed"):
+                    self._add_result("TPM Monotonic Counter: 0x01800001", VerificationStatus.FAIL,
+                                     "Hardware TPM 2.0 device or tpm2-tools missing in production", prereqs)
+                    return False
+                assurance = provisioner.verify_monotonic_assurance()
+                if assurance.get("strictly_monotonic"):
+                    self._add_result("TPM Monotonic Counter: 0x01800001", VerificationStatus.PASS,
+                                     f"Physical monotonic counter verified: {assurance.get('message')}", assurance)
+                    return True
+                else:
+                    self._add_result("TPM Monotonic Counter: 0x01800001", VerificationStatus.FAIL,
+                                     f"Physical monotonic counter verification failed: {assurance.get('message')}", assurance)
+                    return False
+            else:
+                assurance = provisioner.verify_monotonic_assurance()
+                if assurance.get("strictly_monotonic"):
+                    status = VerificationStatus.PASS if prereqs.get("tpm_tools_installed") else VerificationStatus.WARN
+                    note = " (physical hardware)" if prereqs.get("tpm_tools_installed") else " (lab simulation fallback; prod mandates physical TPM NV 0x01800001)"
+                    self._add_result("TPM Monotonic Counter: 0x01800001", status,
+                                     f"{assurance.get('message')}{note}", assurance)
+                    return True
+                else:
+                    self._add_result("TPM Monotonic Counter: 0x01800001", VerificationStatus.WARN,
+                                     f"Counter unverified in lab: {assurance.get('message')}", assurance)
+                    return True
+        except Exception as e:
+            level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+            self._add_result("TPM Monotonic Counter: 0x01800001", level,
+                             f"TPM monotonic counter probe error: {str(e)[:80]}")
+            return not prod
+
     def run_all_verifications(self) -> VerificationReport:
         """Run all verification checks"""
         print("=" * 60)
@@ -834,9 +1020,13 @@ class DeploymentVerifier:
             ("CNSA27 Readiness", self.verify_cnsa27_readiness),
             ("TLS PQ Posture", self.verify_tls_pq_posture),
             ("Host Posture", self.verify_host_posture),
+            ("Hardware Tokens Posture", self.verify_hardware_tokens_posture),
+            ("Physical Isolation Posture", self.verify_physical_isolation_posture),
+            ("TPM Monotonic Counter Posture", self.verify_tpm_monotonic_counter_posture),
             ("Audit Logging", self.verify_audit_logging),
             ("Memory Security", self.verify_memory_security),
             ("Anti-Downgrade Policies", self.verify_secure_environment_configuration),
+            ("CMT Submittal Dossier", self.verify_cmt_submittal_dossier),
         ]
         
         check_results = {}

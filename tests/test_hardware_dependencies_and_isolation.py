@@ -188,3 +188,77 @@ def test_physical_isolation_full_report_structure():
     assert "tempest_accreditation" in report["checks"]
     assert "data_diode_hardware" in report["checks"]
     assert "rf_discipline" in report["checks"]
+
+
+# ==============================================================================
+# 4. Master Hardware Security & Deployment Verifier Integration Tests
+# ==============================================================================
+
+@pytest.mark.hermetic
+def test_master_hardware_security_verifier_lab(monkeypatch):
+    """Verify master hardware security verifier in lab mode passes all 5 pillars."""
+    monkeypatch.delenv("P2P_PRODUCTION", raising=False)
+    monkeypatch.delenv("P2P_STRICT_HOST_POSTURE", raising=False)
+    from verify_hardware_security import verify_all_hardware_security
+
+    report = verify_all_hardware_security(strict=False, production_override=False)
+    assert report["mode"] == "LAB_ADVISORY"
+    assert report["summary"]["total_pillars"] == 5
+    assert report["summary"]["failed"] == 0
+    assert report["summary"]["compliant"] is True
+    assert "pillar_1_memory" in report["pillars"]
+    assert "pillar_2_host_posture" in report["pillars"]
+    assert "pillar_3_tpm_counter" in report["pillars"]
+    assert "pillar_4_tokens" in report["pillars"]
+    assert "pillar_5_physical_isolation" in report["pillars"]
+
+
+@pytest.mark.hermetic
+def test_master_hardware_security_verifier_strict_fails_closed(monkeypatch):
+    """Verify master hardware security verifier strictly fails closed without hardware."""
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    from verify_hardware_security import verify_all_hardware_security
+
+    report = verify_all_hardware_security(strict=True, production_override=True)
+    assert report["mode"] == "PRODUCTION_STRICT"
+    # When physical tokens and physical TPM 2.0 tools are absent, must fail
+    assert report["summary"]["failed"] > 0
+    assert report["summary"]["compliant"] is False
+
+
+@pytest.mark.hermetic
+def test_verify_deployment_hardware_posture_methods(monkeypatch):
+    """Verify DeploymentVerifier's hardware tokens, physical isolation, and TPM monotonic counter methods."""
+    monkeypatch.delenv("P2P_PRODUCTION", raising=False)
+    from verify_deployment import DeploymentVerifier, VerificationStatus
+
+    v = DeploymentVerifier()
+    # In lab mode: all three should return True (advisory warnings only, zero FAILs)
+    assert v.verify_hardware_tokens_posture() is True
+    assert v.verify_physical_isolation_posture() is True
+    assert v.verify_tpm_monotonic_counter_posture() is True
+
+    # Confirm results contain expected check names and statuses
+    check_names = [r.check_name for r in v.results]
+    assert "Hardware Tokens: Two-Person Integrity" in check_names
+    assert "Physical Isolation: NATO SDIP / Simplex Diode" in check_names
+    assert "TPM Monotonic Counter: 0x01800001" in check_names
+    assert not any(r.status == VerificationStatus.FAIL for r in v.results)
+
+
+@pytest.mark.hermetic
+def test_verify_deployment_hardware_posture_fails_closed_in_production(monkeypatch):
+    """Verify DeploymentVerifier fails closed on hardware checks in production."""
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    from verify_deployment import DeploymentVerifier, VerificationStatus
+
+    v = DeploymentVerifier()
+    # In production without physical tokens/tools, checks must fail
+    res_tokens = v.verify_hardware_tokens_posture()
+    res_tpm = v.verify_tpm_monotonic_counter_posture()
+
+    assert res_tokens is False
+    assert res_tpm is False
+    fails = [r for r in v.results if r.status == VerificationStatus.FAIL]
+    assert len(fails) >= 2
+

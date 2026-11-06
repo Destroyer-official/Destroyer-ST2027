@@ -149,6 +149,23 @@ def run_reproducible_build_verification():
     results["source_tree_merkle_root"] = source_tree_merkle_root
     print(f"\n  [=] Core Modules Merkle Root: {source_tree_merkle_root[:24]}...")
 
+    # 2c. Full Source Merkle Tree Coverage (Rust Data Plane + Python Core + Production Configs)
+    print("\n[*] Auditing Complete Source Merkle Coverage (Rust Core + Python Subsystems)...")
+    full_merkle_hasher = hashlib.sha3_512()
+    rust_src_dir = PROJECT_ROOT / "rust_data_plane" / "src"
+    rust_files = sorted([str(p.relative_to(PROJECT_ROOT)).replace("\\", "/") for p in rust_src_dir.glob("*.rs")]) if rust_src_dir.exists() else []
+    all_source_files = sorted(critical_modules + rust_files + ["config/production.toml"])
+    for rel_path in all_source_files:
+        src_path = PROJECT_ROOT / rel_path
+        if src_path.exists():
+            h = hash_file(src_path)
+            full_merkle_hasher.update(f"{rel_path}:{h['sha3_512']}".encode('utf-8'))
+    full_source_merkle_root = full_merkle_hasher.hexdigest()
+    results["full_source_merkle_root"] = full_source_merkle_root
+    results["full_source_file_count"] = len(all_source_files)
+    print(f"  [+] Audited {len(all_source_files)} source modules across Rust data plane and Python runtime.")
+    print(f"  [=] Comprehensive Merkle Root (SHA3-512): {full_source_merkle_root[:24]}...")
+
     # 2b. Hash-Manifest CI Gate: Critical Concurrent-Edit Files
     # These 4 files are actively edited by multiple parties; any drift from
     # the recorded manifest fails the build (detects unauthorized or

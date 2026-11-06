@@ -92,6 +92,7 @@ CELL_PLAIN = 1216
 CELL_SIZE = 1232
 CELL_TAG = 16
 TICK_S = 0.05
+DEFAULT_POISSON_LAMBDA = 20.0  # 20 Hz = 50ms mean inter-arrival time (1 / TICK_S)
 CELL_HEADER_LEN = 11  # seq u64 (8) + flags u8 (1) + chunk_len u16 (2)
 CHUNK_MAX = CELL_PLAIN - CELL_HEADER_LEN  # 1205
 FLAG_DATA = 0x01
@@ -629,6 +630,7 @@ class ConstantRateSession:
             self._poisson = _env_true("P2P_POISSON_CHAFF")
         else:
             self._poisson = bool(poisson_pacing)
+        self._poisson_pacing = self._poisson
         self._rate_lambda = float(rate_lambda)
 
     @property
@@ -835,6 +837,8 @@ def anonymous_send(
     peer_cert: Optional[str] = None,
     peer_subject: Optional[str] = None,
     expected_peer_pk: Optional[bytes] = None,
+    poisson_pacing: Optional[bool] = None,
+    rate_lambda: float = DEFAULT_POISSON_LAMBDA,
 ) -> Dict[str, Any]:
     """End-to-end anonymous send: overlay plus constant-rate uniform cells.
 
@@ -905,7 +909,8 @@ def anonymous_send(
             (peer_start,) = _st.unpack(">Q", peer_frame)
             session = ConstantRateSession(
                 tls, obfs, direction_out=0xA5, direction_in=0x5A,
-                start_seq_out=start_here, peer_start_seq_in=peer_start)
+                start_seq_out=start_here, peer_start_seq_in=peer_start,
+                poisson_pacing=poisson_pacing, rate_lambda=rate_lambda)
             # Channel frames travel as shaper payloads from here on.
             # The TLS socket is now driven by the fixed-tick pump, so hand
             # the socket to the session without closing it here.
@@ -1010,6 +1015,8 @@ def anonymous_recv(
     peer_cert: Optional[str] = None,
     peer_subject: Optional[str] = None,
     expected_peer_pk: Optional[bytes] = None,
+    poisson_pacing: Optional[bool] = None,
+    rate_lambda: float = DEFAULT_POISSON_LAMBDA,
 ) -> Any:
     """Anonymous receive side. Cover flows both ways for the whole session."""
     import hashlib as _hl
@@ -1061,7 +1068,9 @@ def anonymous_recv(
             session = ConstantRateSession(tls, obfs, direction_out=0x5A,
                                           direction_in=0xA5,
                                           start_seq_out=start_here,
-                                          peer_start_seq_in=peer_start)
+                                          peer_start_seq_in=peer_start,
+                                          poisson_pacing=poisson_pacing,
+                                          rate_lambda=rate_lambda)
             session.start()
             try:
                 chunks: List[bytes] = []

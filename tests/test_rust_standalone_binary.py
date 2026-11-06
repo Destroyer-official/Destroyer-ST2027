@@ -408,6 +408,21 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertIn("stream-chaff: emitted 5 frames wire=1232B interval=10ms", res.stdout)
             self.assertEqual(os.path.getsize(send_state), 328)
 
+    def test_stream_chaff_poisson_pacing(self):
+        """Phase 3: Memoryless Poisson cover traffic pacing against Global Passive Adversaries."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port = _free_udp_port()
+            send_state = os.path.join(tmp, "chaff_send_poisson.state")
+
+            res = _run("stream-chaff", "--key-file", kf, "--state", send_state,
+                       "--to", f"127.0.0.1:{port}", "--interval-ms", "10",
+                       "--count", "5", "--quantum", "1232", "--poisson")
+            self.assertEqual(res.returncode, 0, res.stderr[-500:])
+            self.assertIn("stream-chaff: emitted 5 frames wire=1232B interval=10ms (poisson pacing)", res.stdout)
+            self.assertEqual(os.path.getsize(send_state), 328)
+
     def test_kex_listen_connect_hybrid_establishment(self):
         """Phase 1: Pure native post-quantum hybrid key exchange (ML-KEM-1024 + X25519)."""
         import tempfile, time
@@ -811,6 +826,55 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertIn("TACTICAL_COORDINATES_ENCLAVE_ALPHA", resp_out)
 
             # Verify state files are intact and 80 bytes (F-04: authenticated record)
+            self.assertEqual(os.path.getsize(state_init), 328)
+            self.assertEqual(os.path.getsize(state_resp), 328)
+
+    def test_channel_poisson_pacing_and_bidirectional_exchange(self):
+        """Phase 6: Full-duplex Poisson memoryless paced channel against GPA traffic analysis."""
+        import tempfile, time
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            port_init = _free_udp_port()
+            port_resp = _free_udp_port()
+            state_init = os.path.join(tmp, "init_poisson.state")
+            state_resp = os.path.join(tmp, "resp_poisson.state")
+
+            resp_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                 "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
+                 "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
+                 "--poisson",
+                 "--reply", "TACTICAL_RESPONSE_CONFIRMED", "--recv-count", "1",
+                 "--drain-ticks", "6", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            time.sleep(0.15)
+
+            init_proc = subprocess.Popen(
+                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                 "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
+                 "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
+                 "--poisson",
+                 "--msg", "TACTICAL_COORDINATES_ENCLAVE_ALPHA", "--recv-count", "1",
+                 "--drain-ticks", "6", "--timeout-ms", "8000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+
+            init_out, init_err = init_proc.communicate(timeout=10)
+            resp_out, resp_err = resp_proc.communicate(timeout=10)
+
+            self.assertEqual(init_proc.returncode, 0, f"Initiator failed:\nOUT: {init_out}\nERR: {init_err}")
+            self.assertEqual(resp_proc.returncode, 0, f"Responder failed:\nOUT: {resp_out}\nERR: {resp_err}")
+
+            self.assertIn("channel: ACTIVE", init_out)
+            self.assertIn("(poisson pacing)", init_out)
+            self.assertIn("channel: ACTIVE", resp_out)
+            self.assertIn("(poisson pacing)", resp_out)
+
+            self.assertIn("RECV_MSG", init_out)
+            self.assertIn("TACTICAL_RESPONSE_CONFIRMED", init_out)
+            self.assertIn("RECV_MSG", resp_out)
+            self.assertIn("TACTICAL_COORDINATES_ENCLAVE_ALPHA", resp_out)
             self.assertEqual(os.path.getsize(state_init), 328)
             self.assertEqual(os.path.getsize(state_resp), 328)
 
