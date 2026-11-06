@@ -608,6 +608,37 @@ class ShaperRx:
         return out
 
 
+class TacticalProfile:
+    """Tactical operational profiles for wire shaping and bandwidth conservation."""
+    HIGH_THROUGHPUT = "high-throughput"
+    SATELLITE = "satellite"
+    COVERT = "covert"
+
+    @classmethod
+    def parse(cls, name: Optional[str]) -> Optional[str]:
+        if not name:
+            return None
+        norm = str(name).strip().lower()
+        if norm in ("high-throughput", "high_throughput", "high", "fiber", "enclave"):
+            return cls.HIGH_THROUGHPUT
+        if norm in ("satellite", "sat", "satcom", "tactical-satcom", "low-bandwidth", "hf-vhf"):
+            return cls.SATELLITE
+        if norm in ("covert", "stealth", "tor", "anti-sigint", "gpa"):
+            return cls.COVERT
+        return None
+
+    @classmethod
+    def get_defaults(cls, profile: Optional[str]) -> Dict[str, Any]:
+        p = cls.parse(profile)
+        if p == cls.HIGH_THROUGHPUT:
+            return {"tick_interval_s": 0.010, "quantum": 1232, "poisson_pacing": False}
+        if p == cls.SATELLITE:
+            return {"tick_interval_s": 0.200, "quantum": 256, "poisson_pacing": False}
+        if p == cls.COVERT:
+            return {"tick_interval_s": 0.050, "quantum": 1232, "poisson_pacing": True}
+        return {}
+
+
 class ConstantRateSession:
     """Fixed-tick or Poisson-paced pump over a reliable overlay socket. Cover always flows."""
 
@@ -616,7 +647,8 @@ class ConstantRateSession:
                  start_seq_out: Optional[int] = None,
                  peer_start_seq_in: int = 0,
                  poisson_pacing: Optional[bool] = None,
-                 rate_lambda: float = 20.0) -> None:
+                 rate_lambda: float = 20.0,
+                 tactical_profile: Optional[str] = None) -> None:
         self._sock = sock
         self.tx = ShaperTx(obfs_key, direction_out, start_seq_out)
         self.rx = ShaperRx(obfs_key, direction_in, peer_start_seq_in)
@@ -626,12 +658,22 @@ class ConstantRateSession:
         self.delivered: List[bytes] = []
         self._send_lock = threading.Lock()
         self._rx_buf = bytearray()
+        prof_name = tactical_profile or os.environ.get("P2P_TACTICAL_PROFILE")
+        prof_defaults = TacticalProfile.get_defaults(prof_name)
+        self._tactical_profile = TacticalProfile.parse(prof_name)
         if poisson_pacing is None:
-            self._poisson = _env_true("P2P_POISSON_CHAFF")
+            if "poisson_pacing" in prof_defaults:
+                self._poisson = bool(prof_defaults["poisson_pacing"])
+            else:
+                self._poisson = _env_true("P2P_POISSON_CHAFF")
         else:
             self._poisson = bool(poisson_pacing)
         self._poisson_pacing = self._poisson
         self._rate_lambda = float(rate_lambda)
+        if "tick_interval_s" in prof_defaults:
+            self._tick_interval_s = float(prof_defaults["tick_interval_s"])
+        else:
+            self._tick_interval_s = TICK_S
 
     @property
     def tx_seq(self) -> int:
@@ -839,6 +881,7 @@ def anonymous_send(
     expected_peer_pk: Optional[bytes] = None,
     poisson_pacing: Optional[bool] = None,
     rate_lambda: float = DEFAULT_POISSON_LAMBDA,
+    tactical_profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     """End-to-end anonymous send: overlay plus constant-rate uniform cells.
 
@@ -910,7 +953,8 @@ def anonymous_send(
             session = ConstantRateSession(
                 tls, obfs, direction_out=0xA5, direction_in=0x5A,
                 start_seq_out=start_here, peer_start_seq_in=peer_start,
-                poisson_pacing=poisson_pacing, rate_lambda=rate_lambda)
+                poisson_pacing=poisson_pacing, rate_lambda=rate_lambda,
+                tactical_profile=tactical_profile)
             # Channel frames travel as shaper payloads from here on.
             # The TLS socket is now driven by the fixed-tick pump, so hand
             # the socket to the session without closing it here.
@@ -1017,6 +1061,7 @@ def anonymous_recv(
     expected_peer_pk: Optional[bytes] = None,
     poisson_pacing: Optional[bool] = None,
     rate_lambda: float = DEFAULT_POISSON_LAMBDA,
+    tactical_profile: Optional[str] = None,
 ) -> Any:
     """Anonymous receive side. Cover flows both ways for the whole session."""
     import hashlib as _hl
@@ -1070,7 +1115,8 @@ def anonymous_recv(
                                           start_seq_out=start_here,
                                           peer_start_seq_in=peer_start,
                                           poisson_pacing=poisson_pacing,
-                                          rate_lambda=rate_lambda)
+                                          rate_lambda=rate_lambda,
+                                          tactical_profile=tactical_profile)
             session.start()
             try:
                 chunks: List[bytes] = []

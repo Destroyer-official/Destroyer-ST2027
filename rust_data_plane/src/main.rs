@@ -44,7 +44,7 @@ use destroyer_core::keystore;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
-use destroyer_core::pacing::{self, PacedScheduler, PoissonScheduler};
+use destroyer_core::pacing::{self, PacedScheduler, PoissonScheduler, TacticalProfile};
 use destroyer_core::pki::{self, CertSig, Custodian};
 use destroyer_core::policy::{DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
 use destroyer_core::purge;
@@ -108,8 +108,8 @@ fn usage() -> ! {
          recv-file --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH --count K [--timeout-ms MS]\n\
          diode-send --key-file PATH|--key-stdin --state PATH --to ADDR --file PATH [--parity-ratio FLOAT]\n\
          diode-recv --key-file PATH|--key-stdin --state PATH --bind ADDR --out PATH [--timeout-ms MS]\n\
-         stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232] [--poisson]\n\
-         channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--poisson] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
+         stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232] [--tactical-profile high-throughput|satellite|covert] [--poisson]\n\
+         channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--tactical-profile high-throughput|satellite|covert] [--poisson] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          terminal --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--sas TEXT] [--callsign TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          node   --role initiator|responder --bind ADDR --to ADDR [--key-file PATH] [--psk-file PATH] [--state PATH] [--interval-ms MS] [--quantum 256|512|1232] [--headless]\n\
          cookie-challenge [--ip IP] [--port PORT] [--payload TEXT] [--difficulty N]  generate anti-amplification micro-PoW challenge\n\
@@ -1858,9 +1858,14 @@ fn cmd_stream_chaff(args: &[String]) {
         .unwrap_or_else(|| usage())
         .parse()
         .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
+    let profile = get_flag(args, "--tactical-profile")
+        .or_else(|| get_flag(args, "--profile"))
+        .or_else(|| std::env::var("P2P_TACTICAL_PROFILE").ok())
+        .and_then(|s| TacticalProfile::parse(&s));
+
     let interval_ms: u64 = get_flag(args, "--interval-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
-        .unwrap_or(50);
+        .unwrap_or_else(|| profile.map(|p| p.default_interval_ms()).unwrap_or(50));
     let count: u64 = get_flag(args, "--count")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
         .unwrap_or(10);
@@ -1869,7 +1874,7 @@ fn cmd_stream_chaff(args: &[String]) {
             s.parse()
                 .unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)"))
         })
-        .unwrap_or(1232);
+        .unwrap_or_else(|| profile.map(|p| p.default_quantum()).unwrap_or(1232));
 
     if quantum != 256 && quantum != 512 && quantum != 1232 {
         drop(kb);
@@ -1886,6 +1891,7 @@ fn cmd_stream_chaff(args: &[String]) {
 
     let bind_addr = if to.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
     let use_poisson = has_flag(args, "--poisson")
+        || profile.map(|p| p.default_poisson()).unwrap_or(false)
         || std::env::var("P2P_POISSON_CHAFF").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
     let mut paced_scheduler = PacedScheduler::new(Duration::from_millis(interval_ms));
     let mut poisson_scheduler = PoissonScheduler::new(
@@ -1914,8 +1920,9 @@ fn cmd_stream_chaff(args: &[String]) {
             }
             emitted += 1;
         }
+        let prof_str = profile.map(|p| format!(" profile={}", p.as_str())).unwrap_or_default();
         let mode_suffix = if use_poisson { " (poisson pacing)" } else { "" };
-        println!("stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms{mode_suffix}");
+        println!("stream-chaff: emitted {emitted} frames wire={quantum}B interval={interval_ms}ms{prof_str}{mode_suffix}");
     });
 }
 
@@ -1937,15 +1944,20 @@ fn cmd_channel(args: &[String]) {
     if role != "initiator" && role != "responder" {
         fail("bad --role: must be 'initiator' or 'responder'");
     }
+    let profile = get_flag(args, "--tactical-profile")
+        .or_else(|| get_flag(args, "--profile"))
+        .or_else(|| std::env::var("P2P_TACTICAL_PROFILE").ok())
+        .and_then(|s| TacticalProfile::parse(&s));
+
     let interval_ms: u64 = get_flag(args, "--interval-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
-        .unwrap_or(50);
+        .unwrap_or_else(|| profile.map(|p| p.default_interval_ms()).unwrap_or(50));
     let quantum: usize = get_flag(args, "--quantum")
         .map(|s| {
             s.parse()
                 .unwrap_or_else(|_| fail("bad --quantum (must be 256, 512, or 1232)"))
         })
-        .unwrap_or(1232);
+        .unwrap_or_else(|| profile.map(|p| p.default_quantum()).unwrap_or(1232));
     if quantum != 256 && quantum != 512 && quantum != 1232 {
         drop(kb);
         fail("bad --quantum: must be 256, 512, or 1232");
@@ -1968,6 +1980,7 @@ fn cmd_channel(args: &[String]) {
         .unwrap_or(0);
     let use_stdin = has_flag(args, "--stdin");
     let use_poisson = has_flag(args, "--poisson")
+        || profile.map(|p| p.default_poisson()).unwrap_or(false)
         || std::env::var("P2P_POISSON_CHAFF").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
 
     let mut msgs = Vec::new();
@@ -2118,9 +2131,10 @@ fn cmd_channel(args: &[String]) {
         };
         let mut tick_sleep = std::pin::pin!(tokio::time::sleep(next_tick_delay));
 
+        let prof_str = profile.map(|p| format!(" profile={}", p.as_str())).unwrap_or_default();
         let mode_suffix = if use_poisson { " (poisson pacing)" } else { "" };
         println!(
-            "channel: ACTIVE role={role} bind={bind} to={to} interval={interval_ms}ms quantum={quantum}B{mode_suffix}"
+            "channel: ACTIVE role={role} bind={bind} to={to} interval={interval_ms}ms quantum={quantum}B{prof_str}{mode_suffix}"
         );
 
         loop {
@@ -3007,6 +3021,7 @@ fn cmd_node(args: &[String]) {
         println!("  --state PATH                   Path to sequence state file (default: session.state)");
         println!("  --quantum BYTES                Wire quantization size (256, 512, or 1232, default: 1232)");
         println!("  --interval-ms MS               Constant-rate wire pacing interval in ms (default: 20)");
+        println!("  --tactical-profile NAME        Tactical profile: high-throughput, satellite, covert");
         println!("  --headless                     Run headless background operational daemon (no TTY)");
         println!("  --callsign TEXT                Tactical station callsign (default: TACTICAL-NODE)");
         return;

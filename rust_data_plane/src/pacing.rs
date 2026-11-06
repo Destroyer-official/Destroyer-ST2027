@@ -15,6 +15,73 @@ use std::time::{Duration, Instant};
 /// Default wire quantum matching standard IPv6 non-fragmented datagram.
 pub const DEFAULT_WIRE_QUANTUM: usize = 1232;
 
+/// Tactical operational profiles for mission-tailored wire shaping and bandwidth conservation.
+///
+/// Tailors interval pacing, quantized quantum size, and memoryless Poisson cover
+/// to specific deployment constraints (inter-enclave fiber vs. SATCOM vs. covert public transit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TacticalProfile {
+    /// High-throughput inter-enclave optical circuits (Topology 6): 10ms pacing (100 Hz), 1232B cells, constant.
+    HighThroughput,
+    /// Bandwidth-constrained tactical satellite / CNR / battery-limited nodes: 200ms pacing (5 Hz), 256B cells (~10.24 kbps).
+    Satellite,
+    /// Anti-SIGINT / GPA-resistant covert public transit (Topology 2): 50ms mean (20 Hz), 1232B cells, memoryless Poisson chaff.
+    Covert,
+}
+
+impl TacticalProfile {
+    /// Parse profile from CLI flag, environment variable, or configuration name.
+    pub fn parse(s: &str) -> Option<Self> {
+        let norm = s.trim().to_ascii_lowercase();
+        match norm.as_str() {
+            "high-throughput" | "high_throughput" | "high" | "fiber" | "enclave" => {
+                Some(Self::HighThroughput)
+            }
+            "satellite" | "sat" | "satcom" | "tactical-satcom" | "low-bandwidth" | "hf-vhf" => {
+                Some(Self::Satellite)
+            }
+            "covert" | "stealth" | "tor" | "anti-sigint" | "gpa" => Some(Self::Covert),
+            _ => None,
+        }
+    }
+
+    /// Default inter-cell tick interval in milliseconds.
+    pub fn default_interval_ms(&self) -> u64 {
+        match self {
+            Self::HighThroughput => 10,
+            Self::Satellite => 200,
+            Self::Covert => 50,
+        }
+    }
+
+    /// Default quantized frame size in bytes.
+    pub fn default_quantum(&self) -> usize {
+        match self {
+            Self::HighThroughput => 1232,
+            Self::Satellite => 256,
+            Self::Covert => 1232,
+        }
+    }
+
+    /// Whether memoryless exponential Poisson cover injection is enabled by default.
+    pub fn default_poisson(&self) -> bool {
+        match self {
+            Self::HighThroughput => false,
+            Self::Satellite => false,
+            Self::Covert => true,
+        }
+    }
+
+    /// Canonical identifier string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::HighThroughput => "high-throughput",
+            Self::Satellite => "satellite",
+            Self::Covert => "covert",
+        }
+    }
+}
+
 /// High-resolution tick scheduler with drift compensation.
 /// Maintains constant wire timing to defeat inter-packet arrival analysis.
 #[derive(Debug)]
@@ -468,5 +535,31 @@ mod tests {
             scheduler.wait_next_tick();
         }
         assert_eq!(scheduler.ticks_emitted(), 3);
+    }
+
+    #[test]
+    fn test_tactical_profile_parsing_and_defaults() {
+        let ht = TacticalProfile::parse("high-throughput").expect("high-throughput parse");
+        assert_eq!(ht, TacticalProfile::HighThroughput);
+        assert_eq!(ht.default_interval_ms(), 10);
+        assert_eq!(ht.default_quantum(), 1232);
+        assert!(!ht.default_poisson());
+
+        let sat = TacticalProfile::parse("satellite").expect("satellite parse");
+        assert_eq!(sat, TacticalProfile::Satellite);
+        assert_eq!(sat.default_interval_ms(), 200);
+        assert_eq!(sat.default_quantum(), 256);
+        assert!(!sat.default_poisson());
+
+        let cov = TacticalProfile::parse("covert").expect("covert parse");
+        assert_eq!(cov, TacticalProfile::Covert);
+        assert_eq!(cov.default_interval_ms(), 50);
+        assert_eq!(cov.default_quantum(), 1232);
+        assert!(cov.default_poisson());
+
+        assert_eq!(TacticalProfile::parse("fiber"), Some(TacticalProfile::HighThroughput));
+        assert_eq!(TacticalProfile::parse("satcom"), Some(TacticalProfile::Satellite));
+        assert_eq!(TacticalProfile::parse("stealth"), Some(TacticalProfile::Covert));
+        assert_eq!(TacticalProfile::parse("invalid-profile"), None);
     }
 }

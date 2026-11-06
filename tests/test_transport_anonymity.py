@@ -416,5 +416,39 @@ def test_anonymous_send_recv_parameter_signature():
     assert "rate_lambda" in sig_recv.parameters
     assert sig_send.parameters["poisson_pacing"].default is None
     assert sig_recv.parameters["poisson_pacing"].default is None
+    assert "tactical_profile" in sig_send.parameters
+    assert "tactical_profile" in sig_recv.parameters
+
+
+def test_tactical_profile_parsing_and_session_integration():
+    """Verify TacticalProfile parses profiles and configures ConstantRateSession parameters."""
+    sat_defaults = ta.TacticalProfile.get_defaults("satellite")
+    assert sat_defaults["tick_interval_s"] == 0.200
+    assert sat_defaults["quantum"] == 256
+    assert sat_defaults["poisson_pacing"] is False
+
+    cov_defaults = ta.TacticalProfile.get_defaults("covert")
+    assert cov_defaults["tick_interval_s"] == 0.050
+    assert cov_defaults["quantum"] == 1232
+    assert cov_defaults["poisson_pacing"] is True
+
+    ht_defaults = ta.TacticalProfile.get_defaults("high-throughput")
+    assert ht_defaults["tick_interval_s"] == 0.010
+    assert ht_defaults["quantum"] == 1232
+    assert ht_defaults["poisson_pacing"] is False
+
+    s_a, s_b = socket.socketpair()
+    try:
+        sess = ta.ConstantRateSession(
+            s_a, os.urandom(32), direction_out=0xA5, direction_in=0x5A,
+            start_seq_out=1, peer_start_seq_in=2, tactical_profile="satellite"
+        )
+        assert sess._tactical_profile == ta.TacticalProfile.SATELLITE
+        assert sess._tick_interval_s == 0.200
+        assert sess._poisson is False
+    finally:
+        s_a.close()
+        s_b.close()
+
 
 

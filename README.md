@@ -709,8 +709,8 @@ The standalone native executable (`secure-transmit`) provides 25 specialized com
 | `recv-file` | Bulk Data | Reassembles file from consecutive sequence cells; verifies SHA-384 digest. |
 | `diode-send` | Cross-Domain | Simplex optical diode transfer with systematic Cauchy-RS FEC ($K=8, M=4$). |
 | `diode-recv` | Cross-Domain | Reconstructs diode stream from any $K$ received packets without return ACKs. |
-| `stream-chaff` | Anti-SIGINT | Emits continuous CSPRNG chaff cells with isochronous or memoryless Poisson pacing (`--poisson`). |
-| `channel` | Enclave Link | Full-duplex paced link with directional nonces, in-band PCS ratchets, and optional Poisson timing (`--poisson`). |
+| `stream-chaff` | Anti-SIGINT | Emits continuous CSPRNG chaff cells with isochronous, memoryless Poisson pacing, or tactical profiles (`--poisson`, `--tactical-profile`). |
+| `channel` | Enclave Link | Full-duplex paced link with directional nonces, in-band PCS ratchets, and tactical profiles (`--tactical-profile`, `--poisson`). |
 | `terminal` | Tactical C2 | Production interactive tactical operator terminal with keystroke decoupling and anti-forensic screen wipe. |
 | `cookie-challenge` | Anti-DoS | Generates stateless anti-amplification micro-PoW challenge. |
 | `cookie-solve` | Anti-DoS | Solves micro-PoW challenge to unlock server handshake allocation. |
@@ -803,26 +803,34 @@ The session key is cryptographically bound to the hybrid KEM transcript, both ML
   --parity-ratio 0.3
 ```
 
-### 11.8 Wire Pacing & Synthetic Cover Traffic (Isochronous & Poisson Camouflage)
-```bash
-# Transmitting Station (Isochronous fixed 50ms intervals / 20 Hz):
-./rust_data_plane/target/release/secure-transmit stream-chaff \
-  --key-file keys/session.key \
-  --state keys/chaff.state \
-  --to 192.168.10.2:9999 \
-  --interval-ms 50 \
-  --quantum 1232 \
-  --count 0
+### 11.8 Wire Pacing & Tactical Profiles (Isochronous, Poisson & SATCOM Throttling)
 
-# Transmitting Station with Memoryless Poisson Cover Pacing (Anti-GPA Traffic Analysis):
-./rust_data_plane/target/release/secure-transmit stream-chaff \
-  --key-file keys/session.key \
-  --state keys/chaff.state \
-  --to 192.168.10.2:9999 \
-  --interval-ms 50 \
-  --quantum 1232 \
-  --poisson \
-  --count 0
+ST2027 provides mission-tailored operational profiles (`--tactical-profile`) to balance anti-SIGINT traffic masking against transmission line bandwidth constraints:
+
+| Tactical Profile | Primary Use Case | Pacing Interval | Cell Size | Wire Overhead | GPA Traffic Masking Mode |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| `high-throughput` | Inter-enclave optical lines / Gigabit dark fiber | 10 ms (100 Hz) | 1,232 B | ~985 kbps | Constant-rate isochronous wire invariant |
+| `satellite` | Tactical SATCOM (MIL-STD-188-181) / CNR / battery nodes | 200 ms (5 Hz) | 256 B | ~10.24 kbps | Throttled isochronous bandwidth-conserving |
+| `covert` | Public transit (Tor v3 onion) / hostile SIGINT intercept | 50 ms (20 Hz) | 1,232 B | ~197 kbps | Memoryless exponential Poisson chaff |
+
+```bash
+# High-Throughput Profile (Inter-Enclave Optical Lines / Topology 6):
+./rust_data_plane/target/release/secure-transmit channel \
+  --key-file keys/session.key --state keys/chaff.state \
+  --bind 192.168.10.1:9999 --to 192.168.10.2:9999 \
+  --tactical-profile high-throughput
+
+# Bandwidth-Throttled Satellite Profile (~10.24 kbps wire budget):
+./rust_data_plane/target/release/secure-transmit channel \
+  --key-file keys/session.key --state keys/chaff.state \
+  --bind 192.168.10.1:9999 --to 192.168.10.2:9999 \
+  --tactical-profile satellite
+
+# Covert Anti-SIGINT Profile (Memoryless Poisson Cover Pacing):
+./rust_data_plane/target/release/secure-transmit channel \
+  --key-file keys/session.key --state keys/chaff.state \
+  --bind 192.168.10.1:9999 --to 192.168.10.2:9999 \
+  --tactical-profile covert
 ```
 
 ### 11.9 Standalone Native Operational Loops (`secure-transmit node` / `terminal`) & Hardened Web Console

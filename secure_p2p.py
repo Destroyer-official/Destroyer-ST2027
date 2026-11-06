@@ -10914,10 +10914,18 @@ class SecureP2PChat:
         elif cmd in ('/chaff', '/wire-camouflage'):
             print("\r" + " " * 100)
             tokens = (cmd_parts[1] if len(cmd_parts) > 1 else "").split()
-            use_poisson = any(t.lower() in ("--poisson", "-p", "poisson") for t in tokens) or os.environ.get("P2P_POISSON_CHAFF", "0").strip().lower() in ("1", "true", "yes")
-            clean_tokens = [t for t in tokens if t.lower() not in ("--poisson", "-p", "poisson")]
+            tactical_profile = None
+            idx = 0
+            while idx < len(tokens):
+                if tokens[idx].lower() in ("--tactical-profile", "--profile") and idx + 1 < len(tokens):
+                    tactical_profile = tokens[idx + 1].lower()
+                    del tokens[idx:idx + 2]
+                else:
+                    idx += 1
+            use_poisson = any(t.lower() in ("--poisson", "poisson") for t in tokens) or os.environ.get("P2P_POISSON_CHAFF", "0").strip().lower() in ("1", "true", "yes")
+            clean_tokens = [t for t in tokens if t.lower() not in ("--poisson", "poisson")]
             if len(clean_tokens) < 2:
-                print(f"{RED}Usage: /chaff <target_ip> <target_port> [interval_ms=15] [count=100] [--poisson]{RESET}")
+                print(f"{RED}Usage: /chaff <target_ip> <target_port> [interval_ms=15] [count=100] [--tactical-profile high-throughput|satellite|covert] [--poisson]{RESET}")
                 print(f"{CYAN}{self.local_username}: {RESET}", end='', flush=True)
                 return
             tgt_ip, tgt_port = clean_tokens[0], int(clean_tokens[1])
@@ -10938,11 +10946,14 @@ class SecureP2PChat:
                         "--interval-ms", str(interval),
                         "--count", str(count)
                     ]
+                    if tactical_profile:
+                        cmd_arr.extend(["--tactical-profile", tactical_profile])
                     if use_poisson:
                         cmd_arr.append("--poisson")
                     subprocess.Popen(cmd_arr)
                     mode_label = " (Poisson memoryless pacing)" if use_poisson else ""
-                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET} Streaming {count} CSPRNG chaff frames at {interval}ms mean intervals{mode_label} to {tgt_ip}:{tgt_port}")
+                    prof_label = f" [{tactical_profile.upper()}]" if tactical_profile else ""
+                    print(f"\n{BOLD}{GREEN}[WIRE CAMOUFLAGE ACTIVE]{RESET}{prof_label} Streaming {count} CSPRNG chaff frames at {interval}ms mean intervals{mode_label} to {tgt_ip}:{tgt_port}")
                 else:
                     from destroyer_node import DestroyerNode
                     node = getattr(self, '_rust_node', None) or DestroyerNode()
