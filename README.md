@@ -734,7 +734,7 @@ python secure_transmit_2027.py check-hw
 # Run host hardening audit script:
 python scripts/verify_host_hardening.py
 
-# Verify deployment readiness gate (92 checks):
+# Verify deployment readiness gate (96 checks):
 python verify_deployment.py
 ```
 
