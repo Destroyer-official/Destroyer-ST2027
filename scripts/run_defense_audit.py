@@ -177,9 +177,14 @@ def main():
     # Gate 4: Symbolic Formal Verification (ProVerif 2.05)
     print("\n[*] Gate 4: Auditing Symbolic Formal Verification Models...")
     code, out, dur = run_cmd([sys.executable, "-m", "pytest", resolve_test_path("test_proverif_st2027.py"), "-q"])
-    passed = (code == 0)
+    import re
+    passed_m = re.search(r"(\d+)\s+passed", out)
+    skipped_m = re.search(r"(\d+)\s+skipped", out)
+    passed_cnt = int(passed_m.group(1)) if passed_m else 0
+    skipped_cnt = int(skipped_m.group(1)) if skipped_m else 0
+    passed = (code == 0 and passed_cnt >= 2 and skipped_cnt == 0 and "failed" not in out.lower() and "error" not in out.lower())
     card.record_gate("4.1", "ProVerif 2.05 Symbolic Handshake & PCS Proofs", passed, dur,
-                     "2/2 models proven; inj-event & secrecy conclude TRUE")
+                     "2/2 models proven; inj-event & secrecy conclude TRUE" if passed else f"ProVerif verification failed or skipped (passed={passed_cnt}, skipped={skipped_cnt})")
 
     # Gate 5: Active Exploit Regression Battery
     print("\n[*] Gate 5: Executing Active Exploit Regression Battery...")
@@ -237,6 +242,8 @@ def main():
     reports_dir = REPO_ROOT / "compliance_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     receipt_file = reports_dir / "defense_master_audit_receipt.json"
+    sig_file = Path(str(receipt_file) + ".sig")
+    pub_file = Path(str(receipt_file) + ".pub")
 
     def _get_git_commit() -> str:
         try:
@@ -244,12 +251,11 @@ def main():
         except Exception:
             return "unknown"
 
-    receipt_data = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "commit": _get_git_commit(),
-        "audit_version": "ST2027-EVAL-V1",
-        "gates": card.gates.copy(),
-    }
+    def _get_git_tree() -> str:
+        try:
+            return subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True, cwd=str(REPO_ROOT)).strip()
+        except Exception:
+            return "unknown"
 
     t0_sign = time.perf_counter()
     signing_passed = False
@@ -261,56 +267,102 @@ def main():
         signer = LibOQS_MLDSA_87()
         pk, sk = load_or_create_audit_signer()
         signer_fp = audit_signer_fingerprint(pk)
-        receipt_data["signer_pk_sha3_256"] = signer_fp
 
+        # Provisionally include Gate 10.1 in the gates list so the receipt is completely self-describing
+        provisional_gate_10 = {
+            "gate_id": "10.1",
+            "name": "Cryptographic Audit Receipt Signing (ML-DSA-87 & VAS)",
+            "status": "PASS",
+            "duration_ms": 0.0,
+            "details": f"ML-DSA-87 signed & VAS verified; Signer={signer_fp[:16]}..."
+        }
+        all_gates_for_receipt = card.gates.copy()
+        all_gates_for_receipt.append(provisional_gate_10)
+
+        all_passed_provisional = all(g["status"] == "PASS" for g in all_gates_for_receipt)
+        passed_count_provisional = sum(1 for g in all_gates_for_receipt if g["status"] == "PASS")
+        total_count_provisional = len(all_gates_for_receipt)
+
+        receipt_data = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "commit": _get_git_commit(),
+            "tree_merkle_root": _get_git_tree(),
+            "audit_version": "ST2027-EVAL-V1",
+            "overall_status": "PASS" if (all_passed_provisional and passed_count_provisional == total_count_provisional) else "FAIL",
+            "score": f"{passed_count_provisional}/{total_count_provisional}",
+            "signer_pk_sha3_256": signer_fp,
+            "gates": all_gates_for_receipt,
+        }
+
+        # 1. Write the final canonical JSON file to disk
         with open(receipt_file, "w", encoding="utf-8") as f:
-            json.dump(receipt_data, f, indent=2)
+            json.dump(receipt_data, f, indent=2, sort_keys=True)
 
-        canonical_bytes = json.dumps(receipt_data, sort_keys=True).encode("utf-8")
-        sig = signer.sign(sk, canonical_bytes)
-        if not signer.verify(pk, canonical_bytes, sig):
-            raise RuntimeError("FAIL-CLOSED: verify-after-sign failed on master audit receipt")
-        with open(str(receipt_file) + ".sig", "wb") as f:
-            f.write(sig)
-        with open(str(receipt_file) + ".pub", "wb") as f:
-            f.write(pk)
+        # 2. Read back the EXACT persisted bytes from disk to sign
+        persisted_bytes = receipt_file.read_bytes()
+
+        # 3. Sign the persisted bytes
+        sig = signer.sign(sk, persisted_bytes)
+
+        # 4. Write signature and public key to disk
+        sig_file.write_bytes(sig)
+        pub_file.write_bytes(pk)
+
+        # 5. Read back signature and document from disk and execute Verify-After-Sign (VAS)
+        read_sig = sig_file.read_bytes()
+        read_doc = receipt_file.read_bytes()
+        if not signer.verify(pk, read_doc, read_sig):
+            raise RuntimeError("FAIL-CLOSED: verify-after-sign failed on persisted master audit receipt")
+
         signing_passed = True
         signing_details = f"ML-DSA-87 signed & VAS verified; Signer={signer_fp[:16]}..."
         print(f"\n[+] Master defense evaluation receipt cryptographically signed with ML-DSA-87 (VAS verified):")
         print(f"    Receipt  : {receipt_file}")
-        print(f"    Signature: {receipt_file}.sig ({len(sig)} bytes)")
+        print(f"    Signature: {sig_file} ({len(sig)} bytes)")
         print(f"    Signer   : {signer_fp} (persistent audit signer, owner-only custody)")
     except Exception as e:
         signing_passed = False
         signing_details = f"ML-DSA-87 signing failure: {e}"
         print(f"[-] FAIL-CLOSED: could not sign receipt with ML-DSA-87: {e}")
-        # Still persist the unsigned receipt so partial diagnostic results are preserved on disk.
+        if sig_file.exists():
+            try:
+                sig_file.unlink()
+            except Exception:
+                pass
+        # Persist failed diagnostic receipt
         try:
+            failed_gates = card.gates.copy()
+            failed_gates.append({
+                "gate_id": "10.1",
+                "name": "Cryptographic Audit Receipt Signing (ML-DSA-87 & VAS)",
+                "status": "FAIL",
+                "duration_ms": 0.0,
+                "details": signing_details
+            })
+            failed_receipt = {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "commit": _get_git_commit(),
+                "tree_merkle_root": _get_git_tree(),
+                "audit_version": "ST2027-EVAL-V1",
+                "overall_status": "FAIL",
+                "score": f"{sum(1 for g in failed_gates if g['status'] == 'PASS')}/{len(failed_gates)}",
+                "gates": failed_gates,
+            }
             with open(receipt_file, "w", encoding="utf-8") as f:
-                json.dump(receipt_data, f, indent=2)
-        except Exception:  # nosec: B110 - best-effort receipt persistence
+                json.dump(failed_receipt, f, indent=2, sort_keys=True)
+        except Exception:
             pass
 
     dur_sign = (time.perf_counter() - t0_sign) * 1000
     card.record_gate(
         "10.1",
-        "Cryptographic Audit Receipt Signing (ML-DSA-87)",
+        "Cryptographic Audit Receipt Signing (ML-DSA-87 & VAS)",
         signing_passed,
         dur_sign,
         signing_details
     )
 
-    # Finalize receipt with all gates and dynamic completeness verdict
     all_passed, passed_count, total_count = card.evaluate_completeness()
-    receipt_data["overall_status"] = "PASS" if (all_passed and passed_count == total_count) else "FAIL"
-    receipt_data["score"] = f"{passed_count}/{total_count}"
-    receipt_data["gates"] = card.gates
-    try:
-        with open(receipt_file, "w", encoding="utf-8") as f:
-            json.dump(receipt_data, f, indent=2)
-    except Exception:
-        pass
-
     summary_text = card.render_summary()
     print(summary_text)
 

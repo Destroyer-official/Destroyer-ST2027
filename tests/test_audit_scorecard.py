@@ -55,6 +55,21 @@ class TestAuditScorecard(unittest.TestCase):
         summary = card.render_summary()
         self.assertIn("DEFENSE DEFICIENCY DETECTED (8/10 passed)", summary)
 
+    def test_persisted_receipt_mldsa_byte_exact_vas(self):
+        """Verifies that reading the receipt file from disk and verifying against .sig passes VAS."""
+        receipt_file = REPO_ROOT / "compliance_reports" / "defense_master_audit_receipt.json"
+        sig_file = Path(str(receipt_file) + ".sig")
+        pub_file = Path(str(receipt_file) + ".pub")
+        if not (receipt_file.exists() and sig_file.exists() and pub_file.exists()):
+            self.skipTest("Receipt and signature not yet generated on disk")
+
+        from pqc_algorithms import LibOQS_MLDSA_87
+        signer = LibOQS_MLDSA_87()
+        pk = pub_file.read_bytes()
+        sig = sig_file.read_bytes()
+        doc = receipt_file.read_bytes()
+        self.assertTrue(signer.verify(pk, doc, sig), "Persisted receipt bytes must verify against .sig")
+
 
 if __name__ == "__main__":
     unittest.main()

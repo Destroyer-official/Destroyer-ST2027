@@ -134,15 +134,15 @@ impl PacedScheduler {
 /// - Maybenot Framework (PETS 2024 / Tor Project): probabilistic state-machine
 ///   traffic shaping to neutralize deep learning flow correlation (DeepCorr, ESPRESSO, SUMo).
 ///
-/// Sample an inter-arrival interval from a truncated exponential distribution.
+/// Sample an inter-arrival interval from a conditional truncated exponential distribution.
 ///
-/// Distribution specification:
-/// - Continuous density: f(t) = λ e^(-λ t) for t > 0
-/// - Support truncation: strictly clamped to [min_delay, max_delay] to prevent
-///   infinite wait periods (starvation) and zero-delay packet collapses (flooding).
-/// - Sampling technique: Inversion method t = -ln(U) / λ using 53-bit uniform significand.
-/// - Fail-closed security invariant: if OS CSPRNG fails, returns Err(getrandom::Error);
-///   never falls back to a deterministic interval to prevent SIGINT timing exposure.
+/// Mathematical specification:
+/// - Support: t ∈ [t_min, t_max] with 0 < t_min < t_max < ∞
+/// - Probability Density Function: f(t) = λ e^(-λ t) / (e^(-λ t_min) - e^(-λ t_max))
+/// - Inverse-CDF Transform: t = -1/λ * ln(e^(-λ t_min) - U * (e^(-λ t_min) - e^(-λ t_max)))
+///   where U ~ Uniform(0, 1) sampled with 53-bit significand precision.
+/// - Guarantees: Strictly continuous on (t_min, t_max); zero boundary mass pileup;
+///   smooth decay matching the exponential law; fail-closed on OS CSPRNG error.
 pub fn sample_poisson_interval(
     rate_lambda: f64,
     min_delay: Duration,
@@ -150,12 +150,24 @@ pub fn sample_poisson_interval(
 ) -> Result<Duration, getrandom::Error> {
     let mut buf = [0u8; 8];
     getrandom::fill(&mut buf)?;
-    // 53-bit uniform precision to preserve IEEE 754 significand fidelity (P2-04)
+    // 53-bit uniform precision to preserve IEEE 754 significand fidelity
     let val53 = (u64::from_le_bytes(buf) >> 11) + 1;
     let u = (val53 as f64) / 9007199254740993.0; // Strictly in (0.0, 1.0)
     let lambda = if rate_lambda > 0.001 { rate_lambda } else { 20.0 };
-    let interval_secs = -u.ln() / lambda;
-    Ok(Duration::from_secs_f64(interval_secs).clamp(min_delay, max_delay))
+
+    let t_min = min_delay.as_secs_f64();
+    let t_max = max_delay.as_secs_f64().max(t_min + 1e-6);
+
+    let exp_min = (-lambda * t_min).exp();
+    let exp_max = (-lambda * t_max).exp();
+    // Invert conditional CDF: V = exp_min - U * (exp_min - exp_max)
+    let v = exp_min - u * (exp_min - exp_max);
+    let interval_secs = if v > 0.0 {
+        -v.ln() / lambda
+    } else {
+        t_min
+    };
+    Ok(Duration::from_secs_f64(interval_secs.clamp(t_min, t_max)))
 }
 
 /// Memoryless Poisson-distributed traffic pacing engine.

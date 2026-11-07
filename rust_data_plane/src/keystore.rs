@@ -9,8 +9,9 @@
 //!   followed metadata is dead code and is NOT used here).
 //! - Unix: mode 0600 enforced on read AND set atomically on write.
 //! - Windows: exclusive share mode (`FILE_SHARE_NONE`) + owner-only ACL via
-//!   `icacls` (std has no ACL API); ACL failure deletes the file and errors
-//!   so loose-permission keys never rest on disk.
+//!   `icacls` (std has no ACL API); ACL is applied before writing sensitive
+//!   key material; ACL failure deletes the file and errors so loose-permission
+//!   keys never rest on disk. Read path independently verifies DACL.
 //! - Session keys on disk conflict with zero-plaintext-disk doctrine:
 //!   prefer stdin + `LockedKey32` / HSM custody for TOP SECRET; files are
 //!   a lab/transport convenience with hardened permissions, documented.
@@ -76,6 +77,10 @@ pub fn read_key_file(path: &str) -> Result<LockedKey32, CoreError> {
             return Err(CoreError::FilePermissions);
         }
     }
+    #[cfg(not(unix))]
+    {
+        verify_windows_file_dacl(path)?;
+    }
     let mut f = OpenOptions::new()
         .read(true)
         .open(path)
@@ -116,25 +121,60 @@ pub fn write_key_file_exclusive(path: &str, hex: &str) -> Result<(), CoreError> 
     }
     #[cfg(not(unix))]
     {
-        let mut f = OpenOptions::new()
+        // Pre-create empty file to establish DACL before writing sensitive key material
+        let f = OpenOptions::new()
             .write(true)
             .create_new(true)
             .share_mode(0)
+            .open(path)
+            .map_err(|_| CoreError::FilePermissions)?;
+        drop(f);
+        harden_windows_file_dacl(path)?;
+
+        let mut f = OpenOptions::new()
+            .write(true)
             .open(path)
             .map_err(|_| CoreError::FilePermissions)?;
         f.write_all(clean.as_bytes())
             .map_err(|_| CoreError::FilePermissions)?;
         f.write_all(b"\n").map_err(|_| CoreError::FilePermissions)?;
         f.sync_all().map_err(|_| CoreError::FilePermissions)?;
-        drop(f);
-        harden_windows_file_dacl(path)?;
         Ok(())
     }
 }
 
 #[cfg(not(unix))]
+fn verify_windows_file_dacl(path: &str) -> Result<(), CoreError> {
+    let user = std::env::var("USERNAME").map_err(|_| CoreError::FilePermissions)?;
+    let query_out = std::process::Command::new("icacls")
+        .arg(path)
+        .output()
+        .map_err(|_| CoreError::FilePermissions)?;
+    if !query_out.status.success() {
+        return Err(CoreError::FilePermissions);
+    }
+    let stdout = String::from_utf8_lossy(&query_out.stdout).to_lowercase();
+    let forbidden_principals = [
+        "everyone",
+        "authenticated users",
+        "builtin\\users",
+        "nt authority\\interactive",
+        "nt authority\\network",
+    ];
+    for forbidden in &forbidden_principals {
+        if stdout.contains(forbidden) {
+            return Err(CoreError::FilePermissions);
+        }
+    }
+    if !stdout.contains(&user.to_lowercase()) {
+        return Err(CoreError::FilePermissions);
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
 fn harden_windows_file_dacl(path: &str) -> Result<(), CoreError> {
-    let user = std::env::var("USERNAME").unwrap_or_else(|_| "Administrators".to_string());
+    let user = std::env::var("USERNAME").map_err(|_| CoreError::FilePermissions)?;
     let acl_ok = std::process::Command::new("icacls")
         .args([
             path,
@@ -151,34 +191,9 @@ fn harden_windows_file_dacl(path: &str) -> Result<(), CoreError> {
     }
 
     // Independent post-grant ACL enumeration and validation
-    let query_out = std::process::Command::new("icacls")
-        .arg(path)
-        .output();
-    match query_out {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_lowercase();
-            let forbidden_principals = [
-                "everyone",
-                "authenticated users",
-                "builtin\\users",
-                "nt authority\\interactive",
-                "nt authority\\network",
-            ];
-            for forbidden in &forbidden_principals {
-                if stdout.contains(forbidden) {
-                    let _ = std::fs::remove_file(path);
-                    return Err(CoreError::FilePermissions);
-                }
-            }
-            if !stdout.contains(&user.to_lowercase()) {
-                let _ = std::fs::remove_file(path);
-                return Err(CoreError::FilePermissions);
-            }
-        }
-        _ => {
-            let _ = std::fs::remove_file(path);
-            return Err(CoreError::FilePermissions);
-        }
+    if let Err(e) = verify_windows_file_dacl(path) {
+        let _ = std::fs::remove_file(path);
+        return Err(e);
     }
     Ok(())
 }
@@ -217,10 +232,21 @@ pub fn write_key_file_truncate(path: &str, hex: &str) -> Result<(), CoreError> {
     }
     #[cfg(not(unix))]
     {
-        let mut f = OpenOptions::new()
+        // Pre-create empty temporary sibling file and apply restrictive DACL before writing key
+        let f = OpenOptions::new()
             .write(true)
             .create_new(true)
             .share_mode(0)
+            .open(&tmp_path)
+            .map_err(|_| CoreError::FilePermissions)?;
+        drop(f);
+        if let Err(e) = harden_windows_file_dacl(&tmp_path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+
+        let mut f = OpenOptions::new()
+            .write(true)
             .open(&tmp_path)
             .map_err(|_| CoreError::FilePermissions)?;
         if f.write_all(clean.as_bytes()).and_then(|_| f.write_all(b"\n")).and_then(|_| f.sync_all()).is_err() {
@@ -228,10 +254,6 @@ pub fn write_key_file_truncate(path: &str, hex: &str) -> Result<(), CoreError> {
             return Err(CoreError::FilePermissions);
         }
         drop(f);
-        if let Err(e) = harden_windows_file_dacl(&tmp_path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(e);
-        }
     }
 
     // Atomic rename over target path
@@ -243,7 +265,7 @@ pub fn write_key_file_truncate(path: &str, hex: &str) -> Result<(), CoreError> {
     #[cfg(not(unix))]
     {
         // Verify DACL on destination after rename
-        harden_windows_file_dacl(path)?;
+        verify_windows_file_dacl(path)?;
     }
     Ok(())
 }
