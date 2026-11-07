@@ -23,6 +23,7 @@ class DisplayManager(BaseModule):
         This method displays the security summary and sets up environment variables.
         """
         try:
+            print("\n=== SECURE P2P MESSENGER ===")
             # Set the P2P_DISABLE_DANE environment variable to true by default
             os.environ['P2P_DISABLE_DANE'] = os.environ.get('P2P_DISABLE_DANE', 'true')
 

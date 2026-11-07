@@ -103,30 +103,9 @@ class MessageEncryption(BaseModule):
             # Add random padding for traffic analysis protection
             padded_plaintext = orchestrator._add_random_padding(plaintext)
 
-            # Use quantum resistance enhancement if available
-            if (hasattr(orchestrator, 'quantum_resistance') and 
-                orchestrator.security_verified.get('quantum_resistance', False)):
-                try:
-                    context = f"msg:{len(plaintext)}:{time.time()}".encode('utf-8')
-                    binding_key = orchestrator.quantum_resistance.hybrid_key_derivation(
-                        orchestrator.hybrid_root_key, 
-                        context
-                    )
-
-                    # Add binding to the message header
-                    enhanced_plaintext = binding_key[:8] + padded_plaintext
-
-                    # Encrypt with enhanced quantum resistance
-                    ciphertext = orchestrator.ratchet.encrypt(enhanced_plaintext)
-                    return AwaitableBytes(ciphertext)
-                except Exception as e:
-                    self.logger.warning(
-                        f"Quantum resistance encryption enhancement failed: {e}. "
-                        "Using standard encryption."
-                    )
-
-            # Standard encryption (fallback)
-            return AwaitableBytes(orchestrator.ratchet.encrypt(padded_plaintext))
+            # Authenticated encryption via active ratchet
+            ciphertext = orchestrator.ratchet.encrypt(padded_plaintext)
+            return AwaitableBytes(ciphertext)
 
         except Exception as e:
             self.logger.error(f"Error encrypting message: {e}")
@@ -182,24 +161,10 @@ class MessageEncryption(BaseModule):
             raise CryptoError(f"Message decryption blocked: {e}")
 
         try:
-            # Decrypt the data
+            # Authenticated decryption via active ratchet
             decrypted_data = orchestrator.ratchet.decrypt(encrypted_data)
 
-            # Check if this is a quantum-enhanced message (has binding prefix)
-            if (hasattr(orchestrator, 'quantum_resistance') and 
-                orchestrator.security_verified.get('quantum_resistance', False)):
-                try:
-                    # Try to extract binding prefix (first 8 bytes)
-                    binding_prefix = decrypted_data[:8]
-                    actual_plaintext = decrypted_data[8:]
-
-                    # Remove padding from the actual plaintext
-                    unpadded_data = orchestrator._remove_random_padding(actual_plaintext)
-                    return AwaitableStr(unpadded_data.decode('utf-8'))
-                except Exception as _pad_err:
-                    orchestrator.logger.debug(f"Extraction fallback to standard: {_pad_err}")
-
-            # Standard decryption path (fallback)
+            # Remove padding added during encryption
             unpadded_data = orchestrator._remove_random_padding(decrypted_data)
             return AwaitableStr(unpadded_data.decode('utf-8'))
 

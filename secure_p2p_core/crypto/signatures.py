@@ -241,10 +241,6 @@ class SignatureOperations(BaseModule):
         try:
             if not isinstance(message, bytes) or not isinstance(private_key, bytes):
                 raise TypeError("Message and private key must be bytes")
-            
-            # Support both (message, private_key) and (private_key, message)
-            if len(message) == 128 and len(private_key) != 128:
-                private_key, message = message, private_key
 
             if len(private_key) != 128:
                 raise CryptoError("Invalid private key size for SLH-DSA-256f: expected 128 bytes",
@@ -289,10 +285,6 @@ class SignatureOperations(BaseModule):
         try:
             if not isinstance(message, bytes) or not isinstance(signature, bytes) or not isinstance(public_key, bytes):
                 raise TypeError("Inputs must be bytes")
-
-            # Support both (message, signature, public_key) and (public_key, message, signature)
-            if len(message) == 64 and len(public_key) != 64:
-                public_key, message, signature = message, signature, public_key
 
             if len(public_key) != 64:
                 raise CryptoError("Invalid public key size for SLH-DSA-256f: expected 64 bytes",

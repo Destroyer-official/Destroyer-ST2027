@@ -26,10 +26,10 @@ def test_forged_self_anchored_report_is_rejected(tmp_path):
 
 def test_audit_signer_anchor_lengths():
     """Verify that audit signer keys match exact ML-DSA-87 parameter sizes (2592/4896)."""
-    from pathlib import Path
-    repo_root = Path(__file__).resolve().parent.parent
-    pk_file = repo_root / "keys" / "audit_signer.mldsa87.pk"
-    sk_file = repo_root / "keys" / "audit_signer.mldsa87.sk"
+    from report_trust import audit_signer_paths, load_or_create_audit_signer
+    pk_file, sk_file = audit_signer_paths()
+    if not pk_file.exists():
+        load_or_create_audit_signer()
     assert pk_file.exists(), f"Audit signer public key missing: {pk_file}"
     assert pk_file.stat().st_size == 2592, f"Expected 2592 bytes for ML-DSA-87 PK, got {pk_file.stat().st_size}"
     if sk_file.exists():

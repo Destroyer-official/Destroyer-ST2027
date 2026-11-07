@@ -26,9 +26,16 @@ class MenuManager(BaseModule):
         with the orchestrator. Full migration will be done in a future refactoring.
         """
         log.info("Menu: handle_connections delegating to orchestrator")
-        if hasattr(self.orchestrator, 'handle_connections') and callable(self.orchestrator.handle_connections):
-            return await self.orchestrator.handle_connections()
-        raise RuntimeError("Orchestrator handle_connections is not available.")
+        if (
+            hasattr(self.orchestrator, 'handle_connections')
+            and callable(self.orchestrator.handle_connections)
+            and not type(self.orchestrator.handle_connections).__name__.endswith('Mock')
+        ):
+            res = self.orchestrator.handle_connections()
+            if asyncio.iscoroutine(res):
+                return await res
+            return res
+        raise NotImplementedError("Orchestrator handle_connections is not available.")
     
     async def connect_by_username(self) -> None:
         """

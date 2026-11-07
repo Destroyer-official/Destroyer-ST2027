@@ -89,7 +89,8 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
     let mut acc1 = WelfordAccumulator::new();
     let mut rng: u64 = 0x8842A197D6E35B01;
 
-    let fixed_secret = [0x5Au8; 64];
+    let fixed_secret_a = [0x5Au8; 64];
+    let fixed_secret_b_match = [0x5Au8; 64];
     let mut random_secrets = Vec::with_capacity(512);
     for _ in 0..512 {
         let mut buf = [0u8; 64];
@@ -101,33 +102,28 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
 
     // Warm-up cycles to stabilize cache and clock frequency
     for _ in 0..2000 {
-        black_box(ct::ct_eq(black_box(&fixed_secret), black_box(&fixed_secret)));
+        black_box(ct::ct_eq(black_box(&fixed_secret_a), black_box(&fixed_secret_b_match)));
     }
 
     const BATCH: usize = 100;
     const SAMPLES: usize = 15_000;
     for i in 0..SAMPLES {
         let coin = (xorshift64(&mut rng) & 1) == 0;
+        let (in_a, in_b) = if coin {
+            (&fixed_secret_a, &fixed_secret_b_match)
+        } else {
+            (&fixed_secret_a, &random_secrets[i % random_secrets.len()])
+        };
+        let t0 = Instant::now();
+        let mut acc_res = 0u32;
+        for _ in 0..BATCH {
+            acc_res = acc_res.wrapping_add(ct::ct_eq(black_box(in_a), black_box(in_b)) as u32);
+        }
+        let elapsed = t0.elapsed().as_nanos() as f64;
+        black_box(acc_res);
         if coin {
-            // Class 0: fixed matching input
-            let t0 = Instant::now();
-            let mut acc_res = true;
-            for _ in 0..BATCH {
-                acc_res &= ct::ct_eq(black_box(&fixed_secret), black_box(&fixed_secret));
-            }
-            let elapsed = t0.elapsed().as_nanos() as f64;
-            black_box(acc_res);
             acc0.update(elapsed);
         } else {
-            // Class 1: random non-matching input
-            let other = &random_secrets[i % random_secrets.len()];
-            let t0 = Instant::now();
-            let mut acc_res = false;
-            for _ in 0..BATCH {
-                acc_res |= ct::ct_eq(black_box(&fixed_secret), black_box(other));
-            }
-            let elapsed = t0.elapsed().as_nanos() as f64;
-            black_box(acc_res);
             acc1.update(elapsed);
         }
     }
@@ -147,7 +143,8 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
     let mut acc1 = WelfordAccumulator::new();
     let mut rng: u64 = 0xFEDCBA9876543210;
 
-    let fixed_secret = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
+    let fixed_secret_a = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
+    let fixed_secret_b_match = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
     let mut random_secrets = Vec::with_capacity(256);
     for _ in 0..256 {
         let mut buf = [0u8; 32];
@@ -159,31 +156,28 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
 
     // Warm-up
     for _ in 0..2000 {
-        black_box(fixed_secret.ct_eq(black_box(&fixed_secret)));
+        black_box(fixed_secret_a.ct_eq(black_box(&fixed_secret_b_match)));
     }
 
     const BATCH: usize = 100;
     const SAMPLES: usize = 15_000;
     for i in 0..SAMPLES {
         let coin = (xorshift64(&mut rng) & 1) == 0;
+        let (in_a, in_b) = if coin {
+            (&fixed_secret_a, &fixed_secret_b_match)
+        } else {
+            (&fixed_secret_a, &random_secrets[i % random_secrets.len()])
+        };
+        let t0 = Instant::now();
+        let mut acc_res = 0u32;
+        for _ in 0..BATCH {
+            acc_res = acc_res.wrapping_add(in_a.ct_eq(black_box(in_b)) as u32);
+        }
+        let elapsed = t0.elapsed().as_nanos() as f64;
+        black_box(acc_res);
         if coin {
-            let t0 = Instant::now();
-            let mut acc_res = true;
-            for _ in 0..BATCH {
-                acc_res &= fixed_secret.ct_eq(black_box(&fixed_secret));
-            }
-            let elapsed = t0.elapsed().as_nanos() as f64;
-            black_box(acc_res);
             acc0.update(elapsed);
         } else {
-            let other = &random_secrets[i % random_secrets.len()];
-            let t0 = Instant::now();
-            let mut acc_res = false;
-            for _ in 0..BATCH {
-                acc_res |= fixed_secret.ct_eq(black_box(other));
-            }
-            let elapsed = t0.elapsed().as_nanos() as f64;
-            black_box(acc_res);
             acc1.update(elapsed);
         }
     }
@@ -203,36 +197,35 @@ fn dudect_rust_leaky_comparator_detected_as_positive_control() {
     let mut acc1 = WelfordAccumulator::new();
     let mut rng: u64 = 0x123456789ABCDEF0;
 
-    let fixed_secret = [0x5Au8; 64];
-    let mut mismatch_first = fixed_secret;
+    let fixed_secret_a = [0x5Au8; 64];
+    let fixed_secret_b_match = [0x5Au8; 64];
+    let mut mismatch_first = fixed_secret_a;
     mismatch_first[0] ^= 0xFF;
 
     // Warm-up
     for _ in 0..2000 {
-        black_box(leaky_cmp(black_box(&fixed_secret), black_box(&fixed_secret)));
+        black_box(leaky_cmp(black_box(&fixed_secret_a), black_box(&fixed_secret_b_match)));
     }
 
     const BATCH: usize = 100;
     const SAMPLES: usize = 15_000;
     for _ in 0..SAMPLES {
         let coin = (xorshift64(&mut rng) & 1) == 0;
+        let (in_a, in_b) = if coin {
+            (&fixed_secret_a, &fixed_secret_b_match)
+        } else {
+            (&fixed_secret_a, &mismatch_first)
+        };
+        let t0 = Instant::now();
+        let mut acc_res = 0u32;
+        for _ in 0..BATCH {
+            acc_res = acc_res.wrapping_add(leaky_cmp(black_box(in_a), black_box(in_b)) as u32);
+        }
+        let elapsed = t0.elapsed().as_nanos() as f64;
+        black_box(acc_res);
         if coin {
-            let t0 = Instant::now();
-            let mut acc_res = true;
-            for _ in 0..BATCH {
-                acc_res &= leaky_cmp(black_box(&fixed_secret), black_box(&fixed_secret));
-            }
-            let elapsed = t0.elapsed().as_nanos() as f64;
-            black_box(acc_res);
             acc0.update(elapsed);
         } else {
-            let t0 = Instant::now();
-            let mut acc_res = false;
-            for _ in 0..BATCH {
-                acc_res |= leaky_cmp(black_box(&fixed_secret), black_box(&mismatch_first));
-            }
-            let elapsed = t0.elapsed().as_nanos() as f64;
-            black_box(acc_res);
             acc1.update(elapsed);
         }
     }

@@ -43,7 +43,21 @@ def is_production() -> bool:
 
 
 def audit_signer_paths() -> tuple[Path, Path]:
-    key_dir = Path(os.environ.get("P2P_AUDIT_SIGNER_KEY_DIR", REPO_ROOT / "keys"))
+    env_dir = os.environ.get("P2P_AUDIT_SIGNER_KEY_DIR")
+    if env_dir:
+        key_dir = Path(env_dir)
+    else:
+        # Default to out-of-repo user-private directory to prevent private key presence in working tree (F-01)
+        if sys.platform == "win32":
+            external_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ST2027" / "keys"
+        else:
+            external_dir = Path.home() / ".local" / "share" / "st2027" / "keys"
+
+        if external_dir.exists() or is_production():
+            key_dir = external_dir
+        else:
+            key_dir = REPO_ROOT / "keys"
+
     return (key_dir / _PK_NAME, key_dir / _SK_NAME)
 
 

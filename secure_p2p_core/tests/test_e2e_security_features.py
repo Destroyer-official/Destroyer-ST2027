@@ -102,12 +102,12 @@ class TestE2EQuantumResistantCryptography:
         test_key = b"test_signing_key_placeholder"
         
         try:
-            # Sign data
-            signature = signatures.sign_with_slh_dsa_256f(test_key, test_data)
+            # Sign data with correct argument order (message, private_key)
+            signature = signatures.sign_with_slh_dsa_256f(test_data, test_key)
             
             if signature:
-                # Verify signature
-                result = signatures.verify_slh_dsa_256f_signature(test_key, test_data, signature)
+                # Verify signature with correct argument order (message, signature, public_key)
+                result = signatures.verify_slh_dsa_256f_signature(test_data, signature, test_key)
                 assert result is True or result is None
         except Exception as e:
             # Expected if keys not properly initialized
