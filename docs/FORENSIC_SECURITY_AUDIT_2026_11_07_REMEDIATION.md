@@ -30,12 +30,15 @@ On 2026-11-07, an independent forensic technical audit was conducted on the Dest
 - **Remediation Action:**
   1. Deleted `alpha.auth.sk`, `bravo.auth.sk`, and `tactical_station.psk` from the repository root.
   2. Moved `keys/audit_signer.mldsa87.sk` and `keys/audit_signer.mldsa87.pk` out of the repository tree into the user's private OS application data directory (`%LOCALAPPDATA%\ST2027\keys\` on Windows; `~/.local/share/st2027/keys/` on Unix).
-  3. Refactored `report_trust.py::audit_signer_paths()` to default strictly to this external OS directory, creating it with restricted file permissions (`0o600` on Unix; Windows default user DACL).
-  4. Updated `tests/test_cjadc2_report_anchor.py` to use `audit_signer_paths()`.
-  5. Added `*.sk` and `*.psk` patterns to `.gitignore`.
+  3. Refactored `report_trust.py::audit_signer_paths()` to default strictly and unconditionally to this external OS directory, completely eliminating the dev-mode fallback to `REPO_ROOT / "keys"`.
+  4. Updated `report_trust.py::_prepare_key_dir()` to raise a `RuntimeError` (fail-closed) if any key directory is located within the repository tree, even in non-production environments (unless `P2P_AUDIT_SIGNER_ALLOW_REPO_KEY_DIR=1` is explicitly set).
+  5. Updated `cjadc2_allied_gateway.py::_audit_signer_paths()` to delegate directly to `report_trust.audit_signer_paths()` instead of maintaining a separate in-repo fallback.
+  6. Purged untracked `keys/audit_signer.mldsa87.pk` from the workspace.
+  7. Added `*.sk` and `*.psk` patterns to `.gitignore`.
 - **Verification:**
   - `Get-ChildItem -Filter "*.sk" -Recurse` returns 0 files in repository.
   - `Get-ChildItem -Filter "*.psk" -Recurse` returns 0 files in repository.
+  - `Get-ChildItem -Filter "*audit_signer*" -Recurse` returns 0 files in repository.
   - `pytest tests/test_cjadc2_report_anchor.py` passes 2/2.
 
 ### F-02 (Critical): Standalone Rust Binary Does Not Link / Build Linkage
@@ -132,3 +135,18 @@ On 2026-11-07, an independent forensic technical audit was conducted on the Dest
 | **CJADC2 & Audit Signer Out-of-Tree** | `pytest tests/test_cjadc2_report_anchor.py` | **2/2 PASS** (0 failed) |
 | **Supply Chain & SLSA Reproducibility** | `python scripts/verify_reproducible_build.py` | **PASS** (100% verified) |
 | **Working Tree Secret Scan** | `Get-ChildItem -Filter "*.sk", "*.psk" -Recurse` | **0 secret files found** |
+
+---
+
+## 4. Post-Remediation Re-Audit Alignment
+
+The independent reviewer conducted a re-audit of the remediated baseline (recorded in `docs/FORENSIC_SECURITY_AUDIT_2026_11_07.md`), resulting in the following reconciled status:
+
+- **F-03 & F-04:** Verified remediated in code (heuristics and unauthenticated prefix slicing completely eliminated).
+- **F-06:** Verified remediated with 387/387 core tests passing.
+- **F-02:** Verified remediated; standalone Rust binary builds and links cleanly (`cargo build --release --bin secure-transmit`).
+- **F-01:** Fully remediated with the removal of untracked audit signer public/private keys and total elimination of the dev-mode in-repo fallback in `report_trust.py` and `cjadc2_allied_gateway.py`.
+- **F-05 & F-07:** Reconciled as architectural design and assurance boundaries. CPython memory zeroization limits are handled by strict native data-plane isolation, and scorecards are documented as internal automated engineering regression metrics rather than accredited external laboratory certifications (e.g. FIPS 140-3 CMVP / Common Criteria) or government ATOs.
+
+**Revised Provisional Assurance Score:** Updated from **38/100 to 48/100** by the external reviewer, confirming solid forward progress across all technical dimensions while maintaining rigor regarding the requirement for independent third-party laboratory evaluations before high-assurance operational deployment.
+

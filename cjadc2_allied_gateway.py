@@ -62,11 +62,8 @@ def _is_production() -> bool:
 
 def _audit_signer_paths() -> Tuple[Path, Path]:
     """Pinned compliance-report trust anchor (same key as the audit receipt)."""
-    key_dir = Path(os.environ.get("P2P_AUDIT_SIGNER_KEY_DIR", REPO_ROOT / "keys"))
-    return (
-        key_dir / "audit_signer.mldsa87.pk",
-        key_dir / "audit_signer.mldsa87.sk",
-    )
+    from report_trust import audit_signer_paths
+    return audit_signer_paths()
 
 
 def _load_or_create_report_signing_key() -> Tuple[bytes, bytes]:

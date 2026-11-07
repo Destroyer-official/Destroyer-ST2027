@@ -47,16 +47,12 @@ def audit_signer_paths() -> tuple[Path, Path]:
     if env_dir:
         key_dir = Path(env_dir)
     else:
-        # Default to out-of-repo user-private directory to prevent private key presence in working tree (F-01)
+        # Default strictly to out-of-repo user-private directory across all modes (F-01).
+        # Never fall back to repository working tree.
         if sys.platform == "win32":
-            external_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ST2027" / "keys"
+            key_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ST2027" / "keys"
         else:
-            external_dir = Path.home() / ".local" / "share" / "st2027" / "keys"
-
-        if external_dir.exists() or is_production():
-            key_dir = external_dir
-        else:
-            key_dir = REPO_ROOT / "keys"
+            key_dir = Path.home() / ".local" / "share" / "st2027" / "keys"
 
     return (key_dir / _PK_NAME, key_dir / _SK_NAME)
 
@@ -187,7 +183,7 @@ def _prepare_key_dir(key_dir: Path) -> None:
             "(fail-closed)"
         )
     _verify_private_custody(key_dir, directory=True)
-    if is_production() and _within_repo(key_dir):
+    if _within_repo(key_dir):
         if not is_env_true("P2P_AUDIT_SIGNER_ALLOW_REPO_KEY_DIR"):
             raise RuntimeError(
                 "audit signer key directory is inside the source repository; "

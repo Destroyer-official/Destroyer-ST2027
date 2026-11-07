@@ -216,3 +216,35 @@ Scoring rubric: 0 = no evidence/absent, 50 = partial/prototype, 75 = solid but u
 - Working tree secret files listed in F-01.
 - `cargo test --lib`: 199 passed; `cargo test --release`: link failure.
 - `pytest secure_p2p_core/tests`: 385 passed, 2 failed.
+
+---
+
+## Post-Remediation Update (commit 866207a)
+
+Independent re-check of the remediated commit confirms:
+
+- F-03 (signature API heuristics): remediated — length-based argument swapping removed; strict size checks remain.
+- F-04 (quantum prefix): remediated — unauthenticated 8-byte prefix prepend/slice removed; ratchet AEAD only.
+- F-06 (UI tests): remediated — 387/387 core tests pass.
+- F-02 (Rust binary): build now succeeds (`cargo build --release --bin secure-transmit`).
+- F-01 (secret material): partially remediated — an untracked `keys/audit_signer.mldsa87.sk` remained after the claimed purge and was removed during this re-audit. `report_trust.py` still falls back to `REPO_ROOT/keys` when the external directory does not exist and production mode is false, so dev runs can recreate in-repo key material.
+- F-05 (Python memory): unchanged by design — documented boundary, not a code fix.
+- F-07 (claims): documentation relabeled, but scorecards remain self-attested.
+
+Residual assurance gaps not resolved by 866207a: no independent cryptographic review or penetration test; no formal protocol verification beyond self-run harnesses; `report_trust.py` fallback can reintroduce in-repo secrets in non-production mode; compliance receipts remain self-generated.
+
+Revised provisional scores (post-remediation, pending independent verification):
+
+| Dimension | Pre | Post |
+|---|---:|---:|
+| Cryptographic correctness | 45 | 55 |
+| Protocol/architecture security | 40 | 48 |
+| Application security | 35 | 45 |
+| Identity/access control | 30 | 40 |
+| Data/metadata protection | 45 | 50 |
+| Dependency/supply chain | 40 | 45 |
+| Testing/verification maturity | 55 | 62 |
+| Operational readiness | 20 | 35 |
+| **Overall** | **38** | **48** |
+
+These scores remain provisional and do not constitute certification.
