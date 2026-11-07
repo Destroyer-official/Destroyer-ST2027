@@ -149,6 +149,37 @@ fn harden_windows_file_dacl(path: &str) -> Result<(), CoreError> {
         let _ = std::fs::remove_file(path);
         return Err(CoreError::FilePermissions);
     }
+
+    // Independent post-grant ACL enumeration and validation
+    let query_out = std::process::Command::new("icacls")
+        .arg(path)
+        .output();
+    match query_out {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            let forbidden_principals = [
+                "everyone",
+                "authenticated users",
+                "builtin\\users",
+                "nt authority\\interactive",
+                "nt authority\\network",
+            ];
+            for forbidden in &forbidden_principals {
+                if stdout.contains(forbidden) {
+                    let _ = std::fs::remove_file(path);
+                    return Err(CoreError::FilePermissions);
+                }
+            }
+            if !stdout.contains(&user.to_lowercase()) {
+                let _ = std::fs::remove_file(path);
+                return Err(CoreError::FilePermissions);
+            }
+        }
+        _ => {
+            let _ = std::fs::remove_file(path);
+            return Err(CoreError::FilePermissions);
+        }
+    }
     Ok(())
 }
 

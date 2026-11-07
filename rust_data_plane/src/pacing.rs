@@ -134,24 +134,28 @@ impl PacedScheduler {
 /// - Maybenot Framework (PETS 2024 / Tor Project): probabilistic state-machine
 ///   traffic shaping to neutralize deep learning flow correlation (DeepCorr, ESPRESSO, SUMo).
 ///
-/// Uses OS CSPRNG (`getrandom`) to sample uniform random variable U in (0.00001, 0.99999).
+/// Sample an inter-arrival interval from a truncated exponential distribution.
+///
+/// Distribution specification:
+/// - Continuous density: f(t) = λ e^(-λ t) for t > 0
+/// - Support truncation: strictly clamped to [min_delay, max_delay] to prevent
+///   infinite wait periods (starvation) and zero-delay packet collapses (flooding).
+/// - Sampling technique: Inversion method t = -ln(U) / λ using 53-bit uniform significand.
+/// - Fail-closed security invariant: if OS CSPRNG fails, returns Err(getrandom::Error);
+///   never falls back to a deterministic interval to prevent SIGINT timing exposure.
 pub fn sample_poisson_interval(
     rate_lambda: f64,
     min_delay: Duration,
     max_delay: Duration,
-) -> Duration {
+) -> Result<Duration, getrandom::Error> {
     let mut buf = [0u8; 8];
-    if getrandom::fill(&mut buf).is_err() {
-        // CSPRNG failure: fallback to clamped mean interval (fail-safe)
-        let mean_secs = if rate_lambda > 0.001 { 1.0 / rate_lambda } else { 0.05 };
-        return Duration::from_secs_f64(mean_secs).clamp(min_delay, max_delay);
-    }
+    getrandom::fill(&mut buf)?;
     // 53-bit uniform precision to preserve IEEE 754 significand fidelity (P2-04)
     let val53 = (u64::from_le_bytes(buf) >> 11) + 1;
     let u = (val53 as f64) / 9007199254740993.0; // Strictly in (0.0, 1.0)
     let lambda = if rate_lambda > 0.001 { rate_lambda } else { 20.0 };
     let interval_secs = -u.ln() / lambda;
-    Duration::from_secs_f64(interval_secs).clamp(min_delay, max_delay)
+    Ok(Duration::from_secs_f64(interval_secs).clamp(min_delay, max_delay))
 }
 
 /// Memoryless Poisson-distributed traffic pacing engine.
@@ -169,33 +173,39 @@ pub struct PoissonScheduler {
 }
 
 impl PoissonScheduler {
-    pub fn new(rate_lambda: f64, min_interval: Duration, max_interval: Duration) -> Self {
-        let first_interval = sample_poisson_interval(rate_lambda, min_interval, max_interval);
-        Self {
+    pub fn try_new(rate_lambda: f64, min_interval: Duration, max_interval: Duration) -> Result<Self, getrandom::Error> {
+        let first_interval = sample_poisson_interval(rate_lambda, min_interval, max_interval)?;
+        Ok(Self {
             rate_lambda,
             min_interval,
             max_interval,
             next_tick: Instant::now() + first_interval,
             ticks_emitted: 0,
-        }
+        })
+    }
+
+    pub fn new(rate_lambda: f64, min_interval: Duration, max_interval: Duration) -> Self {
+        Self::try_new(rate_lambda, min_interval, max_interval).expect("CSPRNG failure in PoissonScheduler")
     }
 
     /// Block until the next Poisson-scheduled tick.
     /// Eliminates catch-up bursts if clock slipped (P2-02).
-    pub fn wait_next_tick(&mut self) {
+    /// Fails closed on CSPRNG error.
+    pub fn wait_next_tick(&mut self) -> Result<(), getrandom::Error> {
         let now = Instant::now();
         if self.next_tick > now {
             std::thread::sleep(self.next_tick - now);
         }
         self.ticks_emitted += 1;
         let next_interval =
-            sample_poisson_interval(self.rate_lambda, self.min_interval, self.max_interval);
+            sample_poisson_interval(self.rate_lambda, self.min_interval, self.max_interval)?;
         let after = Instant::now();
         if after >= self.next_tick {
             self.next_tick = after + next_interval;
         } else {
             self.next_tick += next_interval;
         }
+        Ok(())
     }
 
     pub fn ticks_emitted(&self) -> u64 {
@@ -514,7 +524,7 @@ mod tests {
 
         let mut samples = Vec::with_capacity(100);
         for _ in 0..100 {
-            let sample = sample_poisson_interval(rate_lambda, min_d, max_d);
+            let sample = sample_poisson_interval(rate_lambda, min_d, max_d).expect("CSPRNG sample failed");
             assert!(sample >= min_d, "sample below min bound: {:?}", sample);
             assert!(sample <= max_d, "sample above max bound: {:?}", sample);
             samples.push(sample.as_secs_f64());
@@ -535,7 +545,7 @@ mod tests {
         assert_eq!(scheduler.rate_lambda(), 200.0);
 
         for _ in 0..3 {
-            scheduler.wait_next_tick();
+            scheduler.wait_next_tick().expect("wait_next_tick step failed");
         }
         assert_eq!(scheduler.ticks_emitted(), 3);
     }

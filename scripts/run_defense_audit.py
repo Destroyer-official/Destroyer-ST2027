@@ -3,8 +3,8 @@
 Sovereign Transmit 2027 (ST2027) — Master Defense Audit Harness
 ================================================================
 Comprehensive verification runner for military/sovereign evaluation.
-Executes all 9 defense assurance gates:
-  1. Rust Data-Plane (Cargo Clippy & 64 Unit/Property Tests)
+Executes all 10 defense assurance gates:
+  1. Rust Data-Plane (Cargo Clippy & Unit/Property Tests)
   2. Native Top-Secret Runtime (ts_rt Clippy & Test)
   3. CNSA Suite 2.0 Power-Up KATs & Cryptographic Purity
   4. Symbolic Formal Verification (ProVerif 2.05 Real Execution)
@@ -13,6 +13,7 @@ Executes all 9 defense assurance gates:
   7. Supply Chain & SLSA Level 3+ Reproducible Build Verification
   8. Truth-in-Claims, Zero-Emoji & Zero-Buzzword Property Audits
   9. Unified In-Process Operator Self-Test (secure_transmit_2027.py selftest)
+ 10. Cryptographic Audit Receipt Generation & Verify-After-Sign (ML-DSA-87)
 
 Generates an ML-DSA-87 cryptographically signed evaluation receipt:
   compliance_reports/defense_master_audit_receipt.json + .sig
@@ -30,9 +31,23 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+EXPECTED_GATES = [
+    "1.1",  # Rust Data-Plane Strict Clippy & Test Battery
+    "2.1",  # ts_rt Clippy & Memory Discipline Verification
+    "3.1",  # CNSA Suite 2.0 KATs & Algorithm Purity
+    "4.1",  # ProVerif 2.05 Symbolic Handshake & PCS Proofs
+    "5.1",  # Active Exploit Defenses (Replay DoS & Nonce Reuse)
+    "6.1",  # Platform Gating (Signed ML-DSA-87 Waivers)
+    "7.1",  # SLSA Level 3+ Supply Chain & DLL Pinning
+    "8.1",  # Truth-in-Claims & Linguistic Purity
+    "9.1",  # In-Process Single-Command Operator Self-Test
+    "10.1", # Cryptographic Audit Receipt Signing (ML-DSA-87)
+]
+
 
 class AuditScorecard:
-    def __init__(self):
+    def __init__(self, expected_gates: list[str] | None = None):
+        self.expected_gates = expected_gates or []
         self.gates = []
         self.overall_pass = True
         self.start_time = time.perf_counter()
@@ -51,8 +66,24 @@ class AuditScorecard:
         status_str = "[PASS]" if passed else "[FAIL]"
         print(f"  {status_str} Gate {gate_id}: {name:<50} ({entry['duration_ms']} ms) — {details}")
 
+    def evaluate_completeness(self) -> tuple[bool, int, int]:
+        executed_ids = {g["gate_id"] for g in self.gates}
+        missing = [gid for gid in self.expected_gates if gid not in executed_ids]
+        failed = [g["gate_id"] for g in self.gates if g["status"] != "PASS"]
+        if missing or failed:
+            self.overall_pass = False
+        passed_count = sum(1 for g in self.gates if g["status"] == "PASS")
+        total_count = len(self.expected_gates) if self.expected_gates else len(self.gates)
+        return self.overall_pass, passed_count, total_count
+
     def render_summary(self) -> str:
         total_duration = time.perf_counter() - self.start_time
+        all_passed, passed_count, total_count = self.evaluate_completeness()
+        status_line = (
+            f"{passed_count}/{total_count} SATISFIED — ALL GATES VERIFIED"
+            if all_passed and passed_count == total_count
+            else f"DEFENSE DEFICIENCY DETECTED ({passed_count}/{total_count} passed)"
+        )
         lines = [
             "",
             "=" * 84,
@@ -60,7 +91,7 @@ class AuditScorecard:
             "=" * 84,
             f"Timestamp (UTC): {datetime.now(timezone.utc).isoformat()}",
             f"Repository Root: {REPO_ROOT}",
-            f"Overall Status : {'10/10 SATISFIED — ALL GATES VERIFIED' if self.overall_pass else 'DEFENSE DEFICIENCY DETECTED'}",
+            f"Overall Status : {status_line}",
             f"Total Duration : {total_duration:.2f} seconds",
             "-" * 84,
             f"{'GATE':<8} {'ASSURANCE CATEGORY':<48} {'STATUS':<8} {'LATENCY':<10}",
@@ -98,7 +129,7 @@ def main():
     print("LAUNCHING ST2027 MASTER DEFENSE HARNESS (ZERO TOLERANCE AUDIT MODE)")
     print("=" * 84)
 
-    card = AuditScorecard()
+    card = AuditScorecard(EXPECTED_GATES)
 
     # Gate 1: Rust Data-Plane (Clippy with -D warnings + 75 tests)
     print("\n[*] Gate 1: Auditing Rust Data Plane (destroyer_core)...")
@@ -201,10 +232,8 @@ def main():
     card.record_gate("9.1", "In-Process Single-Command Operator Self-Test", passed, dur,
                      "In-memory loopback roundtrip, CER, and zeroization verified")
 
-    summary_text = card.render_summary()
-    print(summary_text)
-
-    # Save and sign the evaluation receipt
+    # Gate 10: Cryptographic Evaluation Receipt Generation & Verify-After-Sign (ML-DSA-87)
+    print("\n[*] Gate 10: Generating and Signing Master Evaluation Receipt...")
     reports_dir = REPO_ROOT / "compliance_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     receipt_file = reports_dir / "defense_master_audit_receipt.json"
@@ -219,15 +248,12 @@ def main():
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "commit": _get_git_commit(),
         "audit_version": "ST2027-EVAL-V1",
-        "overall_status": "PASS" if card.overall_pass else "FAIL",
-        "score": "10/10" if card.overall_pass else "DEFICIENT",
-        "gates": card.gates
+        "gates": card.gates.copy(),
     }
 
-    # Sign with the centrally-managed persistent ML-DSA-87 audit signer.
-    # report_trust owns custody: repo-local drill keys are refused in
-    # production unless explicitly overridden, the secret is owner-only,
-    # symlinks/hardlinks are rejected, and verify-after-sign is mandatory.
+    t0_sign = time.perf_counter()
+    signing_passed = False
+    signing_details = ""
     try:
         from pqc_algorithms import LibOQS_MLDSA_87
         from report_trust import audit_signer_fingerprint, load_or_create_audit_signer
@@ -248,19 +274,51 @@ def main():
             f.write(sig)
         with open(str(receipt_file) + ".pub", "wb") as f:
             f.write(pk)
+        signing_passed = True
+        signing_details = f"ML-DSA-87 signed & VAS verified; Signer={signer_fp[:16]}..."
         print(f"\n[+] Master defense evaluation receipt cryptographically signed with ML-DSA-87 (VAS verified):")
         print(f"    Receipt  : {receipt_file}")
         print(f"    Signature: {receipt_file}.sig ({len(sig)} bytes)")
         print(f"    Signer   : {signer_fp} (persistent audit signer, owner-only custody)")
     except Exception as e:
-        # Still persist the unsigned receipt so gate results are not lost.
+        signing_passed = False
+        signing_details = f"ML-DSA-87 signing failure: {e}"
+        print(f"[-] FAIL-CLOSED: could not sign receipt with ML-DSA-87: {e}")
+        # Still persist the unsigned receipt so partial diagnostic results are preserved on disk.
         try:
             with open(receipt_file, "w", encoding="utf-8") as f:
                 json.dump(receipt_data, f, indent=2)
         except Exception:  # nosec: B110 - best-effort receipt persistence
             pass
-        print(f"[-] Note: could not sign receipt with ML-DSA-87: {e}")
-    return 0 if card.overall_pass else 1
+
+    dur_sign = (time.perf_counter() - t0_sign) * 1000
+    card.record_gate(
+        "10.1",
+        "Cryptographic Audit Receipt Signing (ML-DSA-87)",
+        signing_passed,
+        dur_sign,
+        signing_details
+    )
+
+    # Finalize receipt with all gates and dynamic completeness verdict
+    all_passed, passed_count, total_count = card.evaluate_completeness()
+    receipt_data["overall_status"] = "PASS" if (all_passed and passed_count == total_count) else "FAIL"
+    receipt_data["score"] = f"{passed_count}/{total_count}"
+    receipt_data["gates"] = card.gates
+    try:
+        with open(receipt_file, "w", encoding="utf-8") as f:
+            json.dump(receipt_data, f, indent=2)
+    except Exception:
+        pass
+
+    summary_text = card.render_summary()
+    print(summary_text)
+
+    if not (all_passed and passed_count == total_count and len(card.gates) == total_count):
+        print(f"\n[-] MASTER AUDIT FAILED: {passed_count}/{total_count} gates passed. Defense deficiencies detected.")
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":

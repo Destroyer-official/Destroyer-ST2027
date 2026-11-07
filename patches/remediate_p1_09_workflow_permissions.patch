@@ -1,0 +1,39 @@
+diff --git a/.github/workflows/defense_ci.yml b/compliance_reports/defense_ci_hardened.yml
+index 4840fcf..0fe9dba 100644
+--- a/.github/workflows/defense_ci.yml
++++ b/compliance_reports/defense_ci_hardened.yml
+@@ -8,13 +8,14 @@ on:
+ 
+ permissions:
+   contents: read
+-  id-token: write  # OIDC identity token for Cosign / Sigstore provenance
+ 
+ jobs:
+   defense-hardening-verification:
+     name: CNSA 2.0 Hardening & Reproducible Build Attestation
+     runs-on: ubuntu-latest
+     timeout-minutes: 30
++    permissions:
++      contents: read
+ 
+     steps:
+       - name: Checkout Source Code (Audit Root)
+@@ -152,6 +153,9 @@ jobs:
+     runs-on: ubuntu-latest
+     timeout-minutes: 5
+     continue-on-error: false
++    permissions:
++      contents: read
++      id-token: write  # Least privilege: OIDC token strictly scoped to Cosign signing job
+ 
+     steps:
+       - name: Checkout Source Code (Audit Root)
+@@ -351,6 +355,8 @@ jobs:
+         os: [ubuntu-latest, windows-latest]
+     runs-on: ${{ matrix.os }}
+     timeout-minutes: 30
++    permissions:
++      contents: read
+     defaults:
+       run:
+         shell: bash

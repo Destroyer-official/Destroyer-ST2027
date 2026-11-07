@@ -1908,7 +1908,9 @@ fn cmd_stream_chaff(args: &[String]) {
         let mut emitted = 0u64;
         while count == 0 || emitted < count {
             if use_poisson {
-                poisson_scheduler.wait_next_tick();
+                if let Err(e) = poisson_scheduler.wait_next_tick() {
+                    fail(&format!("CSPRNG failure in stream-chaff Poisson pacing: {e}"));
+                }
             } else {
                 paced_scheduler.wait_next_tick();
             }
@@ -2125,11 +2127,16 @@ fn cmd_channel(args: &[String]) {
 
         let start_time = Instant::now();
         let mut next_tick_delay = if use_poisson {
-            pacing::sample_poisson_interval(
+            match pacing::sample_poisson_interval(
                 1000.0 / interval_ms.max(1) as f64,
                 Duration::from_millis(5),
                 Duration::from_millis((interval_ms * 3).max(15)),
-            )
+            ) {
+                Ok(d) => d,
+                Err(e) => {
+                    fail(&format!("CSPRNG failure sampling Poisson interval: {e}"));
+                }
+            }
         } else {
             Duration::from_millis(interval_ms)
         };
@@ -2177,11 +2184,17 @@ fn cmd_channel(args: &[String]) {
                 }
                 _ = &mut tick_sleep => {
                     let next_d = if use_poisson {
-                        pacing::sample_poisson_interval(
+                        match pacing::sample_poisson_interval(
                             1000.0 / interval_ms.max(1) as f64,
                             Duration::from_millis(5),
                             Duration::from_millis((interval_ms * 3).max(15)),
-                        )
+                        ) {
+                            Ok(d) => d,
+                            Err(e) => {
+                                eprintln!("channel: CSPRNG_FAILURE_FATAL {e}");
+                                break;
+                            }
+                        }
                     } else {
                         Duration::from_millis(interval_ms)
                     };

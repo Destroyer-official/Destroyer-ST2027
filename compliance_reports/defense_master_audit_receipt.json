@@ -1,73 +1,80 @@
 {
-  "timestamp_utc": "2026-11-06T15:05:12.588175+00:00",
-  "commit": "81e794afa20181fb79efa95425921d44340c4fb7",
+  "timestamp_utc": "2026-11-07T05:02:03.035003+00:00",
+  "commit": "ebbc48a9623553af809d12dc13b0654bf8057838",
   "audit_version": "ST2027-EVAL-V1",
-  "overall_status": "PASS",
-  "score": "10/10",
   "gates": [
     {
       "gate_id": "1.1",
       "name": "Rust Data-Plane Strict Clippy & Test Battery",
       "status": "PASS",
-      "duration_ms": 25648.03,
+      "duration_ms": 25123.17,
       "details": "255 tests passed (199 lib, 12 dudect, 43 kani); 0 compiler warnings"
     },
     {
       "gate_id": "2.1",
       "name": "ts_rt Clippy & Memory Discipline Verification",
       "status": "PASS",
-      "duration_ms": 125.96,
+      "duration_ms": 119.15,
       "details": "0 FFI warnings; VirtualLock/mlock verified"
     },
     {
       "gate_id": "3.1",
       "name": "CNSA Suite 2.0 KATs & Algorithm Purity",
       "status": "PASS",
-      "duration_ms": 587.61,
+      "duration_ms": 412.31,
       "details": "ML-KEM-1024, ML-DSA-87, AES-256-GCM KATs verified"
     },
     {
       "gate_id": "4.1",
       "name": "ProVerif 2.05 Symbolic Handshake & PCS Proofs",
       "status": "PASS",
-      "duration_ms": 32819.36,
+      "duration_ms": 28875.75,
       "details": "2/2 models proven; inj-event & secrecy conclude TRUE"
     },
     {
       "gate_id": "5.1",
       "name": "Active Exploit Defenses (Replay DoS & Nonce Reuse)",
       "status": "PASS",
-      "duration_ms": 2017.15,
+      "duration_ms": 1923.72,
       "details": "RFC 6479 decoupled window & atomic monotonic state pass"
     },
     {
       "gate_id": "6.1",
       "name": "Platform Gating (Signed ML-DSA-87 Waivers)",
       "status": "PASS",
-      "duration_ms": 2281.34,
+      "duration_ms": 2058.32,
       "details": "Unsigned waivers & unverified records fail closed"
     },
     {
       "gate_id": "7.1",
       "name": "SLSA Level 3+ Supply Chain & DLL Pinning",
       "status": "PASS",
-      "duration_ms": 318.31,
+      "duration_ms": 280.48,
       "details": "Ed25519 & SHA-384 embedded pins; Merkle root verified"
     },
     {
       "gate_id": "8.1",
       "name": "Truth-in-Claims & Linguistic Purity",
       "status": "PASS",
-      "duration_ms": 9833.18,
+      "duration_ms": 8882.66,
       "details": "Purged badges; exact Kani bounds; 0 buzzwords; 0 emojis"
     },
     {
       "gate_id": "9.1",
       "name": "In-Process Single-Command Operator Self-Test",
       "status": "PASS",
-      "duration_ms": 23800.9,
+      "duration_ms": 21153.8,
       "details": "In-memory loopback roundtrip, CER, and zeroization verified"
+    },
+    {
+      "gate_id": "10.1",
+      "name": "Cryptographic Audit Receipt Signing (ML-DSA-87)",
+      "status": "PASS",
+      "duration_ms": 132.6,
+      "details": "ML-DSA-87 signed & VAS verified; Signer=f3c0ae0d5b6c2029..."
     }
   ],
-  "signer_pk_sha3_256": "f3c0ae0d5b6c20299791d3ca6d9cfd5d8fa2f5f54e406a7cefd7bcd9e24268f4"
+  "signer_pk_sha3_256": "f3c0ae0d5b6c20299791d3ca6d9cfd5d8fa2f5f54e406a7cefd7bcd9e24268f4",
+  "overall_status": "PASS",
+  "score": "10/10"
 }
