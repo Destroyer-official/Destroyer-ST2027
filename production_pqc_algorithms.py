@@ -418,33 +418,38 @@ class SideChannelProtection:
         return result == 0
 
 class SecureMemory:
-    """Secure memory management."""
+    """Secure memory management using authenticated AES-256-GCM."""
     
     def __init__(self, use_encryption: bool = True):
         self.use_encryption = use_encryption
         self.storage = {}
+        self._counter = 0
     
     def store(self, key: str, data: bytes):
-        """Store data securely."""
+        """Store data securely using authenticated AES-256-GCM."""
         if self.use_encryption:
-            # Simple XOR encryption for demonstration
-            encryption_key = secrets.token_bytes(len(data))
-            encrypted_data = bytes(a ^ b for a, b in zip(data, encryption_key))
-            self.storage[key] = (encrypted_data, encryption_key)
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            enc_key = AESGCM.generate_key(bit_length=256)
+            aesgcm = AESGCM(enc_key)
+            self._counter += 1
+            nonce = secrets.token_bytes(4) + self._counter.to_bytes(8, byteorder="big")
+            ciphertext = aesgcm.encrypt(nonce, data, None)
+            self.storage[key] = (nonce, ciphertext, enc_key)
         else:
-            self.storage[key] = (data, None)
+            self.storage[key] = (b"", data, None)
     
     def get(self, key: str) -> bytes:
-        """Retrieve data securely."""
+        """Retrieve data securely with authenticated integrity verification."""
         if key not in self.storage:
             raise KeyError(f"Key {key} not found")
         
-        data, encryption_key = self.storage[key]
-        if encryption_key:
-            # Decrypt data
-            return bytes(a ^ b for a, b in zip(data, encryption_key))
+        nonce, payload, enc_key = self.storage[key]
+        if enc_key:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            aesgcm = AESGCM(enc_key)
+            return aesgcm.decrypt(nonce, payload, None)
         else:
-            return data
+            return payload
     
     def contains(self, key: str) -> bool:
         """Check if key exists."""

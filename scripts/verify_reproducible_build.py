@@ -301,7 +301,11 @@ def run_reproducible_build_verification():
         f.write(receipt_bytes)
 
     # Sign the receipt with ML-DSA-87 anchor
-    is_prod = os.environ.get("P2P_PRODUCTION") == "1"
+    try:
+        from production_gate import is_production
+        is_prod = is_production()
+    except ImportError:
+        is_prod = False
     sk_path = PROJECT_ROOT / "certs" / "sbom_mldsa87_signer.sk"
     if sk_path.exists():
         try:

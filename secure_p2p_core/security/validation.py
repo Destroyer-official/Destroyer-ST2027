@@ -184,44 +184,33 @@ class InputValidator:
         else:
             message_str = message
 
-        # Comprehensive attack pattern detection (mandatory rejection for any match)
+        # High-assurance attack pattern detection (destructive injection payloads only; no denial-of-service on legitimate text/code/json)
         attack_patterns = [
-            # Command injection patterns
-            (r';\s*(rm|del|format|shutdown|reboot|halt|poweroff)', "Command injection attempt"),
-            (r'`[^`]*`', "Command substitution attempt"),
-            (r'\$\([^)]*\)', "Command substitution attempt"),
-            (r'&&|\|\||[|]', "Command chaining attempt"),
+            # Destructive command injection patterns
+            (r';\s*(?:rm|del|format|shutdown|reboot|halt|poweroff)\b', "Destructive system command attempt"),
+            (r'`[^`]+`', "Command substitution attempt"),
+            (r'\$\([^)]+\)', "Command substitution attempt"),
 
             # SQL injection patterns
-            (r'(\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b.*\bFROM\b)', "SQL injection attempt"),
+            (r'(\b(?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b.*\bFROM\b)', "SQL injection attempt"),
             (r'\bUNION\b.*\bSELECT\b', "SQL UNION injection attempt"),
-            (r';\s*(DROP|DELETE|TRUNCATE)', "Destructive SQL injection attempt"),
-            (r"'.*OR.*'.*=.*'", "SQL OR injection attempt"),
-            (r'--\s*', "SQL comment injection attempt"),
+            (r';\s*(?:DROP|DELETE|TRUNCATE)\b', "Destructive SQL injection attempt"),
 
             # Script injection patterns
             (r'<script[^>]*>', "Script tag injection attempt"),
             (r'javascript:', "JavaScript protocol injection"),
             (r'vbscript:', "VBScript protocol injection"),
-            (r'on\w+\s*=', "Event handler injection attempt"),
 
             # Path traversal patterns
             (r'\.\./', "Path traversal attempt"),
             (r'\.\.\\', "Windows path traversal attempt"),
             (r'%2e%2e%2f', "URL-encoded path traversal attempt"),
 
-            # Format string attacks
-            (r'%[0-9]*[diouxXeEfFgGaAcspn%]', "Format string attack attempt"),
-
-            # Buffer overflow patterns
-            (r'A{100,}', "Potential buffer overflow attempt"),
-            (r'[^\x20-\x7E]{50,}', "Suspicious binary data"),
-
-            # Control character injection
+            # Control character injection (reject null bytes and unprintable controls)
             (r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', "Control character injection"),
 
-            # Protocol injection
-            (r'(file|ftp|ldap|dict|gopher|telnet|ssh)://', "Protocol injection attempt"),
+            # Local protocol injection
+            (r'(?:file|gopher|telnet)://', "Legacy/local protocol injection attempt"),
 
             # XML/XXE injection
             (r'<!ENTITY', "XML entity injection attempt"),
@@ -232,12 +221,6 @@ class InputValidator:
             if re.search(pattern, message_str, re.IGNORECASE | re.MULTILINE):
                 log.error(f"SECURITY VIOLATION: {attack_type} detected in message - mandatory rejection")
                 return False
-
-        # Check for excessive special characters (potential obfuscation)
-        special_char_count = len(re.findall(r'[^\w\s]', message_str))
-        if special_char_count > len(message_str) * 0.3:  # More than 30% special characters
-            log.error(f"SECURITY VIOLATION: Excessive special characters detected ({special_char_count}/{len(message_str)}) - potential obfuscation attempt - mandatory rejection")
-            return False
 
         return True
 

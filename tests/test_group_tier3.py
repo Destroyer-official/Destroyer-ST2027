@@ -928,3 +928,27 @@ def test_pq_engine_needs_real_packages(dsa, alice_keys, monkeypatch):
     with pytest.raises(GroupKeyError):
         mgr.get_pq_treekem("g", "alice", local_secret_key=b"short")
 
+
+def test_evicted_member_cannot_encrypt_or_decrypt(dsa, alice_keys):
+    """F-05: verify evicted members cannot decrypt or be sealed for."""
+    mgr = GroupKeyManager()
+    mgr.create_group("g", ["alice", "bob"])
+    # Alice and Bob in group g, epoch 0.
+    sealed0 = mgr.encrypt_for_group("g", b"epoch0-data")
+    assert mgr.decrypt_from_group("g", sealed0["envelopes"]["bob"], 0, member_id="bob") == b"epoch0-data"
+
+    # Remove Bob -> epoch 1
+    mgr.remove_member("g", "bob")
+    assert "bob" not in mgr.members_of("g")
+
+    # Bob cannot be passed as a recipient for epoch 1
+    with pytest.raises(GroupMembershipError, match="evicted or never joined"):
+        mgr.encrypt_for_group("g", b"epoch1-secret", recipients=["bob"])
+
+    # Attempting to decrypt epoch 1 as bob fails-closed
+    sealed1 = mgr.encrypt_for_group("g", b"epoch1-secret")
+    assert "bob" not in sealed1["envelopes"]
+    with pytest.raises(GroupMembershipError, match="evicted or never joined"):
+        mgr.decrypt_from_group("g", sealed1["envelopes"]["alice"], 1, member_id="bob")
+
+

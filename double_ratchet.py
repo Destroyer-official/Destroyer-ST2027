@@ -2071,7 +2071,7 @@ class DoubleRatchet:
         side_channel_protection: bool = True,
         anomaly_detection: bool = True,
         max_replay_cache_size: int = MAX_REPLAY_CACHE_SIZE,
-        protocol_version: int = 1,
+        protocol_version: int = 2,
         pq_ratchet_version: Optional[int] = None,
         deniable: bool = False
     ):
@@ -2150,11 +2150,12 @@ class DoubleRatchet:
         #     to v1 for lab interop; strict (prod/TS) fail-closes instead.
         #     See negotiate_pq_ratchet_version() to
         #     re-negotiate after the handshake advertises the peer version.
-        self.protocol_version = 1
+        self.protocol_version = 2
         try:
-            self.protocol_version = int(protocol_version)
+            if protocol_version is not None:
+                self.protocol_version = int(protocol_version)
         except (TypeError, ValueError):
-            self.protocol_version = 1
+            self.protocol_version = 2
         # FAIL-CLOSED (audit Finding 6 — PQ PCS): production/TS deployments
         # claiming fresh-KEM post-compromise recovery MUST NOT run legacy
         # v1 reuse. Research basis: Signal SPQR / Triple Ratchet (Dodis et
@@ -5673,11 +5674,11 @@ def braid_ct_sync_roundtrip(plaintext: bytes = b"Braid peer-synced CT probe",
     # AUDITED (B101): test/demo/verify-harness assertion mechanism; live paths use explicit fail-closed raises (verified 2026-09 waves)
     assert a1.get_pending_pq_ct() is None and b1.get_pending_pq_ct() is None  # nosec: B101
 
-    # 5. Pure-default v1 pair (constructor defaults, as existing tests use):
+    # 5. Explicit v1 pair:
     # unchanged legacy behavior.
     v1b_root = secrets.token_bytes(32)
-    c1 = DoubleRatchet(root_key=v1b_root, is_initiator=True)
-    d1 = DoubleRatchet(root_key=v1b_root, is_initiator=False)
+    c1 = DoubleRatchet(root_key=v1b_root, is_initiator=True, protocol_version=1)
+    d1 = DoubleRatchet(root_key=v1b_root, is_initiator=False, protocol_version=1)
     c1.set_remote_public_key(d1.get_public_key(), d1.get_kem_public_key(),
                              d1.get_dss_public_key())
     d1.set_remote_public_key(c1.get_public_key(), c1.get_kem_public_key(),

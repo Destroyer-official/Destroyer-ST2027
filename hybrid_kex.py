@@ -23,9 +23,11 @@ References:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import secrets
+import time
 from typing import Any, Optional, Tuple
 
 # Backward compatibility for legacy callers.
@@ -46,7 +48,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from liboqs_wrapper import LibOQS_MLKEM_1024
+from liboqs_wrapper import LibOQS_MLKEM_1024, LibOQS_MLDSA_87
 
 
 def _hkdf_sha384(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
@@ -54,7 +56,7 @@ def _hkdf_sha384(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> byte
 
 
 class HybridKeyExchange2027:
-    """Modern hybrid KEX: P-384 + ML-KEM-1024 (+ optional HQC-256) + PSK."""
+    """Modern authenticated hybrid KEX: P-384 + ML-KEM-1024 + ML-DSA-87 + PSK."""
 
     def __init__(
         self,
@@ -92,6 +94,17 @@ class HybridKeyExchange2027:
                 "Silent classical fallback is strictly prohibited."
             ) from e_kem
 
+        # ML-DSA-87 Identity & Mutual Authentication (F-02 remediation)
+        try:
+            self._mldsa = LibOQS_MLDSA_87()
+            self._mldsa_pk, self._mldsa_sk = self._mldsa.keygen()
+            if not self._mldsa_pk or not self._mldsa_sk:
+                raise RuntimeError("ML-DSA-87 keygen failed to produce valid keypair")
+        except Exception as e_dsa:
+            raise RuntimeError(
+                f"MILITARY FATAL: CNSA 2.0 ML-DSA-87 initialization failed: {e_dsa}."
+            ) from e_dsa
+
         # Optional HQC-256 (gated)
         self._hqc = None
         self._hqc_pk = b""
@@ -106,21 +119,101 @@ class HybridKeyExchange2027:
                 self._hqc_pk = b""
                 self._hqc_sk = b""
 
+    def _compute_bundle_tbs(self, bundle: dict) -> bytes:
+        return (
+            b"ST2027-HYBRID-KEX-BUNDLE-v2|"
+            + str(bundle.get("p384", "")).encode()
+            + b"|"
+            + str(bundle.get("mlkem", "")).encode()
+            + b"|"
+            + str(bundle.get("mldsa", "")).encode()
+            + b"|"
+            + str(bundle.get("timestamp", 0)).encode()
+        )
+
+    @staticmethod
+    def _production_posture() -> bool:
+        from production_gate import is_production, is_ts_mode
+        return is_production() or is_ts_mode()
+
+    def negotiate_protocol_version(self, peer_bundle: dict) -> int:
+        peer_ver = int(peer_bundle.get("protocol_version", 1))
+        if self._production_posture() and peer_ver < 2:
+            raise SecurityError("Legacy protocol version < 2 refused in production posture")
+        return min(2, peer_ver)
+
+    @property
+    def static_key(self) -> bytes:
+        return self._p384_public.public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint,
+        )
+
+    def _generate_keys(self) -> None:
+        self._p384_private = ec.generate_private_key(ec.SECP384R1())
+        self._p384_public = self._p384_private.public_key()
+        self._mlkem_pk, self._mlkem_sk = self._mlkem.keygen()
+        self._mldsa_pk, self._mldsa_sk = self._mldsa.keygen()
+        self.next_rotation_time = time.time() + 86400
+
+    @property
+    def dss(self):
+        return self._mldsa
+
+    @property
+    def falcon_private_key(self):
+        return self._mldsa_sk
+
+    @property
+    def kem(self):
+        return self._mlkem
+
+    def check_key_expiration(self) -> bool:
+        return time.time() >= getattr(self, "next_rotation_time", float("inf"))
+
+    def needs_rotation(self) -> bool:
+        return self.check_key_expiration()
+
+    def rotate_keys(self) -> None:
+        self._generate_keys()
+
+    def get_key_file_path(self) -> Optional[str]:
+        return None
+
+    def enhance_quantum_resistance(self) -> None:
+        pass
+
     def get_public_bundle(self) -> dict:
         p384_bytes = self._p384_public.public_bytes(
             encoding=serialization.Encoding.X962,
             format=serialization.PublicFormat.UncompressedPoint,
         )
+        now_ts = int(time.time())
         bundle = {
             "p384": p384_bytes.hex(),
             "mlkem": self._mlkem_pk.hex(),
-            "algorithm": "CNSA-2027-P384-MLKEM1024",
+            "mldsa": self._mldsa_pk.hex(),
+            "timestamp": now_ts,
+            "algorithm": "CNSA-2027-P384-MLKEM1024-MLDSA87",
+            "identity": self.identity or "ST2027_NODE",
+            "protocol_version": 2,
+            "static_key": base64.b64encode(p384_bytes).decode("ascii"),
+            "kem_public_key": base64.b64encode(self._mlkem_pk).decode("ascii"),
+            "mldsa_public_key": base64.b64encode(self._mldsa_pk).decode("ascii"),
+            "falcon_public_key": base64.b64encode(self._mldsa_pk).decode("ascii"),
+            "signed_prekey": base64.b64encode(p384_bytes).decode("ascii"),
+            "signing_key": base64.b64encode(self._mldsa_pk[:32]).decode("ascii"),
         }
         if self._hqc is not None:
             bundle["hqc"] = self._hqc_pk.hex()
+        tbs = self._compute_bundle_tbs(bundle)
+        bundle["signature"] = self._mldsa.sign(self._mldsa_sk, tbs).hex()
         return bundle
 
     def encapsulate_to_peer(self, peer_bundle: dict, transcript: bytes = b"") -> Tuple[bytes, dict, bytes]:
+        if not self.verify_public_bundle(peer_bundle):
+            raise ValueError("Peer bundle failed ML-DSA-87 signature or fingerprint authentication")
+
         # P-384 ECDH
         p384_raw = peer_bundle["p384"]
         if isinstance(p384_raw, str):
@@ -209,6 +302,32 @@ class HybridKeyExchange2027:
                 mlkem_raw = bytes.fromhex(mlkem_raw)
             if len(mlkem_raw) != 1568:
                 return False
+
+            # If ML-DSA-87 signature is attached, verify it
+            if "mldsa" in bundle and "signature" in bundle:
+                mldsa_raw = bundle["mldsa"]
+                if isinstance(mldsa_raw, str):
+                    mldsa_raw = bytes.fromhex(mldsa_raw)
+                if len(mldsa_raw) != 2592:
+                    return False
+                sig_raw = bundle["signature"]
+                if isinstance(sig_raw, str):
+                    sig_raw = bytes.fromhex(sig_raw)
+                if len(sig_raw) != 4627:
+                    return False
+                tbs = self._compute_bundle_tbs(bundle)
+                if not self._mldsa.verify(mldsa_raw, tbs, sig_raw):
+                    return False
+
+                # F-02: Enforce authorized peer fingerprints if configured
+                if self.authorized_peer_fingerprints is not None:
+                    fp = hashlib.sha384(mldsa_raw).hexdigest().lower()
+                    if fp not in self.authorized_peer_fingerprints:
+                        return False
+            elif not self._psk:
+                # F-02: Unauthenticated bundles without PSK are rejected fail-closed
+                return False
+
             return True
         except Exception:
             return False

@@ -33,9 +33,13 @@ from typing import Dict, Any, List, Optional, Tuple
 logger = logging.getLogger("verify_hardware_tokens")
 
 
-def is_production() -> bool:
-    """Check whether production fail-closed security mode is active."""
-    return os.environ.get("P2P_PRODUCTION", "").strip() == "1"
+try:
+    from production_gate import is_production
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from production_gate import is_production
 
 
 class HardwareTokenVerifier:

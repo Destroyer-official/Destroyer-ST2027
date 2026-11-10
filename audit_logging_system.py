@@ -221,7 +221,7 @@ def _verify_chain_value(event_data: str, stored: str) -> bool:
 
 
 def _encrypt_db_field(val: Any) -> str:
-    if val is None:
+    if val is None or val == "":
         return ""
     plaintext = json.dumps(val).encode('utf-8')
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -231,10 +231,10 @@ def _encrypt_db_field(val: Any) -> str:
     ct = aesgcm.encrypt(nonce, plaintext, associated_data=b"SecureP2P::AuditField::v1")
     return "ENC:" + base64.b64encode(nonce + ct).decode('ascii')
 
-def _decrypt_db_field(val_str: Optional[str]) -> Any:
+def _decrypt_db_field(val_str: Optional[str], default: Any = None) -> Any:
     if not val_str:
-        return {}
-    if val_str.startswith("ENC:"):
+        return default
+    if str(val_str).startswith("ENC:"):
         try:
             raw = base64.b64decode(val_str[4:])
             nonce = raw[:12]
@@ -245,7 +245,7 @@ def _decrypt_db_field(val_str: Optional[str]) -> Any:
             plaintext = aesgcm.decrypt(nonce, ct, associated_data=b"SecureP2P::AuditField::v1")
             return json.loads(plaintext.decode('utf-8'))
         except Exception:
-            return {}
+            return default
     try:
         return json.loads(val_str)
     except Exception:
@@ -709,8 +709,10 @@ class AuditLogger:
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             event.event_id, event.timestamp.isoformat(), et_val,
-                            sev_val, event.message, event.user_id, event.source_ip,
-                            event.destination_ip, event.user_agent, event.session_id,
+                            sev_val, _encrypt_db_field(event.message),
+                            _encrypt_db_field(event.user_id), _encrypt_db_field(event.source_ip),
+                            _encrypt_db_field(event.destination_ip), _encrypt_db_field(event.user_agent),
+                            _encrypt_db_field(event.session_id),
                             _encrypt_db_field(event.details), _encrypt_db_field(event.threat_indicators),
                             json.dumps(event.compliance_tags), event.hash_integrity,
                             event.previous_hash
@@ -916,7 +918,9 @@ class AuditLogger:
                 if previous_hash != expected_prev:
                     return False, f"Broken chain link at row {idx} (event {event_id}): expected previous {expected_prev[:16]}, got {str(previous_hash)[:16]}"
                 
-                event_data = f"{previous_hash}{event_id}{timestamp}{event_type}{severity}{message}"
+                decrypted_msg = _decrypt_db_field(message, default="")
+                msg_val = decrypted_msg if isinstance(decrypted_msg, str) else str(message or "")
+                event_data = f"{previous_hash}{event_id}{timestamp}{event_type}{severity}{msg_val}"
                 if not _verify_chain_value(event_data, hash_integrity):
                     return False, f"Hash integrity failure at row {idx} (event {event_id}): stored chain value does not verify"
                 
@@ -963,7 +967,14 @@ class AuditLogger:
             event_type=event_type,
             severity=severity,
             message=msg_str,
-            details=details or {}
+            user_id=kwargs.get('user_id'),
+            source_ip=kwargs.get('source_ip'),
+            destination_ip=kwargs.get('destination_ip'),
+            user_agent=kwargs.get('user_agent'),
+            session_id=kwargs.get('session_id'),
+            details=details or {},
+            threat_indicators=kwargs.get('threat_indicators') or [],
+            compliance_tags=kwargs.get('compliance_tags') or []
         )
         self.store_event(event)
         return event
@@ -1019,9 +1030,9 @@ class AuditLogger:
             query += " AND severity = ?"
             params.append(getattr(severity, 'value', str(severity)))
 
-        if user_id:
-            query += " AND user_id = ?"
-            params.append(user_id)
+        filter_user_id = user_id
+        # Note: user_id column in database is encrypted at rest (AES-256-GCM).
+        # We query by time/type/severity in SQL, then filter by user_id post-decryption.
 
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
@@ -1033,19 +1044,22 @@ class AuditLogger:
 
         events = []
         for row in rows:
+            u_id = _decrypt_db_field(row[5], default=None)
+            if filter_user_id and u_id != filter_user_id:
+                continue
             event_data = {
                 'event_id': row[0],
                 'timestamp': row[1],
                 'event_type': row[2],
                 'severity': row[3],
-                'message': row[4],
-                'user_id': row[5],
-                'source_ip': row[6],
-                'destination_ip': row[7],
-                'user_agent': row[8],
-                'session_id': row[9],
-                'details': _decrypt_db_field(row[10]),
-                'threat_indicators': _decrypt_db_field(row[11]),
+                'message': _decrypt_db_field(row[4], default=""),
+                'user_id': u_id,
+                'source_ip': _decrypt_db_field(row[6], default=None),
+                'destination_ip': _decrypt_db_field(row[7], default=None),
+                'user_agent': _decrypt_db_field(row[8], default=None),
+                'session_id': _decrypt_db_field(row[9], default=None),
+                'details': _decrypt_db_field(row[10], default={}),
+                'threat_indicators': _decrypt_db_field(row[11], default={}),
                 'compliance_tags': json.loads(row[12]) if row[12] else [],
                 'hash_integrity': row[13]
             }
@@ -1097,14 +1111,14 @@ class AuditLogger:
                     "timestamp": row[1],
                     "event_type": row[2],
                     "severity": row[3],
-                    "message": row[4],
-                    "user_id": row[5],
-                    "source_ip": row[6],
-                    "destination_ip": row[7],
-                    "user_agent": row[8],
-                    "session_id": row[9],
-                    "details": _decrypt_db_field(row[10]),
-                    "threat_indicators": _decrypt_db_field(row[11]),
+                    "message": _decrypt_db_field(row[4], default=""),
+                    "user_id": _decrypt_db_field(row[5], default=None),
+                    "source_ip": _decrypt_db_field(row[6], default=None),
+                    "destination_ip": _decrypt_db_field(row[7], default=None),
+                    "user_agent": _decrypt_db_field(row[8], default=None),
+                    "session_id": _decrypt_db_field(row[9], default=None),
+                    "details": _decrypt_db_field(row[10], default={}),
+                    "threat_indicators": _decrypt_db_field(row[11], default={}),
                     "compliance_tags": json.loads(row[12]) if row[12] else [],
                     "event_hash": row[13],
                     "created_at": str(row[14]),

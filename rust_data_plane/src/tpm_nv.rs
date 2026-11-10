@@ -148,6 +148,7 @@ impl ToolPaths {
 }
 
 /// Production transport: spawns tpm2-tools with list-form argv (no shell).
+#[derive(Debug, Clone)]
 pub struct ToolsTransport {
     index: u64,
     owner: String,
@@ -237,6 +238,276 @@ impl NvTransport for ToolsTransport {
             Err(NvError::Tools(m)) if already_defined(&m) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct TbsContextParams2 {
+    version: u32,
+    flags: u32,
+}
+
+#[cfg(windows)]
+extern "system" {
+    fn LoadLibraryA(lpLibFileName: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+    fn GetProcAddress(hModule: *mut std::ffi::c_void, lpProcName: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+    fn FreeLibrary(hLibModule: *mut std::ffi::c_void) -> i32;
+}
+
+/// Windows TPM Base Services (TBS) hardware transport for direct TPM 2.0 NV access.
+#[cfg(windows)]
+#[derive(Debug, Clone)]
+pub struct WindowsTbsTransport {
+    index: u32,
+}
+
+#[cfg(windows)]
+impl WindowsTbsTransport {
+    pub fn new(index: u64) -> Self {
+        Self {
+            index: index as u32,
+        }
+    }
+
+    /// Query whether a physical or virtual TPM 2.0 device is present via Windows TBS.
+    pub fn is_available() -> bool {
+        unsafe {
+            let tbs = LoadLibraryA(c"tbs.dll".as_ptr());
+            if tbs.is_null() {
+                return false;
+            }
+            let is_present_fn = GetProcAddress(tbs, c"Tbsi_Is_Tpm_Present".as_ptr());
+            if is_present_fn.is_null() {
+                let _ = FreeLibrary(tbs);
+                return false;
+            }
+            let is_present: extern "system" fn() -> u32 = std::mem::transmute(is_present_fn);
+            let ok = is_present() != 0;
+            let _ = FreeLibrary(tbs);
+            ok
+        }
+    }
+
+    /// Submit a raw TPM 2.0 command byte buffer through TBS.
+    pub fn submit_raw(&self, cmd: &[u8]) -> Result<Vec<u8>, NvError> {
+        unsafe {
+            let tbs = LoadLibraryA(c"tbs.dll".as_ptr());
+            if tbs.is_null() {
+                return Err(NvError::Tools("Windows tbs.dll could not be loaded".into()));
+            }
+            let create_fn = GetProcAddress(tbs, c"Tbsi_Context_Create".as_ptr());
+            let submit_fn = GetProcAddress(tbs, c"Tbsip_Submit_Command".as_ptr());
+            let close_fn = GetProcAddress(tbs, c"Tbsip_Context_Close".as_ptr());
+
+            if create_fn.is_null() || submit_fn.is_null() || close_fn.is_null() {
+                let _ = FreeLibrary(tbs);
+                return Err(NvError::Tools("tbs.dll missing expected export symbols".into()));
+            }
+
+            let ctx_create: extern "system" fn(*const TbsContextParams2, *mut *mut std::ffi::c_void) -> u32 =
+                std::mem::transmute(create_fn);
+            let ctx_submit: extern "system" fn(*mut std::ffi::c_void, u32, u32, *const u8, u32, *mut u8, *mut u32) -> u32 =
+                std::mem::transmute(submit_fn);
+            let ctx_close: extern "system" fn(*mut std::ffi::c_void) -> u32 =
+                std::mem::transmute(close_fn);
+
+            let params = TbsContextParams2 {
+                version: 2, // TPM_VERSION_20
+                flags: 4,   // includeTpm20 (bit 2)
+            };
+            let mut h_ctx: *mut std::ffi::c_void = std::ptr::null_mut();
+            let cr_res = ctx_create(&params, &mut h_ctx);
+            if cr_res != 0 {
+                let _ = FreeLibrary(tbs);
+                return Err(NvError::Tools(format!("Tbsi_Context_Create failed: 0x{cr_res:08X}")));
+            }
+
+            let mut resp_buf = vec![0u8; 1024];
+            let mut resp_len = resp_buf.len() as u32;
+            let sub_res = ctx_submit(
+                h_ctx,
+                0,   // TBS_COMMAND_LOCALITY_ZERO
+                200, // TBS_COMMAND_PRIORITY_NORMAL
+                cmd.as_ptr(),
+                cmd.len() as u32,
+                resp_buf.as_mut_ptr(),
+                &mut resp_len,
+            );
+            let _ = ctx_close(h_ctx);
+            let _ = FreeLibrary(tbs);
+
+            if sub_res != 0 {
+                return Err(NvError::Tools(format!("Tbsip_Submit_Command failed: 0x{sub_res:08X}")));
+            }
+            resp_buf.truncate(resp_len as usize);
+            Ok(resp_buf)
+        }
+    }
+}
+
+#[cfg(windows)]
+impl NvTransport for WindowsTbsTransport {
+    fn read(&self) -> Result<u64, NvError> {
+        let mut cmd = Vec::with_capacity(35);
+        cmd.extend_from_slice(&0x8002u16.to_be_bytes()); // TPM_ST_SESSIONS
+        cmd.extend_from_slice(&35u32.to_be_bytes());     // commandSize
+        cmd.extend_from_slice(&0x0000014Eu32.to_be_bytes()); // TPM_CC_NV_Read
+        cmd.extend_from_slice(&0x40000001u32.to_be_bytes()); // TPM_RH_OWNER authHandle
+        cmd.extend_from_slice(&self.index.to_be_bytes());     // nvIndex
+        // Authorization session: Password session (empty auth, 9 bytes)
+        cmd.extend_from_slice(&9u32.to_be_bytes());           // authSize
+        cmd.extend_from_slice(&0x40000009u32.to_be_bytes());  // TPM_RS_PW
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // nonceCaller size 0
+        cmd.push(0u8);                                       // sessionAttributes 0
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // hmac size 0
+        // Parameters (4 bytes)
+        cmd.extend_from_slice(&8u16.to_be_bytes());           // size: 8 bytes
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // offset: 0
+
+        let resp = self.submit_raw(&cmd)?;
+        if resp.len() < 10 {
+            return Err(NvError::Tools("TPM response too short".into()));
+        }
+        let rc = u32::from_be_bytes(resp[6..10].try_into().unwrap());
+        if rc == 0 {
+            if resp.len() >= 24 {
+                let val = u64::from_be_bytes(resp[16..24].try_into().unwrap());
+                Ok(val)
+            } else {
+                Err(NvError::Tools("TPM2_NV_Read response buffer truncated".into()))
+            }
+        } else {
+            classify_tpm_rc(rc)
+        }
+    }
+
+    fn increment(&self) -> Result<u64, NvError> {
+        let mut cmd = Vec::with_capacity(31);
+        cmd.extend_from_slice(&0x8002u16.to_be_bytes()); // TPM_ST_SESSIONS
+        cmd.extend_from_slice(&31u32.to_be_bytes());     // commandSize
+        cmd.extend_from_slice(&0x00000177u32.to_be_bytes()); // TPM_CC_NV_Increment
+        cmd.extend_from_slice(&0x40000001u32.to_be_bytes()); // TPM_RH_OWNER authHandle
+        cmd.extend_from_slice(&self.index.to_be_bytes());     // nvIndex
+        // Authorization area (9 bytes)
+        cmd.extend_from_slice(&9u32.to_be_bytes());           // authSize
+        cmd.extend_from_slice(&0x40000009u32.to_be_bytes());  // TPM_RS_PW
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // nonce size 0
+        cmd.push(0u8);                                       // attributes 0
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // hmac size 0
+
+        let resp = self.submit_raw(&cmd)?;
+        if resp.len() < 10 {
+            return Err(NvError::Tools("TPM response too short".into()));
+        }
+        let rc = u32::from_be_bytes(resp[6..10].try_into().unwrap());
+        if rc == 0 {
+            self.read()
+        } else {
+            classify_tpm_rc(rc)
+        }
+    }
+
+    fn define(&self) -> Result<(), NvError> {
+        let mut cmd = Vec::with_capacity(57);
+        cmd.extend_from_slice(&0x8002u16.to_be_bytes()); // TPM_ST_SESSIONS
+        cmd.extend_from_slice(&57u32.to_be_bytes());     // commandSize
+        cmd.extend_from_slice(&0x0000012Au32.to_be_bytes()); // TPM_CC_NV_DefineSpace
+        cmd.extend_from_slice(&0x40000001u32.to_be_bytes()); // TPM_RH_OWNER authHandle
+        cmd.extend_from_slice(&9u32.to_be_bytes());           // authSize
+        cmd.extend_from_slice(&0x40000009u32.to_be_bytes());  // TPM_RS_PW
+        cmd.extend_from_slice(&0u16.to_be_bytes());
+        cmd.push(0u8);
+        cmd.extend_from_slice(&0u16.to_be_bytes());
+        // Parameters:
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // auth.size = 0
+        cmd.extend_from_slice(&26u16.to_be_bytes());          // publicInfo.size = 26
+        cmd.extend_from_slice(&self.index.to_be_bytes());     // nvIndex
+        cmd.extend_from_slice(&0x000Bu16.to_be_bytes());      // nameAlg: SHA-256
+        let attrs: u32 = 0x000C0002 | 0x00080000;            // TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_COUNTER
+        cmd.extend_from_slice(&attrs.to_be_bytes());
+        cmd.extend_from_slice(&0u16.to_be_bytes());           // authPolicy size 0
+        cmd.extend_from_slice(&8u16.to_be_bytes());           // dataSize: 8
+
+        let resp = self.submit_raw(&cmd)?;
+        if resp.len() < 10 {
+            return Err(NvError::Tools("TPM response too short".into()));
+        }
+        let rc = u32::from_be_bytes(resp[6..10].try_into().unwrap());
+        if rc == 0 || rc == 0x014C || (rc & 0xFF) == 0x4C {
+            // 0x14C = TPM_RC_NV_DEFINED (already defined, idempotent success)
+            Ok(())
+        } else {
+            classify_tpm_rc::<()>(rc)
+        }
+    }
+}
+
+/// Dynamic NV transport selecting between Windows TBS, Linux tools, or in-memory emulation.
+#[derive(Debug, Clone)]
+pub enum AnyNvTransport {
+    Tools(Box<ToolsTransport>),
+    #[cfg(windows)]
+    Windows(WindowsTbsTransport),
+    Memory(std::sync::Arc<std::sync::Mutex<Option<u64>>>),
+}
+
+impl NvTransport for AnyNvTransport {
+    fn read(&self) -> Result<u64, NvError> {
+        match self {
+            Self::Tools(t) => t.read(),
+            #[cfg(windows)]
+            Self::Windows(t) => t.read(),
+            Self::Memory(m) => {
+                let lock = m.lock().unwrap();
+                lock.ok_or(NvError::Uninitialized)
+            }
+        }
+    }
+
+    fn increment(&self) -> Result<u64, NvError> {
+        match self {
+            Self::Tools(t) => t.increment(),
+            #[cfg(windows)]
+            Self::Windows(t) => t.increment(),
+            Self::Memory(m) => {
+                let mut lock = m.lock().unwrap();
+                let next = match *lock {
+                    None => 1,
+                    Some(v) => v.checked_add(1).ok_or_else(|| NvError::Tools("counter exhausted".into()))?,
+                };
+                *lock = Some(next);
+                Ok(next)
+            }
+        }
+    }
+
+    fn define(&self) -> Result<(), NvError> {
+        match self {
+            Self::Tools(t) => t.define(),
+            #[cfg(windows)]
+            Self::Windows(t) => t.define(),
+            Self::Memory(m) => {
+                let mut lock = m.lock().unwrap();
+                if lock.is_none() {
+                    *lock = Some(0);
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+pub fn classify_tpm_rc<T>(rc: u32) -> Result<T, NvError> {
+    let lower_rc = rc & 0xFF;
+    if rc == 0x14a || lower_rc == 0x4a {
+        Err(NvError::Uninitialized)
+    } else if rc == 0x18b || lower_rc == 0x8b {
+        Err(NvError::NotDefined)
+    } else if rc == 0x99d || rc == 0x17d || rc == 0x9a2 || lower_rc == 0x9d || lower_rc == 0x7d {
+        Err(NvError::PolicyFailure(format!("TPM authorization policy failure: 0x{rc:08X}")))
+    } else {
+        Err(NvError::Tools(format!("TPM error response code: 0x{rc:08X}")))
     }
 }
 
@@ -337,19 +608,28 @@ pub fn parse_index(s: &str) -> Result<u64, String> {
 }
 
 /// `None` when the guard is disabled (env unset/empty), `Some` otherwise.
-pub fn transport_from_index_str(index: Option<&str>) -> Result<Option<ToolsTransport>, String> {
+pub fn transport_from_index_str(index: Option<&str>) -> Result<Option<AnyNvTransport>, String> {
     let Some(raw) = index else { return Ok(None) };
     let raw = raw.trim();
     if raw.is_empty() {
         return Ok(None);
     }
     let idx = parse_index(raw)?;
+    if std::env::var("P2P_TPM_EMULATION").map(|v| v == "1").unwrap_or(false) {
+        return Ok(Some(AnyNvTransport::Memory(std::sync::Arc::new(std::sync::Mutex::new(None)))));
+    }
+    #[cfg(windows)]
+    {
+        if std::env::var("P2P_TPM2_NVREAD").is_err() && WindowsTbsTransport::is_available() {
+            return Ok(Some(AnyNvTransport::Windows(WindowsTbsTransport::new(idx))));
+        }
+    }
     let owner = std::env::var("P2P_TPM_NV_OWNER").unwrap_or_else(|_| "o".to_string());
-    Ok(Some(ToolsTransport::new(
+    Ok(Some(AnyNvTransport::Tools(Box::new(ToolsTransport::new(
         idx,
         &owner,
         ToolPaths::from_env(),
-    )))
+    )))))
 }
 
 /// True when the state file does not exist yet or is empty (a fresh state
@@ -1195,7 +1475,8 @@ pub fn guard_crl_sequence(state_path: Option<&str>, crl_seq: u64) -> Result<(), 
                 idx.saturating_add(1)
             };
             let owner = std::env::var("P2P_TPM_NV_OWNER").unwrap_or_else(|_| "o".to_string());
-            let transport = ToolsTransport::new(crl_idx, &owner, ToolPaths::from_env());
+            let transport = transport_from_index_str(Some(&format!("0x{crl_idx:x}")))?
+                .unwrap_or_else(|| AnyNvTransport::Tools(Box::new(ToolsTransport::new(crl_idx, &owner, ToolPaths::from_env()))));
             return guard_crl_sequence_with(&transport, crl_seq);
         }
     }
@@ -1674,5 +1955,33 @@ mod tests {
         let e = checkpoint_with(&Broken, &KEY, &path, 1).unwrap_err();
         assert!(e.contains("TPM NV read failed"), "{e}");
         cleanup(&path);
+    }
+
+    #[test]
+    fn test_classify_tpm_rc_mappings() {
+        assert_eq!(classify_tpm_rc::<u64>(0x14a), Err(NvError::Uninitialized));
+        assert_eq!(classify_tpm_rc::<u64>(0x18b), Err(NvError::NotDefined));
+        assert_eq!(classify_tpm_rc::<u64>(0x8b), Err(NvError::NotDefined));
+        assert!(matches!(classify_tpm_rc::<u64>(0x99d), Err(NvError::PolicyFailure(_))));
+        assert!(matches!(classify_tpm_rc::<u64>(0x999), Err(NvError::Tools(_))));
+    }
+
+    #[test]
+    fn test_any_nv_transport_memory() {
+        let mem = AnyNvTransport::Memory(std::sync::Arc::new(std::sync::Mutex::new(None)));
+        assert_eq!(mem.read(), Err(NvError::Uninitialized));
+        assert_eq!(mem.increment().unwrap(), 1);
+        assert_eq!(mem.read().unwrap(), 1);
+        assert_eq!(mem.increment().unwrap(), 2);
+        assert_eq!(mem.read().unwrap(), 2);
+        assert!(mem.define().is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_windows_tbs_availability_check() {
+        // Must succeed without panic on Windows
+        let avail = WindowsTbsTransport::is_available();
+        println!("Windows TBS available on host: {avail}");
     }
 }

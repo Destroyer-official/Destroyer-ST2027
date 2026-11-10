@@ -2081,15 +2081,18 @@ def _cmd_selftest() -> int:
                 cli_kp = generate_hybrid_keypair(cli_pk, cli_sk)
                 srv_kp = generate_hybrid_keypair(srv_pk, srv_sk)
                 m1, ini, t0 = xxhfs_initiate(cli_kp, "selftest")
-                assert len(m1) == XXHFS_M1_LEN and cli_pk not in m1
+                if len(m1) != XXHFS_M1_LEN or cli_pk in m1:
+                    raise SecurityError("M1 length or identity masking invariant violated")
                 m2, rsp, t_rsp = xxhfs_respond(m1, srv_kp, "selftest")
                 m3, c_st = xxhfs_finalize(ini, m2, cli_kp, "selftest", t0, expected_peer_pk=srv_pk)
                 s_st = xxhfs_complete(rsp, m3, srv_kp, "selftest", t_rsp, expected_peer_pk=cli_pk)
-                assert c_st.key() == s_st.key()
+                if c_st.key() != s_st.key():
+                    raise SecurityError("Client and server derived keys mismatch")
                 cli = Channel(c_st, direction_out=0xA5, direction_in=0x5A)
                 srv = Channel(s_st, direction_out=0x5A, direction_in=0xA5)
                 w = cli.seal_data(b"selftest-payload")
-                assert srv.open(w)[1] == b"selftest-payload"
+                if srv.open(w)[1] != b"selftest-payload":
+                    raise SecurityError("Channel seal/open payload mismatch")
                 forged = bytearray(w)
                 forged[2:10] = b"\xff" * 8
                 try:
@@ -2097,8 +2100,10 @@ def _cmd_selftest() -> int:
                     raise AssertionError("forgery accepted")
                 except SecurityError:
                     pass
-                assert srv.open(cli.seal_data(b"post-probe"))[1] == b"post-probe"
-                assert c_st.key() != b"\x00" * 32
+                if srv.open(cli.seal_data(b"post-probe"))[1] != b"post-probe":
+                    raise SecurityError("Post-probe payload mismatch")
+                if c_st.key() == b"\x00" * 32:
+                    raise SecurityError("Derived key cannot be all-zero")
                 c_st.destroy()
                 try:
                     c_st.key()

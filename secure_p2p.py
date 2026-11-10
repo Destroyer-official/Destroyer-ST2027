@@ -10790,7 +10790,9 @@ class SecureP2PChat:
                     try:
                         pw1 = _gp.getpass("Enter Officer 1 Passphrase (no echo): ")
                     except Exception:
-                        pw1 = await self._async_input("Enter Officer 1 Passphrase: ")
+                        if sys.stdin.isatty():
+                            raise
+                        pw1 = sys.stdin.readline().strip()
 
                 off2_id = os.environ.get("P2P_KEY_FILL_OFFICER2", "").strip()
                 if not off2_id:
@@ -10801,7 +10803,9 @@ class SecureP2PChat:
                     try:
                         pw2 = _gp.getpass("Enter Officer 2 Passphrase (no echo): ")
                     except Exception:
-                        pw2 = await self._async_input("Enter Officer 2 Passphrase: ")
+                        if sys.stdin.isatty():
+                            raise
+                        pw2 = sys.stdin.readline().strip()
 
                 if not off1_id or not pw1 or not off2_id or not pw2:
                     print(f"\n{RED}[KEY-FILL ERROR] Incomplete dual-custody credentials. Import aborted.{RESET}")
@@ -14438,13 +14442,20 @@ class TacticalP2PNode:
 
         extra_args = []
         if not self.psk_file:
-            if not self.lab_mode:
+            from production_gate import is_production
+            if is_production() or not self.lab_mode:
                 print(f"{RED}[{self.name} ERROR] PSK file is MANDATORY: no unauthenticated "
                       f"key exchange is permitted in any mode. Provide --psk-file.{RESET}")
                 return False
+            # F-01: All-zero PSK permanently removed; auto-generate 256-bit cryptographically secure PSK
             lab_psk_path = os.path.join(self.work_dir, "lab_default.psk")
             if not os.path.exists(lab_psk_path):
-                Path(lab_psk_path).write_bytes(b"\x00" * 32)
+                Path(lab_psk_path).write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
+                if os.name != "nt":
+                    try:
+                        os.chmod(lab_psk_path, 0o600)
+                    except OSError:
+                        pass
             self.psk_file = lab_psk_path
         if not os.path.exists(self.psk_file):
             print(f"{RED}[{self.name} ERROR] PSK file not found: {self.psk_file}.{RESET}")
@@ -14596,6 +14607,14 @@ class TacticalP2PNode:
             from unified_secure_pipeline import create_zero_gap_session
             key_hex = Path(self.key_path).read_text().strip()
             root_bytes = bytes.fromhex(key_hex)
+            # F-09: Securely shred session key from disk immediately after reading into locked RAM
+            try:
+                kp = Path(self.key_path)
+                if kp.exists():
+                    kp.write_bytes(secrets.token_bytes(64))
+                    kp.unlink()
+            except Exception:
+                pass
             self.zero_gap_pipeline, self.zero_gap_ratchet = create_zero_gap_session(
                 root_bytes, is_initiator=(self.role == "initiator")
             )
@@ -16775,10 +16794,26 @@ def run_production_selftest() -> bool:
     return passed == total
 
 
+def get_tactical_key_dir() -> Path:
+    """Return secure, user-private directory for tactical station keys.
+    Prevents secret material from ever entering the git working tree."""
+    if os.name == "nt":
+        key_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ST2027" / "keys"
+    else:
+        key_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ST2027" / "keys"
+    key_dir.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(key_dir, 0o700)
+        except OSError:
+            pass
+    return key_dir
+
+
 def _auto_provision_tactical_credentials() -> None:
     """Ensure tactical military credentials exist with owner-only permissions."""
-    root_dir = ROOT
-    psk_file = root_dir / "tactical_station.psk"
+    key_dir = get_tactical_key_dir()
+    psk_file = key_dir / "tactical_station.psk"
     if not psk_file.exists():
         psk_file.write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
         if os.name != "nt":
@@ -16787,10 +16822,10 @@ def _auto_provision_tactical_credentials() -> None:
             except OSError:
                 pass
 
-    alpha_sk = root_dir / "alpha.auth.sk"
-    alpha_pk = root_dir / "alpha.auth.pk"
-    bravo_sk = root_dir / "bravo.auth.sk"
-    bravo_pk = root_dir / "bravo.auth.pk"
+    alpha_sk = key_dir / "alpha.auth.sk"
+    alpha_pk = key_dir / "alpha.auth.pk"
+    bravo_sk = key_dir / "bravo.auth.sk"
+    bravo_pk = key_dir / "bravo.auth.pk"
 
     if NATIVE_BIN.exists():
         if not alpha_sk.exists() or not alpha_pk.exists():
@@ -16798,9 +16833,9 @@ def _auto_provision_tactical_credentials() -> None:
         if not bravo_sk.exists() or not bravo_pk.exists():
             subprocess.run([str(NATIVE_BIN), "auth-keygen", "--out-sk", str(bravo_sk), "--out-pk", str(bravo_pk)], check=True, capture_output=True)
 
-    root_ca_file = root_dir / "military_root_ca.crt"
-    alpha_cert = root_dir / "alpha_norad.crt"
-    bravo_cert = root_dir / "bravo_pentagon.crt"
+    root_ca_file = key_dir / "military_root_ca.crt"
+    alpha_cert = key_dir / "alpha_norad.crt"
+    bravo_cert = key_dir / "bravo_pentagon.crt"
 
     if not root_ca_file.exists() or not alpha_cert.exists() or not bravo_cert.exists():
         try:
@@ -16822,9 +16857,9 @@ def _auto_provision_tactical_credentials() -> None:
 def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer: str = None, ipv6: bool = False) -> int:
     """Launch Base Alpha or Base Bravo with zero manual flags in full DEFCON-1 mode."""
     _auto_provision_tactical_credentials()
-    root_dir = ROOT
-    psk_file = str(root_dir / "tactical_station.psk")
-    root_ca_file = str(root_dir / "military_root_ca.crt")
+    key_dir = get_tactical_key_dir()
+    psk_file = str(key_dir / "tactical_station.psk")
+    root_ca_file = str(key_dir / "military_root_ca.crt")
 
     # IPv6 resolution
     if ipv6 or (bind and ":" in bind) or (peer and ":" in peer):
@@ -16846,12 +16881,12 @@ def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer
             channel_port=9060,
             peer_channel_port=9061,
             psk_file=psk_file,
-            auth_sk_file=str(root_dir / "alpha.auth.sk"),
-            peer_auth_pk_file=str(root_dir / "bravo.auth.pk"),
+            auth_sk_file=str(key_dir / "alpha.auth.sk"),
+            peer_auth_pk_file=str(key_dir / "bravo.auth.pk"),
             require_mutual_auth=True,
             root_ca_file=root_ca_file,
-            node_cert_file=str(root_dir / "alpha_norad.crt"),
-            peer_cert_file=str(root_dir / "bravo_pentagon.crt"),
+            node_cert_file=str(key_dir / "alpha_norad.crt"),
+            peer_cert_file=str(key_dir / "bravo_pentagon.crt"),
             require_root_ca=True,
             lab_mode=lab
         )
@@ -16867,12 +16902,12 @@ def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer
             channel_port=9061,
             peer_channel_port=9060,
             psk_file=psk_file,
-            auth_sk_file=str(root_dir / "bravo.auth.sk"),
-            peer_auth_pk_file=str(root_dir / "alpha.auth.pk"),
+            auth_sk_file=str(key_dir / "bravo.auth.sk"),
+            peer_auth_pk_file=str(key_dir / "alpha.auth.pk"),
             require_mutual_auth=True,
             root_ca_file=root_ca_file,
-            node_cert_file=str(root_dir / "bravo_pentagon.crt"),
-            peer_cert_file=str(root_dir / "alpha_norad.crt"),
+            node_cert_file=str(key_dir / "bravo_pentagon.crt"),
+            peer_cert_file=str(key_dir / "alpha_norad.crt"),
             require_root_ca=True,
             lab_mode=lab
         )

@@ -56,7 +56,6 @@ try:
     from liboqs_wrapper import (
         LibOQS_MLKEM_1024,
         LibOQS_McEliece_8192128f,
-        LibOQS_HQC_256,
         liboqs
     )
     HAVE_LIBOQS = True
@@ -353,33 +352,7 @@ class LibOQS_FrodoKEM_1344:
 
 
 def is_hqc_available() -> bool:
-    """Check if HQC-256 is supported, enabled, and authorized in this build.
-
-    Vendored oqs.dll predates liboqs 0.16.0, affected by HQC key-recovery issues fixed
-    upstream in 0.12.0 (CVE-2024-54137) and 0.14.0 (CVE-2025-52473) plus XMSS OOB
-    (CVE-2026-44518/CVE-2026-46344, fixed 0.16.0; only 0.16.0 supported). The HQC
-    diversity leg therefore stays DISABLED by default and the caller falls back
-    to McEliece-8192128f. Explicit opt-in for lab evaluation only:
-    P2P_ENABLE_VULN_HQC=1 (logged as CRITICAL). Re-enable by default after the
-    DLL is rebuilt at >=0.16.0.
-    """
-    try:
-        if os.environ.get("P2P_ENABLE_VULN_HQC", "").strip().lower() in ("1", "true", "yes", "on"):
-            try:
-                import logging as _logging
-                _logging.getLogger(__name__).critical(
-                    "P2P_ENABLE_VULN_HQC=1: HQC-256 leg explicitly enabled on vulnerable "
-                    "oqs <0.16.0 (CVE-2024-54137/CVE-2025-52473). Lab evaluation only."
-                )
-            # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-            except Exception:  # nosec: B110
-                pass
-            if hasattr(liboqs, 'OQS_KEM_alg_is_enabled'):
-                return bool(liboqs.OQS_KEM_alg_is_enabled(b"HQC-256"))
-            return True
-    # AUDITED (B110): intentional best-effort cleanup/probe fallback; no security decision swallowed (triaged 2026-09 waves)
-    except Exception:  # nosec: B110
-        pass
+    """HQC-256 permanently prohibited per CNSA 2.0 (FIPS 203 ML-KEM-1024 standard)."""
     return False
 
 
@@ -475,14 +448,9 @@ class TripleHybridKEM:
         return self._frodo
 
     @property
-    def hqc(self) -> LibOQS_HQC_256:
-        """Lazy-initialize HQC-256 on demand."""
-        if self._hqc is None:
-            try:
-                self._hqc = LibOQS_HQC_256()
-            except Exception as e:
-                raise TripleKEMError(f"Failed to initialize HQC-256: {e}")
-        return self._hqc
+    def hqc(self):
+        """HQC-256 permanently prohibited."""
+        raise TripleKEMError("HQC-256 permanently prohibited per CNSA 2.0 (FIPS 203 ML-KEM-1024 standard)")
 
     def _init_algorithms(self):
         """Initialize KEM algorithms for the active mode."""

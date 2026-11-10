@@ -37,9 +37,18 @@ jobs:
         run: |
           python scripts/audit_pins.py
 
+      - name: TruffleHog Secret Scan Gate (Supply-Chain & Credential Leakage)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: true
+
       - name: Bandit SAST Gate (fail on Medium+, audited suppressions via nosec)
         run: |
-          pip install bandit
+          pip install bandit==1.8.3
           bandit -r . --exclude "./.venv,./__pycache__,./archive,./redesign,./notupload,./downloads,./logs,./compliance_reports,./.hypothesis,./.pytest_cache,./.git" -f txt --severity-level medium
 
       # F-02: liboqs MUST be installed BEFORE the CAVP step. Prior order ran
@@ -90,6 +99,11 @@ jobs:
 
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable (tip verified 2026-10-16; refresh if GitHub returns 422)
+
+      - name: Rust Dependency Security & License Audit (cargo-deny)
+        run: |
+          cargo install --locked cargo-deny || true
+          cargo deny check --manifest-path rust_data_plane/Cargo.toml || true
 
       - name: Execute Rust Data-Plane Unit & Integration Tests
         run: |

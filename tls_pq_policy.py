@@ -52,8 +52,10 @@ def client_offers_hybrid_group() -> bool:
     try:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
         cin, cout = ssl.MemoryBIO(), ssl.MemoryBIO()
-        obj = ctx.wrap_bio(cin, cout, server_side=False)
+        obj = ctx.wrap_bio(cin, cout, server_side=False, server_hostname="localhost")
         try:
             obj.do_handshake()
         except ssl.SSLWantReadError:

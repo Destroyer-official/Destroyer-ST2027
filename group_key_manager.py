@@ -1353,12 +1353,16 @@ class GroupKeyManager:
                         group_id, state.epoch, committer_id)
             return state.epoch
 
-    def encrypt_for_group(self, group_id: str, plaintext: bytes | str) -> Dict[str, Any]:
+    def encrypt_for_group(self, group_id: str, plaintext: bytes | str,
+                          recipients: Optional[List[str]] = None) -> Dict[str, Any]:
         """Encrypt for the group -> ``{"group_id", "epoch", "envelopes"}``.
 
-        ``envelopes`` maps each current member -> ciphertext bytes. Each
+        ``envelopes`` maps each recipient member -> ciphertext bytes. Each
         envelope uses the pairwise hook when available, else the AES-GCM
         placeholder under the current epoch key.
+
+        When ``recipients`` is provided, each must be an active member in
+        ``state.members`` (evicted or unknown recipients fail closed).
         """
         group_id = _validate_group_id(group_id)
         if isinstance(plaintext, str):
@@ -1372,9 +1376,18 @@ class GroupKeyManager:
             self._check_unlocked(state)
             if not state.members:
                 raise GroupMembershipError("group has no members")
+            if recipients is not None:
+                for r in recipients:
+                    r_clean = _validate_member_id(r)
+                    if r_clean not in state.members:
+                        raise GroupMembershipError(
+                            f"recipient {r!r} is not in group (evicted or never joined) for epoch {state.epoch}"
+                        )
+                members = [_validate_member_id(r) for r in recipients]
+            else:
+                members = list(state.members)
             epoch = state.epoch
             key_snapshot = bytes(state.group_key)
-            members = list(state.members)
         aad = None  # computed per member below (V2 member-bound)
         envelopes: Dict[str, bytes] = {}
         strict_pairwise = _strict_pairwise_required()
@@ -1429,6 +1442,10 @@ class GroupKeyManager:
             if epoch != state.epoch:
                 raise GroupKeyError(
                     f"stale epoch {epoch} (current {state.epoch}); no key history retained"
+                )
+            if member_id is not None and member_id not in state.members:
+                raise GroupMembershipError(
+                    f"member {member_id!r} is not in group (evicted or never joined) for epoch {epoch}"
                 )
             key_snapshot = bytes(state.group_key)
         if member_id is not None:

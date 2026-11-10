@@ -482,6 +482,184 @@ class TestAuditForensicRemediations(unittest.TestCase):
         asyncio.run(cp.handle_command("/exit", []))
         orch._close_connection.assert_awaited_once_with(attempt_reconnect=False)
 
+    def test_21_multi_device_enrollment_sas_and_key_change_notifications(self):
+        """F-06: MultiDeviceManager SAS verification and key change notifications."""
+        from multi_device_manager import MultiDeviceManager, DeviceEnrollmentError
+        import unittest.mock as mock
+
+        mgr = MultiDeviceManager(in_memory_only=True)
+        user_id = "test-user-identity-456"
+
+        # 1. Enroll root device
+        root_dev, root_sk = mgr.enroll_root_device(
+            user_identity_id=user_id,
+            device_name="Workstation-1",
+            device_type="desktop"
+        )
+        self.assertIsNotNone(root_dev)
+        notifications = mgr.get_key_change_notifications(user_id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0]["event_type"], "ROOT_DEVICE_ENROLLED")
+
+        # 2. Pre-generate child keys
+        child_pk, child_sk = mgr.generate_device_keypair()
+
+        # 3. Calculate SAS
+        sas = mgr.generate_device_enrollment_sas(user_id, root_dev.device_id, child_pk)
+        self.assertEqual(len(sas), 6)
+        self.assertTrue(sas.isdigit())
+        self.assertTrue(mgr.verify_device_enrollment_sas(user_id, root_dev.device_id, child_pk, sas))
+        self.assertFalse(mgr.verify_device_enrollment_sas(user_id, root_dev.device_id, child_pk, "000000" if sas != "000000" else "111111"))
+
+        # 4. In production posture, missing SAS must fail closed
+        with mock.patch.dict(os.environ, {"P2P_DEVICE_REQUIRE_SAS": "1"}):
+            with self.assertRaises(DeviceEnrollmentError):
+                mgr.enroll_device(
+                    user_identity_id=user_id,
+                    device_name="Tactical-Phone",
+                    device_type="mobile",
+                    authorizing_device_id=root_dev.device_id,
+                    authorizing_private_key=root_sk,
+                    device_public_key=child_pk,
+                    device_private_key=child_sk,
+                    sas_code=None  # Missing SAS
+                )
+
+            # Invalid SAS must fail closed
+            with self.assertRaises(DeviceEnrollmentError):
+                mgr.enroll_device(
+                    user_identity_id=user_id,
+                    device_name="Tactical-Phone",
+                    device_type="mobile",
+                    authorizing_device_id=root_dev.device_id,
+                    authorizing_private_key=root_sk,
+                    device_public_key=child_pk,
+                    device_private_key=child_sk,
+                    sas_code="999999" if sas != "999999" else "888888"
+                )
+
+            # Valid SAS succeeds
+            child_dev, _ = mgr.enroll_device(
+                user_identity_id=user_id,
+                device_name="Tactical-Phone",
+                device_type="mobile",
+                authorizing_device_id=root_dev.device_id,
+                authorizing_private_key=root_sk,
+                device_public_key=child_pk,
+                device_private_key=child_sk,
+                sas_code=sas
+            )
+            self.assertIsNotNone(child_dev)
+
+        # 5. Check notifications
+        notifications = mgr.get_key_change_notifications(user_id)
+        self.assertEqual(len(notifications), 2)
+        self.assertEqual(notifications[1]["event_type"], "DEVICE_ENROLLED")
+        self.assertIn(root_dev.device_id, notifications[1]["notified_devices"])
+
+        # 6. Revoke child device and verify notification
+        mgr.revoke_device(user_id, child_dev.device_id, reason="Compromise suspicion")
+        notifications = mgr.get_key_change_notifications(user_id)
+        self.assertEqual(len(notifications), 3)
+        self.assertEqual(notifications[2]["event_type"], "DEVICE_REVOKED")
+        self.assertIn(root_dev.device_id, notifications[2]["notified_devices"])
+
+    def test_22_audit_database_field_encryption_and_decryption(self):
+        """F-07: Verify sensitive fields in audit DB are encrypted at rest with ENC: and decrypted cleanly."""
+        from audit_logging_system import AuditLogger, AuditEventType, AuditSeverity
+        import tempfile
+        import sqlite3
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            db_path = tf.name
+
+        try:
+            audit = AuditLogger(db_path=db_path)
+            audit.log_event(
+                event_type=AuditEventType.SECURITY_VIOLATION,
+                message_or_details="Secret Tactical Operation Alpha",
+                severity=AuditSeverity.HIGH,
+                details={"mission": "classified_order_99"},
+                threat_indicators={"anomaly_score": 0.95},
+                user_id="officer_77",
+                source_ip="192.168.1.100",
+                destination_ip="10.0.0.1",
+                session_id="session_xyz_secret"
+            )
+            audit.flush_buffer()
+
+            # Inspect raw SQLite database columns directly
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT message, user_id, source_ip, destination_ip, session_id, details FROM audit_events")
+            row = cursor.fetchone()
+            conn.close()
+
+            # Direct verification that raw storage is encrypted (ENC: prefix, no cleartext leak)
+            self.assertTrue(row[0].startswith("ENC:"), f"Message must be encrypted at rest, got: {row[0]}")
+            self.assertNotIn("Secret Tactical Operation Alpha", row[0])
+            self.assertTrue(row[1].startswith("ENC:"), f"User ID must be encrypted at rest, got: {row[1]}")
+            self.assertNotIn("officer_77", row[1])
+            self.assertTrue(row[2].startswith("ENC:"), f"Source IP must be encrypted at rest, got: {row[2]}")
+            self.assertNotIn("192.168.1.100", row[2])
+            self.assertTrue(row[3].startswith("ENC:"), f"Destination IP must be encrypted at rest, got: {row[3]}")
+            self.assertNotIn("10.0.0.1", row[3])
+            self.assertTrue(row[4].startswith("ENC:"), f"Session ID must be encrypted at rest, got: {row[4]}")
+            self.assertNotIn("session_xyz_secret", row[4])
+            self.assertTrue(row[5].startswith("ENC:"), f"Details must be encrypted at rest, got: {row[5]}")
+
+            # Verify query_events cleanly and transparently decrypts
+            queried = audit.query_events(user_id="officer_77")
+            self.assertEqual(len(queried), 1)
+            ev = queried[0]
+            self.assertEqual(ev.message, "Secret Tactical Operation Alpha")
+            self.assertEqual(ev.user_id, "officer_77")
+            self.assertEqual(ev.source_ip, "192.168.1.100")
+            self.assertEqual(ev.destination_ip, "10.0.0.1")
+            self.assertEqual(ev.session_id, "session_xyz_secret")
+            self.assertEqual(ev.details, {"mission": "classified_order_99"})
+
+            # Verify chain integrity verifies cleanly with encrypted fields
+            valid, err = audit.verify_chain_integrity()
+            self.assertTrue(valid, f"Chain integrity should verify cleanly: {err}")
+
+            audit.close()
+        finally:
+            if os.path.exists(db_path):
+                try:
+                    os.unlink(db_path)
+                except Exception:
+                    pass
+
+    def test_23_nc3_production_requires_hardware_custody_responses(self):
+        """F-15: NC3 create_nuclear_eam requires hw_responses in production."""
+        from nc3_nuclear_command import NC3CommandController, DualCustodyViolation, get_or_create_tactical_officer
+        import unittest.mock as mock
+        import secrets
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            with mock.patch.dict(os.environ, {"P2P_OFFICER_SEAL_PW": "test-seal-passphrase"}):
+                nc3 = NC3CommandController()
+                off1 = get_or_create_tactical_officer("GEN_TEST_10")
+                off2 = get_or_create_tactical_officer("ADM_TEST_20")
+                war_key = secrets.token_bytes(32)
+
+                # In production mode without hw_responses, must raise DualCustodyViolation
+                with mock.patch.dict(os.environ, {"P2P_PRODUCTION": "1", "SECURE_P2P_PRODUCTION": "1", "P2P_NC3_ALLOW_SOFTWARE_EMULATION": "0"}):
+                    with self.assertRaises(DualCustodyViolation):
+                        nc3.create_nuclear_eam(
+                            directive_code="FLASH-DEFCON-1",
+                            target_command="GLOBAL_STRIKE_ALPHA",
+                            pal_code="ALPHA-7792-BRAVO-4411",
+                            officer_1=off1,
+                            officer_2=off2,
+                            pal_key=war_key,
+                            validity_window_seconds=120.0,
+                            hw_responses=None
+                        )
+
 
 if __name__ == "__main__":
     unittest.main()

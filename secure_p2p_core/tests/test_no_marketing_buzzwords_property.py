@@ -40,22 +40,25 @@ class TestNoMarketingBuzzwordsProperty:
     Validates: Requirements 3.1, 3.2
     """
     
-    def __init__(self):
+    def setup_method(self):
         self.cleanup_utility = CodeCleanupUtility()
     
     def get_all_python_files(self) -> List[Path]:
         """Get all Python files in the production system."""
+        if hasattr(self, "_cached_python_files") and self._cached_python_files:
+            return self._cached_python_files
         python_files = []
-        exclude_dirs = {'__pycache__', '.git', '.pytest_cache', 'notupload'}
+        exclude_dirs = {'__pycache__', '.git', '.pytest_cache', 'notupload', '.hypothesis', '.venv', 'archive', 'rust_data_plane', 'docs'}
+        exclude_files = {'test_no_marketing_buzzwords_property.py', 'test_no_emoji_property.py', 'production_cleanup_utils.py'}
         
         for root, dirs, files in os.walk(PROJECT_ROOT):
-            # Remove excluded directories from dirs list
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith('.audit-') and not d.startswith('.venv')]
             
             for file in files:
-                if file.endswith('.py'):
+                if file.endswith('.py') and file not in exclude_files:
                     python_files.append(Path(root) / file)
         
+        self._cached_python_files = python_files
         return python_files
     
     def check_file_for_buzzwords(self, file_path: Path) -> Tuple[bool, List[str]]:
@@ -186,7 +189,7 @@ class TestNoMarketingBuzzwordsUnit:
     Unit tests for marketing buzzword detection and removal.
     """
     
-    def __init__(self):
+    def setup_method(self):
         self.cleanup_utility = CodeCleanupUtility()
     
     def test_buzzword_detection_utility(self):

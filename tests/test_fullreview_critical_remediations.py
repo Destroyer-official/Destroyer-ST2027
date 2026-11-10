@@ -843,6 +843,9 @@ class _CaptureHandler:
         self.data = payload
         self.status = status
 
+    def _verify_control_action_auth(self, payload: dict):
+        return True, "VERIFIED", {}
+
 
 class TestNC3ConsoleHardening:
     def test_operator_console_refuses_self_generated_custodian(self, monkeypatch):

@@ -869,9 +869,10 @@ The interactive browser console (`launch_tactical_web.bat`, port 8443) runs via 
 The native tactical terminal provides direct operator-to-operator text transit over constant-rate paced channels:
 
 ```bash
+# Option A: Post-Quantum Ephemeral Dynamic KEX Pairing (Recommended):
 # Receiving Station (Responder):
 ./rust_data_plane/target/release/secure-transmit terminal \
-  --key-file keys/session.key \
+  --psk-file keys/tactical_shared.psk \
   --state keys/term_resp.state \
   --bind 192.168.10.2:9999 \
   --to 192.168.10.1:9999 \
@@ -882,7 +883,7 @@ The native tactical terminal provides direct operator-to-operator text transit o
 
 # Transmitting Station (Initiator):
 ./rust_data_plane/target/release/secure-transmit terminal \
-  --key-file keys/session.key \
+  --psk-file keys/tactical_shared.psk \
   --state keys/term_init.state \
   --bind 192.168.10.1:9999 \
   --to 192.168.10.2:9999 \
@@ -890,6 +891,10 @@ The native tactical terminal provides direct operator-to-operator text transit o
   --interval-ms 50 \
   --quantum 1232 \
   --callsign ALPHA-NORAD
+
+# Windows One-Click Tactical Station Launchers:
+start_tactical_alpha.bat   # Launches Node Alpha (Responder, NORAD)
+start_tactical_bravo.bat   # Launches Node Bravo (Initiator, Pentagon)
 ```
 
 #### Terminal Defense Capabilities & Security Controls:
@@ -898,6 +903,7 @@ The native tactical terminal provides direct operator-to-operator text transit o
 2. **ANSI Anti-Forensics Screen Scrubbing:**
    The terminal emits standard ANSI terminal erase sequence `\x1b[2J\x1b[3J\x1b[H` on `/clear`, `/quit`, and `/zeroize` commands, purging both the visible viewport and terminal scrollback history buffers to prevent shoulder surfing and screen recovery.
 3. **In-Band Operator Control Commands:**
+   - `/rekey`: Initiates an immediate post-quantum continuous epoch ratchet rollover, fragmenting a fresh ML-KEM-1024 encapsulation across wire quanta and deriving fresh epoch keys for Post-Compromise Security (PCS).
    - `/status`: Displays real-time link telemetry (send/recv sequence numbers, 512-packet reservation boundaries, emitted/received chaff and message counters, replay/auth drop metrics, and session uptime).
    - `/clear`: Executes immediate ANSI terminal viewport and scrollback buffer purge.
    - `/help`: Prints the tactical protocol command reference and security classifications.
@@ -1019,7 +1025,7 @@ python scripts/run_defense_audit.py
 # 2. Strict Rust Compiler Clippy & Zero-Warning Gate:
 cargo clippy --all-targets --manifest-path rust_data_plane/Cargo.toml -- -D warnings
 
-# 3. Native Rust Cryptographic Core Battery (255 tests, 0 failures):
+# 3. Native Rust Cryptographic Core Battery (260 tests, 0 failures):
 cargo test --manifest-path rust_data_plane/Cargo.toml
 
 # 4. Standalone Native Executable Integration Battery (27 tests, 0 failures):
@@ -1052,7 +1058,7 @@ pytest tests/test_docs_truth_in_claims.py -v
 # 13. Reproducible Build Verification (SLSA L3-Aligned 47-Module Merkle Tree):
 python scripts/verify_reproducible_build.py
 
-# 14. Master Pre-Flight Deployment Gate (96 PASS, 0 FAIL):
+# 14. Master Pre-Flight Deployment Gate (103 PASS, 0 FAIL, 0 WARN, 0 SKIP):
 python verify_deployment.py
 
 # 15. FIPS 140-3 CMT Laboratory & AO Submittal Packet Verification (14/14 Artifacts):

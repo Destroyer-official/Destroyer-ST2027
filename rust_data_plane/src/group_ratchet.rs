@@ -383,11 +383,19 @@ impl SovereignGroupRatchet {
         if wire_frame.len() < 8 + 8 + 12 + 16 {
             return Err(GroupError::AuthenticationFailed);
         }
-        let epoch = u64::from_be_bytes(wire_frame[..8].try_into().unwrap());
+        let epoch = u64::from_be_bytes(
+            wire_frame[..8]
+                .try_into()
+                .map_err(|_| GroupError::AuthenticationFailed)?,
+        );
         if epoch != self.epoch {
             return Err(GroupError::InvalidEpoch);
         }
-        let seq = u64::from_be_bytes(wire_frame[8..16].try_into().unwrap());
+        let seq = u64::from_be_bytes(
+            wire_frame[8..16]
+                .try_into()
+                .map_err(|_| GroupError::AuthenticationFailed)?,
+        );
         let nonce_bytes = &wire_frame[16..28];
         let ciphertext = &wire_frame[28..];
 

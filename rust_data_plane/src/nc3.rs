@@ -775,6 +775,11 @@ pub struct MockDualSmartcardSimulator {
 
 impl MockDualSmartcardSimulator {
     pub fn new(pin1: &str, pin2: &str) -> Result<Self, CoreError> {
+        if std::env::var("P2P_PRODUCTION").map(|v| v == "1").unwrap_or(false)
+            || std::env::var("SECURE_P2P_PRODUCTION").map(|v| v == "1").unwrap_or(false)
+        {
+            return Err(CoreError::AuthRequired);
+        }
         let (sk1, _) = Mldsa87SigningKey::generate()?;
         let (sk2, _) = Mldsa87SigningKey::generate()?;
 

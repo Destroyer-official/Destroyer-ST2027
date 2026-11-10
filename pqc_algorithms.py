@@ -292,7 +292,6 @@ try:
     from liboqs_wrapper import (
         LibOQS_MLKEM_1024,          # ML-KEM-1024 KEM implementation (component)
         LibOQS_McEliece_8192128f,   # McEliece KEM implementation (component)
-        LibOQS_HQC_256,             # HQC-256 KEM implementation
         LibOQS_MLDSA_87,            # ML-DSA-87 signature implementation (component)
         LibOQS_SLH_DSA_256f,        # SLH-DSA-256f signature implementation (component)
         HybridKEM,                  # Hybrid KEM (ML-KEM-1024 + McEliece-8192128f) - PRIMARY
@@ -1949,7 +1948,6 @@ class SecurityPolicyEnforcer:
     APPROVED_ALGORITHMS = {
         'ML-KEM-1024': {'type': 'KEM', 'security_level': 5, 'quantum_safe': True, 'nist_approved': True},
         'McEliece-8192128f': {'type': 'KEM', 'security_level': 5, 'quantum_safe': True, 'nist_approved': True},
-        'HQC-256': {'type': 'KEM', 'security_level': 5, 'quantum_safe': True, 'nist_approved': True},
         'FALCON-1024': {'type': 'SIGNATURE', 'security_level': 5, 'quantum_safe': True, 'nist_approved': True},
         'SLH-DSA-256s': {'type': 'SIGNATURE', 'security_level': 5, 'quantum_safe': True, 'nist_approved': True},
         'SPHINCS+-256s': {'type': 'SIGNATURE', 'security_level': 5, 'quantum_safe': True, 'nist_approved': True},
@@ -2356,133 +2354,23 @@ class KeySeparationManager:
 
 class HQCCryptoEngine:
     """
-    HQC-256 (Hamming Quasi-Cyclic) Key Encapsulation Mechanism Implementation.
-
-    Implements NIST IR 8545 (Status Report, July 9 2025) compliant HQC-256 algorithm
-    for post-quantum key encapsulation with crypto-agility support as backup KEM.
-
-    Technical Specification:
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    • Standard: NIST IR 8545 (Status Report, July 9 2025) - Selected March 11, 2025
-    • Authority: NIST Computer Security Resource Center (csrc.nist.gov)
-    • Security Level: NIST Level 5 (≈ AES-256-classical-equivalent security (NIST Level 5 metric; not "256 post-quantum bits"))
-    • Problem Basis: Syndrome Decoding of quasi-cyclic codes
-    • Key Sizes: Public 2249 bytes, Private 2289 bytes, Ciphertext 4481 bytes
-    • Performance: ~15k key generations, ~12k encapsulations, ~14k decapsulations per second
-    • Reference: https://csrc.nist.gov/pubs/ir/8545/final
-
-    Mathematical Foundation:
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    HQC is based on the syndrome decoding problem for quasi-cyclic codes:
-
-    • Code Parameters: [n, k, δ] = [35851, 17923, 133] for HQC-256
-    • Generator Matrix: G is a systematic generator matrix for the code
-    • Parity Check Matrix: H such that G·H^T = 0
-    • Error Vector: e with Hamming weight ≤ δ
-    • Syndrome: s = H·e^T
-
-    Security relies on the computational hardness of finding e given s and H,
-    which is NP-hard and provides different mathematical assumptions from
-    lattice-based algorithms (ML-KEM), enabling algorithmic diversity.
-
-    Crypto-Agility Rationale:
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    HQC serves as a backup KEM to ML-KEM-1024 for defense-in-depth:
-
-    1. Different Mathematical Foundation: Code-based vs lattice-based cryptography
-    2. Independent Security Assumptions: Syndrome decoding vs Module-LWE
-    3. Quantum Resistance: Both resist Shor's algorithm, different Grover impact
-    4. Standardization Timeline: NIST IR 8545 provides alternative to FIPS 203
-    5. Implementation Diversity: Different attack surfaces and side-channel profiles
-
-    This enables cryptographic agility if weaknesses are discovered in
-    either ML-KEM or HQC, maintaining system security through crypto-agility.
+    HQC-256 (Hamming Quasi-Cyclic) permanently prohibited per CNSA 2.0.
+    Pre-standard algorithm subject to CVE-2024-54137 and CVE-2025-52473.
     """
-
-    # HQC-256 algorithm parameters per NIST IR 8545
-    HQC_256_PARAMS = {
-        'n': 35851,           # Code length
-        'k': 17923,           # Code dimension
-        'delta': 133,         # Error correction capability
-        'w': 133,             # Hamming weight of error vectors
-        'wr': 133,            # Hamming weight of r
-        'we': 133,            # Hamming weight of e
-        'g': 0x1002D,         # Generator polynomial
-        'public_key_size': 2249,    # Public key size in bytes
-        'private_key_size': 2289,   # Private key size in bytes
-        'ciphertext_size': 4481,    # Ciphertext size in bytes
-        # AUDITED (B105): false positive / test fixture, verified individually 2026-09
-        'shared_secret_size': 32    # Shared secret size in bytes  # nosec: B105
-    }
+    def __init__(self):
+        raise RuntimeError("HQC-256 permanently prohibited: pre-standard algorithm subject to CVE-2024-54137/CVE-2025-52473; use standard ML-KEM-1024 (FIPS 203) instead")
 
     @classmethod
     def hqc_generate_keypair(cls) -> Tuple[bytes, bytes]:
-        """
-        Generate HQC-256 keypair per NIST IR 8545 §3.1 (Status Report, July 9 2025).
-
-        Implements HQC key generation algorithm with constant-time operations
-        and side-channel protections per latest PQShield research (June 2025).
-
-        Algorithm Steps (NIST IR 8545 §4.1):
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        1. Generate random seed σ ← {0,1}^256
-        2. Expand seed to generate polynomials (h, x, y) using SHAKE-256
-        3. Compute public key h = x·g^(-1) + y where g is generator
-        4. Private key contains (x, y) and public key contains h
-        5. Apply constant-time masking for side-channel protection
-
-        Returns:
-            Tuple[bytes, bytes]: (public_key, private_key) with sizes per NIST IR 8545
-
-        Raises:
-            KeyGenerationError: If key generation fails or validation errors occur
-            SecurityError: If entropy is insufficient or side-channel protection fails
-
-        Side-Channel Protections:
-        • Constant-time polynomial operations independent of secret data
-        • Memory access pattern regularization to prevent cache attacks
-        • Algorithmic noise injection per IEEE S&P 2025 research
-        • Power consumption masking against DPA attacks
-
-        Reference: NIST IR 8545 §4.1 "Key Generation" (csrc.nist.gov)
-        """
-        try:
-            # Enforce NIST Level 5+ security policy
-            SecurityPolicyEnforcer.enforce_algorithm('HQC-256')
-
-            pqc_logger.debug("Starting authentic HQC-256 key generation via LibOQS")
-            from liboqs_wrapper import LibOQS_HQC_256
-            impl = LibOQS_HQC_256()
-            public_key, private_key = impl.generate_keypair()
-
-            # Validate key sizes match NIST IR 8545 specification
-            if len(public_key) != cls.HQC_256_PARAMS['public_key_size']:
-                raise KeyGenerationError(
-                    f"HQC public key size {len(public_key)} != expected {cls.HQC_256_PARAMS['public_key_size']}")
-
-            if len(private_key) != cls.HQC_256_PARAMS['private_key_size']:
-                raise KeyGenerationError(
-                    f"HQC private key size {len(private_key)} != expected {cls.HQC_256_PARAMS['private_key_size']}")
-
-            pqc_logger.info(
-                f"Authentic HQC-256 keypair generated successfully (pub: {len(public_key)} bytes, priv: {len(private_key)} bytes)")
-            return public_key, private_key
-
-        except Exception as e:
-            pqc_logger.critical(f"HQC-256 key generation failed: {e}")
-            raise KeyGenerationError(f"HQC-256 key generation failed: {e}. Fake hash expansion is prohibited.") from e
+        raise RuntimeError("HQC-256 permanently prohibited")
 
     @classmethod
     def hqc_encapsulate(cls, public_key: bytes) -> Tuple[bytes, bytes]:
-        from liboqs_wrapper import LibOQS_HQC_256
-        impl = LibOQS_HQC_256()
-        return impl.encaps(public_key)
+        raise RuntimeError("HQC-256 permanently prohibited")
 
     @classmethod
     def hqc_decapsulate(cls, private_key: bytes, ciphertext: bytes) -> bytes:
-        from liboqs_wrapper import LibOQS_HQC_256
-        impl = LibOQS_HQC_256()
-        return impl.decaps(private_key, ciphertext)
+        raise RuntimeError("HQC-256 permanently prohibited")
 
 
 class CryptoAgilityManager:
@@ -2511,8 +2399,8 @@ class CryptoAgilityManager:
     # Default algorithm preferences (order indicates preference)
     # Updated per Task 6 requirements for crypto-agility (July 22, 2025)
     DEFAULT_CONFIG = {
-        'kem': ['mlkem1024', 'hqc'],  # order = preference per Task 6 spec
-        'sig': ['falcon1024'],        # Primary signature algorithm
+        'kem': ['mlkem1024', 'mceliece'],  # order = preference per CNSA 2.0
+        'sig': ['mldsa87', 'falcon1024'],        # Primary signature algorithms
         'aead': ['ChaCha20-Poly1305', 'AES-256-GCM'],  # AEAD preferences
         'hash': ['SHA-512'],                 # Hash function preferences
         'kdf': ['HKDF-SHA3_512']              # Key derivation preferences
@@ -5247,37 +5135,14 @@ _logger = logging.getLogger("EnhancedFALCON_1024")
 
 class EnhancedHQC:
     """
-    Enhanced HQC implementation that wraps true liboqs HQC.
-    NO SIMULATIONS PERMITTED.
+    HQC-256 permanently prohibited per CNSA 2.0 (FIPS 203 ML-KEM-1024 standard).
+    Pre-standard algorithm subject to CVE-2024-54137 and CVE-2025-52473.
     """
     def __init__(self, variant="HQC-256"):
-        from liboqs_wrapper import LibOQS_HQC_256
-        self.variant = variant
-        if variant == "HQC-256":
-            self.impl = LibOQS_HQC_256()
-        else:
-            raise ValueError(f"Unsupported HQC variant: {variant}")
-        self.pk_size = self.impl.pk_size
-        self.sk_size = self.impl.sk_size
-        self.ct_size = self.impl.ct_size
-        self.ss_size = self.impl.ss_size
-
-    def keygen(self):
-        return self.impl.keygen()
-
-    def encaps(self, public_key):
-        return self.impl.encaps(public_key)
-
-    def decaps(self, private_key, ciphertext):
-        return self.impl.decaps(private_key, ciphertext)
-
-    def get_secure_params(self):
-        return {
-            "variant": self.variant,
-            "security_level": "NIST Level 5",
-            "constant_time": True,
-            "side_channel_protected": True
-        }
+        raise RuntimeError(
+            "HQC-256 permanently prohibited: pre-standard algorithm subject to "
+            "CVE-2024-54137/CVE-2025-52473; use standard ML-KEM-1024 (FIPS 203) instead"
+        )
 
 # Create a hybrid key exchange class combining ML-KEM and HQC for enhanced security
 
@@ -5652,7 +5517,7 @@ class SecurityTest:
         """Initialize the security test suite."""
         self.mlkem = EnhancedMLKEM_1024()
         self.falcon = EnhancedFALCON_1024()
-        self.hqc = EnhancedHQC()
+        self.hqc = None  # HQC-256 excised per CNSA 2.0
 
     @staticmethod
     def calculate_entropy(data: bytes) -> float:
@@ -6361,9 +6226,7 @@ def get_default_pqc_algorithms():
     _mlkem = _try_build("mlkem", EnhancedMLKEM_1024)
     if _mlkem is not None:
         impls["mlkem"] = _mlkem  # Lattice-based KEM (FIPS 203)
-    _hqc = _try_build("hqc", lambda: EnhancedHQC("HQC-256"))
-    if _hqc is not None:
-        impls["hqc"] = _hqc  # Code-based KEM (Round 4 alternate)
+    # HQC-256 permanently excised per CNSA 2.0 / CVE-2024-54137
 
     # Digital Signature Algorithms (DSAs)
     _mldsa = _try_build("mldsa", EnhancedMLDSA_87)
@@ -7967,13 +7830,7 @@ class NISTTestVectorValidator:
                 pqc_logger.info(f"FALCON-1024 validation skipped (using hybrid signatures instead): {e}")
                 results['FALCON-1024'] = 'SKIPPED (using hybrid ML-DSA-87 + SLH-DSA-256f)'
 
-            # Validate HQC (if available)
-            try:
-                hqc = EnhancedHQC()
-                results['HQC-256'] = cls.validate_hqc_256(hqc)
-            except Exception as e:
-                pqc_logger.warning(f"HQC-256 validation skipped: {e}")
-                results['HQC-256'] = False
+            # HQC-256 permanently excised per CNSA 2.0 (FIPS 203 ML-KEM-1024 standard)
 
             # Summary
             passed = sum(1 for result in results.values() if result)

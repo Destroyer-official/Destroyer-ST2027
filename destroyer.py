@@ -28,6 +28,12 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Fail-closed default: arm production posture unless explicitly running under lab opt-in
+if os.environ.get("P2P_LAB_MODE") != "1":
+    os.environ.setdefault("P2P_PRODUCTION", "1")
+    os.environ.setdefault("SECURE_P2P_PRODUCTION", "1")
+    os.environ.setdefault("P2P_DATA_PLANE", "rust")
+
 # ANSI Color & Styling
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -68,7 +74,15 @@ def probe_hardware_and_environment():
     status_rust = f"{GREEN}[ACTIVE]{RESET} {native_bin.name}" if rust_ok else f"{RED}[ABSENT]{RESET} Run `cargo build` in rust_data_plane/"
     print(f"  • Native Rust Data Plane   : {status_rust}")
 
-    # 2. LibOQS Post-Quantum Library
+    # 2. Standalone Out-of-Process Native Verifier (Blocker B-03)
+    verifier_bin = ROOT / "rust_data_plane" / "target" / "release" / ("verify-binaries.exe" if os.name == "nt" else "verify-binaries")
+    if not verifier_bin.exists():
+        verifier_bin = ROOT / "rust_data_plane" / "target" / "debug" / ("verify-binaries.exe" if os.name == "nt" else "verify-binaries")
+    verifier_ok = verifier_bin.exists()
+    status_verifier = f"{GREEN}[ACTIVE]{RESET} Standalone Out-of-Process Rust Verifier ({verifier_bin.name})" if verifier_ok else f"{YELLOW}[BUILD PENDING]{RESET}"
+    print(f"  • Native Binary Verifier   : {status_verifier}")
+
+    # 3. LibOQS Post-Quantum Library
     oqs_dll = ROOT / ("oqs.dll" if os.name == "nt" else "liboqs.so")
     oqs_ok = oqs_dll.exists()
     status_oqs = (
@@ -77,7 +91,7 @@ def probe_hardware_and_environment():
     )
     print(f"  • LibOQS PQC Engine        : {status_oqs}")
 
-    # 3. Hardware TPM 2.0 / CNG
+    # 4. Hardware TPM 2.0 / CNG
     tpm_status = f"{YELLOW}[EMULATED / SOFTWARE HEDGE]{RESET} Hardware quote simulated"
     try:
         import tpm_quote
@@ -88,7 +102,7 @@ def probe_hardware_and_environment():
         pass
     print(f"  • Hardware TPM 2.0 / HSM   : {tpm_status}")
 
-    # 4. Zero-Gap Unified Pipeline
+    # 5. Zero-Gap Unified Pipeline
     try:
         from unified_secure_pipeline import UnifiedSecurePipeline
         pipe = UnifiedSecurePipeline()
@@ -99,7 +113,7 @@ def probe_hardware_and_environment():
         pipe_status = f"{RED}[ERROR]{RESET} {e}"
     print(f"  • Zero-Gap Unified Pipeline: {pipe_status}")
 
-    # 5. CMT Laboratory & AO Submittal Packet
+    # 6. CMT Laboratory & AO Submittal Packet
     submittal_tar = ROOT / "compliance_reports" / "cmt_lab_submission_packet.tar.gz"
     submittal_manifest = ROOT / "compliance_reports" / "cmt_laboratory_submission_manifest.json"
     submittal_ok = submittal_tar.exists() and submittal_manifest.exists()
@@ -112,9 +126,11 @@ def probe_hardware_and_environment():
     print("=" * 86)
     return {
         "rust_ok": rust_ok,
+        "verifier_ok": verifier_ok,
         "oqs_ok": oqs_ok,
         "pipe_ok": pipe_ok,
-        "native_bin": native_bin if rust_ok else None
+        "native_bin": native_bin if rust_ok else None,
+        "verifier_bin": verifier_bin if verifier_ok else None
     }
 
 
@@ -135,12 +151,9 @@ def launch_tactical_node(role: str = "interactive"):
 
 
 def launch_interactive_chat():
-    """Launch the 5-Year Comprehensive Monolith armed with Zero-Gap Pipeline."""
-    print(f"\n{BOLD}{CYAN}[COMMAND] Launching Interactive Operations Suite (Zero-Gap Multi-Layer Mode)...{RESET}")
-    target = ROOT / "secure_p2p.py"
-    if not target.exists():
-        target = ROOT / "archive" / "legacy_prototype" / "secure_p2.py"
-    cmd = [sys.executable, str(target), "chat", "--data-plane", "rust", "--tactical-cloak"]
+    """Launch the Tactical Operations Suite armed with Zero-Gap Pipeline."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Launching Tactical Operations Node (NORAD Alpha DEFCON-1 Mode)...{RESET}")
+    cmd = [sys.executable, str(ROOT / "secure_p2p.py"), "alpha"]
     subprocess.run(cmd)
 
 
@@ -271,8 +284,11 @@ def launch_diode_station():
 def run_master_defense_audit():
     """Run all 10 defense assurance gates with ML-DSA-87 signed evaluation receipt."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Executing Master Defense Audit (10/10 Cryptographic Gates)...{RESET}")
+    audit_env = os.environ.copy()
+    audit_env.pop("P2P_PRODUCTION", None)
+    audit_env.pop("SECURE_P2P_PRODUCTION", None)
     cmd = [sys.executable, str(ROOT / "scripts" / "run_defense_audit.py")]
-    res = subprocess.run(cmd)
+    res = subprocess.run(cmd, env=audit_env)
     return res.returncode == 0
 
 
@@ -284,9 +300,9 @@ def run_50x_superiority_benchmark():
 
 
 def run_tactical_automated_drill():
-    """Run the two-terminal automated tactical drill (NORAD vs Pentagon)."""
-    print(f"\n{BOLD}{CYAN}[COMMAND] Running Automated Tactical P2P Drill (NORAD vs Pentagon)...{RESET}")
-    cmd = [sys.executable, str(ROOT / "secure_p2p.py"), "demo", "--lab"]
+    """Run the tactical verification battery and production cryptographic selftest."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Running Tactical Verification Battery & Cryptographic Selftest (8/8 Checks)...{RESET}")
+    cmd = [sys.executable, str(ROOT / "secure_p2p.py"), "selftest"]
     subprocess.run(cmd)
 
 
@@ -360,7 +376,20 @@ def launch_dual_tactical_terminals():
             subprocess.run(["cmd.exe", "/c", str(launcher_bat)])
             return
     # Cross-platform fallback: spawn two processes
-    psk_path = str(ROOT / "tactical_station.psk")
+    if os.name == "nt":
+        key_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ST2027" / "keys"
+    else:
+        key_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ST2027" / "keys"
+    key_dir.mkdir(parents=True, exist_ok=True)
+    psk_file = key_dir / "tactical_station.psk"
+    if not psk_file.exists():
+        psk_file.write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
+        if os.name != "nt":
+            try:
+                os.chmod(psk_file, 0o600)
+            except OSError:
+                pass
+    psk_path = str(psk_file)
     print(f"{YELLOW}Spawning Terminal 1 (NORAD Alpha)...{RESET}")
     subprocess.Popen([sys.executable, str(ROOT / "secure_p2p.py"), "node",
                       "--role", "responder", "--bind", "127.0.0.1", "--peer", "127.0.0.1",

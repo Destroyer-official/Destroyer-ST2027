@@ -41,8 +41,8 @@ import socket
 import os
 import logging
 
-# FORBIDDEN_ALGORITHMS: legacy certificate validation and rejection guards only (CNSA 2.0 pure mode enforced)
-FORBIDDEN_ALGORITHMS = ["RSA", "ECDSA", "ECDH", "P-256", "P-384", "AES-128", "SHA-1", "MD5", "DES", "RC4"]
+# FORBIDDEN_ALGORITHMS: legacy certificate validation and rejection guards only (CNSA 2.0 pure mode enforced; P-384 ECDH permitted in RFC 10024 hybrid mode)
+FORBIDDEN_ALGORITHMS = ["RSA", "ECDSA", "P-256", "AES-128", "SHA-1", "MD5", "DES", "RC4"]
 import time
 import datetime
 import select
@@ -75,15 +75,32 @@ tls_logger = logging.getLogger("tls_channel")
 tls_logger.setLevel(logging.INFO)
 
 # Ensure logs directory exists
-if not os.path.exists("logs"):
-    os.makedirs("logs")
+_logs_dir = "logs"
+if not os.path.exists(_logs_dir):
+    os.makedirs(_logs_dir, mode=0o700, exist_ok=True)
 
 # Setup file logging with detailed information for security auditing with UTF-8 encoding
-tls_file_handler = logging.FileHandler(os.path.join("logs", "tls_channel.log"), encoding='utf-8')
+_tls_log_path = os.path.join(_logs_dir, "tls_channel.log")
+tls_file_handler = logging.FileHandler(_tls_log_path, encoding='utf-8')
 tls_file_handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s')
 tls_file_handler.setFormatter(formatter)
 tls_logger.addHandler(tls_file_handler)
+
+# Enforce restrictive permissions on log file (Finding F-07/F-08)
+try:
+    if os.name == 'posix':
+        os.chmod(_tls_log_path, 0o600)
+    elif os.name == 'nt' and os.path.exists(_tls_log_path):
+        import subprocess as _subp
+        _user = os.environ.get('USERNAME')
+        if _user:
+            _subp.run(
+                ["icacls", _tls_log_path, "/inheritance:r", "/grant:r", f"{_user}:(R,W)"],
+                capture_output=True, check=False
+            )
+except Exception:
+    pass
 
 # Let logs propagate to root logger for console output (avoid duplicate handlers)
 tls_logger.propagate = True
@@ -3796,6 +3813,10 @@ class TLSSecureChannel:
             self.using_pq_ciphers = True
             context._pq_enabled = True
         else:
+            is_prod = is_production()
+            if getattr(self, 'enable_pq_kem', False) and (is_prod or getattr(self, 'strict_pq', False)):
+                log.critical("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups (SecP384r1MLKEM1024). Classical fallback is forbidden in production posture.")
+                raise SecurityError("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups. Classical fallback is forbidden under production posture.")
             log.warning("Client Context: no hybrid PQ group offered by runtime; classical TLS 1.3 key exchange")
             self.using_pq_ciphers = False
             context._pq_enabled = False
@@ -4532,6 +4553,10 @@ class TLSSecureChannel:
             self.using_pq_ciphers = True
             context._pq_enabled = True
         else:
+            is_prod = is_production()
+            if getattr(self, 'enable_pq_kem', False) and (is_prod or getattr(self, 'strict_pq', False)):
+                log.critical("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups (SecP384r1MLKEM1024). Classical fallback is forbidden in production posture.")
+                raise SecurityError("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups. Classical fallback is forbidden under production posture.")
             log.warning("Server Context: no hybrid PQ group offered by runtime; classical TLS 1.3 key exchange")
             self.using_pq_ciphers = False
             context._pq_enabled = False

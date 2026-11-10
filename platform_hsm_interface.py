@@ -4,11 +4,30 @@ import hashlib
 import time
 import datetime
 import typing
+import threading
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 from utils.helpers import is_env_true
+
+# NIST SP 800-38D Section 8.2.1 Deterministic Nonce/IV Generator
+# 96 bits = 32-bit fixed context/device field + 64-bit atomic monotonic counter.
+# Eliminates birthday-bound collision risk for invocations under the same key.
+_gcm_iv_lock = threading.Lock()
+_gcm_iv_fixed = secrets.token_bytes(4)
+_gcm_iv_counter = 0
+
+def generate_deterministic_gcm_iv() -> bytes:
+    """Generate 96-bit deterministic IV per NIST SP 800-38D Section 8.2.1.
+    Fixed field (4 bytes) || Atomic Counter (8 bytes, big-endian).
+    """
+    global _gcm_iv_counter
+    with _gcm_iv_lock:
+        _gcm_iv_counter += 1
+        if _gcm_iv_counter >= (1 << 64) - 1:
+            raise OverflowError("NIST SP 800-38D counter exhaustion: rekey required")
+        return _gcm_iv_fixed + _gcm_iv_counter.to_bytes(8, byteorder="big")
 
 
 
@@ -37,8 +56,8 @@ def secure_hash(data: bytes) -> bytes:
     return hashlib.sha3_512(data).digest()
 
 def secure_encrypt_aes_256_gcm(plaintext: bytes, key: bytes) -> tuple:
-    """Encrypt with AES-256-GCM (NIST Level 5+)"""
-    iv = secrets.token_bytes(12)  # 96-bit IV for GCM
+    """Encrypt with AES-256-GCM using NIST SP 800-38D Section 8.2.1 deterministic 96-bit IV."""
+    iv = generate_deterministic_gcm_iv()
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(plaintext) + encryptor.finalize()

@@ -105,8 +105,8 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
         black_box(ct::ct_eq(black_box(&fixed_secret_a), black_box(&fixed_secret_b_match)));
     }
 
-    const BATCH: usize = 100;
-    const SAMPLES: usize = 15_000;
+    const BATCH: usize = 200;
+    const SAMPLES: usize = 25_000;
     for i in 0..SAMPLES {
         let coin = (xorshift64(&mut rng) & 1) == 0;
         let (in_a, in_b) = if coin {
@@ -159,8 +159,8 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
         black_box(fixed_secret_a.ct_eq(black_box(&fixed_secret_b_match)));
     }
 
-    const BATCH: usize = 100;
-    const SAMPLES: usize = 15_000;
+    const BATCH: usize = 200;
+    const SAMPLES: usize = 25_000;
     for i in 0..SAMPLES {
         let coin = (xorshift64(&mut rng) & 1) == 0;
         let (in_a, in_b) = if coin {
@@ -207,8 +207,8 @@ fn dudect_rust_leaky_comparator_detected_as_positive_control() {
         black_box(leaky_cmp(black_box(&fixed_secret_a), black_box(&fixed_secret_b_match)));
     }
 
-    const BATCH: usize = 100;
-    const SAMPLES: usize = 15_000;
+    const BATCH: usize = 200;
+    const SAMPLES: usize = 25_000;
     for _ in 0..SAMPLES {
         let coin = (xorshift64(&mut rng) & 1) == 0;
         let (in_a, in_b) = if coin {

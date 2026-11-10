@@ -266,15 +266,33 @@ fn load_peer_verifying_key(path: &str) -> Mldsa87VerifyingKey {
 
 /// Mutual identity authentication is mandatory outside explicit lab mode.
 /// `--require-mutual-auth` pins it on even if a lab variable is present.
+/// In production posture (`P2P_PRODUCTION=1` or `SECURE_P2P_PRODUCTION=1`),
+/// mutual authentication is unconditionally MANDATORY, overriding any `--lab` flag (F-03).
 fn mutual_auth_required(args: &[String]) -> bool {
     if has_flag(args, "--require-mutual-auth") {
         return true;
     }
-    if has_flag(args, "--lab") {
-        return false;
+    if std::env::var("P2P_PRODUCTION").as_deref() == Ok("1")
+        || std::env::var("SECURE_P2P_PRODUCTION").as_deref() == Ok("1")
+    {
+        return true;
     }
-    std::env::var("P2P_LAB_MODE").unwrap_or_default() != "1"
-        && std::env::var("ST2027_LAB_MODE").unwrap_or_default() != "1"
+    #[cfg(feature = "lab-surfaces")]
+    {
+        if has_flag(args, "--lab") {
+            return false;
+        }
+        std::env::var("P2P_LAB_MODE").unwrap_or_default() != "1"
+            && std::env::var("ST2027_LAB_MODE").unwrap_or_default() != "1"
+    }
+    #[cfg(not(feature = "lab-surfaces"))]
+    {
+        if has_flag(args, "--lab") {
+            eprintln!("[FAIL-CLOSED] The '--lab' flag is disabled in production builds (feature 'lab-surfaces' not compiled)");
+            std::process::exit(1);
+        }
+        true
+    }
 }
 
 /// Final handshake binding = SHA-384(domain || transcript || resp_sig || init_sig).
@@ -2400,22 +2418,6 @@ fn cmd_channel(args: &[String]) {
                             write_state_locked(&mut state_file, &st, &key_bytes);
                         } else if ftype == FTYPE_CHAFF {
                             chaff_received += 1;
-                        } else if ftype == FTYPE_IN_BAND_EPOCH_REKEY && pt.len() == destroyer_core::frame::IN_BAND_REKEY_PAYLOAD_LEN {
-                            match pcs_ratchet.process_in_band_epoch_rekey(&pt) {
-                                Ok(_new_key) => {
-                                    let new_epoch = pcs_ratchet.epoch();
-                                    println!("channel: IN_BAND_EPOCH_REKEY_RECV epoch={new_epoch}");
-                                    if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
-                                        prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
-                                        prev_key_remaining_ticks = 20;
-                                        println!("channel: EPOCH_ADVANCED epoch={new_epoch}");
-                                    }
-                                }
-                                Err(e) => {
-                                    ep.note_auth_drop();
-                                    println!("channel: IN_BAND_EPOCH_REKEY_ERR {e:?}");
-                                }
-                            }
                         } else if ftype == FTYPE_REKEY || ftype == FTYPE_IN_BAND_EPOCH_REKEY {
                             if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
                                 let tx_id = frag.tx_id;
@@ -2703,10 +2705,71 @@ fn cmd_channel(args: &[String]) {
     });
 }
 
+fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
+    let psk = get_flag(args, "--psk-file")
+        .unwrap_or_else(|| fail("either --key-file PATH or --psk-file PATH must be specified"));
+    let mut rand_bytes = [0u8; 8];
+    if getrandom::fill(&mut rand_bytes).is_err() {
+        fail("getrandom failed during ephemeral kex negotiation");
+    }
+    let rand_val = u64::from_ne_bytes(rand_bytes);
+    let temp_key_path = std::env::temp_dir().join(format!("st2027_ephem_{role}_{}_{:016x}.key", std::process::id(), rand_val));
+    let temp_key = temp_key_path.to_string_lossy().to_string();
+    let mut kex_args = Vec::new();
+    if role == "responder" {
+        kex_args.push("--bind".to_string());
+        kex_args.push(get_flag(args, "--bind").unwrap_or_else(|| fail("--bind required for responder")));
+        kex_args.push("--out-key".to_string());
+        kex_args.push(temp_key.clone());
+        kex_args.push("--psk-file".to_string());
+        kex_args.push(psk);
+        if let Some(sk) = get_flag(args, "--auth-sk-file") {
+            kex_args.push("--auth-sk-file".to_string());
+            kex_args.push(sk);
+        }
+        if let Some(pk) = get_flag(args, "--peer-auth-pk-file") {
+            kex_args.push("--peer-auth-pk-file".to_string());
+            kex_args.push(pk);
+        }
+        println!("[KEX] Listening for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
+        cmd_kex_listen(&kex_args);
+    } else {
+        kex_args.push("--to".to_string());
+        kex_args.push(get_flag(args, "--to").unwrap_or_else(|| fail("--to required for initiator")));
+        kex_args.push("--out-key".to_string());
+        kex_args.push(temp_key.clone());
+        kex_args.push("--psk-file".to_string());
+        kex_args.push(psk);
+        if let Some(sk) = get_flag(args, "--auth-sk-file") {
+            kex_args.push("--auth-sk-file".to_string());
+            kex_args.push(sk);
+        }
+        if let Some(pk) = get_flag(args, "--peer-auth-pk-file") {
+            kex_args.push("--peer-auth-pk-file".to_string());
+            kex_args.push(pk);
+        }
+        println!("[KEX] Connecting to peer for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
+        cmd_kex_connect(&kex_args);
+    }
+    temp_key
+}
+
 fn cmd_terminal(args: &[String]) {
     reject_forbidden_cli(args);
-    let key_file_path = get_flag(args, "--key-file");
-    let (kb, key_id) = load_key_material(args);
+    let mut effective_args = args.to_vec();
+    let mut ephemeral_key_path: Option<String> = None;
+    if get_flag(&effective_args, "--key-file").is_none()
+        && !has_flag(&effective_args, "--key-stdin")
+        && get_flag(&effective_args, "--psk-file").is_some()
+    {
+        let role = get_flag(&effective_args, "--role").unwrap_or_else(|| "initiator".to_string());
+        let temp_key = negotiate_ephemeral_kex(&effective_args, &role);
+        effective_args.push("--key-file".to_string());
+        effective_args.push(temp_key.clone());
+        ephemeral_key_path = Some(temp_key);
+    }
+    let key_file_path = get_flag(&effective_args, "--key-file");
+    let (kb, key_id) = load_key_material(&effective_args);
     let key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind: SocketAddr = get_flag(args, "--bind")
@@ -2755,7 +2818,26 @@ fn cmd_terminal(args: &[String]) {
         (DIR_SEND, DIR_RECV)
     };
 
-    let key = FrameKey::from_slice(kb.as_bytes());
+    let mut pcs_ratchet = PcsRatchet::new(&key_bytes)
+        .unwrap_or_else(|e| fail(&format!("PcsRatchet initialization failed: {e:?}")));
+    let mut current_frame_key = pcs_ratchet
+        .current_frame_key()
+        .unwrap_or_else(|e| fail(&format!("current_frame_key failed: {e:?}")));
+    let mut prev_frame_key: Option<FrameKey> = None;
+    let mut prev_key_remaining_ticks = 0u64;
+    let mut pending_frame_key: Option<FrameKey> = None;
+    let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+    let mut inbound_rekey_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> = std::collections::HashMap::new();
+    let rekey_chunk_size = quantum.saturating_sub(64).min(512);
+
+    if role == "responder" {
+        let adv_msg = ratchet::RekeyMessage::Advert(pcs_ratchet.advertise_bundle());
+        if let Ok(frags) = fragment::fragment(&adv_msg.to_wire(), rekey_chunk_size) {
+            for f in frags {
+                outbound_rekeys.push_back(f.to_wire());
+            }
+        }
+    }
     drop(kb);
 
     let state_fresh = tpm_nv::state_is_fresh(&state);
@@ -2830,6 +2912,7 @@ fn cmd_terminal(args: &[String]) {
 ================================================================================\n\
   POSTURE            : CNSA 2.0 / FIPS 203 ML-KEM-1024 / FIPS 204 ML-DSA-87\n\
   TRAFFIC INVARIANCE : Paced {interval_ms}ms (CBR) | {quantum}B Quantized Cells\n\
+  PCS RATCHET        : SPQR Fresh-KEM Dynamic Post-Compromise Security Healing\n\
   LOCAL FORENSICS    : NIST SP 800-88 Deterministic Memory Sanitization\n\
   ANTI-REPLAY        : RFC 6479 2048-Packet Sliding Window + TPM 2.0 Guard\n\
   SHORT AUTH STRING  : {sas}\n\
@@ -2838,6 +2921,7 @@ fn cmd_terminal(args: &[String]) {
 --------------------------------------------------------------------------------\n\
   OPERATOR COMMANDS:\n\
     /status  - Display real-time link telemetry, seq counters & drop stats\n\
+    /rekey   - Advance post-quantum ratchet epoch with fresh ML-KEM-1024 + P-384\n\
     /clear   - Scrub terminal screen and scrollback buffer (ANSI anti-forensics)\n\
     /zeroize - Emergency 3-pass cryptographic wipe of keys, state & process\n\
     /help    - Display operator protocol manual & classification guide\n\
@@ -2881,10 +2965,34 @@ fn cmd_terminal(args: &[String]) {
                         } else if trimmed == "/clear" {
                             print!("\x1b[2J\x1b[3J\x1b[H");
                             let _ = std::io::stdout().flush();
+                        } else if trimmed == "/rekey" || trimmed == "REKEY" {
+                            if pcs_ratchet.peer_bundle().is_some() && pending_frame_key.is_none() && outbound_rekeys.is_empty() {
+                                match pcs_ratchet.send_step_auto() {
+                                    Ok((step, _msg_key)) => {
+                                        let next_epoch = step.epoch;
+                                        if let Ok(fk) = pcs_ratchet.current_frame_key() {
+                                            pending_frame_key = Some(fk);
+                                        }
+                                        let step_wire = ratchet::RekeyMessage::Step(step).to_wire();
+                                        if let Ok(frags) = fragment::fragment(&step_wire, rekey_chunk_size) {
+                                            for f in frags {
+                                                outbound_rekeys.push_back(f.to_wire());
+                                            }
+                                        }
+                                        println!("[POST-QUANTUM RATCHET] Rekey step emitted for Epoch {next_epoch}");
+                                    }
+                                    Err(e) => {
+                                        println!("[POST-QUANTUM RATCHET] Rekey failed: {e:?}");
+                                    }
+                                }
+                            } else {
+                                println!("[POST-QUANTUM RATCHET] Rekey deferred: peer bundle pending or rekey already in flight");
+                            }
                         } else if trimmed == "/help" {
                             println!(
 "\n[HELP] TACTICAL OPERATOR COMMAND MANUAL:\n\
   /status  - Query link telemetry, sequence numbers, and traffic counters\n\
+  /rekey   - Perform manual post-quantum fresh-KEM epoch ratchet advance\n\
   /clear   - ANSI terminal flush (clears active screen & scrollback buffer)\n\
   /zeroize - Emergency cryptographic purge of key and state files (NIST SP 800-88)\n\
   /quit    - Wipe session memory, scrub terminal and terminate cleanly\n\
@@ -2905,8 +3013,10 @@ fn cmd_terminal(args: &[String]) {
   Frames Recv    : {} (Messages: {msgs_received}, Chaff: {chaff_received})\n\
   Replay Drops   : {replay_drops}\n\
   Auth Drops     : {auth_drops}\n\
+  Ratchet Epoch  : {}\n\
   Uptime         : {:.1} s\n",
                                 msgs_received + chaff_received,
+                                pcs_ratchet.epoch(),
                                 start_time.elapsed().as_secs_f64()
                             );
                         } else if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
@@ -2914,6 +3024,9 @@ fn cmd_terminal(args: &[String]) {
                             drop(term_state_file.take());
                             if let Some(ref kf) = key_file_path {
                                 let _ = purge::purge_file(kf);
+                            }
+                            if let Some(ref ek) = ephemeral_key_path {
+                                let _ = purge::purge_file(ek);
                             }
                             let _ = purge::purge_file(&state);
                             for suffix in [".seqlog", ".nvck"] {
@@ -2937,6 +3050,36 @@ fn cmd_terminal(args: &[String]) {
                     }
                 }
                 _ = tick_timer.tick() => {
+                    if let Some(ref _old_key) = prev_frame_key {
+                        if prev_key_remaining_ticks > 0 {
+                            prev_key_remaining_ticks -= 1;
+                        } else {
+                            let _ = prev_frame_key.take();
+                        }
+                    }
+
+                    if ticks_emitted > 0
+                        && ticks_emitted.is_multiple_of(200)
+                        && role == "initiator"
+                        && pcs_ratchet.peer_bundle().is_some()
+                        && pending_frame_key.is_none()
+                        && outbound_rekeys.is_empty()
+                    {
+                        if let Ok((step, _msg_key)) = pcs_ratchet.send_step_auto() {
+                            let next_epoch = step.epoch;
+                            println!("[POST-QUANTUM RATCHET] Periodic rekey triggered for Epoch {next_epoch}");
+                            if let Ok(fk) = pcs_ratchet.current_frame_key() {
+                                pending_frame_key = Some(fk);
+                            }
+                            let step_wire = ratchet::RekeyMessage::Step(step).to_wire();
+                            if let Ok(frags) = fragment::fragment(&step_wire, rekey_chunk_size) {
+                                for f in frags {
+                                    outbound_rekeys.push_back(f.to_wire());
+                                }
+                            }
+                        }
+                    }
+
                     if next_send_seq >= reserved_limit {
                         let (last_check, _) = window.parts();
                         tpm_nv::guard_recv(&state, &key_bytes, reserved_limit, last_check, false)
@@ -2961,14 +3104,19 @@ fn cmd_terminal(args: &[String]) {
                     let seq = next_send_seq;
                     next_send_seq += 1;
 
-                    let frame = if let Some(payload) = outbound_msgs.pop_front() {
-                        let f = pacing::build_data_frame_directed(&key, seq, tx_dir, quantum, &payload)
+                    let frame = if let Some(rekey_payload) = outbound_rekeys.pop_front() {
+                        pacing::build_rekey_frame_directed(&current_frame_key, seq, tx_dir, quantum, &rekey_payload)
+                            .unwrap_or_else(|_| fail("build rekey frame failed"))
+                    } else if let Some(payload) = outbound_msgs.pop_front() {
+                        pcs_ratchet.note_transmission(payload.len());
+                        let f = pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &payload)
                             .unwrap_or_else(|_| fail("build data frame failed"));
                         msgs_sent += 1;
                         f
                     } else {
+                        pcs_ratchet.note_transmission(0);
                         chaff_sent += 1;
-                        pacing::build_chaff_frame_directed(&key, seq, tx_dir, quantum)
+                        pacing::build_chaff_frame_directed(&current_frame_key, seq, tx_dir, quantum)
                             .unwrap_or_else(|_| fail("build chaff failed"))
                     };
 
@@ -2995,29 +3143,37 @@ fn cmd_terminal(args: &[String]) {
                             auth_drops += 1;
                             continue;
                         }
-                        let seq = match aead::peek_seq(&key, &bytes) {
-                            Some(s) => s,
+                        let mut opened: Option<(u64, u8, Vec<u8>)> = None;
+                        if let Some(seq) = aead::peek_seq(&current_frame_key, &bytes) {
+                            if !window.check(seq) {
+                                replay_drops += 1;
+                            } else if let Ok((seq2, ftype, pt)) = aead::open_indexed(&current_frame_key, rx_dir, &bytes) {
+                                if seq2 == seq {
+                                    opened = Some((seq2, ftype, pt));
+                                }
+                            }
+                        }
+                        if opened.is_none() {
+                            if let Some(ref prev_key) = prev_frame_key {
+                                if let Some(seq) = aead::peek_seq(prev_key, &bytes) {
+                                    if !window.check(seq) {
+                                        replay_drops += 1;
+                                    } else if let Ok((seq2, ftype, pt)) = aead::open_indexed(prev_key, rx_dir, &bytes) {
+                                        if seq2 == seq {
+                                            opened = Some((seq2, ftype, pt));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let (seq2, ftype, pt) = match opened {
+                            Some(res) => res,
                             None => {
                                 ep.note_auth_drop();
                                 auth_drops += 1;
                                 continue;
                             }
                         };
-                        if !window.check(seq) {
-                            ep.note_auth_drop();
-                            replay_drops += 1;
-                            continue;
-                        }
-                        let Ok((seq2, ftype, pt)) = aead::open_indexed(&key, rx_dir, &bytes) else {
-                            ep.note_auth_drop();
-                            auth_drops += 1;
-                            continue;
-                        };
-                        if seq2 != seq {
-                            ep.note_auth_drop();
-                            auth_drops += 1;
-                            continue;
-                        }
                         window.mark(seq2);
                         if ftype == FTYPE_MSG {
                             if let Err(e) = zt_engine.evaluate_ingress(&zt_peer_id, &pt, true) {
@@ -3040,6 +3196,98 @@ fn cmd_terminal(args: &[String]) {
                             }
                         } else if ftype == FTYPE_CHAFF {
                             chaff_received += 1;
+                        } else if ftype == FTYPE_REKEY || ftype == FTYPE_IN_BAND_EPOCH_REKEY {
+                            if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
+                                let tx_id = frag.tx_id;
+                                let total = frag.total;
+                                let mut complete = false;
+                                let mut finished_payload = None;
+                                {
+                                    if inbound_rekey_buffers.len() > 16 {
+                                        inbound_rekey_buffers.clear();
+                                    }
+                                    let maybe_buffer = match inbound_rekey_buffers.entry(tx_id) {
+                                        std::collections::hash_map::Entry::Occupied(o) => Ok(o.into_mut()),
+                                        std::collections::hash_map::Entry::Vacant(v) => {
+                                            fragment::ReassemblyBuffer::new(tx_id, total).map(|b| v.insert(b))
+                                        }
+                                    };
+                                    if let Ok(buffer) = maybe_buffer {
+                                        if let Ok(is_done) = buffer.insert(frag) {
+                                            if is_done {
+                                                complete = true;
+                                                if let Ok(assembled) = buffer.reassemble() {
+                                                    finished_payload = Some(assembled);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if complete {
+                                    inbound_rekey_buffers.remove(&tx_id);
+                                }
+                                if let Some(raw_rekey) = finished_payload {
+                                    match ratchet::RekeyMessage::from_wire(&raw_rekey) {
+                                        Ok(ratchet::RekeyMessage::Advert(bundle)) => {
+                                            println!("[POST-QUANTUM RATCHET] Peer advertised Epoch {}", bundle.epoch);
+                                            pcs_ratchet.set_peer_bundle(bundle);
+                                            if role == "responder" && outbound_rekeys.is_empty() {
+                                                let adv_msg = ratchet::RekeyMessage::Advert(pcs_ratchet.advertise_bundle());
+                                                if let Ok(frags) = fragment::fragment(&adv_msg.to_wire(), rekey_chunk_size) {
+                                                    for f in frags {
+                                                        outbound_rekeys.push_back(f.to_wire());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Ok(ratchet::RekeyMessage::Step(step)) => {
+                                            match pcs_ratchet.receive_step_with_advert(&step) {
+                                                Ok(_msg_key) => {
+                                                    let new_epoch = pcs_ratchet.epoch();
+                                                    println!("[POST-QUANTUM RATCHET] Step accepted. Epoch advanced to {new_epoch}");
+                                                    if let Ok(tag) = pcs_ratchet.compute_confirm_tag(new_epoch) {
+                                                        let conf_msg = ratchet::RekeyMessage::Confirm { epoch: new_epoch, auth_tag: tag };
+                                                        if let Ok(frags) = fragment::fragment(&conf_msg.to_wire(), rekey_chunk_size) {
+                                                            for f in frags {
+                                                                outbound_rekeys.push_back(f.to_wire());
+                                                            }
+                                                        }
+                                                    }
+                                                    let adv_msg = ratchet::RekeyMessage::Advert(pcs_ratchet.advertise_bundle());
+                                                    if let Ok(frags) = fragment::fragment(&adv_msg.to_wire(), rekey_chunk_size) {
+                                                        for f in frags {
+                                                            outbound_rekeys.push_back(f.to_wire());
+                                                        }
+                                                    }
+                                                    if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
+                                                        prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
+                                                        prev_key_remaining_ticks = 20;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    println!("[POST-QUANTUM RATCHET] Step error: {e:?}");
+                                                }
+                                            }
+                                        }
+                                        Ok(ratchet::RekeyMessage::Confirm { epoch, auth_tag }) => {
+                                            if pcs_ratchet.epoch() == epoch {
+                                                if let Ok(expected_tag) = pcs_ratchet.compute_confirm_tag(epoch) {
+                                                    if ct::ct_eq(&auth_tag, &expected_tag) {
+                                                        println!("[POST-QUANTUM RATCHET] Confirmation verified for Epoch {epoch}");
+                                                        if let Some(pfk) = pending_frame_key.take() {
+                                                            prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
+                                                            prev_key_remaining_ticks = 20;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            ep.note_auth_drop();
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3065,6 +3313,10 @@ fn cmd_terminal(args: &[String]) {
             ep.drops
         );
     });
+
+    if let Some(ref tk) = ephemeral_key_path {
+        let _ = purge::purge_file(tk);
+    }
 }
 
 fn cmd_node(args: &[String]) {
@@ -3101,10 +3353,13 @@ fn cmd_node(args: &[String]) {
         forwarded.push("--state".to_string());
         forwarded.push(format!("node_{role}.state"));
     }
+    let mut ephemeral_key_path: Option<String> = None;
     if get_flag(&forwarded, "--key-file").is_none() && !has_flag(&forwarded, "--key-stdin") {
-        if let Some(psk) = get_flag(&forwarded, "--psk-file") {
+        if get_flag(&forwarded, "--psk-file").is_some() {
+            let temp_key = negotiate_ephemeral_kex(&forwarded, &role);
             forwarded.push("--key-file".to_string());
-            forwarded.push(psk);
+            forwarded.push(temp_key.clone());
+            ephemeral_key_path = Some(temp_key);
         } else {
             fail("missing --key-file PATH (or --psk-file PATH) for authenticated operational node");
         }
@@ -3115,6 +3370,10 @@ fn cmd_node(args: &[String]) {
         cmd_channel(&forwarded);
     } else {
         cmd_terminal(&forwarded);
+    }
+
+    if let Some(ref tk) = ephemeral_key_path {
+        let _ = purge::purge_file(tk);
     }
 }
 

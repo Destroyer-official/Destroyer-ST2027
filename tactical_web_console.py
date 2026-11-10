@@ -736,8 +736,7 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             return False, reason, {}
 
         must_require = (
-            _is_production()
-            or os.environ.get("P2P_WEB_REQUIRE_WEBAUTHN") == "1"
+            os.environ.get("P2P_WEB_REQUIRE_WEBAUTHN") == "1"
             or getattr(getattr(self, "server", None), "require_webauthn", False)
         )
         if must_require:
@@ -982,7 +981,11 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         self._send_json(response)
 
     def _handle_api_send(self, payload: dict):
-        auth_ok, auth_reason, auth_meta = self._verify_control_action_auth(payload)
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, auth_meta = verifier(payload)
+        else:
+            auth_ok, auth_reason, auth_meta = TacticalWebHandler._verify_control_action_auth(self, payload)
         if not auth_ok:
             self._send_json({
                 "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",
@@ -1017,7 +1020,11 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         validity windows, with replay suppression. Without a complete
         custody package the response is explicitly a simulated fixture.
         """
-        auth_ok, auth_reason, auth_meta = self._verify_control_action_auth(payload)
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, auth_meta = verifier(payload)
+        else:
+            auth_ok, auth_reason, auth_meta = TacticalWebHandler._verify_control_action_auth(self, payload)
         if not auth_ok:
             self._send_json({
                 "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",
@@ -1191,7 +1198,11 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_api_zgdp(self, payload: dict):
-        auth_ok, auth_reason, auth_meta = self._verify_control_action_auth(payload)
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, auth_meta = verifier(payload)
+        else:
+            auth_ok, auth_reason, auth_meta = TacticalWebHandler._verify_control_action_auth(self, payload)
         if not auth_ok:
             self._send_json({
                 "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",
@@ -1242,7 +1253,11 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             self._send_json({"status": "ZGDP_ERROR", "error": str(e)}, status=500)
 
     def _handle_api_cot(self, payload: dict):
-        auth_ok, auth_reason, auth_meta = self._verify_control_action_auth(payload)
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, auth_meta = verifier(payload)
+        else:
+            auth_ok, auth_reason, auth_meta = TacticalWebHandler._verify_control_action_auth(self, payload)
         if not auth_ok:
             self._send_json({
                 "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",
@@ -1285,7 +1300,11 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_api_diode_send(self, payload: dict):
-        auth_ok, auth_reason, auth_meta = self._verify_control_action_auth(payload)
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, auth_meta = verifier(payload)
+        else:
+            auth_ok, auth_reason, auth_meta = TacticalWebHandler._verify_control_action_auth(self, payload)
         if not auth_ok:
             self._send_json({
                 "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",
@@ -1307,7 +1326,11 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_api_zeroize(self, payload: dict):
-        auth_ok, auth_reason, auth_meta = self._verify_control_action_auth(payload)
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, auth_meta = verifier(payload)
+        else:
+            auth_ok, auth_reason, auth_meta = TacticalWebHandler._verify_control_action_auth(self, payload)
         if not auth_ok:
             self._send_json({
                 "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",

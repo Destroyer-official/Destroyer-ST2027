@@ -19,12 +19,13 @@ if not exist "%BIN%" (
 )
 
 if not exist "keys" mkdir keys
-if not exist "keys\native_session.key" (
-    echo [INIT] Generating fresh 256-bit post-quantum session key...
-    "%BIN%" keygen --out keys\native_session.key
+if not exist "keys\tactical_shared.psk" (
+    echo [INIT] Generating fresh 256-bit post-quantum pre-shared key (PSK)...
+    "%BIN%" keygen --out keys\tactical_shared.psk
 )
 
 echo Starting Base Bravo (Initiator) on 127.0.0.1:9061 ^<--^> Peer 127.0.0.1:9060...
+echo Negotiating dynamic Post-Quantum Hybrid KEX with peer...
 echo.
-"%BIN%" terminal --key-file keys\native_session.key --state keys\bravo_term.state --bind 127.0.0.1:9061 --to 127.0.0.1:9060 --role initiator --interval-ms 50 --quantum 1232 --callsign PENTAGON-BRAVO %*
+"%BIN%" node --role initiator --bind 127.0.0.1:9061 --to 127.0.0.1:9060 --psk-file keys\tactical_shared.psk --state keys\bravo_term.state --interval-ms 50 --quantum 1232 --callsign PENTAGON-BRAVO %*
 pause

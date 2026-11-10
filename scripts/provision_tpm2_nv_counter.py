@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 import struct
 import subprocess  # nosec: B404 (list-form argv used exclusively)
 import sys
@@ -31,9 +32,11 @@ COUNTER_SIZE_BYTES = 8
 DEFAULT_ATTRIBUTES = "ownerread|ownerwrite|authread|authwrite|nt=counter"
 
 
-def is_production() -> bool:
-    """Check whether production fail-closed security mode is active."""
-    return os.environ.get("P2P_PRODUCTION", "").strip() == "1"
+try:
+    from production_gate import is_production
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from production_gate import is_production
 
 
 class TPM2NvCounterProvisioner:

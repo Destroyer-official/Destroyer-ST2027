@@ -272,6 +272,32 @@ def _resolve_diode_wire_key(explicit: Optional[bytes]) -> Optional[bytes]:
         if not (16 <= len(key) <= 64):
             raise ValueError(f"{_DIODE_WIRE_KEY_ENV} must be 16-64 bytes (32-128 hex chars)")
         return key
+
+    try:
+        from production_gate import is_production as _is_prod
+        if _is_prod():
+            return None
+    except Exception:
+        pass
+
+    # Provision authentic diode wire key in user-private storage for HMAC-SHA3-256 integrity (lab/demo only)
+    try:
+        from secure_p2p import get_tactical_key_dir
+        diode_key_file = get_tactical_key_dir() / "diode_station.key"
+        if not diode_key_file.exists():
+            diode_key_file.write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
+            if os.name != "nt":
+                try:
+                    os.chmod(diode_key_file, 0o600)
+                except OSError:
+                    pass
+        key_hex = diode_key_file.read_text(encoding="utf-8").strip()
+        if key_hex:
+            k_bytes = bytes.fromhex(key_hex)
+            if 16 <= len(k_bytes) <= 64:
+                return k_bytes
+    except Exception:
+        pass
     return None
 
 

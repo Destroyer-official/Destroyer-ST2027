@@ -610,15 +610,10 @@ class LibOQS_HQC_256:
     Re-enable by default only after the DLL is rebuilt at 0.16.0+.
     """
     def __init__(self):
-        if os.environ.get("P2P_ENABLE_VULN_HQC", "").strip().lower() not in ("1", "true", "yes", "on"):
-            raise RuntimeError(
-                "HQC-256 refused: vendored oqs.dll predates upstream fixes "
-                "(CVE-2024-54137, CVE-2025-52473); set P2P_ENABLE_VULN_HQC=1 "
-                "to override explicitly (agility-reserve use only)")
-        logging.getLogger("liboqs_wrapper").critical(
-            "P2P_ENABLE_VULN_HQC=1: HQC-256 leg explicitly enabled on "
-            "vulnerable oqs.dll (CVE-2024-54137/CVE-2025-52473); use ends when "
-            "the operation completes")
+        raise RuntimeError(
+            "HQC-256 permanently prohibited: pre-standard algorithm subject to "
+            "CVE-2024-54137/CVE-2025-52473; use standard ML-KEM-1024 (FIPS 203) instead"
+        )
         self.alg_name = b"HQC-256"
         self.kem = liboqs.OQS_KEM_new(self.alg_name)
         if not self.kem: raise RuntimeError(f"Failed to initialize {self.alg_name.decode()} - Was it compiled into oqs.dll?")
@@ -1269,7 +1264,6 @@ class HybridSignature:
 __all__ = [
     'LibOQS_MLKEM_1024',
     'LibOQS_McEliece_8192128f',
-    'LibOQS_HQC_256',
     'LibOQS_MLDSA_87',
     'LibOQS_SLH_DSA_256f',
     'LibOQS_AES256GCM',

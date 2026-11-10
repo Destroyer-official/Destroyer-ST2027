@@ -1022,6 +1022,18 @@ class NC3CommandController:
                 )
                 hw_digest_hex = hashlib.sha3_512(hw_responses[0].auth_signature + hw_responses[1].auth_signature).hexdigest()
                 hw_custodians_list = [hw_responses[0].to_dict(), hw_responses[1].to_dict()]
+            else:
+                from production_gate import is_production as _nc3_prod
+                if _nc3_prod() and os.environ.get("P2P_NC3_ALLOW_SOFTWARE_EMULATION", "").strip() != "1":
+                    raise DualCustodyViolation(
+                        "Hardware dual-custody verification (hw_responses) is mandatory in production mode (F-15). "
+                        "Software-only dual custody is prohibited without physical hardware token challenge responses."
+                    )
+                import logging as _log
+                _log.getLogger("nc3_security").warning(
+                    "[NC3-SEC-WARN] EAM created without hardware dual custody challenge responses "
+                    "(software-only emulation mode active; prohibited in verified operational deployment)."
+                )
 
             vss_commit_hex = ""
             if vss_shares is not None:

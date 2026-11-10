@@ -159,6 +159,9 @@ class UserIdentityDevices:
     
     # Max devices per identity
     MAX_DEVICES: int = 5
+
+    # Key change and enrollment notification history (F-06)
+    key_change_events: List[Dict[str, Any]] = field(default_factory=list)
     
     def get_active_devices(self) -> List[DeviceInfo]:
         """Get list of active (non-revoked) devices."""
@@ -201,6 +204,20 @@ def crl_require_sig() -> bool:
                 "production; CRL signatures remain required", raw)
         return True
     return enabled
+
+
+def _sas_required() -> bool:
+    """Return True when device enrollment Short Authentication String (SAS) is required."""
+    raw = os.environ.get("P2P_DEVICE_REQUIRE_SAS")
+    enabled = str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+    if _crl_prod_strict_on():
+        if raw is not None and not enabled:
+            logger.critical(
+                "PROD-STRICT: ignoring P2P_DEVICE_REQUIRE_SAS=%r opt-out in "
+                "production; enrollment SAS confirmation remains required", raw)
+        return True
+    return enabled
+
 
 
 class MultiDeviceManager:
@@ -399,8 +416,97 @@ class MultiDeviceManager:
             
             logger.info(f"Enrolled root device {device_id[:16]}... for user {user_identity_id[:16]}...")
             
+            self.emit_key_change_notification(
+                user_identity_id,
+                "ROOT_DEVICE_ENROLLED",
+                device_id,
+                {"device_name": device_name}
+            )
+
             return device_info, device_private_key
     
+    def generate_device_enrollment_sas(
+        self,
+        user_identity_id: str,
+        authorizing_device_id: str,
+        new_device_public_key: bytes
+    ) -> str:
+        """
+        Generate a 6-digit Short Authentication String (SAS) for out-of-band verification.
+        Derived deterministically using SHA3-512 over identity, authorizer, and new key.
+        """
+        import hashlib
+        h = hashlib.sha3_512()
+        h.update(b"ST2027-DEVICE-ENROLLMENT-SAS-V1:")
+        h.update(user_identity_id.encode("utf-8"))
+        h.update(b":")
+        h.update(authorizing_device_id.encode("utf-8"))
+        h.update(b":")
+        h.update(bytes(new_device_public_key))
+        digest = h.digest()
+        code_int = int.from_bytes(digest[:4], "big") % 1_000_000
+        return f"{code_int:06d}"
+
+    def verify_device_enrollment_sas(
+        self,
+        user_identity_id: str,
+        authorizing_device_id: str,
+        new_device_public_key: bytes,
+        sas_code: str
+    ) -> bool:
+        """
+        Verify the Short Authentication String (SAS) in constant-time.
+        """
+        import secrets
+        expected = self.generate_device_enrollment_sas(user_identity_id, authorizing_device_id, new_device_public_key)
+        return secrets.compare_digest(str(sas_code).strip(), expected)
+
+    def emit_key_change_notification(
+        self,
+        user_identity_id: str,
+        event_type: str,
+        affected_device_id: str,
+        details: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Emit a key change / device roster notification to all active devices of the user.
+        """
+        with self._lock:
+            user_devices = self._user_devices.get(user_identity_id)
+            if not user_devices:
+                return {}
+            notified_targets = [
+                d.device_id for d in user_devices.get_active_devices()
+                if d.device_id != affected_device_id
+            ]
+            notification = {
+                "user_identity_id": user_identity_id,
+                "event_type": event_type,
+                "affected_device_id": affected_device_id,
+                "timestamp": datetime.now().isoformat(),
+                "notified_devices": notified_targets,
+                "details": details or {}
+            }
+            if not hasattr(user_devices, "key_change_events"):
+                user_devices.key_change_events = []
+            user_devices.key_change_events.append(notification)
+            logger.info(
+                f"[KEY CHANGE ALERT] {event_type} for user {user_identity_id[:16]}... "
+                f"device {affected_device_id[:16]}... notified: {len(notified_targets)} devices"
+            )
+            return notification
+
+    def get_key_change_notifications(
+        self,
+        user_identity_id: str
+    ) -> List[Dict[str, Any]]:
+        """Return history of key change / device roster events."""
+        with self._lock:
+            user_devices = self._user_devices.get(user_identity_id)
+            if not user_devices:
+                return []
+            return list(getattr(user_devices, "key_change_events", []))
+
     def enroll_device(
         self,
         user_identity_id: str,
@@ -409,7 +515,8 @@ class MultiDeviceManager:
         authorizing_device_id: str,
         authorizing_private_key: bytes,
         device_public_key: Optional[bytes] = None,
-        device_private_key: Optional[bytes] = None
+        device_private_key: Optional[bytes] = None,
+        sas_code: Optional[str] = None
     ) -> Tuple[DeviceInfo, bytes]:
         """
         Enroll a new device using signature from an existing authorized device.
@@ -487,6 +594,17 @@ class MultiDeviceManager:
                 raise DeviceEnrollmentError(
                     f"Device {device_id[:16]}... already enrolled"
                 )
+
+            # SAS Verification (Requirement F-06)
+            if _sas_required() and sas_code is None:
+                raise DeviceEnrollmentError(
+                    "SAS confirmation required in production for device enrollment (F-06)"
+                )
+            if sas_code is not None:
+                if not self.verify_device_enrollment_sas(user_identity_id, authorizing_device_id, device_public_key, sas_code):
+                    raise DeviceEnrollmentError(
+                        f"SAS code verification failed for device enrollment: provided {sas_code!r}"
+                    )
             
             # Create enrollment message
             timestamp = datetime.now()
@@ -531,6 +649,13 @@ class MultiDeviceManager:
             logger.info(
                 f"Enrolled device {device_id[:16]}... for user {user_identity_id[:16]}... "
                 f"(authorized by {authorizing_device_id[:16]}..., chain depth: {device_info.signature_chain_depth})"
+            )
+
+            self.emit_key_change_notification(
+                user_identity_id,
+                "DEVICE_ENROLLED",
+                device_id,
+                {"device_name": device_name, "authorizing_device_id": authorizing_device_id}
             )
             
             return device_info, device_private_key
@@ -728,6 +853,13 @@ class MultiDeviceManager:
             logger.info(
                 f"Revoked device {device_id[:16]}... for user {user_identity_id[:16]}... "
                 f"(reason: {reason})"
+            )
+
+            self.emit_key_change_notification(
+                user_identity_id,
+                "DEVICE_REVOKED",
+                device_id,
+                {"reason": reason}
             )
             
             return True

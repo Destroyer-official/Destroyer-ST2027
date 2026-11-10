@@ -186,8 +186,8 @@ class MenuManager(BaseModule):
                     )
                     
                     print(f"[OK] Secure connection established with {ip_address}:{port}")
-                    print(f"  [ENCRYPTION] DoubleRatchet + ChaCha20-Poly1305")
-                    print(f"  [KEY EXCHANGE] X25519 + ML-KEM-1024 (Post-Quantum)")
+                    print(f"  [ENCRYPTION] DoubleRatchet + AES-256-GCM (CNSA 2.0)")
+                    print(f"  [KEY EXCHANGE] P-384 + ML-KEM-1024 (RFC 10024 Post-Quantum)")
                     print(f"  [SESSION] Connection stored as: {peer_id}")
                     print(f"   Use option 3 (Chat with Connected Peer) to start chatting")
                     

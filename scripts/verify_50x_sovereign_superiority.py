@@ -78,8 +78,17 @@ def shannon_entropy(data: bytes) -> float:
     return ent
 
 
+def bench_env() -> Dict[str, str]:
+    """Clean lab environment for empirical benchmark measurements."""
+    env = os.environ.copy()
+    env.pop("P2P_PRODUCTION", None)
+    env.pop("SECURE_P2P_PRODUCTION", None)
+    env["P2P_LAB_MODE"] = "1"
+    return env
+
+
 def make_key_file(tmpdir: str) -> Tuple[str, str]:
-    res = subprocess.run([str(RUST_BIN), "keygen"], capture_output=True, text=True, cwd=str(CRATE))
+    res = subprocess.run([str(RUST_BIN), "keygen"], capture_output=True, text=True, cwd=str(CRATE), env=bench_env())
     hexkey = res.stdout.strip()
     kf = os.path.join(tmpdir, "test.key")
     with open(kf, "w") as f:
@@ -117,7 +126,8 @@ class SovereignSuperiorityBenchmark:
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=bench_env()
             )
 
         # F-16 honesty: the stream-chaff binary is fire-and-forget UDP, so we
@@ -163,7 +173,8 @@ class SovereignSuperiorityBenchmark:
                 cwd=str(CRATE),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=bench_env()
             )
             time.sleep(1.5)
             sent = subprocess.run(
@@ -172,7 +183,8 @@ class SovereignSuperiorityBenchmark:
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
+                env=bench_env()
             )
             out_recv, err_recv = recv.communicate(timeout=20)
             recovered = os.path.exists(dst) and (Path(dst).read_bytes() == original_data)
@@ -197,24 +209,39 @@ class SovereignSuperiorityBenchmark:
             _hex, psk_f = make_key_file(tmp)
             key_a = os.path.join(tmp, "resp.key")
             key_b = os.path.join(tmp, "init.key")
+            resp_sk = os.path.join(tmp, "resp_auth.sk")
+            resp_pk = os.path.join(tmp, "resp_auth.pk")
+            init_sk = os.path.join(tmp, "init_auth.sk")
+            init_pk = os.path.join(tmp, "init_auth.pk")
+
+            # Generate NIST FIPS 204 ML-DSA-87 mutual identity keypairs
+            subprocess.run([str(RUST_BIN), "auth-keygen", "--out-sk", resp_sk, "--out-pk", resp_pk], check=True, cwd=str(CRATE), capture_output=True, env=bench_env())
+            subprocess.run([str(RUST_BIN), "auth-keygen", "--out-sk", init_sk, "--out-pk", init_pk], check=True, cwd=str(CRATE), capture_output=True, env=bench_env())
+
             port = free_tcp_port()
 
             p_listen = subprocess.Popen(
                 [str(RUST_BIN), "kex-listen", "--bind", f"127.0.0.1:{port}",
-                 "--out-key", key_a, "--psk-file", psk_f, "--timeout-ms", "15000"],
+                 "--out-key", key_a, "--psk-file", psk_f,
+                 "--auth-sk-file", resp_sk, "--peer-auth-pk-file", init_pk,
+                 "--timeout-ms", "15000"],
                 cwd=str(CRATE),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=bench_env()
             )
             time.sleep(1.0)
             p_conn = subprocess.run(
                 [str(RUST_BIN), "kex-connect", "--to", f"127.0.0.1:{port}",
-                 "--out-key", key_b, "--psk-file", psk_f, "--timeout-ms", "15000"],
+                 "--out-key", key_b, "--psk-file", psk_f,
+                 "--auth-sk-file", init_sk, "--peer-auth-pk-file", resp_pk,
+                 "--timeout-ms", "15000"],
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
+                env=bench_env()
             )
             out_listen, err_listen = p_listen.communicate(timeout=15)
 
@@ -251,7 +278,8 @@ class SovereignSuperiorityBenchmark:
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=bench_env()
             )
             unlinked = (not os.path.exists(key_file)) and (not os.path.exists(state_file))
 
@@ -281,7 +309,8 @@ class SovereignSuperiorityBenchmark:
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=bench_env()
             )
             m1 = re.search(r"sent seq=(\d+)", p1.stderr)
             seq1 = int(m1.group(1)) if m1 else -1
@@ -292,7 +321,8 @@ class SovereignSuperiorityBenchmark:
                 cwd=str(CRATE),
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=bench_env()
             )
             m2 = re.search(r"sent seq=(\d+)", p2.stderr)
             seq2 = int(m2.group(1)) if m2 else -1
