@@ -275,7 +275,7 @@ jobs:
       # SHA-pinned release (v4.1.2 -> default cosign v3.0.6) BEFORE the
       # attestation gate; cosign v3 sign-blob requires --bundle.
       - name: Install Cosign (pinned sigstore/cosign-installer)
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2 (cosign v3.0.6)
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.2 (cosign v3.0.6)
 
       # F-06: fail-closed supply-chain attestation with a REAL keyless flow
       # (workflow grants id-token: write). Missing cosign, a failed sign, or
