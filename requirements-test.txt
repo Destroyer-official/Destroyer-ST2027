@@ -6,7 +6,7 @@
 # verified this dependency set on 2026-10-25; no monolithic full-suite run is implied.
 pytest==9.1.1
 pytest-timeout==2.4.0
-hypothesis==6.165.5
+hypothesis==6.170.15
 anyio==4.15.1
 sniffio==1.3.1
 typing_extensions==4.16.0
