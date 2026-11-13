@@ -44,7 +44,7 @@ jobs:
           base: ${{ github.event.repository.default_branch }}
           head: HEAD
           extra_args: --only-verified
-        continue-on-error: true
+        continue-on-error: false
 
       - name: Bandit SAST Gate (fail on Medium+, audited suppressions via nosec)
         run: |
@@ -103,7 +103,7 @@ jobs:
       - name: Rust Dependency Security & License Audit (cargo-deny)
         run: |
           cargo install --locked cargo-deny || true
-          cargo deny check --manifest-path rust_data_plane/Cargo.toml || true
+          cargo deny check --manifest-path rust_data_plane/Cargo.toml
 
       - name: Execute Rust Data-Plane Unit & Integration Tests
         run: |

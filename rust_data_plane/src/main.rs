@@ -46,7 +46,7 @@ use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
 use destroyer_core::pacing::{self, PacedScheduler, PoissonScheduler, TacticalProfile};
 use destroyer_core::pki::{self, CertSig, Custodian};
-use destroyer_core::policy::{DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
+use destroyer_core::policy::{self, DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
 use destroyer_core::purge;
 use destroyer_core::ratchet::{self, PcsRatchet};
 use destroyer_core::replay::AntiReplayWindow;
@@ -266,15 +266,13 @@ fn load_peer_verifying_key(path: &str) -> Mldsa87VerifyingKey {
 
 /// Mutual identity authentication is mandatory outside explicit lab mode.
 /// `--require-mutual-auth` pins it on even if a lab variable is present.
-/// In production posture (`P2P_PRODUCTION=1` or `SECURE_P2P_PRODUCTION=1`),
-/// mutual authentication is unconditionally MANDATORY, overriding any `--lab` flag (F-03).
+/// In production posture (`P2P_PRODUCTION` or `SECURE_P2P_PRODUCTION`),
+/// mutual authentication is unconditionally MANDATORY, overriding any `--lab` flag (F-03, F-11).
 fn mutual_auth_required(args: &[String]) -> bool {
     if has_flag(args, "--require-mutual-auth") {
         return true;
     }
-    if std::env::var("P2P_PRODUCTION").as_deref() == Ok("1")
-        || std::env::var("SECURE_P2P_PRODUCTION").as_deref() == Ok("1")
-    {
+    if policy::is_production_env() {
         return true;
     }
     #[cfg(feature = "lab-surfaces")]
@@ -2654,7 +2652,11 @@ fn cmd_channel(args: &[String]) {
                                 if let Some(raw_crl) = finished_payload {
                                     if let Ok(crl) = x509::PqX509Crl::from_der(&raw_crl) {
                                         let verified = if let Some(ref custs) = ca_custodians {
-                                            crl.verify_threshold(custs).is_ok()
+                                            let now = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_secs_f64())
+                                                .unwrap_or(0.0);
+                                            crl.verify_threshold(custs, now).is_ok()
                                         } else {
                                             true
                                         };
@@ -3528,15 +3530,21 @@ fn cmd_kex_listen(args: &[String]) {
                         socket.read_exact(&mut init_crl_der).await.map_err(|_| "read init crl failed")?;
                         let recv_crl = x509::PqX509Crl::from_der(&init_crl_der)
                             .map_err(|_| "invalid initiator CRL DER")?;
-                        recv_crl.verify_threshold(custodians)
-                            .map_err(|_| "initiator CRL failed 3-of-5 threshold CA verification")?;
+                        recv_crl.verify_threshold(custodians, now)
+                            .map_err(|_| "initiator CRL failed 3-of-5 threshold CA verification or freshness")?;
                         let crl_sidecar = format!("{out}.crl_seq");
                         tpm_nv::guard_crl_sequence(Some(&crl_sidecar), recv_crl.crl_number)
                             .map_err(|_| "initiator CRL rejected by TPM 2.0 anti-rollback counter")?;
                         active_crl = Some(recv_crl);
                     }
 
+                    if policy::is_production_env() && active_crl.is_none() {
+                        return Err("production PKI mode strictly requires active, verified CRL (fail-closed)");
+                    }
+
                     if let Some(ref crl) = active_crl {
+                        crl.verify_threshold(custodians, now)
+                            .map_err(|_| "active CRL failed threshold or freshness verification")?;
                         if crl.revoked_serials.contains(&init_cert.serial) {
                             return Err("initiator certificate has been revoked in CRL (fail-closed)");
                         }
@@ -3760,15 +3768,21 @@ fn cmd_kex_connect(args: &[String]) {
                         socket.read_exact(&mut resp_crl_der).await.map_err(|_| "read resp crl failed")?;
                         let recv_crl = x509::PqX509Crl::from_der(&resp_crl_der)
                             .map_err(|_| "invalid responder CRL DER")?;
-                        recv_crl.verify_threshold(custodians)
-                            .map_err(|_| "responder CRL failed 3-of-5 threshold CA verification")?;
+                        recv_crl.verify_threshold(custodians, now)
+                            .map_err(|_| "responder CRL failed 3-of-5 threshold CA verification or freshness")?;
                         let crl_sidecar = format!("{out}.crl_seq");
                         tpm_nv::guard_crl_sequence(Some(&crl_sidecar), recv_crl.crl_number)
                             .map_err(|_| "responder CRL rejected by TPM 2.0 anti-rollback counter")?;
                         active_crl = Some(recv_crl);
                     }
 
+                    if policy::is_production_env() && active_crl.is_none() {
+                        return Err("production PKI mode strictly requires active, verified CRL (fail-closed)");
+                    }
+
                     if let Some(ref crl) = active_crl {
+                        crl.verify_threshold(custodians, now)
+                            .map_err(|_| "active CRL failed threshold or freshness verification")?;
                         if crl.revoked_serials.contains(&resp_cert.serial) {
                             return Err("responder certificate has been revoked in CRL (fail-closed)");
                         }

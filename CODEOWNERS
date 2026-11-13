@@ -1,35 +1,37 @@
 # GitHub CODEOWNERS — Sovereign Transmit 2027 (ST2027)
 # High-Assurance Defense Engineering Access Control
 # Conforms to DoD 5210.41M Two-Person Integrity (TPI)
+# Remediation for F-12: Uses direct user handle @Destroyer-official to ensure
+# active branch-protection and mandatory review assignment on GitHub.
 
 # Default ownership across entire repository
-* @Destroyer-official/security-core @Destroyer-official/lead-architect
+* @Destroyer-official
 
 # Cryptographic Core & Rust Sovereign Data Plane
-/rust_data_plane/ @Destroyer-official/crypto-engineering @Destroyer-official/rust-core
-/pqc_algorithms.py @Destroyer-official/crypto-engineering
-/cnsa2_policy_engine.py @Destroyer-official/crypto-engineering
-/hybrid_kex.py @Destroyer-official/crypto-engineering
-/double_ratchet.py @Destroyer-official/crypto-engineering
+/rust_data_plane/ @Destroyer-official
+/pqc_algorithms.py @Destroyer-official
+/cnsa2_policy_engine.py @Destroyer-official
+/hybrid_kex.py @Destroyer-official
+/double_ratchet.py @Destroyer-official
 
 # Hardware Security, TPM 2.0 & Key Custody
-/rust_data_plane/src/tpm_nv.rs @Destroyer-official/hardware-security
-/rust_data_plane/src/keystore.rs @Destroyer-official/hardware-security
-/platform_hsm_interface.py @Destroyer-official/hardware-security
-/secure_key_manager.py @Destroyer-official/hardware-security
-/trust_anchor.py @Destroyer-official/pki-custodians
+/rust_data_plane/src/tpm_nv.rs @Destroyer-official
+/rust_data_plane/src/keystore.rs @Destroyer-official
+/platform_hsm_interface.py @Destroyer-official
+/secure_key_manager.py @Destroyer-official
+/trust_anchor.py @Destroyer-official
 
 # Wire Pacing, Isochronous Profiles & Cover Traffic
-/rust_data_plane/src/pacing.rs @Destroyer-official/sigint-resistance
-/rust_data_plane/src/net.rs @Destroyer-official/sigint-resistance
+/rust_data_plane/src/pacing.rs @Destroyer-official
+/rust_data_plane/src/net.rs @Destroyer-official
 
 # Release Governance, Hash Manifests & Reproducible Verification
-/critical_modules.hashes @Destroyer-official/lead-architect @Destroyer-official/release-governance
-/scripts/verify_reproducible_build.py @Destroyer-official/release-governance
-/scripts/run_defense_audit.py @Destroyer-official/release-governance
-/compliance_reports/ @Destroyer-official/compliance-audit
+/critical_modules.hashes @Destroyer-official
+/scripts/verify_reproducible_build.py @Destroyer-official
+/scripts/run_defense_audit.py @Destroyer-official
+/compliance_reports/ @Destroyer-official
 
 # Formal Verification Models
-/*.pv @Destroyer-official/formal-methods
-/formal_proofs/ @Destroyer-official/formal-methods
+/*.pv @Destroyer-official
+/formal_proofs/ @Destroyer-official
 

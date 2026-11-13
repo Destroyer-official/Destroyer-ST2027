@@ -27,31 +27,21 @@ def _env_wants_prod() -> bool:
     return is_production()
 
 
-# Sticky production latch: captured once at import. Never allowed to unset.
-_STICKY_PROD: bool = _env_wants_prod()
+# Sticky production latch: delegates to production_gate as single source of truth.
+_STICKY_PROD: bool = False
 
 
 def _is_production() -> bool:
     """
-    Sticky production check (fail-closed).
-
-    Once _STICKY_PROD is True (true at import, or later latched True), it
-    stays True for the lifetime of the process. Any later env clearing that
-    would unset production is denied and logged at CRITICAL.
+    Canonical production check delegating to production_gate (fail-closed).
+    production_gate is the single source of truth and enforces process-wide
+    fail-closed sticky latching.
     """
     global _STICKY_PROD
-    wants = _env_wants_prod()
-    if wants:
-        _STICKY_PROD = True
-        return True
-    if _STICKY_PROD:
-        logger.critical(
-            "Attempt to unset production mode detected "
-            "(P2P_PRODUCTION/SECURE_P2P_PRODUCTION cleared after sticky latch). "
-            "Enforcing sticky production (fail-closed)."
-        )
-        return True
-    return False
+    from production_gate import is_production
+    prod = is_production()
+    _STICKY_PROD = prod
+    return prod
 
 
 def _emit_config_audit(message: str) -> None:

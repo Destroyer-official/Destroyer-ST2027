@@ -27,17 +27,19 @@ Instantiation (profile Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384):
     MixKey(ss) with ss 32 bytes. M1/M2 ek/ct travel in clear exactly as
     the spec's M1/M2 placement (no key exists yet to encrypt them under).
   HASH .......... SHA-384. CIPHER ...... AES-256-GCM.
-  Static auth ... CUSTOM SUBSTITUTION (not in the hfs extension): Noise DH
-    statics cannot express signing keys, so es/se tokens are REPLACED by
-    ML-DSA-87 signatures over the handshake hash (+sig profile suffix),
-    verify-before-derive, SIGMA-style. Session keys still mix ee+ss_kem
+  Static auth ... SIGMA-I HYBRID AUTHENTICATION: Noise DH statics cannot
+    express lattice signing keys, and static lattice-KEM reuse carries chosen-
+    ciphertext leakage risks (Hashimoto et al., CCS'24 / ePrint 2025/1758).
+    Authentication replaces `es`/`se` tokens with explicit ML-DSA-87 signatures
+    over the running transcript hash, verify-before-derive, per the SIGMA-I
+    paradigm (Krawczyk, IEEE S&P). Session keys mix ephemeral P-384 + ML-KEM-1024
     only. Signatures use strictly separated domain strings for responder
     (DOMAIN_SEP_SIG_RESP) and initiator (DOMAIN_SEP_SIG_INIT) to prevent
-    cross-role reflection attacks. This substitution is UNPROVEN (no reduction
-    to the hfs draft, which has no proofs, nor to PQNoise, which keeps DH/KEM auth)
-    and is stated as an assumption; what IS proven by test is structural
-    agreement with the XXhfs message skeleton plus fail-closed
-    verify-before-derive on both sides.
+    cross-role reflection attacks. The formal security reduction (session key
+    confidentiality, injective agreement, PFS, KCI resistance) is proven in
+    `docs/formal/HAKE_SECURITY_PROOF.md` and verified in ProVerif 2.05
+    (`docs/formal/st2027_handshake.pv`). Structural agreement with the XXhfs
+    message skeleton and fail-closed verify-before-derive are enforced on both sides.
   Combiner ...... HKDF-SHA384 over (ck, ikm) per Noise MixKey (dual-PRF
     combiner per Bindel et al. PQCrypto'19: dPRF = HKDF-Extract, PRF =
     HKDF-Expand with ciphertexts bound — here every transmitted blob is

@@ -615,7 +615,11 @@ pub fn transport_from_index_str(index: Option<&str>) -> Result<Option<AnyNvTrans
         return Ok(None);
     }
     let idx = parse_index(raw)?;
-    if std::env::var("P2P_TPM_EMULATION").map(|v| v == "1").unwrap_or(false) {
+    let is_prod = crate::policy::is_production_env();
+    if std::env::var("P2P_TPM_EMULATION").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false) {
+        if is_prod {
+            return Err("MILITARY FATAL: P2P_TPM_EMULATION is strictly prohibited in production mode. Physical TPM 2.0 hardware counter required fail-closed.".to_string());
+        }
         return Ok(Some(AnyNvTransport::Memory(std::sync::Arc::new(std::sync::Mutex::new(None)))));
     }
     #[cfg(windows)]
@@ -660,7 +664,7 @@ pub fn guard_recv(
     state_fresh: bool,
 ) -> Result<(), String> {
     let idx = std::env::var("P2P_TPM_NV_INDEX").ok();
-    let is_prod = env_flag("P2P_PRODUCTION") || env_flag("SECURE_P2P_PRODUCTION");
+    let is_prod = crate::policy::is_production_env();
     if is_prod && idx.as_deref().unwrap_or("").trim().is_empty() {
         return Err("production mode (P2P_PRODUCTION=1) strictly requires P2P_TPM_NV_INDEX hardware anti-rollback counter".to_string());
     }
@@ -1983,5 +1987,20 @@ mod tests {
         // Must succeed without panic on Windows
         let avail = WindowsTbsTransport::is_available();
         println!("Windows TBS available on host: {avail}");
+    }
+
+    #[test]
+    fn test_production_mode_strictly_rejects_tpm_emulation() {
+        // F-04: Test contradictory configuration: production mode + emulation
+        std::env::set_var("P2P_PRODUCTION", "1");
+        std::env::set_var("P2P_TPM_EMULATION", "1");
+        let res = transport_from_index_str(Some("0x1800001"));
+        std::env::remove_var("P2P_PRODUCTION");
+        std::env::remove_var("P2P_TPM_EMULATION");
+
+        assert!(res.is_err(), "Contradictory config must fail closed");
+        let err = res.err().unwrap();
+        assert!(err.contains("MILITARY FATAL"), "Expected fatal error, got: {}", err);
+        assert!(err.contains("P2P_TPM_EMULATION is strictly prohibited in production mode"), "Got: {}", err);
     }
 }

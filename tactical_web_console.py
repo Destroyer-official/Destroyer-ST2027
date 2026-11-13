@@ -43,7 +43,8 @@ def _is_production() -> bool:
         from production_gate import is_production
         return bool(is_production())
     except Exception:
-        return False
+        return any(os.environ.get(v, "").strip().lower() in ("1", "true", "yes", "on", "prod", "production")
+                   for v in ("P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"))
 
 # ---------------------------------------------------------------------------
 # A4-09 hardening (2026-10-17):

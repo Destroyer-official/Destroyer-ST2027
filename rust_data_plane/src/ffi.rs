@@ -602,13 +602,21 @@ pub fn x509_issue_crl(
 }
 
 #[pyfunction]
+#[pyo3(signature = (der_bytes, custodians_json, now=None))]
 pub fn x509_verify_crl(
     der_bytes: Vec<u8>,
     custodians_json: String,
+    now: Option<f64>,
 ) -> PyResult<(u64, Vec<Vec<u8>>)> {
     let crl = crate::x509::PqX509Crl::from_der(&der_bytes).map_err(err)?;
     let custodians = crate::pki::parse_custodians_json(&custodians_json).map_err(err)?;
-    crl.verify_threshold(&custodians).map_err(err)?;
+    let ts = now.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+    });
+    crl.verify_threshold(&custodians, ts).map_err(err)?;
     let serials = crl
         .revoked_serials
         .into_iter()

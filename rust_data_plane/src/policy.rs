@@ -141,6 +141,42 @@ pub const ROLLOVER_PACKET_THRESHOLD: u64 = 10_000;
 /// Default byte threshold for automatic in-band epoch rollover (M = 10 MB = 10,485,760 bytes).
 pub const ROLLOVER_BYTE_THRESHOLD: u64 = 10 * 1024 * 1024;
 
+/// Canonical truthy set for production posture. Keep in sync with Python `production_gate.TRUTHY`.
+/// Any spelling accepted by Python is accepted here.
+pub fn is_production_env() -> bool {
+    const PROD_VARS: [&str; 2] = ["P2P_PRODUCTION", "SECURE_P2P_PRODUCTION"];
+    for var in PROD_VARS {
+        if let Ok(val) = std::env::var(var) {
+            let norm = val.trim().to_lowercase();
+            if norm == "1"
+                || norm == "true"
+                || norm == "yes"
+                || norm == "on"
+                || norm == "t"
+                || norm == "y"
+                || norm == "2"
+                || norm == "enabled"
+                || norm == "enable"
+                || norm == "prod"
+                || norm == "production"
+                || norm == "true prod"
+            {
+                return true;
+            }
+            if norm == "0" || norm == "false" || norm == "no" || norm == "off" || norm.is_empty() {
+                continue;
+            }
+            // Fail-closed on any unrecognized non-empty value (F-11 remediation)
+            eprintln!(
+                "[CRITICAL] rust_data_plane: {} has unrecognized value {:?}. Treating as PRODUCTION (fail-closed).",
+                var, val
+            );
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +213,31 @@ mod tests {
         assert_ne!(DOMAIN_EPOCH_AUTH_KEY, DOMAIN_EPOCH_RATCHET_ROOT);
         assert_eq!(ROLLOVER_PACKET_THRESHOLD, 10_000);
         assert_eq!(ROLLOVER_BYTE_THRESHOLD, 10_485_760);
+    }
+
+    #[test]
+    fn test_is_production_env_canonical_parsing() {
+        // Test truthy values
+        for val in &["1", "true", "yes", "on", "enabled", "production", "prod", "TRUE", "Yes", "ON"] {
+            std::env::set_var("P2P_PRODUCTION", val);
+            assert!(is_production_env(), "Failed for value {}", val);
+            std::env::remove_var("P2P_PRODUCTION");
+
+            std::env::set_var("SECURE_P2P_PRODUCTION", val);
+            assert!(is_production_env(), "Failed for SECURE_P2P_PRODUCTION {}", val);
+            std::env::remove_var("SECURE_P2P_PRODUCTION");
+        }
+
+        // Test falsey values
+        for val in &["0", "false", "no", "off", "", "FALSE", "NO", "Off"] {
+            std::env::set_var("P2P_PRODUCTION", val);
+            assert!(!is_production_env(), "Should be false for value {}", val);
+            std::env::remove_var("P2P_PRODUCTION");
+        }
+
+        // Test unrecognized non-empty value (fail-closed)
+        std::env::set_var("P2P_PRODUCTION", "some_typo_value");
+        assert!(is_production_env(), "Unrecognized non-empty must fail closed to true");
+        std::env::remove_var("P2P_PRODUCTION");
     }
 }

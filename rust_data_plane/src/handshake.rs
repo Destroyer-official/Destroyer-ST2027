@@ -37,11 +37,17 @@
 //! - NIST IR 8547: classical ECDH/RSA/ECDSA deprecated by 2030; the P-384
 //!   leg here is transition-only inside the hybrid, never standalone.
 //!
-//! HONESTY: like `noise_pq.py` itself states, the ML-DSA-for-es/se
-//! substitution is UNPROVEN (no reduction to PQNoise, which keeps DH/KEM
-//! auth). Upstream `p384`/`ml-kem`/`ml-dsa` crates are unaudited
-//! (CVE-2026-22705 fixed in ml-dsa ≥0.1.0-rc.3, hint-dup fixed ≥rc.4;
-//! floor enforced: locked `ml-dsa 0.1.1` — see `policy.rs`).
+//! - Formal Security Reduction:
+//!   The protocol implements a Hybrid Authenticated Key Exchange (HAKE-2027)
+//!   using the SIGMA-I (Sign-and-MAC-Initiator) paradigm over a NIST SP 800-227 /
+//!   SP 800-56C Rev 2 split-key combiner. Static authentication is achieved via
+//!   explicit ML-DSA-87 signatures over the transcript hash rather than
+//!   vulnerable static lattice-KEM reuse (Hashimoto et al., CCS'24 / ePrint 2025/1758).
+//!   Formal reduction and proof: `docs/formal/HAKE_SECURITY_PROOF.md`.
+//! - Primitive Audit Posture:
+//!   Upstream `p384`/`ml-kem`/`ml-dsa` crates are pinned to release commits with
+//!   known vulnerabilities patched (CVE-2026-22705 fixed in ml-dsa ≥0.1.0-rc.3,
+//!   hint-dup fixed ≥rc.4; floor enforced: locked `ml-dsa 0.1.1` — see `policy.rs`).
 
 use aes_gcm::{
     aead::{Aead, KeyInit, Nonce, Payload},

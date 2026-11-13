@@ -330,14 +330,107 @@ def verify_revocation(rev: Revocation, custodians: List[Custodian]) -> None:
 
 
 class RevocationCache:
-    """Memory-only revocation state. No disk, thread-safe, fail-closed."""
+    """
+    Authenticated persistent revocation ledger with memory cache.
+    Thread-safe, fail-closed.
+    Survives application restarts by persisting threshold-signed revocations
+    to an authenticated durable ledger, verifying signatures upon reload (F-05).
+    """
 
-    def __init__(self, custodians: List[Custodian]) -> None:
+    def __init__(self, custodians: List[Custodian], ledger_path: Optional[str] = None) -> None:
         self._custodians = list(custodians)
         self._lock = threading.Lock()
         self._entries: Dict[bytes, Revocation] = {}
         self.hits = 0
         self.rejects = 0
+
+        # Determine ledger persistence target
+        from production_gate import is_production
+        is_prod = is_production()
+        ephemeral = os.environ.get("P2P_EPHEMERAL_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
+        if ledger_path is not None:
+            self._ledger_path: Optional[str] = ledger_path
+        else:
+            env_ledger = os.environ.get("P2P_REVOCATION_LEDGER")
+            if env_ledger:
+                self._ledger_path = env_ledger
+            elif is_prod and not ephemeral:
+                self._ledger_path = os.path.abspath(".p2p_revocation_ledger.json")
+            else:
+                self._ledger_path = None
+
+        if self._ledger_path and os.path.exists(self._ledger_path):
+            self._load_ledger()
+
+    def _load_ledger(self) -> None:
+        """Load and cryptographically verify all revocation records from persistent ledger."""
+        if not self._ledger_path or not os.path.exists(self._ledger_path):
+            return
+        try:
+            with open(self._ledger_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            entries = data.get("entries", [])
+            for item in entries:
+                serial = bytes.fromhex(item["serial"])
+                reason = str(item["reason"])
+                ts = float(item["ts"])
+                seq = int(item["seq"])
+                sigs = [
+                    CertSig(custodian=s["custodian"], sig=bytes.fromhex(s["sig"]))
+                    for s in item.get("sigs", [])
+                ]
+                rev = Revocation(serial=serial, reason=reason, ts=ts, seq=seq, sigs=sigs)
+                # Strict cryptographic threshold verification on reload
+                verify_revocation(rev, self._custodians)
+                with self._lock:
+                    prior = self._entries.get(serial)
+                    if prior is not None and seq <= int(prior.seq):
+                        continue
+                    self._entries[serial] = rev
+        except Exception as exc:
+            log.critical("Revocation ledger failed verification or is corrupted: %r", exc)
+            from production_gate import is_production
+            if is_production():
+                raise TrustError(f"Persistent revocation ledger failed verification: {exc}")
+
+    def _persist_ledger(self) -> None:
+        """Atomically persist threshold-signed revocation state to disk."""
+        if not self._ledger_path:
+            return
+        payload = {
+            "version": 1,
+            "entries": [
+                {
+                    "serial": rev.serial.hex(),
+                    "reason": rev.reason,
+                    "ts": rev.ts,
+                    "seq": rev.seq,
+                    "sigs": [
+                        {"custodian": s.custodian, "sig": s.sig.hex()}
+                        for s in rev.sigs
+                    ],
+                }
+                for rev in self._entries.values()
+            ]
+        }
+        tmp_path = f"{self._ledger_path}.tmp.{os.getpid()}_{secrets.token_hex(4)}"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self._ledger_path)
+        except Exception as exc:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            log.critical("Failed to persist revocation ledger: %r", exc)
+            from production_gate import is_production
+            if is_production():
+                raise TrustError(f"Failed to persist revocation ledger: {exc}")
 
     def add(self, rev: Revocation) -> None:
         verify_revocation(rev, self._custodians)
@@ -348,6 +441,7 @@ class RevocationCache:
                 self.rejects += 1
                 raise TrustError("trust rejected")
             self._entries[key] = rev
+            self._persist_ledger()
 
     def is_revoked(self, serial: bytes) -> bool:
         with self._lock:

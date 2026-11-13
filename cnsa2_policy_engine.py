@@ -561,8 +561,11 @@ class CNSA2PolicyEngine:
         if not is_prod:
             return True
 
-        # Check if destination is onion address
-        if destination and destination.lower().endswith(".onion"):
+        # Extract host without port or whitespace
+        host = destination.split(':')[0].strip().lower() if destination else ""
+
+        # Check if destination is onion address (with or without port)
+        if host and host.endswith(".onion"):
             return True
 
         # Check authorized defense transport modes
@@ -571,7 +574,6 @@ class CNSA2PolicyEngine:
 
         # Check if destination IP is private / loopback / RFC 1918 / CGNAT
         try:
-            host = destination.split(':')[0] if destination else ""
             ip = ipaddress.ip_address(host)
             if ip.is_loopback or ip.is_private or ip.is_link_local:
                 return True

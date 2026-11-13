@@ -319,13 +319,17 @@ class HybridKeyExchange2027:
                 if not self._mldsa.verify(mldsa_raw, tbs, sig_raw):
                     return False
 
-                # F-02: Enforce authorized peer fingerprints if configured
+                # F-02 / F-03: Enforce authorized peer fingerprints
                 if self.authorized_peer_fingerprints is not None:
                     fp = hashlib.sha384(mldsa_raw).hexdigest().lower()
                     if fp not in self.authorized_peer_fingerprints:
                         return False
+                elif self._production_posture() and not self._psk:
+                    # F-03: In production posture, self-signed bundles without an
+                    # enrolled fingerprint or pre-shared key are rejected fail-closed.
+                    return False
             elif not self._psk:
-                # F-02: Unauthenticated bundles without PSK are rejected fail-closed
+                # Unauthenticated bundles without PSK are rejected fail-closed
                 return False
 
             return True
@@ -343,6 +347,11 @@ class HybridKeyExchange2027:
         return handshake_msg, ss
 
     def respond_to_handshake(self, handshake_message: dict, peer_bundle: Optional[dict] = None) -> bytes:
+        if peer_bundle is not None:
+            if not self.verify_public_bundle(peer_bundle):
+                raise ValueError("Peer bundle failed ML-DSA-87 signature or fingerprint authentication")
+        elif self._production_posture() and not self._psk:
+            raise ValueError("Production posture strictly requires authenticated peer_bundle in respond_to_handshake")
         peer_eph = handshake_message["eph_p384"]
         peer_cts = {"mlkem": handshake_message["mlkem_ct"]}
         if "hqc_ct" in handshake_message:

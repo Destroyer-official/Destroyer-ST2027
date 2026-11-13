@@ -1005,8 +1005,24 @@ impl PqX509Crl {
         Ok(encode_sequence(&[&tbs_seq, &sig_alg, &sig_val]))
     }
 
-    /// Validates the CRL threshold signatures against the 5-custodian Root CA.
-    pub fn verify_threshold(&self, custodians: &[Custodian]) -> Result<(), CoreError> {
+    /// Validates the CRL threshold signatures against the 5-custodian Root CA and enforces temporal validity (F-02 remediation).
+    pub fn verify_threshold(&self, custodians: &[Custodian], now: f64) -> Result<(), CoreError> {
+        if !now.is_finite() {
+            return Err(CoreError::Malformed);
+        }
+        let span = self
+            .next_update
+            .checked_sub(self.this_update)
+            .ok_or(CoreError::Malformed)?;
+        if span == 0 || span > MAX_LIFETIME {
+            return Err(CoreError::Malformed);
+        }
+        if !((self.this_update as f64) - MAX_SKEW_FUTURE <= now
+            && now <= (self.next_update as f64) + MAX_SKEW_FUTURE)
+        {
+            return Err(CoreError::Stale);
+        }
+
         let mut by_label: HashMap<&str, &[u8]> = HashMap::new();
         for c in custodians {
             if by_label.insert(c.label.as_str(), &c.mldsa_pk).is_some() {
@@ -1253,6 +1269,21 @@ mod tests {
         assert_eq!(parsed.revoked_serials, vec![serial1, serial2]);
         assert_eq!(parsed.custodian_sigs.len(), 3);
 
-        parsed.verify_threshold(&ca.custodians).unwrap();
+        // Valid timestamp within thisUpdate..nextUpdate window
+        parsed.verify_threshold(&ca.custodians, (now + 100) as f64).unwrap();
+
+        // Expired CRL fails closed with CoreError::Stale
+        let expired_ts = (now + 86400 + 400) as f64;
+        assert_eq!(
+            parsed.verify_threshold(&ca.custodians, expired_ts),
+            Err(CoreError::Stale)
+        );
+
+        // Far future dated (not yet valid) CRL fails closed with CoreError::Stale
+        let premature_ts = (now - 400) as f64;
+        assert_eq!(
+            parsed.verify_threshold(&ca.custodians, premature_ts),
+            Err(CoreError::Stale)
+        );
     }
 }

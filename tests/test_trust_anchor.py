@@ -216,6 +216,39 @@ def test_serial_uniqueness_and_revocation_persists(tmp_path, monkeypatch):
     assert cache.is_revoked(bytes(tbs.serial)) is True
 
 
+def test_revocation_durable_ledger_across_restarts(tmp_path, monkeypatch):
+    """Verify F-05: Revocation state persists across process restart and validates threshold signatures."""
+    cust = _handles(monkeypatch, tmp_path, [f"custodian-{i}" for i in range(1, 6)])
+    custodians = _custodians(cust)
+    ledger_file = str(tmp_path / "revocation_ledger.json")
+
+    # Instance 1: Add a threshold-signed revocation
+    cache1 = ta.RevocationCache(custodians, ledger_path=ledger_file)
+    rev = ta.Revocation(serial=b"\x42" * 16, reason="KEY-COMPROMISE",
+                        ts=__import__("time").time(), seq=10)
+    ta.sign_revocation(rev, cust[:3])
+    cache1.add(rev)
+    assert cache1.is_revoked(b"\x42" * 16) is True
+
+    # Instance 2 (Simulating process restart): Loads from disk and verifies threshold signatures
+    cache2 = ta.RevocationCache(custodians, ledger_path=ledger_file)
+    assert cache2.is_revoked(b"\x42" * 16) is True
+    assert cache2.size() == 1
+
+    # Tampering check: modifying the persistent ledger must fail verification
+    import json
+    with open(ledger_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["entries"][0]["reason"] = "TAMPERED"
+    with open(ledger_file, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    # In production, tampered ledger raises TrustError fail-closed
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    with pytest.raises(ta.TrustError):
+        ta.RevocationCache(custodians, ledger_path=ledger_file)
+
+
 def test_pki_loopback_transfer_over_sockets(tmp_path, monkeypatch):
     import socket as _socket
     import threading as _threading
