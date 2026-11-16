@@ -262,6 +262,11 @@ class TestCriticalAuditRemediations(unittest.TestCase):
             self.assertFalse(mgr._verify_certificate_chain(pem))
         finally:
             os.environ.pop("P2P_PRODUCTION", None)
+            try:
+                import production_gate
+                production_gate.reset_for_tests()
+            except Exception:
+                pass
             if old is not None:
                 ca_mod.get_ca_service = old
 

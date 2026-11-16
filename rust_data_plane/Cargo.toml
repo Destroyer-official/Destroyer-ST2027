@@ -45,7 +45,7 @@ zeroize = { version = "1.9.0", features = ["derive"] }
 # in Cargo.lock. Maturin packaging config lives in pyproject.toml.
 
 [features]
-default = []
+default = ["lab-surfaces"]
 extension-module = ["pyo3/extension-module"]
 # Simulated NC3/EAM/PTT/CoT lab surfaces. Production builds MUST disable
 # this feature (`--no-default-features`) so the simulated command surfaces

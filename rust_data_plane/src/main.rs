@@ -2733,6 +2733,29 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             kex_args.push("--peer-auth-pk-file".to_string());
             kex_args.push(pk);
         }
+        if has_flag(args, "--lab") {
+            kex_args.push("--lab".to_string());
+        }
+        if has_flag(args, "--require-mutual-auth") {
+            kex_args.push("--require-mutual-auth".to_string());
+        }
+        for flag in &[
+            "--cert-file",
+            "--cert",
+            "--ca-file",
+            "--ca",
+            "--crl-file",
+            "--crl",
+            "--auth-tpm-sealed",
+            "--auth-tpm-pub",
+            "--pcrs",
+            "--tpm-owner",
+        ] {
+            if let Some(val) = get_flag(args, flag) {
+                kex_args.push((*flag).to_string());
+                kex_args.push(val);
+            }
+        }
         println!("[KEX] Listening for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
         cmd_kex_listen(&kex_args);
     } else {
@@ -2749,6 +2772,29 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
         if let Some(pk) = get_flag(args, "--peer-auth-pk-file") {
             kex_args.push("--peer-auth-pk-file".to_string());
             kex_args.push(pk);
+        }
+        if has_flag(args, "--lab") {
+            kex_args.push("--lab".to_string());
+        }
+        if has_flag(args, "--require-mutual-auth") {
+            kex_args.push("--require-mutual-auth".to_string());
+        }
+        for flag in &[
+            "--cert-file",
+            "--cert",
+            "--ca-file",
+            "--ca",
+            "--crl-file",
+            "--crl",
+            "--auth-tpm-sealed",
+            "--auth-tpm-pub",
+            "--pcrs",
+            "--tpm-owner",
+        ] {
+            if let Some(val) = get_flag(args, flag) {
+                kex_args.push((*flag).to_string());
+                kex_args.push(val);
+            }
         }
         println!("[KEX] Connecting to peer for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
         cmd_kex_connect(&kex_args);

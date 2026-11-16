@@ -350,15 +350,23 @@ class TestProductionTier4AndConsensus(unittest.TestCase):
     def test_secure_key_manager_production_plaintext_rejection(self):
         """Verify that SecureKeyManager rejects unencrypted legacy keys with SecurityPolicyViolationError in production."""
         os.environ["P2P_PRODUCTION"] = "1"
-        km = SecureKeyManager(secure_dir=self.tmpdir)
-        legacy_key_file = Path(self.tmpdir) / "legacy_secret_key.key"
-        # Write unencrypted plaintext key
-        legacy_key_file.write_bytes(b"SUPER_SECRET_PLAINTEXT_KEY_MATERIAL")
+        try:
+            km = SecureKeyManager(secure_dir=self.tmpdir)
+            legacy_key_file = Path(self.tmpdir) / "legacy_secret_key.key"
+            # Write unencrypted plaintext key
+            legacy_key_file.write_bytes(b"SUPER_SECRET_PLAINTEXT_KEY_MATERIAL")
 
-        with self.assertRaises(SecurityPolicyViolationError) as ctx:
-            km.retrieve_key("legacy_secret_key")
-        self.assertIn("Unencrypted legacy key", str(ctx.exception))
-        self.assertIn("production mode", str(ctx.exception))
+            with self.assertRaises(SecurityPolicyViolationError) as ctx:
+                km.retrieve_key("legacy_secret_key")
+            self.assertIn("Unencrypted legacy key", str(ctx.exception))
+            self.assertIn("production mode", str(ctx.exception))
+        finally:
+            os.environ.pop("P2P_PRODUCTION", None)
+            try:
+                import production_gate
+                production_gate.reset_for_tests()
+            except Exception:
+                pass
 
     def test_cjadc2_allied_gateway_cdr_and_noforn(self):
         """Verify Content Disarm & Reconstruction and NOFORN redaction in AlliedCoalitionGateway."""

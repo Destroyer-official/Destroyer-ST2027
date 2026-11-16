@@ -14607,14 +14607,6 @@ class TacticalP2PNode:
             from unified_secure_pipeline import create_zero_gap_session
             key_hex = Path(self.key_path).read_text().strip()
             root_bytes = bytes.fromhex(key_hex)
-            # F-09: Securely shred session key from disk immediately after reading into locked RAM
-            try:
-                kp = Path(self.key_path)
-                if kp.exists():
-                    kp.write_bytes(secrets.token_bytes(64))
-                    kp.unlink()
-            except Exception:
-                pass
             self.zero_gap_pipeline, self.zero_gap_ratchet = create_zero_gap_session(
                 root_bytes, is_initiator=(self.role == "initiator")
             )

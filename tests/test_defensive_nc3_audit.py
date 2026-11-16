@@ -41,14 +41,16 @@ class TestDefensiveNC3Audit(unittest.TestCase):
     def setUpClass(cls):
         cls._seal_pw_snapshot = os.environ.get("P2P_OFFICER_SEAL_PW")
         os.environ["P2P_OFFICER_SEAL_PW"] = "test-seal-passphrase-nc3-audit"
+        cls._officers_temp_dir = tempfile.mkdtemp()
         cls.nc3 = NC3CommandController()
-        cls.off1 = get_or_create_tactical_officer("GEN_TEST_1")
-        cls.off2 = get_or_create_tactical_officer("ADM_TEST_2")
-        cls.rec1 = get_or_create_tactical_officer("COL_TEST_3")
-        cls.rec2 = get_or_create_tactical_officer("CAPT_TEST_4")
+        cls.off1 = get_or_create_tactical_officer("GEN_TEST_1", officers_dir=cls._officers_temp_dir)
+        cls.off2 = get_or_create_tactical_officer("ADM_TEST_2", officers_dir=cls._officers_temp_dir)
+        cls.rec1 = get_or_create_tactical_officer("COL_TEST_3", officers_dir=cls._officers_temp_dir)
+        cls.rec2 = get_or_create_tactical_officer("CAPT_TEST_4", officers_dir=cls._officers_temp_dir)
 
     @classmethod
     def tearDownClass(cls):
+        shutil.rmtree(cls._officers_temp_dir, ignore_errors=True)
         if cls._seal_pw_snapshot is None:
             os.environ.pop("P2P_OFFICER_SEAL_PW", None)
         else:

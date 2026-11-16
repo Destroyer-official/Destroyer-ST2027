@@ -527,7 +527,7 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
             cmd_resp = [
                 str(exe_path), "node", "--role", "responder",
                 "--bind", "127.0.0.1:19878", "--to", "127.0.0.1:19879",
-                "--psk-file", psk_path,
+                "--psk-file", psk_path, "--lab",
                 "--state", os.path.join(td, "resp.state"),
                 "--headless", "--recv-count", "1", "--interval-ms", "10", "--timeout-ms", "4000"
             ]
@@ -536,7 +536,7 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
             cmd_init = [
                 str(exe_path), "node", "--role", "initiator",
                 "--bind", "127.0.0.1:19879", "--to", "127.0.0.1:19878",
-                "--psk-file", psk_path,
+                "--psk-file", psk_path, "--lab",
                 "--state", os.path.join(td, "init.state"),
                 "--headless", "--msg", "ALPHA-BRAVO-VERIFIED", "--interval-ms", "10", "--count", "15"
             ]

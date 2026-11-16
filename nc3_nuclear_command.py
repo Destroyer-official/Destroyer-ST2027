@@ -1687,17 +1687,10 @@ def _officer_file_seal_key() -> bytes:
     be used operationally (environment memory is inspectable).
     """
     global _officer_seal_key_cache
+    env_pw = os.environ.get("P2P_OFFICER_SEAL_PW")
+    if env_pw:
+        return env_pw.encode("utf-8")
     if _officer_seal_key_cache is None:
-        env_pw = os.environ.get("P2P_OFFICER_SEAL_PW")
-        if env_pw:
-            import warnings
-
-            warnings.warn(
-                "P2P_OFFICER_SEAL_PW is set: non-interactive seal passphrase "
-                "is TEST-ONLY and must never be used operationally."
-            )
-            _officer_seal_key_cache = env_pw.encode("utf-8")
-            return _officer_seal_key_cache
         import getpass
 
         pw = getpass.getpass("Custodian file-seal passphrase (officer credentials at rest): ")

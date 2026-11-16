@@ -37,6 +37,13 @@ _PROCESS_MODE_VARS = (
     "SECURE_P2P_PRODUCTION",
     "P2P_TOP_SECRET",
     "P2P_TS_MODE",
+    "P2P_REQUIRE_HARDWARE_IDENTITY",
+    "P2P_REQUIRE_PKI",
+    "P2P_REQUIRE_AUTH",
+    "P2P_REQUIRE_ECH",
+    "P2P_AIR_GAPPED_MODE",
+    "P2P_OFFLINE_MODE",
+    "P2P_STRICT_PIN",
 )
 
 
@@ -46,15 +53,20 @@ def _isolate_production_gate():
         import production_gate
     except Exception:
         production_gate = None
+    for v in _PROCESS_MODE_VARS:
+        os.environ.pop(v, None)
     if production_gate is not None:
         production_gate.reset_for_tests()
-    saved_env = {k: os.environ.get(k) for k in _PROCESS_MODE_VARS}
+    saved_env = dict(os.environ)
     yield
-    for _k, _v in saved_env.items():
-        if _v is None:
-            os.environ.pop(_k, None)
-        else:
-            os.environ[_k] = _v
+    for k in list(os.environ.keys()):
+        if k not in saved_env:
+            os.environ.pop(k, None)
+    for k, v in saved_env.items():
+        if os.environ.get(k) != v:
+            os.environ[k] = v
+    for v in _PROCESS_MODE_VARS:
+        os.environ.pop(v, None)
     if production_gate is not None:
         production_gate.reset_for_tests()
 
