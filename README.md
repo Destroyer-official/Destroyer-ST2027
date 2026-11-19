@@ -173,16 +173,16 @@ The ST2027 cryptographic architecture adheres strictly to the **NSA Commercial N
 - **Mathematical Specification:**
   Let $R_q = \mathbb{Z}_q[X]/(X^n + 1)$ denote the cyclotomic polynomial ring where degree $n = 256$ and prime modulus $q = 3329$. Let module rank $k = 4$.
   Centered binomial error distribution $\beta_\eta$ of parameter $\eta = 2$ samples polynomials $f(X) = \sum_{i=0}^{255} f_i X^i$ where:
-$$
-f_i = \sum_{j=1}^{\eta} (a_j - b_j), \quad a_j, b_j \stackrel{\$}{\leftarrow} \{0, 1\}
-$$
-  The Module Learning With Errors ($\text{M-LWE}_{k, q, \eta}$) problem requires distinguishing pairs $(\mathbf{A}, \mathbf{A}\mathbf{s} + \mathbf{e})$ from uniform random pairs $(\mathbf{A}, \mathbf{u})$ over $R_q^{k \times k} \times R_q^k$, where secret vector $\mathbf{s} \leftarrow \beta_{\eta_1}^k$ and error vector $\mathbf{e} \leftarrow \beta_{\eta_1}^k$.
+
+  $$f_i = \sum_{j=1}^{\eta} (a_j - b_j), \quad a_j, b_j \leftarrow_{\text{R}} \{0, 1\}$$
+
+  The Module Learning With Errors ($\text{M-LWE}_{k, q, \eta}$) problem requires distinguishing pairs $(\mathbf{A}, \mathbf{A}\mathbf{s} + \mathbf{e})$ from uniform random pairs $(\mathbf{A}, \mathbf{u})$ over $R_q^{k \times k} \times R_q^k$, where secret vector $\mathbf{s} \leftarrow \beta_{\eta}^k$ and error vector $\mathbf{e} \leftarrow \beta_{\eta}^k$.
 
 - **Key Generation & Encapsulation:**
-  1. $\mathbf{A} \in R_q^{k \times k} \leftarrow \operatorname{XOF}(\rho)$ where $\rho \leftarrow \{0, 1\}^{256}$.
-  2. Public key $\mathbf{t} = \operatorname{Compress}_d(\mathbf{A} \mathbf{s} + \mathbf{e}, d=11) \in R_q^k$.
-  3. Ephemeral encapsulation selects random message $m \leftarrow \{0, 1\}^{256}$, derives $(K, r) = \operatorname{G}(m \mathbin{\Vert} \operatorname{H}(pk))$.
-  4. Ciphertext $\mathbf{u} = \operatorname{Compress}_{d_u}(\mathbf{A}^T \mathbf{r} + \mathbf{e}_1, d_u=11)$, $v = \operatorname{Compress}_{d_v}(\mathbf{t}^T \mathbf{r} + e_2 + \lceil \frac{q}{2} \rfloor m, d_v=5)$.
+  1. $\mathbf{A} \in R_q^{k \times k} \leftarrow \mathrm{XOF}(\rho)$ where $\rho \leftarrow \{0, 1\}^{256}$.
+  2. Public key $\mathbf{t} = \mathrm{Compress}_d(\mathbf{A} \mathbf{s} + \mathbf{e}, d=11) \in R_q^k$.
+  3. Ephemeral encapsulation selects random message $m \leftarrow \{0, 1\}^{256}$, derives $(K, r) = \mathrm{G}(m \mathbin{\Vert} \mathrm{H}(pk))$.
+  4. Ciphertext $\mathbf{u} = \mathrm{Compress}_{d_u}(\mathbf{A}^T \mathbf{r} + \mathbf{e}_1, d_u=11)$, $v = \mathrm{Compress}_{d_v}(\mathbf{t}^T \mathbf{r} + e_2 + \lceil \frac{q}{2} \rfloor m, d_v=5)$.
   5. The Fujisaki-Okamoto (FO) transform guarantees Indistinguishability under Adaptive Chosen-Ciphertext Attack (IND-CCA2).
 
 - **Concrete Parameters & Sizes:**
@@ -254,11 +254,11 @@ Aligned with **IETF RFC 10024** and OpenSSL 3.5 (IANA NamedGroup `0x11ED`):
 ```
 
 #### Dual-PRF Security Reduction Theorem
-**Theorem (Hybrid Combiner IND-CCA2 Security):** Let $\mathcal{H} = \operatorname{HKDF-Extract}$ be modeled as a dual pseudorandom function (dual-PRF). For any polynomial-time adversary $\mathcal{A}$ attacking the hybrid key exchange scheme:
+**Theorem (Hybrid Combiner IND-CCA2 Security):** Let $\mathcal{H} = \text{HKDF-Extract}$ be modeled as a dual pseudorandom function (dual-PRF). For any polynomial-time adversary $\mathcal{A}$ attacking the hybrid key exchange scheme:
 $$
 \mathbf{Adv}_{\text{Hybrid}}^{\text{IND-CCA2}}(\mathcal{A}) \le \min\left( \mathbf{Adv}_{\text{P384}}^{\text{CDH}}(\mathcal{A}_{\text{class}}), \mathbf{Adv}_{\text{ML-KEM-1024}}^{\text{IND-CCA2}}(\mathcal{A}_{\text{quant}}) \right) + \mathbf{Adv}_{\text{HKDF}}^{\text{dual-PRF}}(\mathcal{B})
 $$
-*Proof Outline:* If an adversary breaks the confidentiality of $K_{\text{session}}$, they must distinguish the output of $\operatorname{HKDF-Extract}$ from uniform random. Since the input key material is $ss_{\text{ecdh}} \mathbin{\Vert} ss_{\text{kem}}$, by the dual-PRF property of HKDF, as long as *at least one* of $ss_{\text{ecdh}}$ or $ss_{\text{kem}}$ is computationally indistinguishable from uniform, the resulting pseudorandom key (PRK) remains statistically close to uniform, and all derived session keys maintain indistinguishability under chosen-ciphertext attack.
+*Proof Outline:* If an adversary breaks the confidentiality of $K_{\text{session}}$, they must distinguish the output of $\text{HKDF-Extract}$ from uniform random. Since the input key material is $ss_{\text{ecdh}} \mathbin{\Vert} ss_{\text{kem}}$, by the dual-PRF property of HKDF, as long as *at least one* of $ss_{\text{ecdh}}$ or $ss_{\text{kem}}$ is computationally indistinguishable from uniform, the resulting pseudorandom key (PRK) remains statistically close to uniform, and all derived session keys maintain indistinguishability under chosen-ciphertext attack.
 
 ---
 
@@ -272,11 +272,11 @@ $$
 
 - **Signing Logic with Abort (Fiat-Shamir with Aborts):**
   1. Sample masking polynomial vector $\mathbf{y} \leftarrow [-\gamma_1 + 1, \gamma_1]^\ell$.
-  2. Compute $\mathbf{w} = \mathbf{A} \mathbf{y}$ and decompose high bits $\mathbf{w}_1 = \operatorname{HighBits}(\mathbf{w}, 2\gamma_2)$.
-  3. Compute challenge hash polynomial $c = \operatorname{H}(\mu \mathbin{\Vert} \mathbf{w}_1) \in R_q$ where $\|c\|_\infty = 1$ and number of non-zero coefficients is $\tau = 60$.
+  2. Compute $\mathbf{w} = \mathbf{A} \mathbf{y}$ and decompose high bits $\mathbf{w}_1 = \mathrm{HighBits}(\mathbf{w}, 2\gamma_2)$.
+  3. Compute challenge hash polynomial $c = \mathrm{H}(\mu \mathbin{\Vert} \mathbf{w}_1) \in R_q$ where $\|c\|_\infty = 1$ and number of non-zero coefficients is $\tau = 60$.
   4. Compute candidate signature vector $\mathbf{z} = \mathbf{y} + c \mathbf{s}_1$.
-  5. Check rejection conditions: if $\|\mathbf{z}\|_\infty \ge \gamma_1 - \beta$ or $\|\operatorname{LowBits}(\mathbf{A}\mathbf{y} - c\mathbf{s}_2, 2\gamma_2)\|_\infty \ge \gamma_2 - \beta$, reject and restart with fresh $\mathbf{y}$.
-  6. Compute hint bitmask $\mathbf{h} = \operatorname{MakeHint}(-\mathbf{c}\mathbf{t}_0, \mathbf{w} - c\mathbf{s}_2 + c\mathbf{t}_0, 2\gamma_2)$.
+  5. Check rejection conditions: if $\|\mathbf{z}\|_\infty \ge \gamma_1 - \beta$ or $\|\mathrm{LowBits}(\mathbf{A}\mathbf{y} - c\mathbf{s}_2, 2\gamma_2)\|_\infty \ge \gamma_2 - \beta$, reject and restart with fresh $\mathbf{y}$.
+  6. Compute hint bitmask $\mathbf{h} = \mathrm{MakeHint}(-\mathbf{c}\mathbf{t}_0, \mathbf{w} - c\mathbf{s}_2 + c\mathbf{t}_0, 2\gamma_2)$.
   7. Return signature $\sigma = (\mathbf{z}, \mathbf{h}, c)$.
 
 - **Parameters & Wire Format:**
@@ -287,7 +287,7 @@ $$
 - **Mandatory In-Memory Verify-After-Sign (VAS):**
   Lattice signature schemes are vulnerable to laser, electromagnetic, and voltage fault injection attacks (e.g. CHES 2024 / IACR ePrint 2025/2009). If a single coefficient in $\mathbf{z}$ is faulted during computation, the signature leaks secret key coordinates. ST2027 implements strict in-memory Verify-After-Sign before emitting signatures to wire or disk:
 $$
-\text{If } \operatorname{Verify}(M, \sigma, pk) \ne \text{VALID} \implies \operatorname{ZeroizeMemory}(sk) \land \operatorname{Halt}(\text{FaultInjectionDetected})
+\text{If } \mathrm{Verify}(M, \sigma, pk) \ne \text{VALID} \implies \mathrm{ZeroizeMemory}(sk) \land \mathrm{Halt}(\text{FaultInjectionDetected})
 $$
 
 ---
@@ -336,9 +336,9 @@ To guarantee immediate **Forward Secrecy (FS)** and **Post-Compromise Security (
   For epoch index $e \ge 0$ and intra-epoch message index $j \ge 0$:
 $$
 \begin{aligned}
-(\text{RK}_{e+1}, \text{CK}_{e+1}) &\leftarrow \operatorname{HKDF-Extract}\left(\text{RK}_e, ss_{\text{kem}}^{(e+1)}\right) \\
-\text{CK}_{e+1, j+1} &\leftarrow \operatorname{HKDF-Expand}\left(\text{CK}_{e+1, j}, \text{"chain-advance"}, 32\right) \\
-\text{MK}_{e+1, j} &\leftarrow \operatorname{HKDF-Expand}\left(\text{CK}_{e+1, j}, \text{"msg-key"} \mathbin{\Vert} \operatorname{uint64}(j), 32\right)
+(\text{RK}_{e+1}, \text{CK}_{e+1}) &\leftarrow \text{HKDF-Extract}\left(\text{RK}_e, ss_{\text{kem}}^{(e+1)}\right) \\
+\text{CK}_{e+1, j+1} &\leftarrow \text{HKDF-Expand}\left(\text{CK}_{e+1, j}, \text{"chain-advance"}, 32\right) \\
+\text{MK}_{e+1, j} &\leftarrow \text{HKDF-Expand}\left(\text{CK}_{e+1, j}, \text{"msg-key"} \mathbin{\Vert} \mathrm{uint64}(j), 32\right)
 \end{aligned}
 $$
 - **Healing Guarantee (Post-Compromise Security):**
@@ -351,11 +351,11 @@ $$
 
 ### 3.7 Deterministic Composite Nonces & Nonce Collision Proof (NIST SP 800-38D §8.2.1)
 
-AES-256-GCM fails catastrophically if a nonce is repeated under the same key: two distinct ciphertexts sharing a nonce allow an adversary to solve for the GHASH authenticator key $H = \operatorname{AES}_K(0^{128})$ via polynomial root-finding over $\mathrm{GF}(2^{128})$, enabling universal tag forgery.
+AES-256-GCM fails catastrophically if a nonce is repeated under the same key: two distinct ciphertexts sharing a nonce allow an adversary to solve for the GHASH authenticator key $H = \mathrm{AES}_K(0^{128})$ via polynomial root-finding over $\mathrm{GF}(2^{128})$, enabling universal tag forgery.
 
 - **Deterministic 96-Bit Composite Nonce Layout:**
 $$
-IV_{96} = \text{FixedSessionContext}_{32} \mathbin{\Vert} \operatorname{Uint64BE}(N_{\text{counter}})
+IV_{96} = \text{FixedSessionContext}_{32} \mathbin{\Vert} \mathrm{Uint64BE}(N_{\text{counter}})
 $$
   where $\text{FixedSessionContext}_{32} = \text{DirectionByte}_8 \mathbin{\Vert} \text{Salt}_{24}$.
   - Initiator Transmission: $\text{DirectionByte} = 0x01$.
@@ -364,7 +364,7 @@ $$
 - **Mathematical Nonce Collision Proof:**
   Let $N_{\max} = 2^{64} - 1$. For any session key $K$ and direction $d \in \{0x01, 0x02\}$:
 $$
-\forall i, j \in \{0, 1, \dots, N_{\max}\}, \; i \ne j \implies \operatorname{Uint64BE}(i) \ne \operatorname{Uint64BE}(j) \implies IV_i \ne IV_j
+\forall i, j \in \{0, 1, \dots, N_{\max}\}, \; i \ne j \implies \mathrm{Uint64BE}(i) \ne \mathrm{Uint64BE}(j) \implies IV_i \ne IV_j
 $$
   Furthermore, across full-duplex communication channels:
 $$
@@ -420,7 +420,7 @@ High-consequence nuclear directives (Emergency Action Messages `/eam`, emergency
 
 - **Mathematical Formulation:**
   Let master directive secret $S \in \mathbb{F}_2^{256}$.
-  Officer 1 receives independent random share $S_1 \stackrel{\$}{\leftarrow} \mathbb{F}_2^{256}$.
+  Officer 1 receives independent random share $S_1 \leftarrow_{\text{R}} \mathbb{F}_2^{256}$.
   Officer 2 receives share $S_2 = S \oplus S_1 \in \mathbb{F}_2^{256}$.
   Reconstruction requires bitwise addition over $\mathbb{F}_2$:
 $$
@@ -441,7 +441,7 @@ $$
 - **Temporal Hardware Window Verification:**
   Let $t_1$ and $t_2$ be monotonic hardware timestamps generated by Officer 1 and Officer 2 smartcard cryptographic tokens. The directive is executed if and only if:
 $$
-\Delta t = |t_1 - t_2| \le 2000 \text{ ms} \quad \land \quad \operatorname{OfficerRosterVerify}(\sigma_1, \sigma_2) = \text{TRUE}
+\Delta t = |t_1 - t_2| \le 2000 \text{ ms} \quad \land \quad \mathrm{OfficerRosterVerify}(\sigma_1, \sigma_2) = \text{TRUE}
 $$
 
 ---
@@ -453,7 +453,7 @@ All secret-dependent comparisons (MAC tags, cryptographic keys, authentication t
 - **Branchless Byte Equality Formulation:**
   For secret byte buffers $\mathbf{a}, \mathbf{b} \in \{0, 1\}^n$:
 $$
-\operatorname{ct\_eq}(\mathbf{a}, \mathbf{b}) = 1 - \left( \left( \bigvee_{i=0}^{n-1} (a_i \oplus b_i) \right) \gg 7 \right)
+\mathrm{ct\_eq}(\mathbf{a}, \mathbf{b}) = 1 - \left( \left( \bigvee_{i=0}^{n-1} (a_i \oplus b_i) \right) \gg 7 \right)
 $$
   Executed with branchless SIMD or bitwise arithmetic; zero execution branches depend on secret operands.
 
@@ -496,11 +496,11 @@ To prevent replay Denial-of-Service and packet reinjection over untrusted networ
   2. Let bitmap $\mathbf{W} \in \{0, 1\}^{2048}$ represent the sliding acceptance window.
   3. For incoming packet with sequence number $S$:
 $$
-\operatorname{Action}(S) = \begin{cases}
-\operatorname{Drop}, & \text{if } S \le H - 2048 \quad \text{(Expired)} \\
-\operatorname{Drop}, & \text{if } H - 2048 < S \le H \land \mathbf{W}[H - S] = 1 \quad \text{(Duplicate)} \\
-\operatorname{Accept} \land \mathbf{W}[H - S] \leftarrow 1, & \text{if } H - 2048 < S \le H \land \mathbf{W}[H - S] = 0 \quad \text{(In-Order/Out-of-Order Valid)} \\
-\operatorname{Accept} \land \mathbf{W} \leftarrow \mathbf{W} \ll (S - H) \land H \leftarrow S, & \text{if } S > H \quad \text{(Ahead of Window)}
+\mathrm{Action}(S) = \begin{cases}
+\text{Drop}, & \text{if } S \le H - 2048 \quad \text{(Expired)} \\
+\text{Drop}, & \text{if } H - 2048 < S \le H \land \mathbf{W}[H - S] = 1 \quad \text{(Duplicate)} \\
+\text{Accept} \land \mathbf{W}[H - S] \leftarrow 1, & \text{if } H - 2048 < S \le H \land \mathbf{W}[H - S] = 0 \quad \text{(In-Order/Out-of-Order Valid)} \\
+\text{Accept} \land \mathbf{W} \leftarrow \mathbf{W} \ll (S - H) \land H \leftarrow S, & \text{if } S > H \quad \text{(Ahead of Window)}
 \end{cases}
 $$
 - **Sliding-Window Anti-Replay (RFC 6479):** Native Rust circular bitmap window tracking 1024/2048 packets ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)). Out-of-order packets inside the window are checked and marked in constant time (`O(1)` bitwise operations); duplicate packets or packets older than the trailing edge are dropped before decryption.

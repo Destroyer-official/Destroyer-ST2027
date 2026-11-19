@@ -68,7 +68,7 @@ Adversary signals intelligence (SIGINT) monitors radio frequencies and IP backbo
 Phase H implements a post-quantum zero-knowledge membership proof over a 32-level Merkle accumulator:
 
 1. **Leaf Commitment & Blinding:**
-   Given node secret $ID$, clearance level $L$, and cryptographic salt $r \xleftarrow{\$} \{0, 1\}^{256}$:
+   Given node secret $ID$, clearance level $L$, and cryptographic salt $r \leftarrow_{\text{R}} \{0, 1\}^{256}$:
    $$C_{leaf} = \text{SHA-256}(\text{"PQ_ZKP_LEAF_COMMIT_V1"} \parallel ID \parallel L \parallel r)$$
 
 2. **Merkle Membership Path:**

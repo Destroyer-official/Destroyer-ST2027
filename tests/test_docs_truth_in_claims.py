@@ -158,3 +158,26 @@ def test_native_dataplane_cipher_purity():
                 hits.append((fn, sorted(bad)))
     assert not hits, f"non-CNSA cipher symbols in native data-plane: {hits}"
     assert "aes-gcm" in deps, deps
+
+
+def test_katex_latex_github_markdown_rendering():
+    """Gate 5.2: LaTeX formulas render cleanly without GitHub-disallowed macros.
+
+    GitHub KaTeX renderer rejects \\operatorname, \\def, \\let, and unescaped
+    dollar signs nested inside math delimiters. All math expressions must use
+    standard KaTeX primitives (\\mathrm, \\text, \\leftarrow_R, etc.).
+    """
+    disallowed_macros = [r"\operatorname", r"\def", r"\let", r"\newcommand"]
+    for md_file in ROOT.rglob("*.md"):
+        if any(part in md_file.parts for part in [".git", "target", ".venv", "notupload", "vendor"]):
+            continue
+        content = md_file.read_text(encoding="utf-8")
+        for macro in disallowed_macros:
+            assert macro not in content, (
+                f"Disallowed LaTeX macro '{macro}' found in {md_file}. "
+                "Use \\mathrm{...} or \\text{...} for GitHub KaTeX compatibility."
+            )
+        # Ensure no broken dollar delimiters in math expressions
+        assert r"\stackrel{\$}" not in content, f"Broken \\stackrel{{\\$}} in {md_file}"
+        assert r"\xleftarrow{\$}" not in content, f"Broken \\xleftarrow{{\\$}} in {md_file}"
+
