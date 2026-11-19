@@ -95,13 +95,13 @@ impl BlindedClearanceToken {
         let mut hasher_lvl = Sha256::new();
         hasher_lvl.update(b"BLINDED_CDS_LEVEL_V1");
         hasher_lvl.update([level as u8]);
-        hasher_lvl.update(&salt);
+        hasher_lvl.update(salt);
         let level_commitment: [u8; 32] = hasher_lvl.finalize().into();
 
         let mut hasher_comp = Sha256::new();
         hasher_comp.update(b"BLINDED_CDS_COMPARTMENT_V1");
         hasher_comp.update(compartments.to_be_bytes());
-        hasher_comp.update(&salt);
+        hasher_comp.update(salt);
         let compartment_commitment: [u8; 32] = hasher_comp.finalize().into();
 
         Self {
@@ -117,13 +117,13 @@ impl BlindedClearanceToken {
         let mut hasher_lvl = Sha256::new();
         hasher_lvl.update(b"BLINDED_CDS_LEVEL_V1");
         hasher_lvl.update([self.declared_level]);
-        hasher_lvl.update(&self.blinding_salt);
+        hasher_lvl.update(self.blinding_salt);
         let expected_lvl: [u8; 32] = hasher_lvl.finalize().into();
 
         let mut hasher_comp = Sha256::new();
         hasher_comp.update(b"BLINDED_CDS_COMPARTMENT_V1");
         hasher_comp.update(self.declared_compartments.to_be_bytes());
-        hasher_comp.update(&self.blinding_salt);
+        hasher_comp.update(self.blinding_salt);
         let expected_comp: [u8; 32] = hasher_comp.finalize().into();
 
         expected_lvl.ct_eq(&self.level_commitment).into()
@@ -223,6 +223,7 @@ impl BlindedCdsGuard {
 
     /// Complete Cross-Domain inspection on blinded payload & metadata.
     /// If all checks pass, produces a signed `CdsEgressAttestation`.
+    #[allow(clippy::too_many_arguments)]
     pub fn inspect_and_attest(
         &self,
         source_enclave: &str,

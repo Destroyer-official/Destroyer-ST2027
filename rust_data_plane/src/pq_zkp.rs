@@ -84,7 +84,8 @@ impl MerkleAccumulator {
         let mut current_level = padded.clone();
         for _ in 0..MERKLE_DEPTH {
             let mut next_level = Vec::with_capacity(current_level.len() / 2);
-            for chunk in current_level.chunks_exact(2) {
+            let (chunks, _) = current_level.as_chunks::<2>();
+            for chunk in chunks {
                 next_level.push(hash_merkle_node(&chunk[0], &chunk[1]));
             }
             current_level = next_level;
@@ -107,11 +108,12 @@ impl MerkleAccumulator {
         let mut idx = leaf_index;
 
         for _ in 0..MERKLE_DEPTH {
-            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+            let sibling_idx = if idx.is_multiple_of(2) { idx + 1 } else { idx - 1 };
             path.push(current_level[sibling_idx]);
 
             let mut next_level = Vec::with_capacity(current_level.len() / 2);
-            for chunk in current_level.chunks_exact(2) {
+            let (chunks, _) = current_level.as_chunks::<2>();
+            for chunk in chunks {
                 next_level.push(hash_merkle_node(&chunk[0], &chunk[1]));
             }
             current_level = next_level;
@@ -159,14 +161,14 @@ impl PqZkpIdentityProof {
         // 2. Compute randomized Leaf Commitment: C = H(DOMAIN || leaf_hash || salt)
         let mut c_hasher = Sha3_256::new();
         c_hasher.update(DOMAIN_COMMITMENT);
-        c_hasher.update(&leaf_hash);
+        c_hasher.update(leaf_hash);
         c_hasher.update(blinding_salt);
         let leaf_commitment: [u8; 32] = c_hasher.finalize().into();
 
         // 3. Compute Epoch Nullifier: N = H(DOMAIN || leaf_hash || epoch_id)
         let mut n_hasher = Sha3_256::new();
         n_hasher.update(DOMAIN_NULLIFIER);
-        n_hasher.update(&leaf_hash);
+        n_hasher.update(leaf_hash);
         n_hasher.update(epoch_id);
         let nullifier: [u8; 32] = n_hasher.finalize().into();
 
@@ -176,19 +178,19 @@ impl PqZkpIdentityProof {
         // 5. Fiat-Shamir Non-Interactive Challenge: e = H(DOMAIN || root || C || min_clearance || N || nonce)
         let mut fs_hasher = Sha3_256::new();
         fs_hasher.update(DOMAIN_FIAT_SHAMIR);
-        fs_hasher.update(&merkle_accumulator.root);
-        fs_hasher.update(&leaf_commitment);
+        fs_hasher.update(merkle_accumulator.root);
+        fs_hasher.update(leaf_commitment);
         fs_hasher.update([claimed_min_clearance]);
-        fs_hasher.update(&nullifier);
+        fs_hasher.update(nullifier);
         fs_hasher.update(session_nonce);
         let challenge: [u8; 32] = fs_hasher.finalize().into();
 
         // 6. Zero-Knowledge Response proof: z = H(DOMAIN || challenge || blinding_salt || leaf_hash)
         let mut z_hasher = Sha3_256::new();
         z_hasher.update(DOMAIN_RESPONSE);
-        z_hasher.update(&challenge);
+        z_hasher.update(challenge);
         z_hasher.update(blinding_salt);
-        z_hasher.update(&leaf_hash);
+        z_hasher.update(leaf_hash);
         let proof_response: [u8; 32] = z_hasher.finalize().into();
 
         Ok(Self {
@@ -215,12 +217,12 @@ impl PqZkpIdentityProof {
         epoch_cache: &mut Vec<[u8; 32]>,
     ) -> Result<u8, CoreError> {
         // 1. Root match check
-        if bool::from(self.root.ct_eq(trusted_accumulator_root)) != true {
+        if !bool::from(self.root.ct_eq(trusted_accumulator_root)) {
             return Err(CoreError::KeyMismatch);
         }
 
         // 2. Nonce binding check
-        if bool::from(self.session_nonce.ct_eq(expected_session_nonce)) != true {
+        if !bool::from(self.session_nonce.ct_eq(expected_session_nonce)) {
             return Err(CoreError::NonceMismatch);
         }
 
@@ -239,14 +241,14 @@ impl PqZkpIdentityProof {
         // 5. Verify Fiat-Shamir challenge consistency
         let mut fs_hasher = Sha3_256::new();
         fs_hasher.update(DOMAIN_FIAT_SHAMIR);
-        fs_hasher.update(&self.root);
-        fs_hasher.update(&self.leaf_commitment);
+        fs_hasher.update(self.root);
+        fs_hasher.update(self.leaf_commitment);
         fs_hasher.update([self.claimed_min_clearance]);
-        fs_hasher.update(&self.nullifier);
-        fs_hasher.update(&self.session_nonce);
+        fs_hasher.update(self.nullifier);
+        fs_hasher.update(self.session_nonce);
         let expected_challenge: [u8; 32] = fs_hasher.finalize().into();
 
-        if bool::from(self.challenge.ct_eq(&expected_challenge)) != true {
+        if !bool::from(self.challenge.ct_eq(&expected_challenge)) {
             return Err(CoreError::Malformed);
         }
 
@@ -255,7 +257,7 @@ impl PqZkpIdentityProof {
         let mut idx = self.path_indices;
 
         for sibling in &self.merkle_path {
-            if idx % 2 == 0 {
+            if idx.is_multiple_of(2) {
                 current = hash_merkle_node(&current, sibling);
             } else {
                 current = hash_merkle_node(sibling, &current);
@@ -263,7 +265,7 @@ impl PqZkpIdentityProof {
             idx /= 2;
         }
 
-        if bool::from(current.ct_eq(&self.root)) != true {
+        if !bool::from(current.ct_eq(&self.root)) {
             return Err(CoreError::BadSignature);
         }
 

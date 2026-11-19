@@ -222,11 +222,11 @@ pub fn add_awgn_noise(samples: &[f32], snr_db: f32) -> Vec<f32> {
         ((seed >> 32) as u32 as f32) / (u32::MAX as f32)
     };
 
-    for i in 0..samples.len() {
+    for sample in samples {
         let u1 = lcg_rand().max(1e-7);
         let u2 = lcg_rand();
         let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * PI * u2).cos();
-        noisy.push(samples[i] + z0 * noise_std);
+        noisy.push(*sample + z0 * noise_std);
     }
 
     noisy

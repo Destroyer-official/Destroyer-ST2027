@@ -2050,6 +2050,7 @@ pub struct CoreDtnBundle;
 #[pymethods]
 impl CoreDtnBundle {
     #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
     pub fn create_0rtt_bundle(
         source_eid: String,
         destination_eid: String,
@@ -2124,6 +2125,7 @@ impl CoreDtnBundle {
     }
 
     #[staticmethod]
+    #[allow(clippy::type_complexity)]
     pub fn inspect_bundle(
         wire_bytes: Vec<u8>,
     ) -> PyResult<(
@@ -2199,6 +2201,7 @@ impl CorePqZkp {
     }
 
     #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
     pub fn prove_identity(
         callsign: String,
         serial_number: String,
@@ -2329,7 +2332,7 @@ impl CoreSdrDsss {
         if i_channel.len() != q_channel.len() {
             return Err(PyValueError::new_err("i_channel and q_channel must have equal length"));
         }
-        let iq: Vec<(f32, f32)> = i_channel.into_iter().zip(q_channel.into_iter()).collect();
+        let iq: Vec<(f32, f32)> = i_channel.into_iter().zip(q_channel).collect();
         let mod_engine = crate::sdr_dsss::DsssModulator::new(127);
         Ok(mod_engine.to_cs16(&iq, amplitude))
     }
@@ -2393,6 +2396,7 @@ impl CoreBlindedCds {
         self.inner.scan_blinded_tokens(&token_arrs).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn inspect_and_attest(
         &self,
         source_enclave: String,

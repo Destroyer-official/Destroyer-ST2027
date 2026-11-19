@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-19T13:19:17.221651+00:00",
+  "timestamp_utc": "2026-11-19T13:53:08.140719+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -66,7 +66,7 @@
   },
   "overall_status": "PASS",
   "source_tree_merkle_root": "fd217101277412bc4da72548bb3ec624aa7f9b07e2b9f7d7ea6232e9fd9e092d8fb4b9453fb61402f46da29e719102d33aa0d6e1b64da46f9ed98075d3eec8c2",
-  "full_source_merkle_root": "238519c437802e3f121749ac3c30ae0c5c86385be4522d2478ea64a618a94a8829513c9de5e56c1c73fd123f751eba3c025b5ac247004554e477d83934432a21",
+  "full_source_merkle_root": "523eec9795ed5aafa866571ef86a38b36f7873f330f08a4843849e17a850ddaa7fc2518c1def4ae3a1ee4313ed739707ec24234112713eda5c11751af1b402d6",
   "full_source_file_count": 58,
   "full_source_scope_description": "Authoritative Sovereign Data Plane (46 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {

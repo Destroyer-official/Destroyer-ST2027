@@ -167,6 +167,7 @@ impl DtnBundle {
     }
 
     /// Creates an asynchronous 0-RTT post-quantum encrypted bundle using ML-KEM-1024 and ML-DSA-87.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_0rtt(
         source_eid: &str,
         destination_eid: &str,

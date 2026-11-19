@@ -152,7 +152,7 @@ pub struct FountainEncoder {
 impl FountainEncoder {
     pub fn new(payload: &[u8], symbol_len: usize, block_id: u32) -> Self {
         assert!(symbol_len > 0);
-        let k = (payload.len() + symbol_len - 1) / symbol_len;
+        let k = payload.len().div_ceil(symbol_len);
         let mut source_symbols = Vec::with_capacity(k);
 
         for chunk in payload.chunks(symbol_len) {
@@ -336,7 +336,7 @@ impl VisualAirgapDiode {
         if frame_bytes.len() < VISUAL_PREAMBLE.len() + 2 {
             return None;
         }
-        if &frame_bytes[..4] != VISUAL_PREAMBLE {
+        if frame_bytes[..4] != VISUAL_PREAMBLE {
             return None;
         }
 
