@@ -56,7 +56,7 @@ def test_secure_boot_mock_enabled():
 
 def test_secure_boot_mock_disabled():
     """Verify Secure Boot detection when disabled."""
-    verifier = HostHardeningVerifier()
+    verifier = HostHardeningVerifier(strict=True)
     verifier.os_type = "windows"
 
     with patch("verify_host_hardening.winreg.OpenKey", return_value=MagicMock()), \
@@ -73,7 +73,7 @@ def test_vbs_and_hvci_mock_active():
     verifier.os_type = "windows"
 
     with patch("verify_host_hardening.winreg.OpenKey", return_value=MagicMock()), \
-         patch("verify_host_hardening.winreg.QueryValueEx", side_effect=[(1, 4), (1, 4)]), \
+         patch("verify_host_hardening.winreg.QueryValueEx", return_value=(1, 4)), \
          patch("verify_host_hardening.winreg.CloseKey"):
         res = verifier.check_vbs_and_hvci()
         assert res["status"] == "PASS"  # nosec: B101

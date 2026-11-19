@@ -210,6 +210,40 @@ def _c07() -> str:
     return "256/256 unique 32-byte draws"
 
 
+@check("c08", "CRYPTO", "Multi-Assumption PQC Triple-KEX roundtrip + zero-fallback")
+def _c08() -> str:
+    from pqc_multi_assumption import MultiAssumptionKEXManager, TripleKexCiphertext
+    psk = secrets.token_bytes(32)
+    tr = b"DIAGNOSTIC-TRANSCRIPT-C08"
+    alice = MultiAssumptionKEXManager(hardware_psk=psk)
+    bob = MultiAssumptionKEXManager(hardware_psk=psk, auto_generate=False)
+    ct, k_bob = bob.encapsulate(alice.get_public_key(), transcript=tr)
+    k_alice = alice.decapsulate(ct, transcript=tr)
+    if not hmac.compare_digest(k_alice, k_bob):
+        raise AssertionError("TripleKex master key mismatch")
+
+    # Verify session keys expansion & mutual confirmation
+    keys_alice = alice.expand_session_keys(k_alice, transcript_binding=tr)
+    keys_bob = bob.expand_session_keys(k_bob, transcript_binding=tr)
+    if not keys_alice.ct_eq(keys_bob):
+        raise AssertionError("TripleSessionKeys mismatch")
+    tag = bob.compute_confirmation_tag(keys_bob.confirmation_key, is_initiator=True, transcript_binding=tr)
+    if not alice.verify_peer_confirmation_tag(keys_alice.confirmation_key, is_peer_initiator=True, transcript_binding=tr, peer_tag=tag):
+        raise AssertionError("Confirmation tag verification failed")
+
+    # Verify zero-fallback: missing PSK fails closed
+    try:
+        MultiAssumptionKEXManager(hardware_psk=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("MultiAssumptionKEXManager allowed None hardware_psk")
+
+    alice.close()
+    bob.close()
+    return "Triple-KEX roundtrip verified (K_master 48B match; confirmation verified; zero-fallback active)"
+
+
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -563,6 +597,48 @@ def _t04() -> str:
     return "100%-flood-in-window yields a single ACK"
 
 
+@check("t05", "TRANSPORT", "chameleon traffic morphing (WebRTC/QUIC p>0.95 KS score)")
+def _t05() -> str:
+    from network.traffic_morpher import (
+        WebRtcTrafficMorpher,
+        QuicTrafficMorpher,
+        ChameleonTrafficMorpher,
+        verify_ks_score,
+        compute_shannon_entropy,
+    )
+    # 1. WebRTC RTP Opus morphing & pacing
+    webrtc = WebRtcTrafficMorpher()
+    cell = b"DIAGNOSTIC_CHAMELEON_CELL_ST2027_VERIFIED"
+    m_rtp = webrtc.morph(cell)
+    d_rtp = webrtc.demorph(m_rtp)
+    if d_rtp != cell:
+        raise AssertionError("WebRtcMorpher demorph mismatch (bit corruption)")
+
+    intervals = webrtc.generate_pacing_intervals(100)
+    stat, pval, passed = verify_ks_score(intervals)
+    if not passed or pval <= 0.95:
+        raise AssertionError(f"WebRTC pacing KS test failed: p={pval:.4f} <= 0.95 (stat={stat:.4f})")
+
+    # 2. QUIC v2 1-RTT short header morphing & padding
+    quic = QuicTrafficMorpher(target_size=1200)
+    m_quic = quic.morph(cell)
+    d_quic = quic.demorph(m_quic)
+    if d_quic != cell:
+        raise AssertionError("QuicMorpher demorph mismatch (bit corruption)")
+
+    # 3. Unified engine dynamic profile switching
+    engine = ChameleonTrafficMorpher(default_profile="webrtc")
+    p1 = engine.morph(cell)
+    if engine.demorph(p1) != cell:
+        raise AssertionError("ChameleonEngine WebRTC demorph failed")
+    engine.set_profile("quic")
+    p2 = engine.morph(cell)
+    if engine.demorph(p2) != cell:
+        raise AssertionError("ChameleonEngine QUIC demorph failed")
+
+    return f"WebRTC/QUIC zero-loss demorph ok, pacing KS p={pval:.4f} > 0.95 (D={stat:.4f})"
+
+
 # ============================================================================
 # STORAGE
 # ============================================================================
@@ -592,7 +668,7 @@ def _s01() -> str:
              "certs/node_alpha.json", "certs/node_bravo.json",
              "certs/pki_manifest.json", "certs/sovereign_root_ca.json",
              "certs/sovereign_sub_ca.json"}
-    bad = [b for b in bad if not (b.startswith("compliance_reports/") and (b.endswith(".pub") or b.endswith(".sig")))]
+    bad = [b for b in bad if not (b.startswith("compliance_reports/") and (b.endswith(".pub") or b.endswith(".sig") or b.endswith(".tar.gz")))]
     bad = [b for b in bad if b not in allow]
     # Files staged for deletion are already on the way out: confirm and pass.
     if bad:

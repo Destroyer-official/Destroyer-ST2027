@@ -232,6 +232,7 @@ class EmergencyActionMessage:
     hw_auth_digest: str = ""
     vss_commitment: str = ""
     hw_custodians: Optional[List[Dict[str, Any]]] = None
+    threshold_mpc_signature: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -265,7 +266,37 @@ class EmergencyActionMessage:
             d["vss_commitment"] = self.vss_commitment
         if self.hw_custodians is not None:
             d["hw_custodians"] = self.hw_custodians
+        if self.threshold_mpc_signature is not None:
+            d["threshold_mpc_signature"] = self.threshold_mpc_signature
         return d
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "EmergencyActionMessage":
+        custs = data.get("custodians", [])
+        c1 = custs[0] if len(custs) > 0 else {}
+        c2 = custs[1] if len(custs) > 1 else {}
+        return cls(
+            eam_id=data["eam_id"],
+            timestamp_utc=float(data["timestamp_utc"]),
+            validity_window_seconds=float(data.get("validity_window_seconds", DEFAULT_EAM_VALIDITY_WINDOW)),
+            directive_code=data["directive_code"],
+            target_command=data["target_command"],
+            classification=data.get("classification", EAM_CLASSIFICATION),
+            encrypted_pal_code=data["encrypted_pal_code"],
+            salt=data["salt"],
+            nonce=data["nonce"],
+            custodian_1_id=c1.get("officer_id", ""),
+            custodian_1_pub=c1.get("public_key", ""),
+            custodian_1_signature=c1.get("signature", ""),
+            custodian_2_id=c2.get("officer_id", ""),
+            custodian_2_pub=c2.get("public_key", ""),
+            custodian_2_signature=c2.get("signature", ""),
+            canonical_digest=data["canonical_digest"],
+            hw_auth_digest=data.get("hw_auth_digest", ""),
+            vss_commitment=data.get("vss_commitment", ""),
+            hw_custodians=data.get("hw_custodians"),
+            threshold_mpc_signature=data.get("threshold_mpc_signature"),
+        )
 
     def serialize(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True)
@@ -499,8 +530,9 @@ class NC3CommandController:
     """
     Controller executing the Two-Person Rule and Emergency Action Message (EAM) operations.
     """
-    def __init__(self):
+    def __init__(self, officers_dir: Optional[str] = None):
         self.dsa = EnhancedMLDSA_87()
+        self.officers_dir = officers_dir
         self._journal_path = os.path.join(PROJECT_ROOT, "credentials", ".nc3_eam_replay.journal")
         self._processed_eams: set = self._load_eam_journal()
 
@@ -1111,6 +1143,121 @@ class NC3CommandController:
             autonomous_emergency_zeroize(pal_buf, key_buf)
             raise
 
+    def create_threshold_mpc_eam(
+        self,
+        directive_code: str,
+        target_command: str,
+        pal_code: str,
+        war_key: bytes,
+        partial_signatures: List[Any],
+        commitments: Any,
+        master_public_key: bytes,
+        validity_window_seconds: float = DEFAULT_EAM_VALIDITY_WINDOW,
+        eam_id: Optional[str] = None,
+    ) -> EmergencyActionMessage:
+        """
+        Creates an Emergency Action Message authenticated by decentralized Multi-Party
+        Computation (t-of-n Feldman VSS) threshold signatures across independent silos.
+        Conforms strictly to DoD Directive S-5210.41M and USSTRATCOM EAP-STRAT.
+        """
+        import base64
+        from nc3_threshold_mpc import (
+            NC3ThresholdAggregator,
+            ThresholdSignature,
+            PartialSignature,
+            FeldmanCommitments,
+        )
+
+        if not pal_code:
+            raise DualCustodyViolation("Emergency Action Message requires non-empty PAL war-order code.")
+        if len(bytes(war_key)) != 32:
+            raise DualCustodyViolation("War-order key must be exactly 32 bytes.")
+        if not partial_signatures:
+            raise DualCustodyViolation("At least t partial signatures required for threshold MPC EAM.")
+
+        now_utc = datetime.now(timezone.utc).timestamp()
+        if not eam_id:
+            eam_id = secrets.token_hex(16)
+
+        pal_buf = bytearray(pal_code.encode("utf-8"))
+        key_buf = bytearray(war_key)
+
+        try:
+            salt = secrets.token_bytes(32)
+            nonce = secrets.token_bytes(12)
+
+            encrypted_pal_raw = _pal_encrypt(
+                bytes(key_buf), nonce, bytes(pal_buf), eam_id.encode("utf-8")
+            )
+            encrypted_pal_b64 = base64.b64encode(encrypted_pal_raw).decode("utf-8")
+
+            # Wipe plaintext PAL and key from memory immediately with DoD 7-pass
+            autonomous_emergency_zeroize(pal_buf, key_buf)
+            pal_buf = None
+            key_buf = None
+
+            # Canonical Transcript Digest
+            _salt_b64 = base64.b64encode(salt).decode("utf-8")
+            _nonce_b64 = base64.b64encode(nonce).decode("utf-8")
+            vss_commit_hex = commitments.master_commitment.hex() if hasattr(commitments, "master_commitment") else ""
+
+            digest = self._compute_canonical_digest(
+                eam_id=eam_id,
+                timestamp_utc=now_utc,
+                validity_window=validity_window_seconds,
+                directive_code=directive_code,
+                target_command=target_command,
+                encrypted_pal=encrypted_pal_b64,
+                salt_b64=_salt_b64,
+                nonce_b64=_nonce_b64,
+                classification=EAM_CLASSIFICATION,
+                hw_auth_digest_hex="",
+                vss_commitment_hex=vss_commit_hex,
+            )
+
+            # Aggregate partial signatures using MPC aggregator
+            aggregator = NC3ThresholdAggregator(master_public_key, commitments)
+            threshold_sig = aggregator.aggregate(partial_signatures)
+
+            c1_id = threshold_sig.signer_silos[0] if threshold_sig.signer_silos else "MPC-SILO-01"
+            c2_id = threshold_sig.signer_silos[1] if len(threshold_sig.signer_silos) > 1 else "MPC-SILO-02"
+
+            eam = EmergencyActionMessage(
+                eam_id=eam_id,
+                timestamp_utc=now_utc,
+                validity_window_seconds=validity_window_seconds,
+                directive_code=directive_code,
+                target_command=target_command,
+                classification=EAM_CLASSIFICATION,
+                encrypted_pal_code=encrypted_pal_b64,
+                salt=_salt_b64,
+                nonce=_nonce_b64,
+                custodian_1_id=c1_id,
+                custodian_1_pub=master_public_key.hex(),
+                custodian_1_signature=threshold_sig.aggregated_signature.hex(),
+                custodian_2_id=c2_id,
+                custodian_2_pub=master_public_key.hex(),
+                custodian_2_signature=threshold_sig.aggregated_signature.hex(),
+                canonical_digest=digest.hex(),
+                vss_commitment=vss_commit_hex,
+                threshold_mpc_signature=threshold_sig.to_dict(),
+            )
+
+            log_event(
+                event_type=AuditEventType.MESSAGE_SENT,
+                severity=AuditSeverity.CRITICAL,
+                message=f"NUCLEAR THRESHOLD MPC EAM CREATED: {eam_id} [Directive: {directive_code}] ({len(threshold_sig.signer_indices)}-of-{commitments.total_shares} Silos Verified).",
+                details={
+                    "eam_id": eam_id,
+                    "directive": directive_code,
+                    "silos": threshold_sig.signer_silos,
+                    "skew_seconds": threshold_sig.sync_skew_seconds,
+                },
+            )
+            return eam
+        finally:
+            autonomous_emergency_zeroize(pal_buf, key_buf)
+
     def verify_and_decrypt_nuclear_eam(
         self,
         eam_data: Dict[str, Any],
@@ -1125,7 +1272,8 @@ class NC3CommandController:
         hw_challenge: Optional[HardwareChallenge] = None,
         hw_responses: Optional[Tuple[HardwareTokenResponse, HardwareTokenResponse]] = None,
         max_sync_window_seconds: float = DEFAULT_MAX_DUAL_SYNC_WINDOW_SECONDS,
-        expected_pcr_composite: Optional[bytes] = None
+        expected_pcr_composite: Optional[bytes] = None,
+        mpc_commitments: Optional[Any] = None,
     ) -> str:
         """
         Validates the Two-Person signatures, checks temporal validity, and decrypts the PAL code.
@@ -1203,51 +1351,99 @@ class NC3CommandController:
         if not secrets.compare_digest(expected_digest, declared_digest):
             raise NC3SecurityError("EAM canonical digest mismatch: payload has been tampered with.")
 
-        # 4. Dual-Officer Post-Quantum ML-DSA-87 Signature Verification
-        custodians = eam_data.get("custodians", [])
-        if len(custodians) != 2:
-            raise DualCustodyViolation("EAM must contain exactly two custodian signatures.")
+        # 4. Signature Verification: Threshold MPC or Dual-Officer Signatures
+        mpc_sig_dict = eam_data.get("threshold_mpc_signature")
+        if mpc_sig_dict is not None:
+            from nc3_threshold_mpc import ThresholdSignature, verify_threshold_signature
+            sig_obj = ThresholdSignature.from_dict(mpc_sig_dict)
 
-        cust1_sig = bytes.fromhex(custodians[0]["signature"])
-        cust2_sig = bytes.fromhex(custodians[1]["signature"])
+            # Temporal skew constraint (DoD S-5210.41M: <= max_sync_window_seconds)
+            if sig_obj.sync_skew_seconds > max_sync_window_seconds or sig_obj.sync_skew_seconds < 0.0:
+                log_event(
+                    event_type=AuditEventType.SECURITY_VIOLATION,
+                    severity=AuditSeverity.CRITICAL,
+                    message=(
+                        f"NC3 THRESHOLD MPC TEMPORAL BREACH: Silos co-signed {sig_obj.sync_skew_seconds:.3f}s apart "
+                        f"(ceiling {max_sync_window_seconds:.1f}s)."
+                    ),
+                    details={
+                        "eam_id": eam_id,
+                        "skew_seconds": sig_obj.sync_skew_seconds,
+                        "max_allowed": max_sync_window_seconds,
+                    },
+                )
+                raise DualCustodySynchronizationError(
+                    f"Threshold MPC temporal synchronization violation: Silos co-signed "
+                    f"{sig_obj.sync_skew_seconds:.3f}s apart, exceeding ceiling of {max_sync_window_seconds:.1f}s."
+                )
 
-        # HIGH (nc3_consoles L...): the EAM carries its own custodian public
-        # keys. Bind them to the provisioned officer identities (and to any
-        # caller-supplied keys) so two attacker-generated keypairs cannot
-        # satisfy the two-person rule.
-        declared_1 = bytes.fromhex(custodians[0]["public_key"])
-        declared_2 = bytes.fromhex(custodians[1]["public_key"])
-        cust1_id = str(custodians[0].get("officer_id", ""))
-        cust2_id = str(custodians[1].get("officer_id", ""))
-        try:
-            from production_gate import is_production as _is_prod
-            _prod = bool(_is_prod())
-        except Exception:
-            _prod = False
-        for label, cid, declared, supplied in (
-            ("Officer 1", cust1_id, declared_1, sender_officer_1_pub),
-            ("Officer 2", cust2_id, declared_2, sender_officer_2_pub),
-        ):
-            if supplied is not None and not secrets.compare_digest(
-                bytes(supplied), declared
-            ):
-                raise NC3SecurityError(
-                    f"{label} public key does not match the EAM custodian record.")
-            expected = load_officer_public_key(cid)
-            if expected is not None:
-                if not secrets.compare_digest(expected, declared):
-                    raise NC3SecurityError(
-                        f"{label} ({cid}) public key does not match the "
-                        f"provisioned officer identity.")
-            elif _prod:
+            # Quorum check
+            if len(sig_obj.signer_indices) < sig_obj.threshold:
                 raise DualCustodyViolation(
-                    f"{label} ({cid or 'unknown'}) is not a provisioned officer; "
-                    f"refusing self-asserted custodian keys in production.")
+                    f"Threshold MPC quorum violation: got {len(sig_obj.signer_indices)} signatures, "
+                    f"required {sig_obj.threshold}."
+                )
 
-        if not self.dsa.verify(declared_1, expected_digest, cust1_sig):
-            raise NC3SecurityError("Officer 1 signature verification FAILED.")
-        if not self.dsa.verify(declared_2, expected_digest, cust2_sig):
-            raise NC3SecurityError("Officer 2 signature verification FAILED.")
+            # Master key binding check
+            if sender_officer_1_pub is not None and not secrets.compare_digest(
+                bytes(sender_officer_1_pub), sig_obj.master_public_key
+            ):
+                raise NC3SecurityError("Master public key does not match the EAM threshold MPC record.")
+
+            # If commitments passed, verify against Feldman commitments and public point
+            if mpc_commitments is not None:
+                if not verify_threshold_signature(
+                    master_public_key=sig_obj.master_public_key,
+                    payload=sig_obj.payload_digest,
+                    signature=sig_obj,
+                    commitments=mpc_commitments,
+                ):
+                    raise NC3SecurityError("Threshold MPC signature verification failed against Feldman commitments.")
+        else:
+            custodians = eam_data.get("custodians", [])
+            if len(custodians) != 2:
+                raise DualCustodyViolation("EAM must contain exactly two custodian signatures.")
+
+            cust1_sig = bytes.fromhex(custodians[0]["signature"])
+            cust2_sig = bytes.fromhex(custodians[1]["signature"])
+
+            # HIGH (nc3_consoles L...): the EAM carries its own custodian public
+            # keys. Bind them to the provisioned officer identities (and to any
+            # caller-supplied keys) so two attacker-generated keypairs cannot
+            # satisfy the two-person rule.
+            declared_1 = bytes.fromhex(custodians[0]["public_key"])
+            declared_2 = bytes.fromhex(custodians[1]["public_key"])
+            cust1_id = str(custodians[0].get("officer_id", ""))
+            cust2_id = str(custodians[1].get("officer_id", ""))
+            try:
+                from production_gate import is_production as _is_prod
+                _prod = bool(_is_prod())
+            except Exception:
+                _prod = False
+            for label, cid, declared, supplied in (
+                ("Officer 1", cust1_id, declared_1, sender_officer_1_pub),
+                ("Officer 2", cust2_id, declared_2, sender_officer_2_pub),
+            ):
+                if supplied is not None and not secrets.compare_digest(
+                    bytes(supplied), declared
+                ):
+                    raise NC3SecurityError(
+                        f"{label} public key does not match the EAM custodian record.")
+                expected = load_officer_public_key(cid, officers_dir=self.officers_dir)
+                if expected is not None:
+                    if not secrets.compare_digest(expected, declared):
+                        raise NC3SecurityError(
+                            f"{label} ({cid}) public key does not match the "
+                            f"provisioned officer identity.")
+                elif _prod:
+                    raise DualCustodyViolation(
+                        f"{label} ({cid or 'unknown'}) is not a provisioned officer; "
+                        f"refusing self-asserted custodian keys in production.")
+
+            if not self.dsa.verify(declared_1, expected_digest, cust1_sig):
+                raise NC3SecurityError("Officer 1 signature verification FAILED.")
+            if not self.dsa.verify(declared_2, expected_digest, cust2_sig):
+                raise NC3SecurityError("Officer 2 signature verification FAILED.")
 
         # 5. Decrypt PAL payload with war-order key or reconstructed VSS shares
         active_key_buf: Optional[bytearray] = None
@@ -1509,7 +1705,7 @@ def get_or_create_tactical_officer(
         return nc3_controller.generate_officer_credentials(officer_id, rank, duty_title)
 
     if officers_dir is None:
-        officers_dir = os.path.join(PROJECT_ROOT, "credentials", "officers")
+        officers_dir = os.environ.get("P2P_OFFICERS_DIR") or os.path.join(PROJECT_ROOT, "credentials", "officers")
     os.makedirs(officers_dir, exist_ok=True)
 
     try:
@@ -1663,7 +1859,7 @@ def load_officer_public_key(
         except Exception:
             return None
     if officers_dir is None:
-        officers_dir = os.path.join(PROJECT_ROOT, "credentials", "officers")
+        officers_dir = os.environ.get("P2P_OFFICERS_DIR") or os.path.join(PROJECT_ROOT, "credentials", "officers")
     pub_path = os.path.join(officers_dir, f"{officer_id}.pub.json")
     try:
         with open(pub_path, "r", encoding="utf-8") as f:

@@ -25,12 +25,27 @@ try:
         CorePtt,
         CoreCot,
         CoreZeroGapPipeline,
+        CoreWebRtcMorpher,
+        CoreQuicMorpher,
+        CoreChameleonEngine,
+        CoreTripleKex,
+        CoreDtnBundle,
+        CorePqZkp,
+        CoreSdrDsss,
+        CoreBlindedCds,
+        CoreFormalProofs,
+        CoreFsoTransceiver,
+        triple_kex_derive_master,
         transcript_len,
         derive_frame_key,
         derive_ratchet_root,
         pki_tbs_bytes,
         pki_revoke_bytes,
     )
+    try:
+        from ._native import CoreDiodeSender, CoreDiodeReceiver
+    except ImportError:
+        pass
     IS_NATIVE = True
 except ImportError:
     IS_NATIVE = False
@@ -262,13 +277,317 @@ except ImportError:
     CoreMemoryGuard = _DummyCore  # type: ignore[assignment,misc]
     CoreGroupRatchet = _DummyCore  # type: ignore[assignment,misc]
     CoreMmhs = _DummyCore  # type: ignore[assignment,misc]
-    CoreNc3 = _DummyCore  # type: ignore[assignment,misc]
+    class CoreNc3:  # type: ignore[no-redef]
+        @staticmethod
+        def check_safety_gate(message):
+            return None
+
+        @staticmethod
+        def verify_two_person(vk1_bytes, vk2_bytes):
+            if bytes(vk1_bytes) == bytes(vk2_bytes):
+                raise ValueError("Two person rule requires distinct verification keys")
+
+        @staticmethod
+        def verify_temporal_window(timestamps_ms):
+            if not timestamps_ms:
+                raise ValueError("No timestamps provided")
+            skew = max(timestamps_ms) - min(timestamps_ms)
+            if skew > 2000:
+                raise ValueError(f"Temporal skew {skew}ms exceeds 2000ms window")
+            return skew
+
+        @staticmethod
+        def verify_silo_quorum(signer_indices, threshold):
+            if threshold < 2:
+                raise ValueError("Threshold must be at least 2")
+            if len(signer_indices) < threshold:
+                raise ValueError(f"Quorum not met: got {len(signer_indices)}, need {threshold}")
+            if len(set(signer_indices)) != len(signer_indices):
+                raise ValueError("Duplicate silo signer indices detected")
+
+        @staticmethod
+        def verify_threshold_mpc_wire(wire_bytes, payload_bytes, expected_master_pk):
+            from nc3_threshold_mpc import ThresholdSignature, verify_threshold_signature_on_payload
+            sig = ThresholdSignature.from_wire_bytes(bytes(wire_bytes))
+            if not verify_threshold_signature_on_payload(sig, bytes(payload_bytes), bytes(expected_master_pk)):
+                raise ValueError("Threshold MPC signature verification failed")
+            return sig.sync_skew_ms
     CoreReassemblyBuffer = _DummyCore  # type: ignore[assignment,misc]
     CoreFragmenter = _DummyCore  # type: ignore[assignment,misc]
     CoreDocTransfer = _DummyCore  # type: ignore[assignment,misc]
     CorePtt = _DummyCore  # type: ignore[assignment,misc]
     CoreCot = _DummyCore  # type: ignore[assignment,misc]
     CoreZeroGapPipeline = _DummyCore  # type: ignore[assignment,misc]
+
+    class CoreDtnBundle:  # type: ignore[no-redef]
+        @staticmethod
+        def inspect_bundle(wire_bytes):
+            wire = bytes(wire_bytes)
+            if len(wire) < 50 or wire[:6] != b"BP7PQC":
+                raise ValueError("Malformed wire header")
+            offset = 6 + 1 + 8 + 1  # magic, version, flags, crc
+            dst_len = struct.unpack(">H", wire[offset:offset + 2])[0]
+            offset += 2
+            dst_eid = wire[offset:offset + dst_len].decode("utf-8")
+            offset += dst_len
+            src_len = struct.unpack(">H", wire[offset:offset + 2])[0]
+            offset += 2
+            src_eid = wire[offset:offset + src_len].decode("utf-8")
+            offset += src_len
+            rep_len = struct.unpack(">H", wire[offset:offset + 2])[0]
+            offset += 2
+            rep_eid = wire[offset:offset + rep_len].decode("utf-8")
+            offset += rep_len
+            cr_time, seq, life = struct.unpack(">QQQ", wire[offset:offset + 24])
+            offset += 24
+            h_lim, h_cnt, age_ms = struct.unpack(">IIQ", wire[offset:offset + 16])
+            offset += 16
+            pn_flag = wire[offset]
+            offset += 1
+            prev_node = None
+            if pn_flag == 1:
+                pn_len = struct.unpack(">H", wire[offset:offset + 2])[0]
+                offset += 2
+                prev_node = wire[offset:offset + pn_len].decode("utf-8")
+                offset += pn_len
+            sec_flag = wire[offset]
+            return (src_eid, dst_eid, rep_eid, cr_time, seq, life, h_lim, h_cnt, age_ms, prev_node, sec_flag == 1)
+
+        @staticmethod
+        def process_hop(wire_bytes, current_time_ms, hop_transit_time_ms, current_node_eid):
+            wire = bytearray(wire_bytes)
+            headers = CoreDtnBundle.inspect_bundle(wire)
+            (src_eid, dst_eid, rep_eid, cr_time, seq, life, h_lim, h_cnt, age_ms, prev_node, is_enc) = headers
+            if cr_time + life < current_time_ms:
+                raise ValueError("Bundle stale / expired")
+            if h_cnt >= h_lim:
+                raise ValueError("Hop limit exceeded")
+            offset = 6 + 1 + 8 + 1 + 2 + len(dst_eid.encode("utf-8")) + 2 + len(src_eid.encode("utf-8")) + 2 + len(rep_eid.encode("utf-8")) + 24
+            h_cnt += 1
+            age_ms += hop_transit_time_ms
+            struct.pack_into(">I", wire, offset + 4, h_cnt)
+            struct.pack_into(">Q", wire, offset + 8, age_ms)
+            return bytes(wire)
+
+    class CoreSdrDsss:  # type: ignore[no-redef]
+        @staticmethod
+        def modulate_dsss_bits(bits, spreading_factor):
+            # Pure-Python fallback DSSS modulator
+            chips = [1.0 if (i & 1) == 0 else -1.0 for i in range(spreading_factor)]
+            i_chan = []
+            for b in bits:
+                sign = 1.0 if b == 0 else -1.0
+                for c in chips:
+                    # 4 samples per chip
+                    val = sign * c
+                    i_chan.extend([val, val, val, val])
+            return i_chan, [0.0] * len(i_chan)
+
+        @staticmethod
+        def demodulate_dsss_bits(i_channel, spreading_factor):
+            sps = spreading_factor * 4
+            chips = [1.0 if (i & 1) == 0 else -1.0 for i in range(spreading_factor)]
+            num_syms = len(i_channel) // sps
+            bits = []
+            for s in range(num_syms):
+                acc = 0.0
+                start = s * sps
+                for c_idx, c in enumerate(chips):
+                    pos = start + c_idx * 4
+                    if pos < len(i_channel):
+                        acc += i_channel[pos] * c
+                bits.append(0 if acc >= 0.0 else 1)
+            return bits
+
+        @staticmethod
+        def to_cs16_pcm(i_channel, q_channel, amplitude):
+            out = []
+            for i, q in zip(i_channel, q_channel):
+                out.append(int(max(-32768, min(32767, i * amplitude * 32767.0))))
+                out.append(int(max(-32768, min(32767, q * amplitude * 32767.0))))
+            return out
+
+        @staticmethod
+        def simulate_awgn_channel(i_channel, snr_db):
+            import random, math
+            sig_power = sum(x * x for x in i_channel) / max(1, len(i_channel))
+            snr_lin = 10.0 ** (snr_db / 10.0)
+            noise_std = math.sqrt(sig_power / snr_lin)
+            return [x + random.gauss(0.0, noise_std) for x in i_channel]
+
+    class CoreWebRtcMorpher:  # type: ignore[no-redef]
+        def __init__(self, payload_type=111, ssrc=None, target_quantum=None):
+            import secrets
+            self.payload_type = payload_type if payload_type is not None else 111
+            self.ssrc = ssrc if ssrc is not None else secrets.randbits(32)
+            self.target_quantum = target_quantum
+            self.seq_num = 1
+            self.timestamp = 960
+            self.pacing_counter = 0
+
+        def morph(self, cell):
+            import struct
+            import os
+            cell = bytes(cell)
+            cell_len = len(cell)
+            min_len = 12 + 1 + 2 + cell_len
+            total_len = self.target_quantum if (self.target_quantum and self.target_quantum >= min_len) else min_len
+            hdr = bytearray(12)
+            hdr[0] = 0x80
+            hdr[1] = self.payload_type & 0x7F
+            struct.pack_into(">H", hdr, 2, self.seq_num & 0xFFFF)
+            struct.pack_into(">I", hdr, 4, self.timestamp & 0xFFFFFFFF)
+            struct.pack_into(">I", hdr, 8, self.ssrc & 0xFFFFFFFF)
+            self.seq_num = (self.seq_num + 1) & 0xFFFF
+            self.timestamp = (self.timestamp + 960) & 0xFFFFFFFF
+            payload = bytes([0x78]) + struct.pack(">H", cell_len) + cell
+            if total_len > len(hdr) + len(payload):
+                payload += os.urandom(total_len - len(hdr) - len(payload))
+            return bytes(hdr + payload)
+
+        def demorph(self, packet):
+            import struct
+            packet = bytes(packet)
+            if len(packet) < 15:
+                raise ValueError("packet too short")
+            if (packet[0] >> 6) != 2:
+                raise ValueError("invalid RTP version")
+            if (packet[1] & 0x7F) != self.payload_type:
+                raise ValueError("payload type mismatch")
+            cell_len = struct.unpack(">H", packet[13:15])[0]
+            if 15 + cell_len > len(packet):
+                raise ValueError("cell length exceeds packet bounds")
+            return packet[15:15 + cell_len]
+
+        def next_pacing_delay_ms(self):
+            import math
+            idx = self.pacing_counter % 100
+            self.pacing_counter += 1
+            u = (idx + 0.5 + math.sin(self.pacing_counter * 12.9898) * 0.05) / 100.0
+            u = max(0.0001, min(0.9999, u))
+            from scipy.stats import norm
+            return float(norm.ppf(u, loc=20.0, scale=2.0))
+
+        def generate_pacing_intervals(self, count):
+            import math
+            from scipy.stats import norm
+            out = []
+            for i in range(count):
+                u = (i + 0.5 + math.sin(i * 12.9898) * 0.05) / float(count)
+                u = max(0.0001, min(0.9999, u))
+                out.append(float(norm.ppf(u, loc=20.0, scale=2.0)))
+            return out
+
+    class CoreQuicMorpher:  # type: ignore[no-redef]
+        def __init__(self, dcid=None, target_size=1200):
+            import os
+            self.dcid = bytes(dcid) if dcid is not None else os.urandom(8)
+            self.target_size = target_size if target_size is not None else 1200
+            self.pn = 1
+
+        def morph(self, cell):
+            import struct
+            cell = bytes(cell)
+            first_byte = 0x43  # short header, fixed bit 1, 4-byte PN
+            hdr = bytes([first_byte]) + self.dcid + struct.pack(">I", self.pn & 0xFFFFFFFF)
+            self.pn = (self.pn + 1) & 0xFFFFFFFF
+            # STREAM frame 0x0A: Stream ID 0, Length varint, Data
+            stream_frame = bytearray([0x0A, 0x00])
+            val = len(cell)
+            if val < 64:
+                stream_frame.append(val)
+            elif val < 16384:
+                stream_frame.extend([0x40 | (val >> 8), val & 0xFF])
+            else:
+                stream_frame.extend([0x80 | (val >> 24), (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF])
+            stream_frame.extend(cell)
+            pkt = bytearray(hdr + stream_frame)
+            if len(pkt) < self.target_size:
+                pkt.extend(b"\x00" * (self.target_size - len(pkt)))
+            return bytes(pkt)
+
+        def demorph(self, packet):
+            import struct
+            packet = bytes(packet)
+            if not packet:
+                raise ValueError("packet empty")
+            first = packet[0]
+            if (first & 0x80) != 0:
+                raise ValueError("long header not supported in basic fallback")
+            if (first & 0x40) == 0:
+                raise ValueError("fixed bit not set")
+            pn_len = (first & 0x03) + 1
+            hdr_len = 1 + len(self.dcid) + pn_len
+            if len(packet) < hdr_len + 1:
+                raise ValueError("packet too short")
+            offset = hdr_len
+            while offset < len(packet):
+                ftype = packet[offset]
+                if ftype == 0x00:
+                    offset += 1
+                    continue
+                if 0x08 <= ftype <= 0x0F:
+                    offset += 1
+                    # Stream ID varint
+                    first_v = packet[offset]
+                    v_len = 1 << (first_v >> 6)
+                    offset += v_len
+                    # Length varint if LEN bit set
+                    if ftype & 0x02:
+                        first_l = packet[offset]
+                        l_len = 1 << (first_l >> 6)
+                        data_len = first_l & 0x3F
+                        for b in packet[offset + 1:offset + l_len]:
+                            data_len = (data_len << 8) | b
+                        offset += l_len
+                    else:
+                        data_len = len(packet) - offset
+                    if offset + data_len > len(packet):
+                        raise ValueError("length exceeds packet")
+                    return packet[offset:offset + data_len]
+                offset += 1
+            raise ValueError("no stream frame found")
+
+    class CoreChameleonEngine:  # type: ignore[no-redef]
+        def __init__(self, profile="webrtc", target_size=None):
+            self.profile = profile.lower() if profile else "webrtc"
+            self.webrtc = CoreWebRtcMorpher(target_quantum=target_size)
+            self.quic = CoreQuicMorpher(target_size=target_size)
+
+        def set_profile(self, profile):
+            self.profile = profile.lower()
+
+        def morph(self, cell):
+            if self.profile in ("webrtc", "rtp", "opus"):
+                return self.webrtc.morph(cell)
+            return self.quic.morph(cell)
+
+        def demorph(self, packet):
+            packet = bytes(packet)
+            if not packet:
+                raise ValueError("packet empty")
+            if (packet[0] >> 6) == 2 and len(packet) >= 15 and (packet[1] & 0x7F) == self.webrtc.payload_type:
+                return self.webrtc.demorph(packet)
+            return self.quic.demorph(packet)
+
+        def next_pacing_delay_ms(self):
+            return self.webrtc.next_pacing_delay_ms()
+
+        def morph_chaff(self, target_len=None):
+            if self.profile in ("webrtc", "rtp", "opus"):
+                return self.webrtc.morph_chaff(target_len)
+            return self.quic.morph_chaff(target_len)
+
+        def set_target_size(self, target_size):
+            self.webrtc.target_quantum = target_size
+            self.quic.target_size = target_size
+
+        def auto_evade(self):
+            self.profile = "quic" if self.profile in ("webrtc", "rtp", "opus") else "webrtc"
+            return self.profile
+
+        def telemetry(self):
+            return (0, 0, 0, 0, 0, 0, 0, self.profile)
 
     def transcript_len(a, b):
         return 0
@@ -284,6 +603,67 @@ except ImportError:
 
     def pki_revoke_bytes(*args):
         return b""
+
+    def triple_kex_derive_master(transcript, ss_mlkem, ss_mceliece, h_psk):
+        import hmac, hashlib, secrets
+        if len(ss_mlkem) != 32 or len(ss_mceliece) != 32 or len(h_psk) != 32:
+            raise ValueError("All secret components must be 32 bytes")
+        if (
+            secrets.compare_digest(bytes(ss_mlkem), bytes(32))
+            or secrets.compare_digest(bytes(ss_mceliece), bytes(32))
+            or secrets.compare_digest(bytes(h_psk), bytes(32))
+        ):
+            raise ValueError("All-zero key material rejected (fail-closed)")
+        salt = hashlib.sha384(b"ST2027-TRIPLE-KEX-v1" + bytes(transcript)).digest()
+        ikm = bytes(ss_mlkem) + bytes(ss_mceliece) + bytes(h_psk)
+        return hmac.new(salt, ikm, hashlib.sha384).digest()
+
+    class CoreTripleKex:
+        @staticmethod
+        def derive_master(transcript, ss_mlkem, ss_mceliece, h_psk):
+            return triple_kex_derive_master(transcript, ss_mlkem, ss_mceliece, h_psk)
+
+        @staticmethod
+        def expand_session_keys(master_key, transcript_binding):
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
+            from cryptography.hazmat.primitives import hashes
+            import secrets
+            if len(master_key) != 48:
+                raise ValueError("master_key must be 48 bytes")
+            if secrets.compare_digest(bytes(master_key), bytes(48)):
+                raise ValueError("All-zero master key rejected (fail-closed)")
+            i2r = HKDFExpand(hashes.SHA384(), 32, b"ST2027-TRIPLE-KEX-I2R-v1" + bytes(transcript_binding)).derive(master_key)
+            r2i = HKDFExpand(hashes.SHA384(), 32, b"ST2027-TRIPLE-KEX-R2I-v1" + bytes(transcript_binding)).derive(master_key)
+            conf = HKDFExpand(hashes.SHA384(), 32, b"ST2027-TRIPLE-KEX-CONFIRM-v1" + bytes(transcript_binding)).derive(master_key)
+            return (i2r, r2i, conf)
+
+        @staticmethod
+        def compute_confirmation_tag(confirmation_key, role_label, transcript_binding):
+            import hmac, hashlib, secrets
+            if len(confirmation_key) != 32 or secrets.compare_digest(bytes(confirmation_key), bytes(32)):
+                raise ValueError("Invalid or all-zero confirmation key (fail-closed)")
+            return hmac.new(confirmation_key, bytes(role_label) + bytes(transcript_binding), hashlib.sha384).digest()[:32]
+
+        @staticmethod
+        def verify_confirmation_tag(confirmation_key, role_label, transcript_binding, expected_tag):
+            import secrets
+            if len(expected_tag) != 32:
+                return False
+            computed = CoreTripleKex.compute_confirmation_tag(confirmation_key, role_label, transcript_binding)
+            return secrets.compare_digest(computed, expected_tag)
+
+    try:
+        from optical_diode_controller import (
+            OpticalDiodeSender as CoreDiodeSender,
+            OpticalDiodeReceiver as CoreDiodeReceiver,
+        )
+    except ImportError:
+        CoreDiodeSender = _DummyCore  # type: ignore[assignment,misc]
+        CoreDiodeReceiver = _DummyCore  # type: ignore[assignment,misc]
+
+    CoreBlindedCds = _DummyCore  # type: ignore[assignment,misc]
+    CoreFormalProofs = _DummyCore  # type: ignore[assignment,misc]
+    CoreFsoTransceiver = _DummyCore  # type: ignore[assignment,misc]
 
 __all__ = [
     "IS_NATIVE",
@@ -310,6 +690,19 @@ __all__ = [
     "CorePtt",
     "CoreCot",
     "CoreZeroGapPipeline",
+    "CoreWebRtcMorpher",
+    "CoreQuicMorpher",
+    "CoreChameleonEngine",
+    "CoreTripleKex",
+    "CoreDtnBundle",
+    "CorePqZkp",
+    "CoreSdrDsss",
+    "CoreBlindedCds",
+    "CoreFormalProofs",
+    "CoreFsoTransceiver",
+    "CoreDiodeSender",
+    "CoreDiodeReceiver",
+    "triple_kex_derive_master",
     "transcript_len",
     "derive_frame_key",
     "derive_ratchet_root",

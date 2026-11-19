@@ -9,8 +9,10 @@ from audit_logging_system import (
     AuditEventType,
     AuditSeverity,
     log_event,
-    get_audit_system,
+    get_audit_logger,
 )
+
+get_audit_system = get_audit_logger
 
 __all__ = [
     "AuditLogger",
@@ -19,4 +21,5 @@ __all__ = [
     "AuditSeverity",
     "log_event",
     "get_audit_system",
+    "get_audit_logger",
 ]

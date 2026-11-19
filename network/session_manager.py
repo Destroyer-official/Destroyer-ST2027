@@ -432,7 +432,8 @@ class SessionManager:
                 # Create session-specific audit database path
                 audit_db_dir = "logs"
                 os.makedirs(audit_db_dir, exist_ok=True)
-                session_audit_db = os.path.join(audit_db_dir, f"session_{peer_id}_audit.db")
+                safe_peer = "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(peer_id))
+                session_audit_db = os.path.join(audit_db_dir, f"session_{safe_peer}_audit.db")
                 
                 # Create AuditLogger instance for this session
                 session_audit_logger = AuditLogger(db_path=session_audit_db)

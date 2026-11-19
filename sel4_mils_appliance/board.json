@@ -1,0 +1,43 @@
+{
+  "name": "seL4_MILS_Appliance_Hardware_Target",
+  "arch": "aarch64",
+  "soc": "Cortex-A72_Secure_Enclave",
+  "memory_layout": {
+    "red_crypto_ring": {
+      "vaddr": "0x10000000",
+      "size": "0x10000",
+      "page_size": "0x1000",
+      "cached": true,
+      "domains": ["red", "crypto"]
+    },
+    "crypto_black_ring": {
+      "vaddr": "0x20000000",
+      "size": "0x10000",
+      "page_size": "0x1000",
+      "cached": true,
+      "domains": ["crypto", "black"]
+    },
+    "crypto_locked_keys": {
+      "vaddr": "0x30000000",
+      "size": "0x4000",
+      "page_size": "0x1000",
+      "cached": false,
+      "domains": ["crypto"]
+    }
+  },
+  "channels": [
+    {
+      "id": 1,
+      "endpoints": ["red", "crypto"]
+    },
+    {
+      "id": 2,
+      "endpoints": ["crypto", "black"]
+    }
+  ],
+  "security_standards": [
+    "Common Criteria EAL6+ / EAL7",
+    "NSA CNSA Suite 2.0",
+    "FIPS 140-3 Level 4"
+  ]
+}

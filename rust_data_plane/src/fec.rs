@@ -94,7 +94,7 @@ impl GF256 {
 
 pub static GF: GF256 = GF256::new();
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FecError {
     DivisionByZero,
     TooManyChunks,
@@ -174,6 +174,53 @@ impl CauchyReedSolomon {
 
     pub fn n(&self) -> usize {
         self.k + self.m
+    }
+
+    pub fn cauchy_matrix(&self) -> &[u8] {
+        &self.cauchy_matrix
+    }
+
+    /// Splits `payload` into K data chunks padded to `chunk_size` and generates M parity chunks.
+    /// Returns all K+M chunks (0..K data chunks, K..K+M parity chunks) of uniform `chunk_size`.
+    pub fn encode_payload(&self, payload: &[u8], chunk_size: usize) -> Result<Vec<Vec<u8>>, FecError> {
+        let total_len = payload.len();
+        let expected_capacity = self.k * chunk_size;
+        if total_len > expected_capacity {
+            return Err(FecError::ChunkSizeMismatch);
+        }
+
+        let mut data_chunks = vec![vec![0u8; chunk_size]; self.k];
+        for (i, chunk) in data_chunks.iter_mut().enumerate().take(self.k) {
+            let start = i * chunk_size;
+            if start < total_len {
+                let end = (start + chunk_size).min(total_len);
+                let slice = &payload[start..end];
+                chunk[..slice.len()].copy_from_slice(slice);
+            }
+        }
+
+        let data_refs: Vec<&[u8]> = data_chunks.iter().map(|c| c.as_slice()).collect();
+        let parity_chunks = self.encode(&data_refs)?;
+
+        let mut all_chunks = Vec::with_capacity(self.k + self.m);
+        all_chunks.extend(data_chunks);
+        all_chunks.extend(parity_chunks);
+        Ok(all_chunks)
+    }
+
+    /// Reconstructs original unpadded payload from any K received chunks.
+    pub fn decode_payload(&self, received: &[(usize, &[u8])], total_len: usize) -> Result<Vec<u8>, FecError> {
+        let recovered_chunks = self.decode(received)?;
+        let mut full = Vec::with_capacity(self.k * (recovered_chunks.first().map_or(0, |c| c.len())));
+        for chunk in recovered_chunks {
+            full.extend_from_slice(&chunk);
+        }
+        if total_len <= full.len() {
+            full.truncate(total_len);
+            Ok(full)
+        } else {
+            Err(FecError::ChunkSizeMismatch)
+        }
     }
 
     /// Encodes K data chunks of uniform length into M parity chunks of the same length.

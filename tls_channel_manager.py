@@ -3813,7 +3813,7 @@ class TLSSecureChannel:
             self.using_pq_ciphers = True
             context._pq_enabled = True
         else:
-            is_prod = is_production()
+            is_prod = _tls_is_production()
             if getattr(self, 'enable_pq_kem', False) and (is_prod or getattr(self, 'strict_pq', False)):
                 log.critical("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups (SecP384r1MLKEM1024). Classical fallback is forbidden in production posture.")
                 raise SecurityError("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups. Classical fallback is forbidden under production posture.")
@@ -4553,7 +4553,7 @@ class TLSSecureChannel:
             self.using_pq_ciphers = True
             context._pq_enabled = True
         else:
-            is_prod = is_production()
+            is_prod = _tls_is_production()
             if getattr(self, 'enable_pq_kem', False) and (is_prod or getattr(self, 'strict_pq', False)):
                 log.critical("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups (SecP384r1MLKEM1024). Classical fallback is forbidden in production posture.")
                 raise SecurityError("CNSA 2.0 violation: Host TLS runtime does not offer RFC 10024 hybrid groups. Classical fallback is forbidden under production posture.")

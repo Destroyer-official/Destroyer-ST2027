@@ -2,7 +2,7 @@
   "metadata": {
     "assessment_name": "DoD RMF Red-Team Penetration Assessment",
     "version": "2028.1.0",
-    "timestamp_utc": "2026-11-16T06:42:19.133494+00:00",
+    "timestamp_utc": "2026-11-19T04:29:25.013312+00:00",
     "adversary_threat_tier": "TIER-6 (Nation-State Strategic SIGINT)",
     "overall_status": "DEFENDED"
   },
@@ -10,7 +10,7 @@
     "total_vectors": 5,
     "passed": 5,
     "failed": 0,
-    "duration_seconds": 3.67,
+    "duration_seconds": 3.7,
     "all_passed": true
   },
   "drill_results": [
@@ -18,15 +18,15 @@
       "vector_id": "V1",
       "title": "Timing Attack & Constant-Time Probe",
       "status": "PASS",
-      "details": "Timing delta across early/mid/late tamper offsets: 0.005ms (<5.0ms gate)",
-      "duration_ms": 18.93
+      "details": "Timing delta across early/mid/late tamper offsets: 0.069ms (<5.0ms gate)",
+      "duration_ms": 23.98
     },
     {
       "vector_id": "V2",
       "title": "Network Jamming & Malformed Injection",
       "status": "PASS",
       "details": "9/9 corrupted frames dropped; 0 replies leaked to attacker",
-      "duration_ms": 2391.69
+      "duration_ms": 2420.66
     },
     {
       "vector_id": "V3",
@@ -40,14 +40,14 @@
       "title": "Memory Residual & Key Zeroization Probe",
       "status": "PASS",
       "details": "Mutable key bytearray wiped (all 0x00) immediately upon handoff; native ZeroizeOnDrop active",
-      "duration_ms": 0.04
+      "duration_ms": 0.11
     },
     {
       "vector_id": "V5",
       "title": "Replay Swarm & Rogue Impersonation Probe",
       "status": "PASS",
       "details": "100% of replayed swarm packets rejected fail-closed (20/20)",
-      "duration_ms": 1256.14
+      "duration_ms": 1255.82
     }
   ]
 }

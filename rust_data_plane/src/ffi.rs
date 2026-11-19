@@ -1387,6 +1387,27 @@ impl CoreNc3 {
         verify_eam(&eam, &vk1, &vk2, max_age_secs).map_err(err)?;
         Ok(eam.directive_text)
     }
+
+    #[staticmethod]
+    pub fn verify_threshold_mpc_wire(
+        wire_bytes: Vec<u8>,
+        payload_bytes: Vec<u8>,
+        expected_master_pk: Vec<u8>,
+    ) -> PyResult<u64> {
+        let sig = crate::nc3_mpc::MpcThresholdSignature::from_bytes(&wire_bytes).map_err(err)?;
+        crate::nc3_mpc::verify_threshold_mpc(&sig, &payload_bytes, &expected_master_pk).map_err(err)?;
+        Ok(sig.sync_skew_ms)
+    }
+
+    #[staticmethod]
+    pub fn verify_temporal_window(timestamps_ms: Vec<u64>) -> PyResult<u64> {
+        crate::nc3_mpc::verify_temporal_window(&timestamps_ms).map_err(err)
+    }
+
+    #[staticmethod]
+    pub fn verify_silo_quorum(signer_indices: Vec<u32>, threshold: u16) -> PyResult<()> {
+        crate::nc3_mpc::verify_silo_quorum(&signer_indices, threshold).map_err(err)
+    }
 }
 
 #[pyclass]
@@ -1625,7 +1646,908 @@ impl CoreZeroGapPipeline {
     }
 }
 
+use crate::chameleon::{
+    ChameleonEngine, ChameleonProfile, QuicMorpher, WebRtcMorpher,
+};
+
+#[pyclass]
+pub struct CoreWebRtcMorpher {
+    inner: WebRtcMorpher,
+}
+
+#[pymethods]
+impl CoreWebRtcMorpher {
+    #[new]
+    #[pyo3(signature = (payload_type=None, ssrc=None, target_quantum=None))]
+    pub fn new(
+        payload_type: Option<u8>,
+        ssrc: Option<u32>,
+        target_quantum: Option<usize>,
+    ) -> Self {
+        let mut m = WebRtcMorpher::new();
+        if let Some(pt) = payload_type {
+            m.payload_type = pt;
+        }
+        if let Some(s) = ssrc {
+            m.ssrc = s;
+        }
+        if let Some(q) = target_quantum {
+            m.target_quantum = Some(q);
+        }
+        Self { inner: m }
+    }
+
+    pub fn morph(&mut self, cell: Vec<u8>) -> PyResult<Vec<u8>> {
+        Ok(self.inner.morph(&cell))
+    }
+
+    pub fn morph_chaff(&mut self, target_len: Option<usize>) -> Vec<u8> {
+        self.inner.morph_chaff(target_len)
+    }
+
+    pub fn demorph(&mut self, packet: Vec<u8>) -> PyResult<Vec<u8>> {
+        self.inner
+            .demorph(&packet)
+            .map_err(|e| PyValueError::new_err(format!("demorph failed: {e}")))
+    }
+
+    pub fn next_pacing_delay_ms(&mut self) -> f64 {
+        self.inner.next_pacing_delay_ms()
+    }
+
+    pub fn generate_pacing_intervals(&self, count: usize) -> Vec<f64> {
+        self.inner.generate_pacing_intervals(count)
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn get_telemetry(&self) -> PyResult<(u64, u64, u64, u64, u64, u64, u64, String)> {
+        let t = self.inner.get_telemetry();
+        Ok((
+            t.packets_morphed,
+            t.packets_demorphed,
+            t.bytes_morphed,
+            t.bytes_demorphed,
+            t.malformed_drops,
+            t.replay_drops,
+            t.chaff_emitted,
+            t.active_profile,
+        ))
+    }
+}
+
+#[pyclass]
+pub struct CoreQuicMorpher {
+    inner: QuicMorpher,
+}
+
+#[pymethods]
+impl CoreQuicMorpher {
+    #[new]
+    #[pyo3(signature = (dcid=None, target_size=None))]
+    pub fn new(dcid: Option<Vec<u8>>, target_size: Option<usize>) -> Self {
+        let mut m = QuicMorpher::new();
+        if let Some(d) = dcid {
+            m.dcid = d;
+        }
+        if let Some(s) = target_size {
+            m.target_size = s;
+        }
+        Self { inner: m }
+    }
+
+    pub fn morph(&mut self, cell: Vec<u8>) -> PyResult<Vec<u8>> {
+        Ok(self.inner.morph(&cell))
+    }
+
+    pub fn morph_chaff(&mut self, target_len: Option<usize>) -> Vec<u8> {
+        self.inner.morph_chaff(target_len)
+    }
+
+    pub fn demorph(&mut self, packet: Vec<u8>) -> PyResult<Vec<u8>> {
+        self.inner
+            .demorph(&packet)
+            .map_err(|e| PyValueError::new_err(format!("demorph failed: {e}")))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn get_telemetry(&self) -> PyResult<(u64, u64, u64, u64, u64, u64, u64, String)> {
+        let t = self.inner.get_telemetry();
+        Ok((
+            t.packets_morphed,
+            t.packets_demorphed,
+            t.bytes_morphed,
+            t.bytes_demorphed,
+            t.malformed_drops,
+            t.replay_drops,
+            t.chaff_emitted,
+            t.active_profile,
+        ))
+    }
+}
+
+#[pyclass]
+pub struct CoreChameleonEngine {
+    inner: ChameleonEngine,
+}
+
+#[pymethods]
+impl CoreChameleonEngine {
+    #[new]
+    #[pyo3(signature = (profile=None, target_size=None))]
+    pub fn new(profile: Option<&str>, target_size: Option<usize>) -> Self {
+        let prof = profile
+            .and_then(ChameleonProfile::parse)
+            .unwrap_or(ChameleonProfile::WebRtc);
+        let mut inner = ChameleonEngine::new(prof);
+        if let Some(sz) = target_size {
+            inner.webrtc.target_quantum = Some(sz);
+            inner.quic.target_size = sz;
+        }
+        Self { inner }
+    }
+
+    pub fn set_target_size(&mut self, target_size: usize) {
+        self.inner.webrtc.target_quantum = Some(target_size);
+        self.inner.quic.target_size = target_size;
+    }
+
+    pub fn morph(&mut self, cell: Vec<u8>) -> PyResult<Vec<u8>> {
+        Ok(self.inner.morph(&cell))
+    }
+
+    pub fn morph_chaff(&mut self, target_len: Option<usize>) -> Vec<u8> {
+        self.inner.morph_chaff(target_len)
+    }
+
+    pub fn demorph(&mut self, packet: Vec<u8>) -> PyResult<Vec<u8>> {
+        self.inner
+            .demorph(&packet)
+            .map_err(|e| PyValueError::new_err(format!("demorph failed: {e}")))
+    }
+
+    pub fn set_profile(&mut self, profile: &str) -> PyResult<()> {
+        let prof = ChameleonProfile::parse(profile).ok_or_else(|| {
+            PyValueError::new_err(format!("unknown profile: {profile}"))
+        })?;
+        self.inner.set_profile(prof);
+        Ok(())
+    }
+
+    pub fn auto_evade(&mut self) -> PyResult<String> {
+        let p = self.inner.auto_evade();
+        let s = match p {
+            ChameleonProfile::WebRtc => "webrtc",
+            ChameleonProfile::QuicV2 => "quic",
+        };
+        Ok(s.to_string())
+    }
+
+    pub fn next_pacing_delay_ms(&mut self) -> f64 {
+        self.inner.webrtc.next_pacing_delay_ms()
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn telemetry(&self) -> PyResult<(u64, u64, u64, u64, u64, u64, u64, String)> {
+        let t = self.inner.telemetry();
+        Ok((
+            t.packets_morphed,
+            t.packets_demorphed,
+            t.bytes_morphed,
+            t.bytes_demorphed,
+            t.malformed_drops,
+            t.replay_drops,
+            t.chaff_emitted,
+            t.active_profile,
+        ))
+    }
+}
+
+#[pyclass]
+pub struct CoreTripleKex;
+
+#[pymethods]
+impl CoreTripleKex {
+    #[staticmethod]
+    pub fn derive_master(
+        transcript: Vec<u8>,
+        ss_mlkem: Vec<u8>,
+        ss_mceliece: Vec<u8>,
+        h_psk: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        triple_kex_derive_master(transcript, ss_mlkem, ss_mceliece, h_psk)
+    }
+
+    #[staticmethod]
+    pub fn expand_session_keys(
+        master_key: Vec<u8>,
+        transcript_binding: Vec<u8>,
+    ) -> PyResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if master_key.len() != crate::kex_combiner::MASTER_KEY_LEN {
+            return Err(PyValueError::new_err(format!(
+                "master_key must be {} bytes",
+                crate::kex_combiner::MASTER_KEY_LEN
+            )));
+        }
+        let mut mk = [0u8; crate::kex_combiner::MASTER_KEY_LEN];
+        mk.copy_from_slice(&master_key);
+        let mk_obj = crate::kex_combiner::MasterKey::new(mk)
+            .map_err(|e| PyValueError::new_err(format!("triple-kex: {e}")))?;
+        let session_keys = crate::kex_combiner::TripleKex::expand_session_keys(&mk_obj, &transcript_binding)
+            .map_err(|e| PyValueError::new_err(format!("triple-kex: {e}")))?;
+        Ok((
+            session_keys.initiator_traffic_key.to_vec(),
+            session_keys.responder_traffic_key.to_vec(),
+            session_keys.confirmation_key.to_vec(),
+        ))
+    }
+
+    #[staticmethod]
+    pub fn compute_confirmation_tag(
+        confirmation_key: Vec<u8>,
+        role_label: Vec<u8>,
+        transcript_binding: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        if confirmation_key.len() != 32 {
+            return Err(PyValueError::new_err("confirmation_key must be 32 bytes"));
+        }
+        let mut ck = [0u8; 32];
+        ck.copy_from_slice(&confirmation_key);
+        let tag = crate::kex_combiner::TripleKex::compute_confirmation_tag(
+            &ck,
+            &role_label,
+            &transcript_binding,
+        )
+        .map_err(|e| PyValueError::new_err(format!("triple-kex confirmation: {e}")))?;
+        Ok(tag.to_vec())
+    }
+
+    #[staticmethod]
+    pub fn verify_confirmation_tag(
+        confirmation_key: Vec<u8>,
+        role_label: Vec<u8>,
+        transcript_binding: Vec<u8>,
+        expected_tag: Vec<u8>,
+    ) -> PyResult<bool> {
+        if confirmation_key.len() != 32 || expected_tag.len() != 32 {
+            return Err(PyValueError::new_err("confirmation_key and expected_tag must be 32 bytes"));
+        }
+        let mut ck = [0u8; 32];
+        ck.copy_from_slice(&confirmation_key);
+        let mut tag = [0u8; 32];
+        tag.copy_from_slice(&expected_tag);
+        let ok = crate::kex_combiner::TripleKex::verify_confirmation_tag(
+            &ck,
+            &role_label,
+            &transcript_binding,
+            &tag,
+        )
+        .is_ok();
+        Ok(ok)
+    }
+}
+
+#[pyfunction]
+pub fn triple_kex_derive_master(
+    transcript: Vec<u8>,
+    ss_mlkem: Vec<u8>,
+    ss_mceliece: Vec<u8>,
+    h_psk: Vec<u8>,
+) -> PyResult<Vec<u8>> {
+    if ss_mlkem.len() != 32 {
+        return Err(PyValueError::new_err("ss_mlkem must be 32 bytes"));
+    }
+    if ss_mceliece.len() != 32 {
+        return Err(PyValueError::new_err("ss_mceliece must be 32 bytes"));
+    }
+    if h_psk.len() != 32 {
+        return Err(PyValueError::new_err("h_psk must be 32 bytes"));
+    }
+    let mut ml = [0u8; 32];
+    ml.copy_from_slice(&ss_mlkem);
+    let mut mc = [0u8; 32];
+    mc.copy_from_slice(&ss_mceliece);
+    let mut psk = [0u8; 32];
+    psk.copy_from_slice(&h_psk);
+
+    let master = crate::kex_combiner::TripleKex::derive_master_key(&transcript, &ml, &mc, &psk)
+        .map_err(|e| PyValueError::new_err(format!("triple-kex combiner: {e}")))?;
+    Ok(master.as_bytes().to_vec())
+}
+
+use crate::diode::{DiodeReceiver, DiodeSender};
+
+#[pyclass]
+pub struct CoreDiodeSender {
+    inner: DiodeSender,
+}
+
+#[pymethods]
+impl CoreDiodeSender {
+    #[new]
+    pub fn new() -> PyResult<Self> {
+        let sender = DiodeSender::generate().map_err(|e| PyValueError::new_err(format!("diode sender: {e}")))?;
+        Ok(Self { inner: sender })
+    }
+
+    pub fn verifying_key_bytes(&self) -> Vec<u8> {
+        self.inner.verifying_key_bytes().to_vec()
+    }
+
+    #[pyo3(signature = (payload, k=None, m=None))]
+    pub fn prepare_packets(
+        &self,
+        payload: Vec<u8>,
+        k: Option<usize>,
+        m: Option<usize>,
+    ) -> PyResult<(Vec<u8>, Vec<Vec<u8>>)> {
+        let (tx_id, packets) = self
+            .inner
+            .prepare_packets(&payload, k, m)
+            .map_err(|e| PyValueError::new_err(format!("diode sender: {e}")))?;
+        Ok((tx_id.to_vec(), packets))
+    }
+
+    #[pyo3(signature = (payload, target_addr, k=None, m=None, delay_ms=0.5))]
+    pub fn send_simplex_udp(
+        &self,
+        payload: Vec<u8>,
+        target_addr: String,
+        k: Option<usize>,
+        m: Option<usize>,
+        delay_ms: f64,
+    ) -> PyResult<Vec<u8>> {
+        let delay = std::time::Duration::from_secs_f64(delay_ms / 1000.0);
+        let tx_id = self
+            .inner
+            .send_simplex_udp(&payload, &target_addr, k, m, delay)
+            .map_err(|e| PyValueError::new_err(format!("diode send failed: {e}")))?;
+        Ok(tx_id.to_vec())
+    }
+}
+
+#[pyclass]
+pub struct CoreDiodeReceiver {
+    inner: DiodeReceiver,
+}
+
+#[pymethods]
+impl CoreDiodeReceiver {
+    #[new]
+    #[pyo3(signature = (expected_sender_vk=None, ttl_seconds=30.0, max_concurrent=128))]
+    pub fn new(
+        expected_sender_vk: Option<Vec<u8>>,
+        ttl_seconds: f64,
+        max_concurrent: usize,
+    ) -> Self {
+        let ttl = std::time::Duration::from_secs_f64(ttl_seconds);
+        Self {
+            inner: DiodeReceiver::with_config(expected_sender_vk, ttl, max_concurrent),
+        }
+    }
+
+    pub fn process_packet(&mut self, wire: Vec<u8>) -> PyResult<Option<Vec<u8>>> {
+        self.inner
+            .process_packet(&wire)
+            .map_err(|e| PyValueError::new_err(format!("diode receive error: {e}")))
+    }
+
+    #[pyo3(signature = (bind_addr, timeout_seconds=5.0))]
+    pub fn listen_simplex_udp(
+        &mut self,
+        bind_addr: String,
+        timeout_seconds: f64,
+    ) -> PyResult<Vec<u8>> {
+        let timeout = std::time::Duration::from_secs_f64(timeout_seconds);
+        self.inner
+            .listen_simplex_udp(&bind_addr, timeout)
+            .map_err(|e| PyValueError::new_err(format!("diode listen error: {e}")))
+    }
+}
+
+#[pyclass]
+pub struct CoreDtnBundle;
+
+#[pymethods]
+impl CoreDtnBundle {
+    #[staticmethod]
+    pub fn create_0rtt_bundle(
+        source_eid: String,
+        destination_eid: String,
+        report_to_eid: String,
+        creation_time_ms: u64,
+        sequence: u64,
+        lifetime_ms: u64,
+        hop_limit: u32,
+        recipient_mlkem_pk: Vec<u8>,
+        sender_mldsa_sk_seed: Vec<u8>,
+        payload: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        if sender_mldsa_sk_seed.len() != 32 {
+            return Err(PyValueError::new_err(
+                "sender_mldsa_sk_seed must be 32 bytes (FIPS 204 seed)",
+            ));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&sender_mldsa_sk_seed);
+        let (sk, vk) = crate::auth::Mldsa87SigningKey::from_seed(&seed);
+        let vk_bytes = vk.to_bytes();
+
+        let bundle = crate::dtn_bundle::DtnBundle::create_0rtt(
+            &source_eid,
+            &destination_eid,
+            &report_to_eid,
+            creation_time_ms,
+            sequence,
+            lifetime_ms,
+            hop_limit,
+            &recipient_mlkem_pk,
+            &sk,
+            &vk_bytes,
+            &payload,
+        )
+        .map_err(err)?;
+
+        Ok(bundle.to_bytes())
+    }
+
+    #[staticmethod]
+    pub fn open_0rtt_bundle(
+        wire_bytes: Vec<u8>,
+        recipient_mlkem_sk_seed: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        let bundle = crate::dtn_bundle::DtnBundle::from_bytes(&wire_bytes).map_err(err)?;
+        if recipient_mlkem_sk_seed.len() != 64 {
+            return Err(PyValueError::new_err(
+                "recipient_mlkem_sk_seed must be 64 bytes (FIPS 203 seed)",
+            ));
+        }
+        let mut seed = [0u8; 64];
+        seed.copy_from_slice(&recipient_mlkem_sk_seed);
+        use ml_kem::{DecapsulationKey, MlKem1024};
+        let dk = DecapsulationKey::<MlKem1024>::from_seed(seed.into());
+
+        bundle.open_0rtt(&dk).map_err(err)
+    }
+
+    #[staticmethod]
+    pub fn process_hop(
+        wire_bytes: Vec<u8>,
+        current_time_ms: u64,
+        hop_transit_time_ms: u64,
+        current_node_eid: String,
+    ) -> PyResult<Vec<u8>> {
+        let mut bundle = crate::dtn_bundle::DtnBundle::from_bytes(&wire_bytes).map_err(err)?;
+        bundle
+            .process_hop(current_time_ms, hop_transit_time_ms, &current_node_eid)
+            .map_err(err)?;
+        Ok(bundle.to_bytes())
+    }
+
+    #[staticmethod]
+    pub fn inspect_bundle(
+        wire_bytes: Vec<u8>,
+    ) -> PyResult<(
+        String,
+        String,
+        String,
+        u64,
+        u64,
+        u64,
+        u32,
+        u32,
+        u64,
+        Option<String>,
+        bool,
+    )> {
+        let bundle = crate::dtn_bundle::DtnBundle::from_bytes(&wire_bytes).map_err(err)?;
+        Ok((
+            bundle.primary.source_eid,
+            bundle.primary.destination_eid,
+            bundle.primary.report_to_eid,
+            bundle.primary.creation_time.time_ms,
+            bundle.primary.creation_time.sequence,
+            bundle.primary.lifetime_ms,
+            bundle.hop_count.hop_limit,
+            bundle.hop_count.hop_count,
+            bundle.bundle_age.age_ms,
+            bundle.previous_node,
+            bundle.security.is_some(),
+        ))
+    }
+}
+
+#[pyclass]
+pub struct CorePqZkp;
+
+#[pymethods]
+impl CorePqZkp {
+    #[staticmethod]
+    pub fn compute_leaf_hash(
+        callsign: String,
+        serial_number: String,
+        clearance_level: u8,
+        public_key_fingerprint: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        if public_key_fingerprint.len() != 32 {
+            return Err(PyValueError::new_err("public_key_fingerprint must be 32 bytes"));
+        }
+        let mut fp = [0u8; 32];
+        fp.copy_from_slice(&public_key_fingerprint);
+        let id = crate::pq_zkp::TacticalIdentityRecord {
+            callsign,
+            serial_number,
+            clearance_level,
+            public_key_fingerprint: fp,
+        };
+        Ok(id.leaf_hash().to_vec())
+    }
+
+    #[staticmethod]
+    pub fn build_merkle_accumulator(leaf_hashes: Vec<Vec<u8>>) -> PyResult<(Vec<u8>, Vec<Vec<u8>>)> {
+        let mut leaves = Vec::with_capacity(leaf_hashes.len());
+        for lh in leaf_hashes {
+            if lh.len() != 32 {
+                return Err(PyValueError::new_err("leaf hash must be 32 bytes"));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&lh);
+            leaves.push(arr);
+        }
+        let acc = crate::pq_zkp::MerkleAccumulator::build(leaves);
+        let leaves_out = acc.leaves.iter().map(|l| l.to_vec()).collect();
+        Ok((acc.root.to_vec(), leaves_out))
+    }
+
+    #[staticmethod]
+    pub fn prove_identity(
+        callsign: String,
+        serial_number: String,
+        clearance_level: u8,
+        public_key_fingerprint: Vec<u8>,
+        leaf_hashes: Vec<Vec<u8>>,
+        leaf_index: usize,
+        claimed_min_clearance: u8,
+        epoch_id: Vec<u8>,
+        session_nonce: Vec<u8>,
+        blinding_salt: Vec<u8>,
+    ) -> PyResult<Vec<u8>> {
+        if public_key_fingerprint.len() != 32 {
+            return Err(PyValueError::new_err("public_key_fingerprint must be 32 bytes"));
+        }
+        if epoch_id.len() != 16 {
+            return Err(PyValueError::new_err("epoch_id must be 16 bytes"));
+        }
+        if session_nonce.len() != 32 {
+            return Err(PyValueError::new_err("session_nonce must be 32 bytes"));
+        }
+        if blinding_salt.len() != 32 {
+            return Err(PyValueError::new_err("blinding_salt must be 32 bytes"));
+        }
+
+        let mut fp = [0u8; 32];
+        fp.copy_from_slice(&public_key_fingerprint);
+        let mut ep = [0u8; 16];
+        ep.copy_from_slice(&epoch_id);
+        let mut sn = [0u8; 32];
+        sn.copy_from_slice(&session_nonce);
+        let mut bs = [0u8; 32];
+        bs.copy_from_slice(&blinding_salt);
+
+        let id = crate::pq_zkp::TacticalIdentityRecord {
+            callsign,
+            serial_number,
+            clearance_level,
+            public_key_fingerprint: fp,
+        };
+
+        let mut leaves = Vec::with_capacity(leaf_hashes.len());
+        for lh in leaf_hashes {
+            if lh.len() != 32 {
+                return Err(PyValueError::new_err("leaf hash must be 32 bytes"));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&lh);
+            leaves.push(arr);
+        }
+        let acc = crate::pq_zkp::MerkleAccumulator::build(leaves);
+
+        let proof = crate::pq_zkp::PqZkpIdentityProof::prove(
+            &id,
+            &acc,
+            leaf_index,
+            claimed_min_clearance,
+            &ep,
+            &sn,
+            &bs,
+        )
+        .map_err(err)?;
+
+        Ok(proof.to_bytes())
+    }
+
+    #[staticmethod]
+    pub fn verify_identity_wire(
+        wire_bytes: Vec<u8>,
+        trusted_root: Vec<u8>,
+        session_nonce: Vec<u8>,
+        expected_min_clearance: u8,
+        epoch_seen_nullifiers: Vec<Vec<u8>>,
+    ) -> PyResult<(u8, Vec<u8>)> {
+        if trusted_root.len() != 32 {
+            return Err(PyValueError::new_err("trusted_root must be 32 bytes"));
+        }
+        if session_nonce.len() != 32 {
+            return Err(PyValueError::new_err("session_nonce must be 32 bytes"));
+        }
+        let mut tr = [0u8; 32];
+        tr.copy_from_slice(&trusted_root);
+        let mut sn = [0u8; 32];
+        sn.copy_from_slice(&session_nonce);
+
+        let mut cache = Vec::with_capacity(epoch_seen_nullifiers.len());
+        for n in epoch_seen_nullifiers {
+            if n.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&n);
+                cache.push(arr);
+            }
+        }
+
+        let proof = crate::pq_zkp::PqZkpIdentityProof::from_bytes(&wire_bytes).map_err(err)?;
+        let verified_clearance = proof
+            .verify(&tr, &sn, expected_min_clearance, &mut cache)
+            .map_err(err)?;
+
+        let nullifier_used = proof.nullifier.to_vec();
+        Ok((verified_clearance, nullifier_used))
+    }
+}
+
+#[pyclass]
+pub struct CoreSdrDsss;
+
+#[pymethods]
+impl CoreSdrDsss {
+    #[staticmethod]
+    pub fn modulate_dsss_bits(bits: Vec<u8>, spreading_factor: usize) -> PyResult<(Vec<f32>, Vec<f32>)> {
+        let mod_engine = crate::sdr_dsss::DsssModulator::new(spreading_factor);
+        let iq = mod_engine.modulate_bits(&bits);
+        let i_chan = iq.iter().map(|&(i, _)| i).collect();
+        let q_chan = iq.iter().map(|&(_, q)| q).collect();
+        Ok((i_chan, q_chan))
+    }
+
+    #[staticmethod]
+    pub fn demodulate_dsss_bits(i_channel: Vec<f32>, spreading_factor: usize) -> PyResult<Vec<u8>> {
+        let demod_engine = crate::sdr_dsss::DsssDemodulator::new(spreading_factor);
+        let bits = demod_engine.demodulate_bits(&i_channel);
+        Ok(bits)
+    }
+
+    #[staticmethod]
+    pub fn to_cs16_pcm(i_channel: Vec<f32>, q_channel: Vec<f32>, amplitude: f32) -> PyResult<Vec<i16>> {
+        if i_channel.len() != q_channel.len() {
+            return Err(PyValueError::new_err("i_channel and q_channel must have equal length"));
+        }
+        let iq: Vec<(f32, f32)> = i_channel.into_iter().zip(q_channel.into_iter()).collect();
+        let mod_engine = crate::sdr_dsss::DsssModulator::new(127);
+        Ok(mod_engine.to_cs16(&iq, amplitude))
+    }
+
+    #[staticmethod]
+    pub fn simulate_awgn_channel(i_channel: Vec<f32>, snr_db: f32) -> PyResult<Vec<f32>> {
+        Ok(crate::sdr_dsss::add_awgn_noise(&i_channel, snr_db))
+    }
+}
+
+#[pyclass]
+pub struct CoreBlindedCds {
+    inner: crate::blinded_cds::BlindedCdsGuard,
+}
+
+#[pymethods]
+impl CoreBlindedCds {
+    #[new]
+    pub fn new(guard_id: String, filter_key: Vec<u8>) -> PyResult<Self> {
+        let mut key = [0u8; 32];
+        if filter_key.len() != 32 {
+            return Err(PyValueError::new_err("filter_key must be exactly 32 bytes"));
+        }
+        key.copy_from_slice(&filter_key);
+        Ok(Self {
+            inner: crate::blinded_cds::BlindedCdsGuard::new(&guard_id, key),
+        })
+    }
+
+    pub fn add_prohibited_pattern(&mut self, pattern: String) {
+        self.inner.add_prohibited_pattern(&pattern);
+    }
+
+    pub fn blind_token(&self, word: String) -> Vec<u8> {
+        self.inner.blind_token(&word).to_vec()
+    }
+
+    #[staticmethod]
+    pub fn create_clearance_token(level: u8, compartments: u32, salt: Vec<u8>) -> PyResult<(Vec<u8>, Vec<u8>)> {
+        let sec_level = crate::blinded_cds::SecurityLevel::from_u8(level)
+            .ok_or_else(|| PyValueError::new_err("Invalid security level (0-5)"))?;
+        let mut s = [0u8; 32];
+        if salt.len() != 32 {
+            return Err(PyValueError::new_err("salt must be 32 bytes"));
+        }
+        s.copy_from_slice(&salt);
+        let token = crate::blinded_cds::BlindedClearanceToken::create(sec_level, compartments, s);
+        Ok((token.level_commitment.to_vec(), token.compartment_commitment.to_vec()))
+    }
+
+    pub fn scan_blinded_tokens(&self, tokens: Vec<Vec<u8>>) -> PyResult<()> {
+        let mut token_arrs = Vec::with_capacity(tokens.len());
+        for t in &tokens {
+            if t.len() != 32 {
+                return Err(PyValueError::new_err("All blinded tokens must be 32 bytes"));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(t);
+            token_arrs.push(arr);
+        }
+        self.inner.scan_blinded_tokens(&token_arrs).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    pub fn inspect_and_attest(
+        &self,
+        source_enclave: String,
+        target_enclave: String,
+        source_level: u8,
+        source_comp: u32,
+        source_salt: Vec<u8>,
+        target_level: u8,
+        target_comp: u32,
+        target_salt: Vec<u8>,
+        blinded_tokens: Vec<Vec<u8>>,
+        payload_ciphertext: Vec<u8>,
+        timestamp: u64,
+    ) -> PyResult<Vec<u8>> {
+        let s_lvl = crate::blinded_cds::SecurityLevel::from_u8(source_level)
+            .ok_or_else(|| PyValueError::new_err("Invalid source security level"))?;
+        let t_lvl = crate::blinded_cds::SecurityLevel::from_u8(target_level)
+            .ok_or_else(|| PyValueError::new_err("Invalid target security level"))?;
+        if source_salt.len() != 32 || target_salt.len() != 32 {
+            return Err(PyValueError::new_err("Salts must be 32 bytes"));
+        }
+        let mut s_salt = [0u8; 32];
+        s_salt.copy_from_slice(&source_salt);
+        let mut t_salt = [0u8; 32];
+        t_salt.copy_from_slice(&target_salt);
+
+        let src_tok = crate::blinded_cds::BlindedClearanceToken::create(s_lvl, source_comp, s_salt);
+        let tgt_tok = crate::blinded_cds::BlindedClearanceToken::create(t_lvl, target_comp, t_salt);
+
+        let mut token_arrs = Vec::with_capacity(blinded_tokens.len());
+        for t in &blinded_tokens {
+            if t.len() != 32 {
+                return Err(PyValueError::new_err("All blinded tokens must be 32 bytes"));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(t);
+            token_arrs.push(arr);
+        }
+
+        let attestation = self.inner.inspect_and_attest(
+            &source_enclave,
+            &target_enclave,
+            &src_tok,
+            &tgt_tok,
+            &token_arrs,
+            &payload_ciphertext,
+            timestamp,
+        ).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        serde_json::to_vec(&attestation).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    pub fn verify_attestation(&self, attestation_json: Vec<u8>, payload_ciphertext: Vec<u8>) -> PyResult<bool> {
+        let att: crate::blinded_cds::CdsEgressAttestation = serde_json::from_slice(&attestation_json)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        match self.inner.verify_attestation(&att, &payload_ciphertext) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+}
+
+#[pyclass]
+pub struct CoreFormalProofs;
+
+#[pymethods]
+impl CoreFormalProofs {
+    #[staticmethod]
+    pub fn verify_constant_time(iterations: usize) -> (String, bool, usize, usize, String) {
+        let rep = crate::formal_proofs::FormalProofVerifier::verify_constant_time_contract(iterations);
+        (rep.contract_name, rep.verified, rep.iterations_checked, rep.failure_counterexamples, rep.proof_technique)
+    }
+
+    #[staticmethod]
+    pub fn verify_bounded_arithmetic(max_tests: usize) -> (String, bool, usize, usize, String) {
+        let rep = crate::formal_proofs::FormalProofVerifier::verify_bounded_arithmetic_contract(max_tests);
+        (rep.contract_name, rep.verified, rep.iterations_checked, rep.failure_counterexamples, rep.proof_technique)
+    }
+
+    #[staticmethod]
+    pub fn verify_replay_invariant(window_size: u64, test_vectors: usize) -> (String, bool, usize, usize, String) {
+        let rep = crate::formal_proofs::FormalProofVerifier::verify_anti_replay_inductive_invariant(window_size, test_vectors);
+        (rep.contract_name, rep.verified, rep.iterations_checked, rep.failure_counterexamples, rep.proof_technique)
+    }
+
+    #[staticmethod]
+    pub fn verify_parser_no_panic(inputs: Vec<Vec<u8>>) -> (String, bool, usize, usize, String) {
+        let rep = crate::formal_proofs::FormalProofVerifier::verify_parser_no_panic_contract(&inputs);
+        (rep.contract_name, rep.verified, rep.iterations_checked, rep.failure_counterexamples, rep.proof_technique)
+    }
+
+    #[staticmethod]
+    pub fn generate_smt_theorems() -> String {
+        crate::formal_proofs::FormalProofVerifier::generate_smt_lib2_theorems()
+    }
+}
+
+#[pyclass]
+pub struct CoreFsoTransceiver;
+
+#[pymethods]
+impl CoreFsoTransceiver {
+    #[staticmethod]
+    pub fn encode_fountain_packets(payload: Vec<u8>, symbol_len: usize, count: usize, block_id: u32) -> Vec<Vec<u8>> {
+        let mut encoder = crate::fso_transceiver::FountainEncoder::new(&payload, symbol_len, block_id);
+        let mut packets = Vec::with_capacity(count);
+        for _ in 0..count {
+            packets.push(encoder.produce_packet().to_bytes());
+        }
+        packets
+    }
+
+    #[staticmethod]
+    pub fn decode_fountain_packets(packets: Vec<Vec<u8>>, k_symbols: usize, symbol_len: usize, original_len: usize) -> PyResult<Option<Vec<u8>>> {
+        let mut decoder = crate::fso_transceiver::FountainDecoder::new(k_symbols, symbol_len);
+        for p in packets {
+            if let Some(pkt) = crate::fso_transceiver::FountainPacket::from_bytes(&p) {
+                decoder.ingest_packet(&pkt);
+                if decoder.is_complete() {
+                    break;
+                }
+            }
+        }
+        Ok(decoder.reconstruct_payload(original_len))
+    }
+
+    #[staticmethod]
+    pub fn frame_visual(packet_bytes: Vec<u8>) -> PyResult<Vec<u8>> {
+        let pkt = crate::fso_transceiver::FountainPacket::from_bytes(&packet_bytes)
+            .ok_or_else(|| PyValueError::new_err("Invalid fountain packet bytes"))?;
+        Ok(crate::fso_transceiver::VisualAirgapDiode::frame_visual_packet(&pkt))
+    }
+
+    #[staticmethod]
+    pub fn deframe_visual(frame_bytes: Vec<u8>) -> PyResult<Vec<u8>> {
+        let pkt = crate::fso_transceiver::VisualAirgapDiode::deframe_visual_packet(&frame_bytes)
+            .ok_or_else(|| PyValueError::new_err("Invalid or corrupted visual frame"))?;
+        Ok(pkt.to_bytes())
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<CoreBlindedCds>()?;
+    m.add_class::<CoreFormalProofs>()?;
+    m.add_class::<CoreFsoTransceiver>()?;
+    m.add_class::<CoreSdrDsss>()?;
+    m.add_class::<CorePqZkp>()?;
+    m.add_class::<CoreDtnBundle>()?;
+    m.add_class::<CoreDiodeSender>()?;
+    m.add_class::<CoreDiodeReceiver>()?;
+    m.add_class::<CoreTripleKex>()?;
+    m.add_function(wrap_pyfunction!(triple_kex_derive_master, m)?)?;
+    m.add_class::<CoreWebRtcMorpher>()?;
+    m.add_class::<CoreQuicMorpher>()?;
+    m.add_class::<CoreChameleonEngine>()?;
     m.add_class::<CoreMmhs>()?;
     m.add_class::<CoreNc3>()?;
     m.add_class::<CoreReassemblyBuffer>()?;

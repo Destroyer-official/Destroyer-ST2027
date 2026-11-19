@@ -97,6 +97,41 @@ class DestroyerNode:
         self._chaff_stop_event = None
         self._last_send_time = 0.0
         self._security_tier = None
+        self.chameleon_morpher = None
+        if os.environ.get("P2P_CHAMELEON_MORPH", "0").lower() in ("1", "true", "strict"):
+            from network.traffic_morpher import ChameleonTrafficMorpher
+            prof = os.environ.get("P2P_CHAMELEON_PROFILE", "webrtc")
+            self.chameleon_morpher = ChameleonTrafficMorpher(default_profile=prof)
+
+    def enable_chameleon_morphing(self, profile: str = "webrtc", target_size: Optional[int] = 1200) -> None:
+        """Enable dynamic civilian WebRTC or QUIC v2 chameleon traffic morphing."""
+        from network.traffic_morpher import ChameleonTrafficMorpher
+        self.chameleon_morpher = ChameleonTrafficMorpher(default_profile=profile, target_size=target_size)
+
+    def disable_chameleon_morphing(self) -> None:
+        """Disable chameleon traffic morphing."""
+        self.chameleon_morpher = None
+
+    def is_chameleon_morphing(self) -> bool:
+        """Return True if chameleon traffic morphing is active."""
+        return self.chameleon_morpher is not None
+
+    def get_chameleon_telemetry(self) -> dict:
+        """Return operational telemetry from active chameleon morpher."""
+        if self.chameleon_morpher is None:
+            return {"active": False}
+        t = self.chameleon_morpher.telemetry()
+        return {
+            "active": True,
+            "profile": t.active_profile,
+            "packets_morphed": t.packets_morphed,
+            "packets_demorphed": t.packets_demorphed,
+            "bytes_morphed": t.bytes_morphed,
+            "bytes_demorphed": t.bytes_demorphed,
+            "chaff_emitted": t.chaff_emitted,
+            "malformed_drops": t.malformed_drops,
+            "replay_drops": t.replay_drops,
+        }
 
     @property
     def security_tier(self):
@@ -306,9 +341,11 @@ class DestroyerNode:
             return True
         return False
 
-    def bind_udp(self, host: str = "127.0.0.1", port: int = 0) -> tuple[str, int]:
+    def bind_udp(self, host: str | tuple[str, int] = "127.0.0.1", port: int = 0) -> tuple[str, int]:
         """Bind local UDP socket for silent-drop data plane traffic."""
         import socket
+        if isinstance(host, tuple):
+            host, port = host
         if self.udp_sock is not None:
             self.close_udp()
 
@@ -324,6 +361,11 @@ class DestroyerNode:
         if self.udp_sock is None:
             raise RuntimeError("UDP socket not bound: call bind_udp first")
         frame = self.transmit(message, chaff=chaff)
+        if self.chameleon_morpher is not None:
+            if chaff:
+                frame = self.chameleon_morpher.morph_chaff()
+            else:
+                frame = self.chameleon_morpher.morph(frame)
         if len(frame) > self.MAX_DATAGRAM:
             raise ValueError(f"Frame exceeds MAX_DATAGRAM ({len(frame)} > {self.MAX_DATAGRAM})")
         self._last_send_time = time.monotonic()
@@ -444,6 +486,16 @@ class DestroyerNode:
                 continue
 
             self._udp_admitted += 1
+            if self.chameleon_morpher is not None:
+                try:
+                    demorphed = self.chameleon_morpher.demorph(raw)
+                    if not demorphed:
+                        continue  # Absorbed chameleon chaff frame
+                    raw = demorphed
+                except Exception:
+                    self._udp_drops += 1
+                    continue
+
             opened = self.receive(raw)
             if opened is None:
                 self._udp_drops += 1
@@ -569,6 +621,10 @@ class DestroyerNode:
                 self.engine.reset()
             except Exception:
                 pass
+
+    def close(self) -> None:
+        """Close UDP socket and release resources (alias for destroy)."""
+        self.destroy()
 
 
 def data_plane_mode() -> str:

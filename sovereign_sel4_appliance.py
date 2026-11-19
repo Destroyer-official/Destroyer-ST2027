@@ -34,11 +34,19 @@ logger = logging.getLogger("sovereign_sel4_appliance")
 class SovereignApplianceNode:
     """An integrated seL4 Sovereign Appliance Node executing MILS separation."""
 
-    def __init__(self, node_id: str, psk: Optional[bytes] = None):
+    def __init__(self, node_id: str, psk: Optional[bytes] = None, system_xml_path: Optional[Path | str] = None):
         self.node_id = node_id
 
         # 1. Formal Manifest & Invariant Check
-        self.manifest = SeL4MicrokitManifest.create_st2027_sovereign_system()
+        from pathlib import Path as FilePath
+        if system_xml_path is not None:
+            self.manifest = SeL4MicrokitManifest.from_xml_file(FilePath(system_xml_path))
+        else:
+            default_xml = FilePath("sel4_mils_appliance/system.xml")
+            if default_xml.exists():
+                self.manifest = SeL4MicrokitManifest.from_xml_file(default_xml)
+            else:
+                self.manifest = SeL4MicrokitManifest.create_st2027_sovereign_system()
         self.manifest.validate_mils_invariants()
 
         # 2. Inter-Domain Shared Memory Rings

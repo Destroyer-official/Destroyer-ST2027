@@ -144,6 +144,8 @@ class SeL4MicrokitManifest:
             raise SeL4PolicyViolation(f"Unknown protection domain {ch.pd_a} in channel")
         if ch.pd_b not in self.protection_domains:
             raise SeL4PolicyViolation(f"Unknown protection domain {ch.pd_b} in channel")
+        if not (1 <= ch.id_a <= 63) or not (1 <= ch.id_b <= 63):
+            raise SeL4PolicyViolation(f"Channel IDs must be in range [1, 63], got ({ch.id_a}, {ch.id_b})")
         self.channels.append(ch)
 
     def validate_mils_invariants(self) -> bool:
@@ -155,7 +157,9 @@ class SeL4MicrokitManifest:
         # 1. Channel Isolation
         for ch in self.channels:
             pds = {ch.pd_a, ch.pd_b}
-            if "red_domain" in pds and "black_domain" in pds:
+            has_red = bool(pds & {"red_domain", "red"})
+            has_black = bool(pds & {"black_domain", "black"})
+            if has_red and has_black:
                 raise SeL4PolicyViolation(
                     "CRITICAL MILS VIOLATION: Direct IPC channel detected between RED and BLACK domains"
                 )
@@ -169,12 +173,15 @@ class SeL4MicrokitManifest:
                 mr_to_pds[m.mr_name].add(pd.name)
 
         for mr_name, pds in mr_to_pds.items():
-            if "red_domain" in pds and "black_domain" in pds:
+            has_red = bool(pds & {"red_domain", "red"})
+            has_black = bool(pds & {"black_domain", "black"})
+            if has_red and has_black:
                 raise SeL4PolicyViolation(
                     f"CRITICAL MILS VIOLATION: Shared memory region {mr_name} mapped into both RED and BLACK domains"
                 )
             if mr_name == "crypto_locked_keys":
-                if pds != {"crypto_domain"}:
+                crypto_aliases = {"crypto_domain", "crypto"}
+                if not pds.issubset(crypto_aliases) or not pds:
                     raise SeL4PolicyViolation(
                         f"CRITICAL KEY ISOLATION VIOLATION: crypto_locked_keys mapped outside CRYPTO domain ({pds})"
                     )

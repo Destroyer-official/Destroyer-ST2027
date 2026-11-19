@@ -1,0 +1,111 @@
+{
+  "certified_devices": [
+    {
+      "cc_cert": "EAL4+AVA_VAN.5",
+      "cc_id": "CCEVS-VR-VID11089-2024",
+      "device_id": "DIODE-OWL-1000G",
+      "direction": "low-to-high",
+      "install_ref": "OE.NETWORK-SOLO-INTERCONNECT-001",
+      "model": "DualDiode Communication Interconnect 1000G",
+      "tx_only_attested": true,
+      "valid_through": "2028-12-31",
+      "vendor": "Owl Cyber Defense"
+    },
+    {
+      "cc_cert": "EAL7+",
+      "cc_id": "NSCIB-CC-19-48210-CR3",
+      "device_id": "DIODE-FOXIT-EAL7",
+      "direction": "low-to-high",
+      "install_ref": "OE.NETWORK-SOLO-INTERCONNECT-002",
+      "model": "Fox DataDiode 10G Simplex Optical Boundary",
+      "tx_only_attested": true,
+      "valid_through": "2029-06-30",
+      "vendor": "Fox-IT"
+    },
+    {
+      "cc_cert": "EAL5+",
+      "cc_id": "CSEC-CC-2022-008",
+      "device_id": "DIODE-ADVENICA-SECURI",
+      "direction": "low-to-high",
+      "install_ref": "OE.NETWORK-SOLO-INTERCONNECT-003",
+      "model": "SecuriCDS DD1000A Hardware Data Diode",
+      "tx_only_attested": true,
+      "valid_through": "2028-09-30",
+      "vendor": "Advenica"
+    }
+  ],
+  "drill_id": "OPTICAL-DIODE-DRILL-1795077619",
+  "duration_seconds": 0.264,
+  "overall_status": "PASSED",
+  "probes": [
+    {
+      "details": {
+        "cauchy_dimensions": "4x8",
+        "field": "GF(2^8)",
+        "inverses_tested": 255,
+        "non_singular_proof": "Every square submatrix invertible by Cauchy double determinant theorem",
+        "polynomial": "0x11D"
+      },
+      "name": "Galois Field GF(2^8) Arithmetic & Cauchy Generator Non-Singularity",
+      "probe_id": "PROBE-01-GF256-CAUCHY",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "fifteen_percent_loss_recovery": "VERIFIED_BITWISE_100%",
+        "k_data_chunks": 8,
+        "m_parity_chunks": 4,
+        "thirty_three_percent_maximum_loss_recovery": "VERIFIED_BITWISE_100%",
+        "total_codewords": 12,
+        "twenty_five_percent_burst_loss_recovery": "VERIFIED_BITWISE_100%",
+        "zero_loss_recovery": "VERIFIED_BITWISE_100%"
+      },
+      "name": "Systematic Cauchy-Reed-Solomon FEC Burst & Erasure Loss Sweep",
+      "probe_id": "PROBE-02-FEC-ERASURE-SWEEP",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "algorithm": "ML-DSA-87 (NIST FIPS 204)",
+        "public_key_len": 2592,
+        "signature_len": 4627,
+        "tampered_chunk_fail_closed": "PASS",
+        "valid_packet_verification": "PASS"
+      },
+      "name": "ML-DSA-87 Post-Quantum Chunk Authentication & Tamper Defense",
+      "probe_id": "PROBE-03-MLDSA87-AUTH",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "pure_simplex_guaranteed": true,
+        "receiver_zero_transmitter_invariant": true,
+        "transmitter_zero_listener_invariant": true
+      },
+      "name": "Simplex Direction Enforcement via AST Static Analysis",
+      "probe_id": "PROBE-04-SIMPLEX-AST-PROOF",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "delivered_packets": 9,
+        "dropped_burst_packets": 3,
+        "loss_percentage": 25.0,
+        "payload_bytes": 8000,
+        "payload_sha384": "dbcdd3d8612c08384393914146f643a138c11bdafdfa9e1b3549e53ed344e5570cd21f589047fd9131ac29dae9e900f3",
+        "port": 58735,
+        "sha384_match": true,
+        "total_packets": 12,
+        "zero_acks_verified": true,
+        "zero_reverse_channel": true
+      },
+      "name": "Live End-to-End Simplex Optical UDP Transmission (25% Burst Loss)",
+      "probe_id": "PROBE-05-E2E-LIVE-SIMPLEX-DRILL",
+      "status": "PASS"
+    }
+  ],
+  "security_invariant": "Zero reverse channel / zero ACKs; tolerates >=25% burst packet loss with 100% bitwise reconstruction",
+  "signature_metadata": {},
+  "standard_framework": "Common Criteria ISO/IEC 15408 EAL4+/EAL7+ Simplex Optical Boundary",
+  "timestamp_utc": "2026-11-19T08:40:19.874935+00:00"
+}

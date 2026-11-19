@@ -1,8 +1,8 @@
 {
   "cmt_laboratory_submittal_manifest": {
-    "manifest_id": "CMT-SUBMITTAL-9f588bac-1866-4d93-b8d5-b7b96783a308",
+    "manifest_id": "CMT-SUBMITTAL-f9df5d18-bca4-4808-ae4f-bb2b907a641b",
     "schema_version": "2027.1.0-CNSA2-MIL",
-    "published_utc": "2026-11-09T12:45:10.181041+00:00",
+    "published_utc": "2026-11-19T04:38:03.728761+00:00",
     "submittal_type": "Cryptographic Module Testing (CMT) Laboratory Evaluation Dossier & Authorizing Official (AO) Authorization Package",
     "module_identification": {
       "module_name": "Secure P2P Sovereign Cryptographic Module",
@@ -84,9 +84,9 @@
         "category": "NIST ACVP / CAVP Algorithm Validation Evidence",
         "standard": "NIST SP 800-140C / FIPS 203, 204, 205, 197, 180-4, 202",
         "description": "Cryptographic Algorithm Validation Program test evidence: 13/13 passing vectors for ML-KEM-1024, ML-DSA-87, SLH-DSA-256f, AES-256-GCM, and SHA-384/512.",
-        "file_size_bytes": 5060,
-        "sha384": "cae629b8fb2df44c2cbda460eb3dfb18c2e0eb15891a347b20db792dfd0295e5207043db5cf5d426e81cbb7e814fbbf5",
-        "sha512": "40a56271e11d05e4b377c85e08afe473a27783bf7748df7435cdbd7381e32e80bb373b1ce86d1402c0e3ae42320d765c331db3810ea4f6c5eca71aee1e1bd57b",
+        "file_size_bytes": 5063,
+        "sha384": "e830740fe59c034f69ccad36def72605d0bb2bea4248aeaf280eee3f47d474c97357d1741e468c4d0bee9591b295ca8f",
+        "sha512": "6ccf6a24f58a9236f6dfa68e36dc8a38a128a6362ebf8834787c0a4b7900dd5d4996393d1079bd29a64349fe5add30c61944a57378033dd9cd77760caa78e956",
         "cryptographic_signature": {
           "algorithm": "ML-DSA-87 (FIPS 204)",
           "status": "PASS",

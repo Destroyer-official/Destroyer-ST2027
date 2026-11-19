@@ -42,24 +42,33 @@ pub mod acd;
 pub mod aead;
 pub mod attest;
 pub mod auth;
+pub mod blinded_cds;
 pub mod chaff;
+pub mod chameleon;
 pub mod cookie;
 pub mod cot;
 pub mod ct;
+pub mod diode;
 pub mod doc_transfer;
+pub mod dtn_bundle;
 pub mod fec;
 pub mod ffi;
+pub mod formal_proofs;
 pub mod fragment;
 pub mod frame;
+pub mod fso_transceiver;
 pub mod group_ratchet;
 pub mod handshake;
+pub mod hardware_enclave;
 pub mod kem;
 pub mod kex_auth;
+pub mod kex_combiner;
 pub mod keystore;
 pub mod memlock;
 pub mod memory_guard;
 pub mod mmhs;
 pub mod nc3;
+pub mod nc3_mpc;
 pub mod net;
 pub mod nostd_microcore;
 pub mod pacing;
@@ -67,14 +76,22 @@ pub mod pad;
 pub mod pipeline;
 pub mod pki;
 pub mod policy;
+pub mod pq_zkp;
 pub mod ptt;
 pub mod purge;
 pub mod ratchet;
 pub mod replay;
+pub mod sdr_dsss;
 pub mod session;
 pub mod tpm_nv;
 pub mod x509;
 pub mod zero_trust;
+
+pub use hardware_enclave::{
+    CngPlatformTrustAnchor, HardwareBackendType, HardwareEnclaveError, HardwareTrustAnchor,
+    MockHardwareTrustAnchor, PcrMeasurement, PcrSealedIdentity, Pkcs11TrustAnchor,
+    TpmPcrSealAnchor, DEFAULT_MEASURED_BOOT_PCRS, TPM_RC_POLICY_FAIL,
+};
 
 use crate::aead::{FrameKey, DIR_RECV, DIR_SEND};
 use crate::frame::{pad_to_quantum, FTYPE_CHAFF, FTYPE_MSG};
