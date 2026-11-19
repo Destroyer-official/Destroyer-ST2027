@@ -19,7 +19,8 @@ docs/
 ├── SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md   # AST Mechanical Logic Flows & Parameter Catalog (Vol C)
 ├── security_audit_report.md                 # Defensive Security Audit & 63-Finding Remediation Matrix
 ├── SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md # Master engineering specification & state machines
-├── COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md # 50X defense superiority white paper vs Signal/CDS
+├── COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md # Defense architecture comparative analysis vs Signal/CDS
+├── PHASES_G_THROUGH_L_TACTICAL_DATA_PLANE_SPEC.md # Tactical Data Plane Technical Specification (Phases G–L)
 ├── ST2027_SPEC.md                           # Top-Secret sovereign transport specification & wire formats
 ├── ST2027_RESEARCH_SOURCES_2026-09-30.md    # Academic research citations, RFCs, and literature survey
 ├── DEFENSE_HARDENING_MASTER_PLAN.md         # Strategic defense hardening roadmap & verification criteria

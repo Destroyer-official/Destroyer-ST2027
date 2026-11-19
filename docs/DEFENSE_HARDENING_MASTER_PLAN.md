@@ -675,9 +675,9 @@ Ran command: `git push origin main`
 ---
 
 ### [x] Task 6.6: Automated Protocol Performance Benchmark (COMPLETED & VERIFIED)
-- **Location:** [`scripts/verify_50x_sovereign_superiority.py`](scripts/verify_50x_sovereign_superiority.py)
-- **Implementation:** Comprehensive empirical benchmark measuring all five physical and mathematical defense vectors against consumer messaging standards (Signal, WhatsApp).
-- **Verification Gate:** Automated execution returns `[VERDICT] 50X SOVEREIGN DEFENSE SUPERIORITY MATHEMATICALLY & EMPIRICALLY CONFIRMED` and exit code 0.
+- **Location:** [`scripts/verify_ratchet_performance.py`](scripts/verify_ratchet_performance.py)
+- **Implementation:** Comprehensive empirical benchmark measuring cryptographic ratchets, memory bounds, wire entropy, and simplex diode throughput.
+- **Verification Gate:** Automated execution returns `[VERDICT] DEFENSE SPECIFICATION CONTROLS MATHEMATICALLY & EMPIRICALLY CONFIRMED` and exit code 0.
 
 ---
 

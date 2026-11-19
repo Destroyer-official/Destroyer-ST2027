@@ -292,10 +292,10 @@ def run_master_defense_audit():
     return res.returncode == 0
 
 
-def run_50x_superiority_benchmark():
+def run_cryptographic_performance_benchmark():
     """Run the protocol performance empirical benchmark."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Running Protocol Performance Empirical Benchmark...{RESET}")
-    cmd = [sys.executable, str(ROOT / "scripts" / "verify_50x_sovereign_superiority.py")]
+    cmd = [sys.executable, str(ROOT / "scripts" / "verify_ratchet_performance.py")]
     subprocess.run(cmd)
 
 
@@ -572,7 +572,7 @@ def interactive_menu_loop():
         elif choice == "7":
             run_master_defense_audit()
         elif choice == "8":
-            run_50x_superiority_benchmark()
+            run_cryptographic_performance_benchmark()
         elif choice == "9":
             run_tactical_automated_drill()
         elif choice == "10":
@@ -611,7 +611,7 @@ def main():
     elif args.mode == "audit":
         run_master_defense_audit()
     elif args.mode == "benchmark":
-        run_50x_superiority_benchmark()
+        run_cryptographic_performance_benchmark()
     elif args.mode == "drill":
         run_tactical_automated_drill()
     elif args.mode == "cjadc2":

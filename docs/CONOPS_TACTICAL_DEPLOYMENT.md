@@ -367,10 +367,10 @@ The ST2027 baseline is empirically benchmarked against consumer messaging standa
 
 | Defense Vector | Consumer Messaging Standard | ST2027 Baseline | Advantage Factor |
 | :--- | :--- | :--- | :--- |
-| **Traffic Flow & Metadata Camouflage** | Variable-length bursts emitted only during user activity; leaks keystroke timing and identity | Constant-rate hardware-paced scheduler emitting fixed-size wire cells (1232B) with continuous CSPRNG chaff ($H > 7.95$ bits/byte) | **>50X SNR Immunity** (Continuous thermodynamic wire camouflage) |
-| **Unidirectional Cross-Domain Transit** | Bidirectional TCP/TLS network stack vulnerable to reverse socket penetration | Physical simplex optical single-strand fiber with Cauchy-Reed-Solomon $GF(2^8)$ FEC; zero return wire | **Infinite** (Physical impossibility of reverse penetration) |
-| **Post-Quantum Security Margin** | Classical Curve25519 or partial hybrid schemes vulnerable to quantum collection | FIPS 203 ML-KEM-1024 + FIPS 204 ML-DSA-87 + AES-256-GCM + SHA-384 with transcript hash binding | **>2^64 Post-Quantum Security Factor** (Strict CNSA 2.0) |
+| **Traffic Flow & Metadata Camouflage** | Variable-length bursts emitted only during user activity; leaks keystroke timing and identity | Constant-rate hardware-paced scheduler emitting fixed-size wire cells (1232B) with continuous CSPRNG chaff ($H > 7.95$ bits/byte) | **Constant-Rate Masking** (Continuous thermodynamic wire camouflage) |
+| **Unidirectional Cross-Domain Transit** | Bidirectional TCP/TLS network stack vulnerable to reverse socket penetration | Physical simplex optical single-strand fiber with Cauchy-Reed-Solomon $GF(2^8)$ FEC; zero return wire | **Simplex Isolation** (Physical impossibility of reverse penetration) |
+| **Post-Quantum Security Margin** | Classical Curve25519 or partial hybrid schemes vulnerable to quantum collection | FIPS 203 ML-KEM-1024 + FIPS 204 ML-DSA-87 + AES-256-GCM + SHA-384 with transcript hash binding | **NIST Category 5 Margin** (Strict CNSA 2.0 Compliance) |
 | **Monotonic Nonce Collision Safety** | In-memory nonce counters susceptible to reset, rollback, or thread race collisions | Persistent locked atomic state file (`STSTATE1`) with sequence reservation before encryption and directional domain separation | **Deterministic Zero Nonce Collision** (NIST SP 800-38D) |
-| **Media Sanitization & Anti-Forensics** | Standard filesystem deletion leaving secret keys and plaintext in flash wear-leveling blocks | NIST SP 800-88 Rev 2 & DoD 5220.22-M 3-pass hardware overwrite (CSPRNG -> 0xFF -> 0x00), cache sync, and unlink | **Absolute Anti-Forensic Assurance** |
+| **Media Sanitization & Anti-Forensics** | Standard filesystem deletion leaving secret keys and plaintext in flash wear-leveling blocks | NIST SP 800-88 Rev 2 & DoD 5220.22-M 3-pass hardware overwrite (CSPRNG -> 0xFF -> 0x00), cache sync, and unlink | **NIST SP 800-88 Sanitization** |
 
-Automated empirical evaluation script: `scripts/verify_50x_sovereign_superiority.py`.
+Automated empirical evaluation script: `scripts/verify_ratchet_performance.py`.

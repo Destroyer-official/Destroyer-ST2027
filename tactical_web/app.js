@@ -589,7 +589,7 @@ async function runAutomatedDrill() {
     setStep('[STEP 4/4] VALIDATING NIST SP 800-88 3-PASS ZEROIZATION HARNESS...');
     await new Promise(r => setTimeout(r, 600));
 
-    setStep('DRILL COMPLETE: ALL 50X SOVEREIGN DEFENSE VECTORS SATISFIED! (10/10 GATES VERIFIED)');
+    setStep('DRILL COMPLETE: ALL DEFENSE SPECIFICATION CONTROLS SATISFIED (10/10 GATES VERIFIED)');
   } catch (e) {
     setStep(`DRILL ERROR: ${e}`);
   } finally {
