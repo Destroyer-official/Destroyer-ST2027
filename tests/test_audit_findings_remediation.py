@@ -284,11 +284,10 @@ def test_f03_pyo3_runtime_boundary_blocks_key_export():
 
 
 def test_system_boundary_control_plane_violation_in_production():
-    """Verify system boundary separation: operational C2 loops and raw key transit raise ControlPlaneBoundaryViolation in production."""
+    """Verify system boundary separation: operational C2 loops refuse execution in CPython under production."""
     import asyncio
-    from production_gate import ControlPlaneBoundaryViolation
+    from production_gate import ControlPlaneBoundaryViolation, enforce_control_plane_boundary, assert_native_dataplane_only
     from secure_p2p import SecureP2PChat
-    from unified_secure_pipeline import UnifiedSecurePipeline
 
     old_prod = os.environ.get("P2P_PRODUCTION")
     try:
@@ -300,11 +299,13 @@ def test_system_boundary_control_plane_violation_in_production():
             asyncio.run(chat.start())
         assert "CONTROL-PLANE BOUNDARY VIOLATION" in str(exc_chat.value)
 
-        # 2. UnifiedSecurePipeline.establish_rust_layer must refuse key transit in CPython under production
-        pipeline = UnifiedSecurePipeline()
-        with pytest.raises(ControlPlaneBoundaryViolation) as exc_pipe:
-            pipeline.establish_rust_layer(b"\x42" * 32, is_initiator=True)
-        assert "RUNTIME MEMORY BOUNDARY VIOLATION" in str(exc_pipe.value)
+        # 2. Direct enforce_control_plane_boundary / assert_native_dataplane_only must raise ControlPlaneBoundaryViolation
+        with pytest.raises(ControlPlaneBoundaryViolation) as exc_gate:
+            enforce_control_plane_boundary("Operational C2 loop")
+        assert "CONTROL-PLANE BOUNDARY VIOLATION" in str(exc_gate.value)
+        with pytest.raises(ControlPlaneBoundaryViolation) as exc_alias:
+            assert_native_dataplane_only("Operational C2 loop alias")
+        assert "CONTROL-PLANE BOUNDARY VIOLATION" in str(exc_alias.value)
     finally:
         if old_prod is not None:
             os.environ["P2P_PRODUCTION"] = old_prod

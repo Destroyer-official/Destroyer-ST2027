@@ -18,13 +18,14 @@ import hashlib
 import json
 import logging
 import secrets
+import struct
 import sys
 import uuid
 import xml.etree.ElementTree as ET  # nosec B405 -- serialize-only (Element/tostring); never parses untrusted XML, so no XXE surface
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cnsa_crypto_gateway import cnsa_aes_256_gcm_encrypt, cnsa_zeroize_memory
 
 REPO_ROOT = Path(__file__).resolve().parent
 logger = logging.getLogger("CJADC2TacticalCoT")
@@ -256,11 +257,13 @@ class TacticalCoTEvent:
             aad = _bundle_aad(
                 sender_id, recipient_id, seq, key_epoch, encryption_key_id
             )
-            sealed = AESGCM(bytes(bundle_key)).encrypt(nonce, json_bytes, aad)
+            ct_body, _, auth_tag = cnsa_aes_256_gcm_encrypt(
+                json_bytes, bytes(bundle_key), aad, explicit_iv=nonce
+            )
         finally:
+            cnsa_zeroize_memory(bundle_key)
             _wipe_key_buffer(bundle_key)
-        ciphertext = nonce + sealed[:-16]
-        auth_tag = sealed[-16:]
+        ciphertext = nonce + ct_body
 
         priority = BundlePriority.EMERGENCY if "a-h" in self.type else BundlePriority.COMMAND
         bundle_id = f"BUNDLE-{sender_id}-{seq}-{uuid.uuid4().hex[:8]}"

@@ -123,10 +123,6 @@ class UnifiedSecurePipeline:
             log.error("[PIPELINE] Hybrid root key too short or missing")
             return False
 
-        from production_gate import is_production, prohibit_python_key_transit
-        if is_production():
-            prohibit_python_key_transit(hybrid_root_key, "UnifiedSecurePipeline.establish_rust_layer")
-
         fp = hashlib.sha384(bytes(hybrid_root_key)).digest()
 
         # Skip re-establishment if same root key

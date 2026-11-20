@@ -54,6 +54,7 @@ __all__ = [
     "PRODUCTION_VARS",
     "ControlPlaneBoundaryViolation",
     "enforce_control_plane_boundary",
+    "assert_native_dataplane_only",
     "prohibit_python_key_transit",
 ]
 
@@ -230,6 +231,10 @@ def prohibit_python_key_transit(material: object = None, context: str = "") -> N
         except Exception:
             pass
         raise ControlPlaneBoundaryViolation(msg)
+
+
+# Alias for backwards compatibility with test harnesses and callers
+assert_native_dataplane_only = enforce_control_plane_boundary
 
 
 # Import-time evaluation arms the latch before callers can create a lab
