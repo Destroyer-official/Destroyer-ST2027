@@ -4652,7 +4652,11 @@ def store_key_file_secure(label: str, key_data: bytes) -> bool:
         label = _validate_keyfile_label(label)
         master = _keyfile_master_key()
         salt = secrets.token_bytes(32)
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         aad = _KEYFILE_AAD_PREFIX + label.encode("utf-8")
         ciphertext = AESGCM(_keyfile_file_key(master, salt, label)).encrypt(
             nonce, key_data, aad

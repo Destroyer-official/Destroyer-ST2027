@@ -13,8 +13,8 @@ Cryptographic Roots   : NIST FIPS 203 (ML-KEM-1024), NIST FIPS 204 (ML-DSA-87), 
 Transport Profile     : Fixed 1232B Wire Cells, 50ms Constant-Rate Traffic Pacing (20.0 Hz)
 Hardware Trust Base   : Discrete TPM 2.0 (ISO/IEC 11889) + PKCS#11 v2.40 Hardware Silicon
 Dual-Authorization    : DoD Directive 5210.41M / CJCSI 3260.01E Two-Person Integrity (TPI)
-Operational Release   : Baseline 2027.2 (Pre-Evaluation Production-Ready Defense Baseline)
-Production Verdict    : UNCONDITIONAL GO (100% Master Defense Audit Verified — 10/10 Gates Passed)
+Operational Release   : Baseline 2027.2 (Pre-Evaluation Controlled Evaluation Baseline)
+Evaluation Status     : CONTROLLED EVALUATION READY (10/10 Internal Defense Verification Gates Verified; Laboratory Submittal Dossier Prepared for Accredited CMVP Evaluation)
 ```
 
 ---

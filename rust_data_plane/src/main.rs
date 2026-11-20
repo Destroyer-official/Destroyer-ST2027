@@ -401,6 +401,9 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
             }
             _ => fail("key file unreadable"),
         });
+        if std::env::var("P2P_STRICT_MEMLOCK").as_deref() == Ok("1") {
+            out.require_locked().unwrap_or_else(|e| fail(e));
+        }
         let digest = Sha384::digest(out.as_bytes());
         let mut key_id = [0u8; 16];
         key_id.copy_from_slice(&digest[..16]);
@@ -414,6 +417,9 @@ fn load_key_material(args: &[String]) -> (LockedKey32, [u8; 16]) {
     };
     // Direct in-place parse into page-locked buffer: zero stack copies of raw secret
     let out = LockedKey32::from_hex(&hex_z).unwrap_or_else(|e| fail(e));
+    if std::env::var("P2P_STRICT_MEMLOCK").as_deref() == Ok("1") {
+        out.require_locked().unwrap_or_else(|e| fail(e));
+    }
     hex_z.zeroize();
     let digest = Sha384::digest(out.as_bytes());
     let mut key_id = [0u8; 16];
@@ -2750,6 +2756,7 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             "--auth-tpm-pub",
             "--pcrs",
             "--tpm-owner",
+            "--timeout-ms",
         ] {
             if let Some(val) = get_flag(args, flag) {
                 kex_args.push((*flag).to_string());
@@ -2790,6 +2797,7 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             "--auth-tpm-pub",
             "--pcrs",
             "--tpm-owner",
+            "--timeout-ms",
         ] {
             if let Some(val) = get_flag(args, flag) {
                 kex_args.push((*flag).to_string());
@@ -3744,9 +3752,19 @@ fn cmd_kex_connect(args: &[String]) {
 
     let (key_hex, sas) = rt.block_on(async {
         let connect_fut = async {
-            let mut socket = tokio::net::TcpStream::connect(to)
-                .await
-                .map_err(|_| "connect failed")?;
+            let start = tokio::time::Instant::now();
+            let deadline = tokio::time::Duration::from_millis(timeout_ms);
+            let mut socket = loop {
+                match tokio::net::TcpStream::connect(to).await {
+                    Ok(s) => break s,
+                    Err(_) => {
+                        if start.elapsed() >= deadline {
+                            return Err("connect failed: connection timed out waiting for responder");
+                        }
+                        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+                    }
+                }
+            };
 
             // 1. Receive responder bundle: resp_p_pub (97) || resp_ml_ek (MLKEM_PK)
             let mut resp_bundle = vec![0u8; P384_PK + MLKEM_PK];

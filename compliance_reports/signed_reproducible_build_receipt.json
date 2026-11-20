@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-19T14:26:10.814706+00:00",
+  "timestamp_utc": "2026-11-20T11:39:58.674099+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -27,20 +27,20 @@
   },
   "core_modules": {
     "platform_hsm_interface.py": {
-      "size_bytes": 528988,
-      "sha3_512": "cb371dd1a125e4c6bd936d54d7d72817db46cbf4d414791b978f8c62ed4cf07b1cbda4c31d2da53b22d913aec85dc47fe81f362b29f058ed36df6ffa49c10006"
+      "size_bytes": 529150,
+      "sha3_512": "308dd1cb61efa4807d4aab4a622ef2d1c9c0a8330a680a85175460048777eab187de21c3e59665b048da4952bf8e5b924cdaa142f4d44ce71c2929153aab38de"
     },
     "cnsa2_policy_engine.py": {
       "size_bytes": 36770,
       "sha3_512": "994725fdee6bc05a33ef07c1cb26736b25a47639b35b405875842ae21fb1a5c362fc792b1e966db32bd66db39dfd3164a09e1e47550989120a14eea9cf8dc510"
     },
     "audit_logging_system.py": {
-      "size_bytes": 56736,
-      "sha3_512": "c7babab38fca07455b3999cf1e8320c321e655dde88c251b55d9b119454ab1ec0f5668ae2340b7c677c0ab2a5818b287be85f56b265a4e3e6831aa70025ec921"
+      "size_bytes": 56559,
+      "sha3_512": "dd84f55a2864bc2e4dedadce37a67f7c9e77221da26c420bcb64a846373ab4ba94c009fa90317f9d3abc7b69d4c0f2cd4d52a11019caf57c13b02ba9a1cb0e39"
     },
     "pqc_algorithms.py": {
-      "size_bytes": 342631,
-      "sha3_512": "1f18c7dcda429e31b6cac813612c0323027a5310d67c86a23c4c304db6d56f5b9ae04fb7d78e3bb4709e327b86a628aa8194bba8e55a0972870a585e655dea69"
+      "size_bytes": 342971,
+      "sha3_512": "2a17943ebe4b57d8172882e27c171cb59dc0a4d11ba101a8870da028c1f82081ebf6d00c592caffbb0ca53eedeca2f9513894817a07229e9e01ddbfeae195730"
     },
     "metadata_resistance.py": {
       "size_bytes": 35215,
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 919988,
-      "sha3_512": "c770b37c7020a40a060dbdc07211e3c9ad2e74d433a5037700a56ef812f3626cd61600408c23c9736353f9badaf7069c23a9f18ce0bdb5b89fd1c763eb35d0c4"
+      "size_bytes": 925460,
+      "sha3_512": "af9a5d3278a172fd03d0d215f8c01483d3623b87712fce1bbaae4bd4c1ab4a917d2bbd13eaf75ced553cabe347b896fefa1c311a2782cb820cb8318e2a0374bd"
     }
   },
   "sbom_status": {
@@ -65,8 +65,8 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "fd217101277412bc4da72548bb3ec624aa7f9b07e2b9f7d7ea6232e9fd9e092d8fb4b9453fb61402f46da29e719102d33aa0d6e1b64da46f9ed98075d3eec8c2",
-  "full_source_merkle_root": "523eec9795ed5aafa866571ef86a38b36f7873f330f08a4843849e17a850ddaa7fc2518c1def4ae3a1ee4313ed739707ec24234112713eda5c11751af1b402d6",
+  "source_tree_merkle_root": "e7ebace2e10d9d5e9b7883068ac7de30ce481f8462a314488224ac1b8bb24891e6abf95f3810794a48e19d11293e8202674bb2210e93f247d7aa18d98598564b",
+  "full_source_merkle_root": "08e326609077734cc3cde06eb7b7230d8b658b7db3936d7e53d3241c44a45aa64aeb91ba64671eaf8bdce0a50257b5e34d9dc208d516bbb2e5ede851ec29509e",
   "full_source_file_count": 58,
   "full_source_scope_description": "Authoritative Sovereign Data Plane (46 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {
@@ -76,8 +76,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "07c1507490e1f089c79090c9f5dcbb6a5bcc0e8c6671aa3f6aee2b87fc80489499e8e06355264e8eb13eb5c626254c4679c831e966d124e57e774a3d0a71f46c",
-      "actual_sha3_512": "07c1507490e1f089c79090c9f5dcbb6a5bcc0e8c6671aa3f6aee2b87fc80489499e8e06355264e8eb13eb5c626254c4679c831e966d124e57e774a3d0a71f46c",
+      "expected_sha3_512": "e3cf22d694ac9ec680a32f8bc1bbe17043b69b421a8d06db6cce28790e1c8d1d1f3ede94653f88664cd2b0dfc156916f8063628a939e47f98bfc7880fbb415aa",
+      "actual_sha3_512": "e3cf22d694ac9ec680a32f8bc1bbe17043b69b421a8d06db6cce28790e1c8d1d1f3ede94653f88664cd2b0dfc156916f8063628a939e47f98bfc7880fbb415aa",
       "matched": true
     },
     "ts_runtime.py": {

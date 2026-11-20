@@ -7482,6 +7482,9 @@ class SecureP2PChat:
 
     async def start(self):
         """Start the secure P2P chat application with enhanced security."""
+        from production_gate import is_production, enforce_control_plane_boundary
+        if is_production():
+            enforce_control_plane_boundary("SecureP2PChat.start (operational C2 loop)")
         if self.threat_engine:
             self.threat_engine.start_threat_detection()
         if self.security_monitor:
@@ -13798,6 +13801,28 @@ class SecureP2PChat:
         name = self.local_username or "SOVEREIGN_NODE"
         print(f"\n{BOLD}[{name}]{RESET} {CYAN}[PHASE 1] Initiating Post-Quantum Hybrid Key Exchange (SecP384r1MLKEM1024)...{RESET}")
 
+        auth_args = []
+        if getattr(self, "psk_file", None):
+            auth_args.extend(["--psk-file", str(self.psk_file)])
+        if getattr(self, "auth_sk_file", None):
+            auth_args.extend(["--auth-sk-file", str(self.auth_sk_file)])
+        if getattr(self, "peer_auth_pk_file", None):
+            auth_args.extend(["--peer-auth-pk-file", str(self.peer_auth_pk_file)])
+        if getattr(self, "node_cert_file", None) and str(self.node_cert_file).endswith(".der"):
+            auth_args.extend(["--cert-file", str(self.node_cert_file)])
+        if getattr(self, "root_ca_file", None) and str(self.root_ca_file).endswith(".der"):
+            auth_args.extend(["--ca-file", str(self.root_ca_file)])
+        if getattr(self, "auth_tpm_sealed", None):
+            auth_args.extend(["--auth-tpm-sealed", str(self.auth_tpm_sealed)])
+        if getattr(self, "auth_tpm_pub", None):
+            auth_args.extend(["--auth-tpm-pub", str(self.auth_tpm_pub)])
+        if getattr(self, "tpm_pcrs", None):
+            auth_args.extend(["--tpm-pcrs", str(self.tpm_pcrs)])
+        if getattr(self, "tpm_owner", None):
+            auth_args.extend(["--tpm-owner", str(self.tpm_owner)])
+        if getattr(self, "lab_mode", False):
+            auth_args.append("--lab")
+
         if role == "responder":
             bind_kex = f"{bind_addr}:{kex_port}"
             cmd = [
@@ -13805,7 +13830,7 @@ class SecureP2PChat:
                 "--bind", bind_kex,
                 "--out-key", self.key_path,
                 "--timeout-ms", str(timeout_sec * 1000)
-            ]
+            ] + auth_args
             print(f"[{name}] Listening for peer on {bind_kex}...")
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             out, err = proc.communicate(timeout=timeout_sec)
@@ -13817,7 +13842,7 @@ class SecureP2PChat:
                 "--to", peer_kex,
                 "--out-key", self.key_path,
                 "--timeout-ms", str(timeout_sec * 1000)
-            ]
+            ] + auth_args
             print(f"[{name}] Connecting to peer on {peer_kex}...")
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             out, err = proc.communicate(timeout=timeout_sec)
@@ -13838,6 +13863,12 @@ class SecureP2PChat:
         print(f"{DIM}[{name}] Key secured at {self.key_path} (mode 0600){RESET}")
 
         # Initialize Zero-Gap Multi-Layer Defense Pipeline from derived session key
+        # In production mode (P2P_PRODUCTION=1), session keys are held strictly in native memory/file
+        # to prevent non-deterministic immutable bytes retention in CPython.
+        if _production():
+            print(f"{GREEN}[{name} PRODUCTION CONTROL-PLANE] Native key boundary active: session key remains isolated at {self.key_path}.{RESET}")
+            return True
+
         try:
             from unified_secure_pipeline import create_zero_gap_session
             key_hex = Path(self.key_path).read_text().strip()
@@ -14492,6 +14523,11 @@ class TacticalP2PNode:
                         self.acd_engine.ingest_event("auth_fail", peer_id=self.peer_addr, source_ip=self.peer_addr, details={"reason": f"root_ca_reject:{ca_err}"})
                     return False
 
+            if self.node_cert_file and os.path.exists(self.node_cert_file) and str(self.node_cert_file).endswith(".der"):
+                extra_args.extend(["--cert-file", self.node_cert_file])
+            if self.root_ca_file and os.path.exists(self.root_ca_file) and str(self.root_ca_file).endswith(".der"):
+                extra_args.extend(["--ca-file", self.root_ca_file])
+
             if not (self.auth_sk_file or self.auth_tpm_sealed) or not self.peer_auth_pk_file:
                 print(f"{RED}[{self.name} ERROR] Mutual ML-DSA-87 material "
                       f"missing (--auth-tpm-sealed or --auth-sk-file / --peer-auth-pk-file). "
@@ -14602,6 +14638,12 @@ class TacticalP2PNode:
               f"({auth_label})!{RESET}")
         print(f"{BOLD}{MAGENTA}[{self.name} OOB SAS] Verification Code: [ {self.sas} ]{RESET}")
         print(f"{DIM}[{self.name}] Key secured at {self.key_path} (mode 0600){RESET}")
+
+        # In strict native-only production mode, operational keys must NOT be retained in Python memory
+        # to eliminate forensic residue and comply with the native-only key boundary (F-03).
+        if _production():
+            print(f"{GREEN}[{self.name} PRODUCTION CONTROL-PLANE] Native key boundary active: session key remains isolated in native storage at {self.key_path}.{RESET}")
+            return True
 
         try:
             from unified_secure_pipeline import create_zero_gap_session
@@ -16671,7 +16713,11 @@ def run_production_selftest() -> bool:
         from cryptography.exceptions import InvalidTag
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         key = secrets.token_bytes(32)
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         aad = b"ST2027-SELFTEST-AAD"
         msg = b"TOP SECRET // NC3 SELFTEST"
         box = AESGCM(key)
@@ -16848,6 +16894,14 @@ def _auto_provision_tactical_credentials() -> None:
 
 def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer: str = None, ipv6: bool = False) -> int:
     """Launch Base Alpha or Base Bravo with zero manual flags in full DEFCON-1 mode."""
+    if not lab:
+        os.environ["P2P_PRODUCTION"] = "1"
+        os.environ["SECURE_P2P_PRODUCTION"] = "1"
+        try:
+            import production_gate
+            production_gate.arm_production_gate()
+        except Exception:
+            pass
     _auto_provision_tactical_credentials()
     key_dir = get_tactical_key_dir()
     psk_file = str(key_dir / "tactical_station.psk")
@@ -16862,51 +16916,55 @@ def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer
         bind = bind or "127.0.0.1"
         peer = peer or "127.0.0.1"
 
-    if station.lower() in ("alpha", "norad", "responder", "1"):
-        run_interactive_terminal(
-            role="responder",
-            bind=bind,
-            peer=peer,
-            name="NORAD_ALPHA",
-            kex_port=9050,
-            peer_kex_port=9050,
-            channel_port=9060,
-            peer_channel_port=9061,
-            psk_file=psk_file,
-            auth_sk_file=str(key_dir / "alpha.auth.sk"),
-            peer_auth_pk_file=str(key_dir / "bravo.auth.pk"),
-            require_mutual_auth=True,
-            root_ca_file=root_ca_file,
-            node_cert_file=str(key_dir / "alpha_norad.crt"),
-            peer_cert_file=str(key_dir / "bravo_pentagon.crt"),
-            require_root_ca=True,
-            lab_mode=lab
-        )
-        return 0
-    elif station.lower() in ("bravo", "pentagon", "initiator", "2"):
-        run_interactive_terminal(
-            role="initiator",
-            bind=bind,
-            peer=peer,
-            name="PENTAGON_BRAVO",
-            kex_port=9051,
-            peer_kex_port=9050,
-            channel_port=9061,
-            peer_channel_port=9060,
-            psk_file=psk_file,
-            auth_sk_file=str(key_dir / "bravo.auth.sk"),
-            peer_auth_pk_file=str(key_dir / "alpha.auth.pk"),
-            require_mutual_auth=True,
-            root_ca_file=root_ca_file,
-            node_cert_file=str(key_dir / "bravo_pentagon.crt"),
-            peer_cert_file=str(key_dir / "alpha_norad.crt"),
-            require_root_ca=True,
-            lab_mode=lab
-        )
-        return 0
-    else:
-        print(f"{RED}[ERROR] Unknown station '{station}'. Choose 'alpha' or 'bravo'.{RESET}")
-        return 2
+    role = "responder" if station.lower() in ("alpha", "norad", "responder", "1") else "initiator"
+    name = "NORAD_ALPHA" if role == "responder" else "PENTAGON_BRAVO"
+    chan_port = 9060 if role == "responder" else 9061
+    peer_chan_port = 9061 if role == "responder" else 9060
+    auth_sk = str(key_dir / ("alpha.auth.sk" if role == "responder" else "bravo.auth.sk"))
+    peer_pk = str(key_dir / ("bravo.auth.pk" if role == "responder" else "alpha.auth.pk"))
+    node_cert = str(key_dir / ("alpha_norad.crt" if role == "responder" else "bravo_pentagon.crt"))
+    peer_cert = str(key_dir / ("bravo_pentagon.crt" if role == "responder" else "alpha_norad.crt"))
+
+    if not lab:
+        # High-Assurance Canonical Production Execution (F-02, F-03, F-08 Remediation)
+        # All operational C2 loops and cryptographic key handling execute 100% within the native
+        # Rust standalone executable (secure-transmit node). Zero key material crosses into Python memory.
+        print(f"\n{BOLD}{GREEN}[CANONICAL PRODUCTION PIPELINE] Launching standalone native Rust data plane:{RESET}")
+        print(f"  {CYAN}secure-transmit node --role {role} --bind {_format_endpoint(bind, chan_port)} --to {_format_endpoint(peer, peer_chan_port)}{RESET}")
+        native_cmd = [
+            str(NATIVE_BIN), "node",
+            "--role", role,
+            "--bind", _format_endpoint(bind, chan_port),
+            "--to", _format_endpoint(peer, peer_chan_port),
+            "--psk-file", psk_file,
+            "--auth-sk-file", auth_sk,
+            "--peer-auth-pk-file", peer_pk,
+            "--require-mutual-auth",
+            "--callsign", name,
+        ]
+        return subprocess.call(native_cmd)
+
+    # Explicit lab mode: run the Python interactive test terminal harness
+    run_interactive_terminal(
+        role=role,
+        bind=bind,
+        peer=peer,
+        name=name,
+        kex_port=9050 if role == "responder" else 9051,
+        peer_kex_port=9050,
+        channel_port=chan_port,
+        peer_channel_port=peer_chan_port,
+        psk_file=psk_file,
+        auth_sk_file=auth_sk,
+        peer_auth_pk_file=peer_pk,
+        require_mutual_auth=True,
+        root_ca_file=root_ca_file,
+        node_cert_file=node_cert,
+        peer_cert_file=peer_cert,
+        require_root_ca=True,
+        lab_mode=True
+    )
+    return 0
 
 
 def _print_lab_menu(parser) -> int:
@@ -17207,6 +17265,38 @@ def main(argv=None) -> int:
         node_cert_file = getattr(args, "node_cert_file", None) or os.environ.get("P2P_NODE_CERT_FILE")
         peer_cert_file = getattr(args, "peer_cert_file", None) or os.environ.get("P2P_PEER_CERT_FILE")
         require_root_ca = bool(getattr(args, "require_root_ca", False)) or bool(root_ca_file)
+
+        if not lab_mode:
+            # High-Assurance Production Canonical Path (F-02, F-03, F-08 Remediation)
+            local_chan = args.channel_port or (9060 if args.role == "responder" else 9061)
+            peer_chan = args.peer_channel_port or (9061 if args.role == "responder" else 9060)
+            native_cmd = [
+                str(NATIVE_BIN), "node",
+                "--role", args.role,
+                "--bind", _format_endpoint(args.bind, local_chan),
+                "--to", _format_endpoint(args.peer, peer_chan),
+                "--psk-file", psk_file,
+                "--callsign", args.name,
+            ]
+            if auth_sk_file:
+                native_cmd.extend(["--auth-sk-file", auth_sk_file])
+            if peer_auth_pk_file:
+                native_cmd.extend(["--peer-auth-pk-file", peer_auth_pk_file])
+            if require_mutual:
+                native_cmd.append("--require-mutual-auth")
+            if auth_tpm_sealed:
+                native_cmd.extend(["--auth-tpm-sealed", auth_tpm_sealed])
+            if auth_tpm_pub:
+                native_cmd.extend(["--auth-tpm-pub", auth_tpm_pub])
+            if tpm_pcrs:
+                native_cmd.extend(["--pcrs", tpm_pcrs])
+            if tpm_owner:
+                native_cmd.extend(["--tpm-owner", tpm_owner])
+            if args.kex_timeout:
+                native_cmd.extend(["--timeout-ms", str(args.kex_timeout * 1000)])
+            print(f"\n{BOLD}{GREEN}[CANONICAL PRODUCTION PIPELINE] Launching standalone native Rust data plane:{RESET}")
+            print(f"  {CYAN}{' '.join(native_cmd)}{RESET}")
+            return subprocess.call(native_cmd)
 
         run_interactive_terminal(
             role=args.role,

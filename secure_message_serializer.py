@@ -465,7 +465,9 @@ class SecureMessageSerializer:
         timestamp = int(time.time() * 1000000)
         # Inner serialized structure: sequence(8) + timestamp(8) + sender_id(32) + type(1) + payload
         inner_plaintext = struct.pack('>QQ32sB', sequence, timestamp, sender_id, int(msg_type)) + payload
-        nonce = secrets.token_bytes(12)
+        # Deterministic 96-bit composite nonce per NIST SP 800-38D Section 8.2.1:
+        # 64-bit strictly monotonic sequence || 32-bit timestamp lower-order bits
+        nonce = struct.pack('>Q', sequence) + struct.pack('>I', timestamp & 0xFFFFFFFF)
         aesgcm = AESGCM(aead_key)
         aad = struct.pack('>BH', self.PROTOCOL_VERSION, flags | MessageFlags.ENCRYPTED)
         inner_ciphertext = aesgcm.encrypt(nonce, inner_plaintext, aad)

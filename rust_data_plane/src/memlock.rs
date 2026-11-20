@@ -126,6 +126,15 @@ impl LockedKey32 {
     pub fn is_locked(&self) -> bool {
         self.locked
     }
+
+    /// Assert page locking succeeded; fails closed if the OS refused lock.
+    pub fn require_locked(&self) -> Result<(), &'static str> {
+        if self.locked {
+            Ok(())
+        } else {
+            Err("strict memory custody failure: page locking (VirtualLock/mlock) refused by OS")
+        }
+    }
 }
 
 impl Drop for LockedKey32 {

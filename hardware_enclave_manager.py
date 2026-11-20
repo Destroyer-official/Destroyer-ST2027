@@ -581,20 +581,14 @@ class HardwareEnclaveManager:
             salt = secrets.token_bytes(16)
             kek = self._derive_kek(policy_digest, salt)
 
-            try:
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-                nonce = secrets.token_bytes(12)
-                aesgcm = AESGCM(kek)
-                ct_with_tag = aesgcm.encrypt(nonce, secret_material, None)
-                ciphertext = ct_with_tag[:-16]
-                tag = ct_with_tag[-16:]
-            except ImportError:
-                nonce = secrets.token_bytes(12)
-                stream_key = hashlib.sha256(kek + nonce).digest()
-                ciphertext = bytes(a ^ b for a, b in zip(secret_material, stream_key * ((len(secret_material) // 32) + 1)))
-                tag = hmac.new(kek, ciphertext + nonce + policy_digest, hashlib.sha256).digest()[:16]
+            from cnsa_crypto_gateway import cnsa_seal_payload, cnsa_zeroize_memory
+            sealed = cnsa_seal_payload(secret_material, kek, None)
+            nonce = sealed[:12]
+            ciphertext = sealed[12:-16]
+            tag = sealed[-16:]
 
             # Zeroize intermediate KEK
+            cnsa_zeroize_memory(kek)
             del kek
 
             sealed_blob = SealedSiliconBlob(
@@ -663,32 +657,19 @@ class HardwareEnclaveManager:
             # Step 3: Decrypt payload using derived KEK
             kek = self._derive_kek(sealed_blob.policy_digest, sealed_blob.salt)
             try:
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-                aesgcm = AESGCM(kek)
-                payload = sealed_blob.ciphertext + sealed_blob.tag
-                plaintext = aesgcm.decrypt(sealed_blob.nonce, payload, None)
-            except Exception:
-                try:
-                    expected_tag = hmac.new(kek, sealed_blob.ciphertext + sealed_blob.nonce + sealed_blob.policy_digest, hashlib.sha256).digest()[:16]
-                    if not hmac.compare_digest(expected_tag, sealed_blob.tag):
-                        raise PlatformMeasurementDriftError(
-                            pcr_index=0,
-                            expected=sealed_blob.tag.hex(),
-                            actual="AUTH_TAG_MISMATCH",
-                            tpm_error_code=TPM_RC_POLICY_FAIL,
-                            message="Cryptographic authentication failed during unsealing",
-                        )
-                    stream_key = hashlib.sha256(kek + sealed_blob.nonce).digest()
-                    plaintext = bytes(a ^ b for a, b in zip(sealed_blob.ciphertext, stream_key * ((len(sealed_blob.ciphertext) // 32) + 1)))
-                except Exception as e:
-                    raise PlatformMeasurementDriftError(
-                        pcr_index=0,
-                        expected=sealed_blob.policy_digest.hex(),
-                        actual="CORRUPTED_OR_TAMPERED",
-                        tpm_error_code=TPM_RC_POLICY_FAIL,
-                        message=f"Unseal decryption failed: {e}",
-                    )
+                from cnsa_crypto_gateway import cnsa_open_payload, cnsa_zeroize_memory
+                payload = sealed_blob.nonce + sealed_blob.ciphertext + sealed_blob.tag
+                plaintext = cnsa_open_payload(payload, kek, None)
+            except Exception as e:
+                raise PlatformMeasurementDriftError(
+                    pcr_index=0,
+                    expected=sealed_blob.tag.hex(),
+                    actual="AUTH_TAG_MISMATCH",
+                    tpm_error_code=TPM_RC_POLICY_FAIL,
+                    message=f"Cryptographic unsealing failed: {e}",
+                ) from e
             finally:
+                cnsa_zeroize_memory(kek)
                 del kek
 
             logger.info(f"Unsealed identity '{sealed_blob.key_id}' successfully: verified PCRs {sealed_blob.pcr_indices}")

@@ -578,7 +578,9 @@ def create_bpsec_bundle(
         _derive_bundle_key(root_key, sender_id, recipient_id, seq, key_epoch)
     )
     try:
-        nonce = secrets.token_bytes(12)
+        # Deterministic 96-bit composite nonce per NIST SP 800-38D Section 8.2.1:
+        # 64-bit strictly monotonic sequence || 32-bit epoch
+        nonce = struct.pack('>Q', seq) + struct.pack('>I', key_epoch & 0xFFFFFFFF)
         aad = _bundle_aad(
             sender_id, recipient_id, seq, key_epoch, encryption_key_id
         )

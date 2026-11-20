@@ -123,6 +123,10 @@ class UnifiedSecurePipeline:
             log.error("[PIPELINE] Hybrid root key too short or missing")
             return False
 
+        from production_gate import is_production, prohibit_python_key_transit
+        if is_production():
+            prohibit_python_key_transit(hybrid_root_key, "UnifiedSecurePipeline.establish_rust_layer")
+
         fp = hashlib.sha384(bytes(hybrid_root_key)).digest()
 
         # Skip re-establishment if same root key
@@ -152,8 +156,8 @@ class UnifiedSecurePipeline:
             node.establish(frame_key, is_initiator=is_initiator)
 
             # Wipe the frame key from Python memory immediately
-            for i in range(len(frame_key)):
-                frame_key[i] = 0
+            from cnsa_crypto_gateway import cnsa_zeroize_memory
+            cnsa_zeroize_memory(frame_key)
             del frame_key
 
             self._rust_node = node

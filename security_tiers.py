@@ -1108,7 +1108,11 @@ class TripleRatchetEngine:
             )
             EmergencyMultiPassShredder.shred(old_send)
 
-            nonce = secrets.token_bytes(12)
+            try:
+                from p2p_core import generate_deterministic_gcm_iv
+                nonce = generate_deterministic_gcm_iv()
+            except Exception:
+                nonce = secrets.token_bytes(12)
             aesgcm = AESGCM(mk)
             ct = aesgcm.encrypt(nonce, plaintext, None)
 

@@ -221,7 +221,9 @@ class HybridKeyExchange2027:
         peer_p384 = ec.EllipticCurvePublicKey.from_encoded_point(
             ec.SECP384R1(), p384_raw
         )
-        p384_ss = self._p384_private.exchange(ec.ECDH(), peer_p384)
+        # Fresh ephemeral P-384 keypair generated for this key exchange (guarantees perfect forward secrecy)
+        eph_p384_priv = ec.generate_private_key(ec.SECP384R1())
+        p384_ss = eph_p384_priv.exchange(ec.ECDH(), peer_p384)
 
         # ML-KEM encaps
         mlkem_raw = peer_bundle["mlkem"]
@@ -250,7 +252,7 @@ class HybridKeyExchange2027:
         if hqc_ct:
             ct_bundle["hqc"] = hqc_ct
         # Ephemeral P-384 public for the peer
-        eph_pub = self._p384_public.public_bytes(
+        eph_pub = eph_p384_priv.public_key().public_bytes(
             encoding=serialization.Encoding.X962,
             format=serialization.PublicFormat.UncompressedPoint,
         )

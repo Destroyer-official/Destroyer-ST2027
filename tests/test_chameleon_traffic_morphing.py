@@ -17,7 +17,13 @@ import os
 import secrets
 import struct
 import pytest
-from scipy.stats import kstest, norm
+try:
+    from scipy.stats import kstest, norm
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+    kstest = None
+    norm = None
 
 from network.traffic_morpher import (
     WebRtcTrafficMorpher,

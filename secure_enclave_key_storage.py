@@ -1259,7 +1259,11 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
         return os.path.join(self._storage_path, f"{safe_id}.key")
     
     def _encrypt_key(self, key_material: bytes, key_id: Optional[str] = None) -> bytes:
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         # Materialize immutable bytes only for the AESGCM call instant; the
         # transient cannot be wiped (bytes are immutable) so drop it
         # immediately to minimize GC lifetime. Long-lived storage stays in
@@ -1519,8 +1523,12 @@ class SoftwareFallbackBackend(KeyStorageBackendInterface):
             salt = secrets.token_bytes(32)
             backup_key = self._derive_backup_key(pp, salt, iterations=self.BACKUP_KDF_ITERATIONS)
             try:
-                # AES-256-GCM with 12B nonce, AAD SecureP2P::Backup::v2.
-                nonce = secrets.token_bytes(12)
+                # AES-256-GCM with deterministic composite nonce per NIST SP 800-38D, AAD SecureP2P::Backup::v2.
+                try:
+                    from p2p_core import generate_deterministic_gcm_iv
+                    nonce = generate_deterministic_gcm_iv()
+                except Exception:
+                    nonce = secrets.token_bytes(12)
                 ct = AESGCM(backup_key).encrypt(nonce, plaintext, self.BACKUP_AAD_V2)
             finally:
                 del backup_key

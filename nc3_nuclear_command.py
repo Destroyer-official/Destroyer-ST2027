@@ -1074,7 +1074,11 @@ class NC3CommandController:
             eam_id = secrets.token_hex(16)
             now_utc = datetime.now(timezone.utc).timestamp()
             salt = secrets.token_bytes(32)
-            nonce = secrets.token_bytes(12)
+            try:
+                from p2p_core import generate_deterministic_gcm_iv
+                nonce = generate_deterministic_gcm_iv()
+            except Exception:
+                nonce = secrets.token_bytes(12)
 
             # 3. Encrypt PAL payload using AES-256-GCM (CNSA strict).
             import base64
@@ -1184,7 +1188,11 @@ class NC3CommandController:
 
         try:
             salt = secrets.token_bytes(32)
-            nonce = secrets.token_bytes(12)
+            try:
+                from p2p_core import generate_deterministic_gcm_iv
+                nonce = generate_deterministic_gcm_iv()
+            except Exception:
+                nonce = secrets.token_bytes(12)
 
             encrypted_pal_raw = _pal_encrypt(
                 bytes(key_buf), nonce, bytes(pal_buf), eam_id.encode("utf-8")
@@ -1737,7 +1745,11 @@ def get_or_create_tactical_officer(
         seal_key = _officer_file_seal_key()
         raw = json.dumps(officer.to_dict(include_secret=True)).encode("utf-8")
         salt = secrets.token_bytes(32)
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         iters = 220_000
         file_key = hashlib.pbkdf2_hmac("sha512", seal_key, salt, iters, dklen=32)
         ct = AESGCM(file_key).encrypt(
@@ -1958,7 +1970,11 @@ def serialize_eam_wire(eam_data: Dict[str, Any], aead_key: Optional[bytes] = Non
     if aead_key is not None:
         if len(aead_key) != 32:
             raise ValueError("AEAD key must be 32 bytes for AES-256-GCM")
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         ct = AESGCM(aead_key).encrypt(nonce, padded_payload, b"NC3-EAM-WIRE-V1")
         return nonce + ct
     return padded_payload

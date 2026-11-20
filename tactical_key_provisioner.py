@@ -69,11 +69,10 @@ def save_encrypted_credential(file_path: str, data: bytes, passphrase: Optional[
         backend=default_backend()
     )
     key = kdf.derive(pw.encode('utf-8'))
-    aesgcm = AESGCM(key)
-    nonce = secrets.token_bytes(12)
+    from cnsa_crypto_gateway import cnsa_seal_payload
     aad = os.path.basename(file_path).encode('utf-8')
-    ciphertext = aesgcm.encrypt(nonce, data, aad)
-    payload = b"ENC_KEY_V2" + salt + nonce + ciphertext
+    envelope = cnsa_seal_payload(data, key, aad)
+    payload = b"ENC_KEY_V2" + salt + envelope
 
     with open(file_path, "wb") as f:
         f.write(payload)
@@ -112,10 +111,10 @@ def load_encrypted_credential(file_path: str, passphrase: Optional[str] = None) 
             backend=default_backend()
         )
         key = kdf.derive(pw.encode('utf-8'))
-        aesgcm = AESGCM(key)
+        from cnsa_crypto_gateway import cnsa_open_payload
         aad = os.path.basename(file_path).encode('utf-8')
         try:
-            return aesgcm.decrypt(nonce, ciphertext, aad)
+            return cnsa_open_payload(nonce + ciphertext, key, aad)
         except Exception as e:
             raise SecurityError(
                 f"Decryption failed for {file_path}: invalid passphrase, corrupted data, "

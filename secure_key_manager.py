@@ -2690,7 +2690,11 @@ if __name__ == "__main__":
             file_salt = secrets.token_bytes(32)
             enc_key = self._derive_storage_key(file_salt)
             aesgcm = AESGCM(enc_key)
-            nonce = secrets.token_bytes(12)
+            try:
+                from p2p_core import generate_deterministic_gcm_iv
+                nonce = generate_deterministic_gcm_iv()
+            except Exception:
+                nonce = secrets.token_bytes(12)
             aad = f"P2P_KEYSTORE_V1::{self.app_name}::{key_name}".encode('utf-8')
             ciphertext = aesgcm.encrypt(nonce, key_data.encode('utf-8'), aad)
             envelope = b"ENC_KEY_V1" + file_salt + nonce + ciphertext

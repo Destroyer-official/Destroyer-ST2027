@@ -233,18 +233,14 @@ class CriticalReleaseAuthority:
             info=b"CRITICAL_RELEASE_OPERATOR_2_SHARE",
         ).derive(verifier2)
 
-        nonce1 = secrets.token_bytes(12)
-        nonce2 = secrets.token_bytes(12)
-
-        aes1 = AESGCM(k1)
-        aes2 = AESGCM(k2)
-
-        enc_share1 = aes1.encrypt(nonce1, bytes(share1), b"TPI_SHARE_1")
-        enc_share2 = aes2.encrypt(nonce2, bytes(share2), b"TPI_SHARE_2")
+        from cnsa_crypto_gateway import cnsa_seal_payload, cnsa_zeroize_memory
+        env1 = cnsa_seal_payload(bytes(share1), k1, b"TPI_SHARE_1")
+        env2 = cnsa_seal_payload(bytes(share2), k2, b"TPI_SHARE_2")
+        nonce1, enc_share1 = env1[:12], env1[12:]
+        nonce2, enc_share2 = env2[:12], env2[12:]
 
         # Zeroize temporary secret buffers
-        wipe_native(share1)
-        wipe_native(share2)
+        cnsa_zeroize_memory(share1, share2)
         del k1, k2
 
         return (enc_share1, nonce1, enc_share2, nonce2)
@@ -297,10 +293,9 @@ class CriticalReleaseAuthority:
         ).derive(verifier2)
 
         try:
-            aes1 = AESGCM(k1)
-            aes2 = AESGCM(k2)
-            share1 = bytearray(aes1.decrypt(nonce1, enc_share1, b"TPI_SHARE_1"))
-            share2 = bytearray(aes2.decrypt(nonce2, enc_share2, b"TPI_SHARE_2"))
+            from cnsa_crypto_gateway import cnsa_open_payload, cnsa_zeroize_memory
+            share1 = bytearray(cnsa_open_payload(nonce1 + enc_share1, k1, b"TPI_SHARE_1"))
+            share2 = bytearray(cnsa_open_payload(nonce2 + enc_share2, k2, b"TPI_SHARE_2"))
             raw_key = bytearray(a ^ b for a, b in zip(share1, share2))
         except Exception as e:
             self._register_failure()
@@ -309,6 +304,7 @@ class CriticalReleaseAuthority:
             del k1, k2
 
         buf = NativeSecureBuffer(raw_key)
+        cnsa_zeroize_memory(share1, share2, raw_key)
         wipe_native(share1)
         wipe_native(share2)
         wipe_native(raw_key)
@@ -324,9 +320,10 @@ class CriticalReleaseAuthority:
         raw_key = bytearray(secrets.token_bytes(32))
         enc_share1, nonce1, enc_share2, nonce2 = self.split_release_key(bytes(raw_key))
 
-        payload_nonce = secrets.token_bytes(12)
-        aes = AESGCM(bytes(raw_key))
-        ciphertext = aes.encrypt(payload_nonce, plaintext, b"CRITICAL_RELEASE_PAYLOAD_V2")
+        from cnsa_crypto_gateway import cnsa_seal_payload, cnsa_zeroize_memory
+        env = cnsa_seal_payload(plaintext, bytes(raw_key), b"CRITICAL_RELEASE_PAYLOAD_V2")
+        payload_nonce, ciphertext = env[:12], env[12:]
+        cnsa_zeroize_memory(raw_key)
         wipe_native(raw_key)
 
         return {
@@ -366,11 +363,11 @@ class CriticalReleaseAuthority:
         )
 
         try:
+            from cnsa_crypto_gateway import cnsa_open_payload
             with key_buf.expose() as key_bytes:
-                aes = AESGCM(bytes(key_bytes))
-                plaintext = aes.decrypt(
-                    bundle["payload_nonce"],
-                    bundle["ciphertext"],
+                plaintext = cnsa_open_payload(
+                    bundle["payload_nonce"] + bundle["ciphertext"],
+                    bytes(key_bytes),
                     b"CRITICAL_RELEASE_PAYLOAD_V2",
                 )
             return plaintext

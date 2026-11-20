@@ -17,6 +17,7 @@ pydantic_core==2.50.1
 annotated-types==0.8.0
 annotated-doc==0.0.5
 typing-inspection==0.4.4
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2
 python-pkcs11==0.10.1
 asn1crypto==1.5.1
+scipy==1.18.1

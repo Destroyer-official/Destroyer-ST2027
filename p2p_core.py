@@ -9,22 +9,22 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 
 # NIST SP 800-38D Section 8.2.1 Deterministic Nonce/IV Generator
-# 96 bits = 32-bit fixed context/device field + 64-bit atomic monotonic counter.
-# Eliminates birthday-bound collision risk for invocations under the same key.
-_gcm_iv_lock = threading.Lock()
-_gcm_iv_fixed = secrets.token_bytes(4)
-_gcm_iv_counter = 0
+# Delegated to canonical cnsa_crypto_gateway (Single Source of Truth)
+from cnsa_crypto_gateway import (
+    generate_deterministic_gcm_iv,
+    cnsa_aes_256_gcm_encrypt,
+    cnsa_aes_256_gcm_decrypt,
+    cnsa_seal_payload,
+    cnsa_open_payload,
+    cnsa_hkdf_derive,
+    cnsa_zeroize_memory,
+    CryptographicIntegrityError,
+    KeyLengthError,
+    CounterExhaustionError,
+)
 
-def generate_deterministic_gcm_iv() -> bytes:
-    """Generate 96-bit deterministic IV per NIST SP 800-38D Section 8.2.1.
-    Fixed field (4 bytes) || Atomic Counter (8 bytes, big-endian).
-    """
-    global _gcm_iv_counter
-    with _gcm_iv_lock:
-        _gcm_iv_counter += 1
-        if _gcm_iv_counter >= (1 << 64) - 1:
-            raise OverflowError("NIST SP 800-38D counter exhaustion: rekey required")
-        return _gcm_iv_fixed + _gcm_iv_counter.to_bytes(8, byteorder="big")
+secure_encrypt_aes_256_gcm = cnsa_aes_256_gcm_encrypt
+secure_decrypt_aes_256_gcm = cnsa_aes_256_gcm_decrypt
 
 def secure_randbelow(n: int) -> int:
     """Generate a random integer in range [0, n) using hardware RNG."""
@@ -65,20 +65,6 @@ def get_secure_token():
 def secure_hash(data: bytes) -> bytes:
     """Compute SHA3-512 hash (NIST Level 5+)"""
     return hashlib.sha3_512(data).digest()
-
-def secure_encrypt_aes_256_gcm(plaintext: bytes, key: bytes) -> tuple:
-    """Encrypt with AES-256-GCM using NIST SP 800-38D Section 8.2.1 deterministic 96-bit IV."""
-    iv = generate_deterministic_gcm_iv()
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(plaintext) + encryptor.finalize()
-    return ciphertext, iv, encryptor.tag
-
-def secure_decrypt_aes_256_gcm(ciphertext: bytes, key: bytes, iv: bytes, tag: bytes) -> bytes:
-    """Decrypt with AES-256-GCM (NIST Level 5+)"""
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    return decryptor.update(ciphertext) + decryptor.finalize()
 
 class NISTLevel5PolicyEngine:
     """NIST Level 5+ Security Policy Engine"""

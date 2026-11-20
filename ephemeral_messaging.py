@@ -212,34 +212,24 @@ class EphemeralMessage:
         Encrypt entire ephemeral message including all metadata inside an AEAD envelope
         (Item 36 / Finding 5.5). Hides sender_id, recipient_id, timestamps, and TTL on wire.
         """
-        if not HAS_AESGCM:
-            raise RuntimeError("cryptography AESGCM required for encrypted envelope")
         if len(aead_key) != 32:
             raise ValueError("AEAD key must be 32 bytes")
         raw_json = json.dumps(self.to_dict()).encode("utf-8")
-        nonce = secrets.token_bytes(12)
-        aesgcm = AESGCM(aead_key)
-        aad = b"EPHEMERAL_MSG_V1"
-        ciphertext = aesgcm.encrypt(nonce, raw_json, aad)
-        return nonce + ciphertext
+        from cnsa_crypto_gateway import cnsa_seal_payload
+        return cnsa_seal_payload(raw_json, aead_key, b"EPHEMERAL_MSG_V1")
 
     @classmethod
     def from_encrypted_envelope(cls, envelope_bytes: bytes, aead_key: bytes) -> "EphemeralMessage":
         """
         Decrypt and parse an ephemeral message AEAD envelope.
         """
-        if not HAS_AESGCM:
-            raise RuntimeError("cryptography AESGCM required for encrypted envelope")
         if len(aead_key) != 32:
             raise ValueError("AEAD key must be 32 bytes")
         if len(envelope_bytes) < 12 + 16:
             raise EphemeralMessageError("Encrypted envelope too short")
-        nonce = envelope_bytes[:12]
-        ciphertext = envelope_bytes[12:]
-        aesgcm = AESGCM(aead_key)
-        aad = b"EPHEMERAL_MSG_V1"
+        from cnsa_crypto_gateway import cnsa_open_payload
         try:
-            plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
+            plaintext = cnsa_open_payload(envelope_bytes, aead_key, b"EPHEMERAL_MSG_V1")
         except Exception as e:
             raise EphemeralMessageError(f"Envelope AEAD authentication failed: {e}")
         data = json.loads(plaintext.decode("utf-8"))
@@ -285,34 +275,24 @@ class DeletionRecord:
         """
         Encrypt deletion sync record inside an AEAD envelope (Item 36 / Finding 5.5).
         """
-        if not HAS_AESGCM:
-            raise RuntimeError("cryptography AESGCM required for encrypted envelope")
         if len(aead_key) != 32:
             raise ValueError("AEAD key must be 32 bytes")
         raw_json = json.dumps(self.to_dict()).encode("utf-8")
-        nonce = secrets.token_bytes(12)
-        aesgcm = AESGCM(aead_key)
-        aad = b"DELETION_REC_V1"
-        ciphertext = aesgcm.encrypt(nonce, raw_json, aad)
-        return nonce + ciphertext
+        from cnsa_crypto_gateway import cnsa_seal_payload
+        return cnsa_seal_payload(raw_json, aead_key, b"DELETION_REC_V1")
 
     @classmethod
     def from_encrypted_envelope(cls, envelope_bytes: bytes, aead_key: bytes) -> "DeletionRecord":
         """
         Decrypt and parse a deletion record AEAD envelope.
         """
-        if not HAS_AESGCM:
-            raise RuntimeError("cryptography AESGCM required for encrypted envelope")
         if len(aead_key) != 32:
             raise ValueError("AEAD key must be 32 bytes")
         if len(envelope_bytes) < 12 + 16:
             raise EphemeralMessageError("Encrypted envelope too short")
-        nonce = envelope_bytes[:12]
-        ciphertext = envelope_bytes[12:]
-        aesgcm = AESGCM(aead_key)
-        aad = b"DELETION_REC_V1"
+        from cnsa_crypto_gateway import cnsa_open_payload
         try:
-            plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
+            plaintext = cnsa_open_payload(envelope_bytes, aead_key, b"DELETION_REC_V1")
         except Exception as e:
             raise EphemeralMessageError(f"Envelope AEAD authentication failed: {e}")
         data = json.loads(plaintext.decode("utf-8"))

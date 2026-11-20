@@ -90,6 +90,15 @@ impl CoreMldsaSigner {
     }
 }
 
+fn check_production_key_export() -> PyResult<()> {
+    if crate::policy::is_production_env() {
+        return Err(pyo3::exceptions::PyPermissionError::new_err(
+            "Production key boundary violation: exporting raw cryptographic keys to CPython runtime is strictly prohibited under production posture (F-03). All operational key handling must remain in native Rust memory.",
+        ));
+    }
+    Ok(())
+}
+
 /// KEX responder: holds the ephemeral bundle in Rust; completes with
 /// PSK and/or ML-DSA transcript-signature legs (verify-before-derive).
 #[pyclass]
@@ -112,6 +121,7 @@ impl CoreKexResponder {
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("responder consumed"))?;
         let s = responder_complete(k, &ib, auth).map_err(err)?;
+        check_production_key_export()?;
         Ok((
             s.session_key().to_vec(),
             s.transcript().to_vec(),
@@ -257,6 +267,7 @@ impl CoreKexInitiator {
         let mut z = Zeroizing::new(p);
         use zeroize::Zeroize;
         z.zeroize();
+        check_production_key_export()?;
         Ok((
             r.session_key().to_vec(),
             r.transcript().to_vec(),
@@ -287,6 +298,7 @@ impl CoreKexInitiator {
             },
         )
         .map_err(err)?;
+        check_production_key_export()?;
         Ok((
             r.session_key().to_vec(),
             r.transcript().to_vec(),
@@ -323,6 +335,7 @@ impl CoreKexInitiator {
         let mut z = Zeroizing::new(p);
         use zeroize::Zeroize;
         z.zeroize();
+        check_production_key_export()?;
         Ok((
             r.session_key().to_vec(),
             r.transcript().to_vec(),
@@ -382,6 +395,7 @@ impl CoreRatchet {
             .as_mut()
             .ok_or_else(|| PyValueError::new_err("ratchet consumed"))?;
         let (step, key) = r.send_step(&pa, &peer_ek).map_err(err)?;
+        check_production_key_export()?;
         Ok((
             step.eph_p_pub.to_vec(),
             step.ml_ct,
@@ -399,6 +413,7 @@ impl CoreRatchet {
         }
         let mut pa = [0u8; crate::kem::P384_PK];
         pa.copy_from_slice(&eph_p);
+        check_production_key_export()?;
         Ok(self
             .inner
             .as_mut()
@@ -510,6 +525,7 @@ pub fn derive_frame_key(
     }
     let mut hh = [0u8; crate::handshake::HASHLEN];
     hh.copy_from_slice(&h);
+    check_production_key_export()?;
     Ok(crate::handshake::derive_shared_frame_key(&a, &b, &hh, is_initiator).to_vec())
 }
 
@@ -665,6 +681,7 @@ pub fn derive_ratchet_root(
     let mut hh = [0u8; crate::handshake::HASHLEN];
     hh.copy_from_slice(&h);
     let (root, t) = crate::handshake::derive_double_ratchet_root(&a, &b, &hh, is_initiator);
+    check_production_key_export()?;
     Ok((root.to_vec(), t.to_vec()))
 }
 
@@ -727,6 +744,7 @@ impl CoreHsInitiator {
             .take()
             .ok_or_else(|| PyValueError::new_err("handshake consumed"))?;
         let (a, b, t) = h.split().map_err(err)?;
+        check_production_key_export()?;
         Ok((a.to_vec(), b.to_vec(), t.to_vec()))
     }
 }
@@ -780,6 +798,7 @@ impl CoreHsResponder {
             .take()
             .ok_or_else(|| PyValueError::new_err("handshake consumed"))?;
         let (a, b, t) = h.split().map_err(err)?;
+        check_production_key_export()?;
         Ok((a.to_vec(), b.to_vec(), t.to_vec()))
     }
 }
@@ -1642,6 +1661,7 @@ impl CoreZeroGapPipeline {
     #[staticmethod]
     pub fn derive_war_key(master_secret: Vec<u8>, info: Vec<u8>) -> PyResult<Vec<u8>> {
         let key = derive_war_key_sha512(&master_secret, &info).map_err(err)?;
+        check_production_key_export()?;
         Ok(key.to_vec())
     }
 }
@@ -1874,6 +1894,7 @@ impl CoreTripleKex {
             .map_err(|e| PyValueError::new_err(format!("triple-kex: {e}")))?;
         let session_keys = crate::kex_combiner::TripleKex::expand_session_keys(&mk_obj, &transcript_binding)
             .map_err(|e| PyValueError::new_err(format!("triple-kex: {e}")))?;
+        check_production_key_export()?;
         Ok((
             session_keys.initiator_traffic_key.to_vec(),
             session_keys.responder_traffic_key.to_vec(),
@@ -1951,6 +1972,7 @@ pub fn triple_kex_derive_master(
 
     let master = crate::kex_combiner::TripleKex::derive_master_key(&transcript, &ml, &mc, &psk)
         .map_err(|e| PyValueError::new_err(format!("triple-kex combiner: {e}")))?;
+    check_production_key_export()?;
     Ok(master.as_bytes().to_vec())
 }
 

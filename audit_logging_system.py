@@ -224,12 +224,10 @@ def _encrypt_db_field(val: Any) -> str:
     if val is None or val == "":
         return ""
     plaintext = json.dumps(val).encode('utf-8')
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cnsa_crypto_gateway import cnsa_seal_payload
     key = _get_audit_encryption_key()
-    nonce = secrets.token_bytes(12)
-    aesgcm = AESGCM(key)
-    ct = aesgcm.encrypt(nonce, plaintext, associated_data=b"SecureP2P::AuditField::v1")
-    return "ENC:" + base64.b64encode(nonce + ct).decode('ascii')
+    sealed = cnsa_seal_payload(plaintext, key, associated_data=b"SecureP2P::AuditField::v1")
+    return "ENC:" + base64.b64encode(sealed).decode('ascii')
 
 def _decrypt_db_field(val_str: Optional[str], default: Any = None) -> Any:
     if not val_str:
@@ -237,12 +235,9 @@ def _decrypt_db_field(val_str: Optional[str], default: Any = None) -> Any:
     if str(val_str).startswith("ENC:"):
         try:
             raw = base64.b64decode(val_str[4:])
-            nonce = raw[:12]
-            ct = raw[12:]
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            from cnsa_crypto_gateway import cnsa_open_payload
             key = _get_audit_encryption_key()
-            aesgcm = AESGCM(key)
-            plaintext = aesgcm.decrypt(nonce, ct, associated_data=b"SecureP2P::AuditField::v1")
+            plaintext = cnsa_open_payload(raw, key, associated_data=b"SecureP2P::AuditField::v1")
             return json.loads(plaintext.decode('utf-8'))
         except Exception:
             return default

@@ -54,16 +54,16 @@ if [ -n "$PROVERIF_BIN" ]; then
     fi
     exit 0
 else
-    # Fallback to structural AST formal verification test suite
+    if [ "$STRICT" = "1" ] || [ "${CI:-}" = "true" ]; then
+        echo "FAIL: proverif not installed (--strict / CI mode requires ProVerif >= 2.05 from https://proverif.inria.fr/)" >&2
+        exit 1
+    fi
+    # Non-strict fallback to structural AST formal verification test suite
     if command -v python3 >/dev/null 2>&1; then
         echo "=== Executing Structural & Semantic AST Formal Model Verifier ==="
         python3 -m unittest "$ROOT/tests/test_formal_proverif_models.py"
-        echo "[+] Formal models verified via Python AST engine."
-        echo "[+] All formal verification models executed."
+        echo "[+] AST_STRUCTURAL_CHECK_PASS: Formal models verified via Python AST engine (ProVerif not installed; structural check only)."
         exit 0
-    elif [ "$STRICT" = "1" ] || [ "${CI:-}" = "true" ]; then
-        echo "FAIL: proverif not installed (--strict / CI mode requires ProVerif >= 2.05 from https://proverif.inria.fr/)" >&2
-        exit 1
     fi
     echo "SKIP: proverif not installed in local environment"
     exit 0

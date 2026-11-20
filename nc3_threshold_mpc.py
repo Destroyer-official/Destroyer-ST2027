@@ -242,7 +242,11 @@ def seal_share_to_file(
     (220,000 iterations per OWASP/CNSA standard) and AES-256-GCM authenticated encryption.
     Plaintext and key buffers are zeroized with DoD 5220.22-M 7-pass zeroization immediately.
     """
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cnsa_crypto_gateway import (
+        cnsa_aes_256_gcm_encrypt,
+        cnsa_zeroize_memory,
+        generate_deterministic_gcm_iv,
+    )
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.primitives import hashes
 
@@ -260,7 +264,10 @@ def seal_share_to_file(
         iterations=220_000,
     )
     derived_key = kdf.derive(passphrase)
-    nonce = secrets.token_bytes(12)
+    try:
+        nonce = generate_deterministic_gcm_iv()
+    except Exception:
+        nonce = secrets.token_bytes(12)
 
     share_dict = {
         "share_index": share.share_index,
@@ -276,8 +283,10 @@ def seal_share_to_file(
     key_buf = bytearray(derived_key)
 
     try:
-        aesgcm = AESGCM(bytes(key_buf))
-        ciphertext = aesgcm.encrypt(nonce, bytes(pt_buf), b"NC3-MPC-SEALED-SHARE-V1")
+        ct_body, iv_ret, tag = cnsa_aes_256_gcm_encrypt(
+            bytes(pt_buf), bytes(key_buf), b"NC3-MPC-SEALED-SHARE-V1", explicit_iv=nonce
+        )
+        ciphertext = ct_body + tag
         package = {
             "v": 2,
             "salt_hex": salt.hex(),
@@ -290,6 +299,7 @@ def seal_share_to_file(
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(package, f, indent=2)
     finally:
+        cnsa_zeroize_memory(pt_buf, key_buf)
         autonomous_emergency_zeroize(pt_buf, key_buf)
 
 
@@ -301,7 +311,10 @@ def load_sealed_share_from_file(
     Loads and decrypts a sealed ThresholdShare from disk at rest.
     Verifies authenticity, extracts share parameters, and zeroizes plaintext buffers immediately.
     """
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cnsa_crypto_gateway import (
+        cnsa_aes_256_gcm_decrypt,
+        cnsa_zeroize_memory,
+    )
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.primitives import hashes
 
@@ -335,8 +348,11 @@ def load_sealed_share_from_file(
     pt_buf: Optional[bytearray] = None
 
     try:
-        aesgcm = AESGCM(bytes(key_buf))
-        plaintext = aesgcm.decrypt(nonce, ciphertext, b"NC3-MPC-SEALED-SHARE-V1")
+        ct_body = ciphertext[:-16]
+        tag = ciphertext[-16:]
+        plaintext = cnsa_aes_256_gcm_decrypt(
+            ct_body, bytes(key_buf), nonce, tag, b"NC3-MPC-SEALED-SHARE-V1"
+        )
         pt_buf = bytearray(plaintext)
         data = json.loads(plaintext.decode("utf-8"))
         return ThresholdShare.from_dict(data)
@@ -345,6 +361,7 @@ def load_sealed_share_from_file(
             raise
         raise NC3SecurityError(f"Failed to unseal threshold share: {e}")
     finally:
+        cnsa_zeroize_memory(key_buf, pt_buf)
         autonomous_emergency_zeroize(key_buf, pt_buf)
 
 

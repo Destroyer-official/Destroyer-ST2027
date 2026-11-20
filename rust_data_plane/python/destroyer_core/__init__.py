@@ -661,6 +661,9 @@ except ImportError:
         CoreDiodeSender = _DummyCore  # type: ignore[assignment,misc]
         CoreDiodeReceiver = _DummyCore  # type: ignore[assignment,misc]
 
+    CoreDtnBundle = _DummyCore  # type: ignore[assignment,misc]
+    CorePqZkp = _DummyCore  # type: ignore[assignment,misc]
+    CoreSdrDsss = _DummyCore  # type: ignore[assignment,misc]
     CoreBlindedCds = _DummyCore  # type: ignore[assignment,misc]
     CoreFormalProofs = _DummyCore  # type: ignore[assignment,misc]
     CoreFsoTransceiver = _DummyCore  # type: ignore[assignment,misc]

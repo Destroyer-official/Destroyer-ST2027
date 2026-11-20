@@ -945,7 +945,11 @@ class DistributedKeyStorage:
         )
         dek = hkdf.derive(kek)
         aesgcm = AESGCM(dek)
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         aad = f"threshold_share:{key_id}:{share_index}".encode('utf-8')
         ciphertext = aesgcm.encrypt(nonce, data, aad)
         return b"ENC_SHARE\x02" + nonce + ciphertext

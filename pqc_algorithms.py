@@ -6489,7 +6489,11 @@ class SecureMemory:
             Encrypted data (nonce + ciphertext + GCM auth tag)
         """
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         aesgcm = AESGCM(self._encryption_key)
         ct = aesgcm.encrypt(nonce, bytes(data), b"SECURE_MEMORY_AAD")
         return bytearray(nonce + ct)
@@ -6688,7 +6692,11 @@ class EnhancedMLDSA_87:
             )
             key = kdf.derive(self._internal_secret)
             aesgcm = AESGCM(key)
-            nonce = secrets.token_bytes(12)
+            try:
+                from p2p_core import generate_deterministic_gcm_iv
+                nonce = generate_deterministic_gcm_iv()
+            except Exception:
+                nonce = secrets.token_bytes(12)
             ct = aesgcm.encrypt(nonce, private_key, b"PQC_PRIVATE_KEY_AAD")
             return salt + nonce + ct
         except Exception as e:

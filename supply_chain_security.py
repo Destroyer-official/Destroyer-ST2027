@@ -1850,7 +1850,11 @@ class TUFReleaseManager:
         key = _hl.scrypt(passphrase, salt=salt, n=131072, r=8, p=1,
                          maxmem=256 * 1024 * 1024, dklen=32)
         aesgcm = AESGCM(key)
-        nonce = secrets.token_bytes(12)
+        try:
+            from p2p_core import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
+        except Exception:
+            nonce = secrets.token_bytes(12)
         ct = aesgcm.encrypt(nonce, sk, self._PQ_SK_AAD)
         tmp = self._pq_sk_path.with_suffix('.enc.new')
         tmp.write_bytes(self._PQ_SK_MAGIC + salt + nonce + ct)

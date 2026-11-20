@@ -1730,29 +1730,21 @@ def _envelope_aad(group_id: str, epoch: int, member_id: Optional[str] = None) ->
 
 
 def _aead_seal(key: bytes, aad: bytes, plaintext: bytes) -> bytes:
-    """Seal with AES-GCM: nonce(12) || ct+tag. Lazy import, no I/O."""
+    """Seal with AES-GCM: nonce(12) || ct || tag(16) via CNSA Crypto Gateway."""
+    from cnsa_crypto_gateway import cnsa_seal_payload
     try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore
+        return cnsa_seal_payload(bytes(plaintext), bytes(key), aad)
     except Exception as exc:
-        raise GroupKeyError(
-            "cryptography package required for placeholder envelopes"
-        ) from exc
-    nonce = secrets.token_bytes(12)
-    return nonce + AESGCM(bytes(key)).encrypt(nonce, bytes(plaintext), aad)
+        raise GroupKeyError(f"envelope seal failed: {exc}") from exc
 
 
 def _aead_open(key: bytes, aad: bytes, envelope: bytes) -> bytes:
-    try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore
-    except Exception as exc:
-        raise GroupKeyError(
-            "cryptography package required for placeholder envelopes"
-        ) from exc
+    """Open AES-GCM envelope via CNSA Crypto Gateway."""
     if len(envelope) < 12 + 16:
         raise GroupKeyError("envelope too short")
-    nonce, ct = envelope[:12], envelope[12:]
+    from cnsa_crypto_gateway import cnsa_open_payload
     try:
-        return AESGCM(bytes(key)).decrypt(nonce, ct, aad)
+        return cnsa_open_payload(bytes(envelope), bytes(key), aad)
     except Exception as exc:
         raise GroupKeyError(f"envelope authentication failed: {exc}") from exc
 

@@ -28,19 +28,10 @@ def secure_hash(data: bytes) -> bytes:
     """Compute SHA3-512 hash (NIST Level 5+)"""
     return hashlib.sha3_512(data).digest()
 
-def secure_encrypt_aes_256_gcm(plaintext: bytes, key: bytes) -> tuple:
-    """Encrypt with AES-256-GCM (NIST Level 5+)"""
-    iv = secrets.token_bytes(12)  # 96-bit IV for GCM
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(plaintext) + encryptor.finalize()
-    return ciphertext, iv, encryptor.tag
-
-def secure_decrypt_aes_256_gcm(ciphertext: bytes, key: bytes, iv: bytes, tag: bytes) -> bytes:
-    """Decrypt with AES-256-GCM (NIST Level 5+)"""
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    return decryptor.update(ciphertext) + decryptor.finalize()
+from cnsa_crypto_gateway import (
+    cnsa_aes_256_gcm_encrypt as secure_encrypt_aes_256_gcm,
+    cnsa_aes_256_gcm_decrypt as secure_decrypt_aes_256_gcm,
+)
 
 class NISTLevel5PolicyEngine:
     """NIST Level 5+ Security Policy Engine"""

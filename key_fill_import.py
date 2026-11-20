@@ -65,15 +65,15 @@ def _scrypt_kek(passphrase: str, salt: bytes) -> bytearray:
 
 
 def _aes_seal(key: bytes, plaintext: bytes, aad: bytes) -> Tuple[bytes, bytes]:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    nonce = secrets.token_bytes(12)
-    return nonce, AESGCM(bytes(key)).encrypt(nonce, bytes(plaintext), aad)
+    from cnsa_crypto_gateway import cnsa_seal_payload
+    envelope = cnsa_seal_payload(bytes(plaintext), bytes(key), associated_data=aad)
+    return envelope[:12], envelope[12:]
 
 
 def _aes_open(key: bytes, nonce: bytes, ct: bytes, aad: bytes) -> bytes:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cnsa_crypto_gateway import cnsa_open_payload, CryptographicIntegrityError
     try:
-        return AESGCM(bytes(key)).decrypt(bytes(nonce), bytes(ct), aad)
+        return cnsa_open_payload(bytes(nonce) + bytes(ct), bytes(key), associated_data=aad)
     except Exception as e:
         raise KeyFillError(f"authenticated decryption failed: {e}") from e
 
