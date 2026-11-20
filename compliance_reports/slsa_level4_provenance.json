@@ -1,0 +1,111 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "secure-transmit.exe",
+      "digest": {
+        "sha3-512": "abcfbb78bb1fa72708a9650c9dd81f4ff9346c28c5d0a40f40a8d2013826730709313521da05bb6be488145d3633c5a20739ff8f081cea81c0f60cbdede945d3"
+      }
+    },
+    {
+      "name": "oqs.dll",
+      "digest": {
+        "sha3-512": "c6af8151a04b750112f49c8d5ae39df1a4625b99dd0c1ac70385867b9308dc4d187a1cbb3ee034ce3c1c3ec9a72cd3147fdfaad74b1940bea16264b3af5ac0ea"
+      }
+    },
+    {
+      "name": "libsodium.dll",
+      "digest": {
+        "sha3-512": "31b92c7e2986d4a8a39cbab49b48de627352223db60ab3bdde10a371d1713f5f97c5c7205140878bab87fe0a992cffc151bd216be645ed3a8e27e78318d93cd0"
+      }
+    },
+    {
+      "name": "secure_transmit_2027.py",
+      "digest": {
+        "sha3-512": "84ee770997ae6820d0d7a341d57b389cc7acc9a8ac519a1311e468f1a1aefaab64972f4197634cafadfe1c7a8b2c32012b7ce4f3678487f2387f86557fea3b18"
+      }
+    },
+    {
+      "name": "destroyer.py",
+      "digest": {
+        "sha3-512": "c8437e6323563ae9c76a91ccdfe6a7c0d22ed415044a19c11cd5880d588af314842f3cbdda39dacdc547fd25fff1c7fb672ca0ad2cab31dd94edb2b3673483fa"
+      }
+    },
+    {
+      "name": "secure_p2p.py",
+      "digest": {
+        "sha3-512": "af9a5d3278a172fd03d0d215f8c01483d3623b87712fce1bbaae4bd4c1ab4a917d2bbd13eaf75ced553cabe347b896fefa1c311a2782cb820cb8318e2a0374bd"
+      }
+    },
+    {
+      "name": "production_gate.py",
+      "digest": {
+        "sha3-512": "922efb81153cc8e6618e66d17e7dc4219e980578a301d0f2766d9e3a319aeb329e0216a499ad54fe00733020a823f14b98485a3137d03f9ef607cbaa8ce6742f"
+      }
+    },
+    {
+      "name": "cnsa_crypto_gateway.py",
+      "digest": {
+        "sha3-512": "e4ca94ffcf63a53f54352f04aaeb2013fc3a96164191860efe40e33241f6ca3353969417e97b96c9174b26613581fe640e69f6b6ea6d5f4b1d18773e1b93b208"
+      }
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://slsa.dev/hermetic-build/v1",
+      "externalParameters": {
+        "source": {
+          "repository": "https://github.com/Destroyer-official/Destroyer-ST2027",
+          "commit": "fa01a0c8d5987e1d5b1f55c0a2d25f9443183d12",
+          "branch": "main"
+        },
+        "compilerFlags": [
+          "-C",
+          "opt-level=3",
+          "-C",
+          "panic=abort",
+          "-C",
+          "codegen-units=1",
+          "-C",
+          "lto=fat"
+        ]
+      },
+      "internalParameters": {
+        "slsaLevel": "SLSA_LEVEL_4",
+        "cnsaPurity": "CNSA_2_0_PURE_CATEGORY_5",
+        "hermeticBuilder": true,
+        "reproducibleBuild": true
+      },
+      "resolvedDependencies": [
+        {
+          "uri": "pkg:generic/liboqs@0.16.0",
+          "digest": {
+            "sha3-512": "c6af8151a04b750112f49c8d5ae39df1a4625b99dd0c1ac70385867b9308dc4d187a1cbb3ee034ce3c1c3ec9a72cd3147fdfaad74b1940bea16264b3af5ac0ea"
+          }
+        },
+        {
+          "uri": "pkg:generic/libsodium@1.0.22",
+          "digest": {
+            "sha3-512": "31b92c7e2986d4a8a39cbab49b48de627352223db60ab3bdde10a371d1713f5f97c5c7205140878bab87fe0a992cffc151bd216be645ed3a8e27e78318d93cd0"
+          }
+        }
+      ]
+    },
+    "runDetails": {
+      "builder": {
+        "id": "https://github.com/Destroyer-official/Destroyer-ST2027/actions/runs/hermetic-airgap-builder",
+        "version": {
+          "os": "Windows-11-10.0.26300-SP0",
+          "python": "3.15.2",
+          "machine": "AMD64"
+        }
+      },
+      "metadata": {
+        "invocationId": "RUN-fa01a0c8d598-1795181346",
+        "startedOn": "2026-11-20T13:29:05.969937+00:00",
+        "finishedOn": "2026-11-20T13:29:05.969937+00:00"
+      }
+    }
+  }
+}

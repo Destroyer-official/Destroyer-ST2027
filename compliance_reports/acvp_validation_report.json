@@ -1,0 +1,158 @@
+{
+  "acvp_version": "1.1.0",
+  "standard_alignment": "NIST FIPS 203, FIPS 204, SP 800-38D, CNSA 2.0 Pure",
+  "evaluation_timestamp": "2026-11-20T13:28:57.294467+00:00",
+  "module_under_test": {
+    "name": "Destroyer-ST2027 Sovereign Cryptographic Core",
+    "version": "2027.2.0-SOVEREIGN",
+    "security_category": "NIST Level 5 / CNSA Suite 2.0 Category 5",
+    "architecture": "win32"
+  },
+  "test_groups": [
+    {
+      "tgId": 101,
+      "algorithm": "ML-KEM",
+      "parameterSet": "ML-KEM-1024",
+      "mode": "keyGen_encapDecap_implicitReject",
+      "tests": [
+        {
+          "tcId": 1,
+          "pk_len": 1568,
+          "sk_len": 3168,
+          "ct_len": 1568,
+          "roundtrip": "PASS",
+          "implicit_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 2,
+          "pk_len": 1568,
+          "sk_len": 3168,
+          "ct_len": 1568,
+          "roundtrip": "PASS",
+          "implicit_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 3,
+          "pk_len": 1568,
+          "sk_len": 3168,
+          "ct_len": 1568,
+          "roundtrip": "PASS",
+          "implicit_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 4,
+          "pk_len": 1568,
+          "sk_len": 3168,
+          "ct_len": 1568,
+          "roundtrip": "PASS",
+          "implicit_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 5,
+          "pk_len": 1568,
+          "sk_len": 3168,
+          "ct_len": 1568,
+          "roundtrip": "PASS",
+          "implicit_rejection": "PASS",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "tgId": 201,
+      "algorithm": "ML-DSA",
+      "parameterSet": "ML-DSA-87",
+      "mode": "sigGen_sigVer_tamperReject",
+      "tests": [
+        {
+          "tcId": 1,
+          "msg_len": 47,
+          "pk_len": 2592,
+          "sk_len": 4896,
+          "sig_len": 4627,
+          "valid_verification": "PASS",
+          "tamper_message_rejection": "PASS",
+          "tamper_signature_rejection": "PASS",
+          "wrong_key_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 2,
+          "msg_len": 56,
+          "pk_len": 2592,
+          "sk_len": 4896,
+          "sig_len": 4627,
+          "valid_verification": "PASS",
+          "tamper_message_rejection": "PASS",
+          "tamper_signature_rejection": "PASS",
+          "wrong_key_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 3,
+          "msg_len": 57,
+          "pk_len": 2592,
+          "sk_len": 4896,
+          "sig_len": 4627,
+          "valid_verification": "PASS",
+          "tamper_message_rejection": "PASS",
+          "tamper_signature_rejection": "PASS",
+          "wrong_key_rejection": "PASS",
+          "status": "PASS"
+        },
+        {
+          "tcId": 4,
+          "msg_len": 56,
+          "pk_len": 2592,
+          "sk_len": 4896,
+          "sig_len": 4627,
+          "valid_verification": "PASS",
+          "tamper_message_rejection": "PASS",
+          "tamper_signature_rejection": "PASS",
+          "wrong_key_rejection": "PASS",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "tgId": 301,
+      "algorithm": "AES-256-GCM",
+      "specification": "NIST SP 800-38D",
+      "tests": [
+        {
+          "tcId": 1,
+          "case": "McGrew_Viega_Case16",
+          "ciphertext_match": "PASS",
+          "decryption_match": "PASS",
+          "tag_forgery_rejection": "PASS",
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "tgId": 401,
+      "algorithm": "HKDF-SHA384",
+      "specification": "NIST SP 800-56C",
+      "tests": [
+        {
+          "tcId": 1,
+          "key_separation": "PASS",
+          "output_length": 48,
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_test_groups": 4,
+    "total_tests": 11,
+    "passed": 11,
+    "failed": 0,
+    "pass_rate_pct": 100.0
+  },
+  "overall_verdict": "ACVP-VERIFIED-PASSED"
+}

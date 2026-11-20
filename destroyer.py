@@ -527,6 +527,87 @@ def run_cmt_submittal_audit():
         print(f"\n{BOLD}{RED}[FAILURE] CMT Laboratory & AO Submittal Dossier packaging or verification encountered errors (exit code {res.returncode}).{RESET}\n", flush=True)
 
 
+def run_acvp_validation_cmd():
+    """Run NIST ACVP automated test vector harness for FIPS 203 & FIPS 204."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Running NIST ACVP Post-Quantum Automated Validation Harness...{RESET}", flush=True)
+    script = ROOT / "scripts" / "acvp_pqc_validator.py"
+    subprocess.run([sys.executable, str(script)])
+
+
+def run_formal_verification_cmd():
+    """Run automated ProVerif formal symbolic verification engine."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Running ProVerif Symbolic Formal Protocol Verification...{RESET}", flush=True)
+    script = ROOT / "scripts" / "run_formal_verification.py"
+    subprocess.run([sys.executable, str(script)])
+
+
+def run_constant_time_cmd():
+    """Run statistical constant-time side-channel evaluation (CT-KAT / Dudect)."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Running Statistical Constant-Time Side-Channel Analysis (Welch's t-test)...{RESET}", flush=True)
+    script = ROOT / "scripts" / "verify_constant_time.py"
+    subprocess.run([sys.executable, str(script)])
+
+
+def run_oscal_ssp_cmd():
+    """Generate and cryptographically sign NIST OSCAL v1.1.0 System Security Plan."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Generating NIST OSCAL v1.1.0 Machine-Readable System Security Plan (SSP)...{RESET}", flush=True)
+    script = ROOT / "scripts" / "generate_oscal_ssp.py"
+    subprocess.run([sys.executable, str(script)])
+
+
+def run_slsa_provenance_cmd():
+    """Generate signed SLSA Level 4 in-toto software supply chain provenance attestation."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Generating SLSA Level 4 In-Toto Provenance Attestation...{RESET}", flush=True)
+    script = ROOT / "scripts" / "generate_slsa_provenance.py"
+    subprocess.run([sys.executable, str(script)])
+
+
+def run_master_certify_cmd():
+    """Execute complete Master 100% Accreditation & Certification Battery."""
+    print(f"\n{BOLD}{CYAN}================================================================================")
+    print("  ST2027 MASTER 100% ACCREDITATION & CERTIFICATION BATTERY (2027 STANDARDS)")
+    print(f"================================================================================{RESET}\n")
+
+    steps = [
+        ("NIST ACVP PQC Validation (FIPS 203/204)", ROOT / "scripts" / "acvp_pqc_validator.py"),
+        ("Statistical Constant-Time Dudect Analysis", ROOT / "scripts" / "verify_constant_time.py"),
+        ("ProVerif Formal Symbolic Protocol Verification", ROOT / "scripts" / "run_formal_verification.py"),
+        ("NIST OSCAL v1.1.0 System Security Plan", ROOT / "scripts" / "generate_oscal_ssp.py"),
+        ("SLSA Level 4 In-Toto Provenance Attestation", ROOT / "scripts" / "generate_slsa_provenance.py"),
+        ("Signed Reproducible Build & Supply Chain", ROOT / "scripts" / "verify_reproducible_build.py"),
+    ]
+
+    cert_env = os.environ.copy()
+    cert_env.pop("P2P_PRODUCTION", None)
+    cert_env.pop("SECURE_P2P_PRODUCTION", None)
+
+    results = []
+    for title, script in steps:
+        print(f"\n{BOLD}[*] Executing Gate: {title}...{RESET}")
+        res = subprocess.run([sys.executable, str(script)], env=cert_env)
+        ok = (res.returncode == 0)
+        results.append((title, ok))
+
+    print(f"\n{BOLD}{CYAN}================================================================================")
+    print("  SOVEREIGN DEFENSE 100% ACCREDITATION STATUS MATRIX")
+    print(f"================================================================================{RESET}")
+    passed_count = sum(1 for _, ok in results if ok)
+    total_count = len(results)
+
+    for title, ok in results:
+        status_tag = f"{GREEN}[PASS 100%]{RESET}" if ok else f"{RED}[FAIL]{RESET}"
+        print(f"  {status_tag} {title}")
+
+    print("--------------------------------------------------------------------------------")
+    score_pct = (passed_count / total_count) * 100.0
+    print(f"  {BOLD}Accreditation Readiness: {passed_count}/{total_count} Passed ({score_pct:.1f}%){RESET}")
+    if passed_count == total_count:
+        print(f"  {BOLD}{GREEN}[VERDICT: UNCONDITIONAL 100% TECHNICAL ACCREDITATION READY]{RESET}")
+    else:
+        print(f"  {BOLD}{RED}[VERDICT: REMEDIATION REQUIRED BEFORE FORMAL LAB SUBMITTAL]{RESET}")
+    print("================================================================================\n")
+
+
 def interactive_menu_loop():
     """Main interactive command center menu loop."""
     print_master_banner()
@@ -548,11 +629,17 @@ def interactive_menu_loop():
         print(f"  {RED}[12] Emergency Post-Session Zeroization (NIST SP 800-88 / DoD 5220.22-M){RESET}")
         print(f"  {CYAN}[13] Verify & Package FIPS 140-3 CMT Laboratory & AO Submittal Dossier{RESET}")
         print(f"  {CYAN}[14] Run Multi-Assumption Post-Quantum KEX Combiner Drill (Zero Fallback){RESET}")
+        print(f"  {GREEN}[16] Run NIST ACVP PQC Automated Validation Harness (FIPS 203/204){RESET}")
+        print(f"  {GREEN}[17] Run ProVerif Symbolic Formal Protocol Verification Engine{RESET}")
+        print(f"  {GREEN}[18] Run Statistical Constant-Time Side-Channel Analysis (CT-KAT/Dudect){RESET}")
+        print(f"  {GREEN}[19] Generate NIST OSCAL v1.1.0 System Security Plan (SSP){RESET}")
+        print(f"  {GREEN}[20] Generate Signed SLSA Level 4 Software Supply Chain Provenance{RESET}")
+        print(f"  {BOLD}{MAGENTA}[21] Run MASTER 100% Sovereign Defense Accreditation Battery{RESET}")
         print(f"  {WHITE}[15] Exit Command Center{RESET}")
         print("=" * 86)
 
         try:
-            choice = input(f"{BOLD}{YELLOW}Enter Option (1-15, P for PQC, S for seL4): {RESET}").strip()
+            choice = input(f"{BOLD}{YELLOW}Enter Option (1-21, C for Certify, P for PQC): {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting Command Center...")
             break
@@ -585,18 +672,31 @@ def interactive_menu_loop():
             run_cmt_submittal_audit()
         elif choice in ("14", "p", "P", "pqc", "kex"):
             run_multi_assumption_pqc_kex_drill()
+        elif choice in ("16", "acvp"):
+            run_acvp_validation_cmd()
+        elif choice in ("17", "formal"):
+            run_formal_verification_cmd()
+        elif choice in ("18", "ct"):
+            run_constant_time_cmd()
+        elif choice in ("19", "oscal"):
+            run_oscal_ssp_cmd()
+        elif choice in ("20", "slsa"):
+            run_slsa_provenance_cmd()
+        elif choice in ("21", "c", "C", "certify"):
+            run_master_certify_cmd()
         elif choice in ("15", "q", "exit", "quit"):
             print(f"{GREEN}Session closed under zero-leak discipline.{RESET}")
             break
         else:
-            print(f"{RED}Invalid selection. Please choose 1-15.{RESET}")
+            print(f"{RED}Invalid selection. Please choose 1-21.{RESET}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="ST2027 Protocol Suite Command Center")
     parser.add_argument("mode", nargs="?", default="interactive",
                         choices=["interactive", "web", "tactical", "alpha", "bravo", "chat",
-                                 "audit", "benchmark", "drill", "cjadc2", "terminals", "tpm", "zeroize", "sel4", "cmt", "pqc", "kex"],
+                                 "audit", "benchmark", "drill", "cjadc2", "terminals", "tpm", "zeroize", "sel4", "cmt", "pqc", "kex",
+                                 "acvp", "formal", "ct", "oscal", "slsa", "certify"],
                         help="Operating mode (default: interactive menu)")
     args = parser.parse_args()
 
@@ -628,6 +728,18 @@ def main():
         run_cmt_submittal_audit()
     elif args.mode in ("pqc", "kex"):
         run_multi_assumption_pqc_kex_drill()
+    elif args.mode == "acvp":
+        run_acvp_validation_cmd()
+    elif args.mode == "formal":
+        run_formal_verification_cmd()
+    elif args.mode == "ct":
+        run_constant_time_cmd()
+    elif args.mode == "oscal":
+        run_oscal_ssp_cmd()
+    elif args.mode == "slsa":
+        run_slsa_provenance_cmd()
+    elif args.mode == "certify":
+        run_master_certify_cmd()
 
 
 if __name__ == "__main__":

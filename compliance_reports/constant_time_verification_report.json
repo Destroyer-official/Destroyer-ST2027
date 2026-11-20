@@ -1,0 +1,37 @@
+{
+  "evaluation_name": "Post-Quantum Cryptographic Constant-Time Side-Channel Analysis",
+  "methodology": "Welch's Two-Sample t-test (Dudect CT-KAT)",
+  "timestamp": "2026-11-20T13:28:58.007008+00:00",
+  "sample_count_per_class": 500,
+  "significance_threshold_t": 4.5,
+  "primitives_tested": [
+    {
+      "primitive": "ML-KEM-1024",
+      "operation": "decapsulation (valid vs mutated ciphertext)",
+      "class_a_mean_ns": 171476.6,
+      "class_b_mean_ns": 224003.6,
+      "welch_t_statistic": -1.997303888416604,
+      "leakage_detected": false,
+      "status": "PASS"
+    },
+    {
+      "primitive": "ML-DSA-87",
+      "operation": "signature verification (authentic vs corrupted)",
+      "class_a_mean_ns": 384371.6,
+      "class_b_mean_ns": 395436.8,
+      "welch_t_statistic": -0.2359769230046079,
+      "leakage_detected": false,
+      "status": "PASS"
+    },
+    {
+      "primitive": "AES-256-GCM",
+      "operation": "authentication tag verification (valid vs forged)",
+      "class_a_mean_ns": 29993.2,
+      "class_b_mean_ns": 22919.6,
+      "welch_t_statistic": 0.4372568034685663,
+      "leakage_detected": false,
+      "status": "PASS"
+    }
+  ],
+  "overall_status": "PASS"
+}

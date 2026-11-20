@@ -1,10 +1,10 @@
 {
   "system-security-plan": {
-    "id": "8933d185-d2b9-4f5e-a8d3-a8f4c28aeecc",
+    "id": "9375e19e-8691-41a7-a38a-bf45c2d237ce",
     "metadata": {
       "title": "Sovereign Military P2P Communications Platform - System Security Plan (SSP)",
-      "published": "2026-10-05T17:20:36.199883+00:00",
-      "last-modified": "2026-10-05T17:20:36.199883+00:00",
+      "published": "2026-11-20T13:29:05.106833+00:00",
+      "last-modified": "2026-11-20T13:29:05.106833+00:00",
       "version": "2028.1.0-DEFENSE",
       "oscal-version": "1.1.0",
       "remarks": "SELF-AUTHORED SSP DRAFT for AO package assembly (not accredited; no AO action). Control coverage below is the implemented-boundary subset (12 controls); full High-baseline extension is tracked in the SAR POA&M.",
@@ -118,7 +118,7 @@
       "description": "Implemented-boundary control subset mapped to NIST SP 800-53 Rev 5 (12 controls with in-repo evidence). NOT full High-baseline coverage; extension tracked in SAR POA&M.",
       "implemented-requirements": [
         {
-          "uuid": "11529b20-440f-4f6c-9eae-659e5c38947e",
+          "uuid": "8efc2830-54ff-4d97-9c6b-24a8c5d8d5fa",
           "control-id": "ac-3",
           "description": "Access Enforcement: Strict Zero-Trust RBAC engine enforces least privilege and default-deny.",
           "by-components": [
@@ -129,7 +129,7 @@
           ]
         },
         {
-          "uuid": "f9a7d17b-2d75-4f5a-a643-a0bbc709d50b",
+          "uuid": "f89c27fc-04a1-43b3-974e-f3710229b123",
           "control-id": "ac-4",
           "description": "Information Flow Enforcement: Enforces discrete traffic quantum shape and chaff absorption.",
           "by-components": [
@@ -140,7 +140,7 @@
           ]
         },
         {
-          "uuid": "866cda08-8cbe-4dd5-8f91-fa9be3b88377",
+          "uuid": "dc9b1d47-3c6e-4c0e-a9dc-ea59d75f11a3",
           "control-id": "au-2",
           "description": "Event Logging: All authentication, key rotation, and packet drop events recorded.",
           "by-components": [
@@ -151,7 +151,7 @@
           ]
         },
         {
-          "uuid": "de8fef07-bdae-4404-adfb-eef4419e0c99",
+          "uuid": "2757fda6-5cc6-4fd1-87f8-5ff70c9c1b5f",
           "control-id": "au-9",
           "description": "Protection of Audit Information: Audit logs protected via forward-secure HMAC-SHA384 chaining.",
           "by-components": [
@@ -162,7 +162,7 @@
           ]
         },
         {
-          "uuid": "f53ed45b-d505-4e1b-9fc8-84f7faf41a2a",
+          "uuid": "9c9d3bbb-f832-46df-83e8-e9ee9ff9aca4",
           "control-id": "au-10",
           "description": "Non-Repudiation: Every session transaction and certificate signed with ML-DSA-87.",
           "by-components": [
@@ -173,7 +173,7 @@
           ]
         },
         {
-          "uuid": "4f0dfa95-0b15-48e8-ab5e-d02cfc2fc159",
+          "uuid": "e407b608-9abb-4fab-9ad8-8c27a7848fed",
           "control-id": "ia-2",
           "description": "Identification and Authentication: Multi-factor and hardware-backed peer authentication.",
           "by-components": [
@@ -184,7 +184,7 @@
           ]
         },
         {
-          "uuid": "4b75ccbc-b457-4bf2-9578-7eb74c224934",
+          "uuid": "989b1707-83f1-42af-932e-bae14931e2b3",
           "control-id": "ia-5",
           "description": "Authenticator Management: Post-quantum Double Ratchet provides forward secrecy and break-in recovery.",
           "by-components": [
@@ -195,7 +195,7 @@
           ]
         },
         {
-          "uuid": "f4082697-e24c-4e03-8c6f-7a74e0f6cbad",
+          "uuid": "9cfa5570-3627-4460-a6b9-efda0a1c78b5",
           "control-id": "sc-8",
           "description": "Transmission Confidentiality and Integrity: Dual-layer authenticated encryption over wire.",
           "by-components": [
@@ -206,7 +206,7 @@
           ]
         },
         {
-          "uuid": "b659b9b5-b3ac-41b3-bd11-08a3e54a9dcf",
+          "uuid": "202c5243-24c9-43a6-8954-eba680a01b7e",
           "control-id": "sc-12",
           "description": "Cryptographic Key Establishment and Management: Post-quantum hybrid KEM and M-of-N Shamir backup.",
           "by-components": [
@@ -217,7 +217,7 @@
           ]
         },
         {
-          "uuid": "6c3624d1-8fb9-46da-8a0d-0cc3e3778997",
+          "uuid": "54d6d751-1ce5-4439-8f13-30565d8d2aff",
           "control-id": "sc-13",
           "description": "Cryptographic Protection: NIST Level 5+ algorithms conforming strictly to NSA CNSA 2.0.",
           "by-components": [
@@ -228,7 +228,7 @@
           ]
         },
         {
-          "uuid": "2fccf847-b981-415f-857c-826b5412d511",
+          "uuid": "07294e1a-8991-44e8-b068-7aaca7fb20cc",
           "control-id": "si-4",
           "description": "Information System Monitoring: Anti-replay sliding window and token-bucket flood prevention.",
           "by-components": [
@@ -239,7 +239,7 @@
           ]
         },
         {
-          "uuid": "8596320b-1e88-4981-877f-ef828f4cb368",
+          "uuid": "8f51d194-fe5d-4102-ba98-b8e6fd861c9b",
           "control-id": "si-7",
           "description": "Software, Firmware, and Information Integrity: CycloneDX 1.6 CBOM and TUF anti-rollback.",
           "by-components": [
