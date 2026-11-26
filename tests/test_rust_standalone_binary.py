@@ -910,16 +910,26 @@ class TestRustStandaloneBinary(unittest.TestCase):
             state_init = os.path.join(tmp, "init_poisson.state")
             state_resp = os.path.join(tmp, "resp_poisson.state")
 
+            import threading as _thr
             resp_proc = subprocess.Popen(
                 [BIN, "channel", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
                  "--poisson",
                  "--reply", "TACTICAL_RESPONSE_CONFIRMED", "--recv-count", "1",
-                 "--drain-ticks", "6", "--timeout-ms", "8000"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                 "--drain-ticks", "6", "--timeout-ms", "12000"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
             )
-            time.sleep(0.15)
+            resp_lines = []
+            resp_active = _thr.Event()
+            def _pump_resp():
+                for line in resp_proc.stdout:
+                    resp_lines.append(line)
+                    if "channel: ACTIVE" in line:
+                        resp_active.set()
+            tr = _thr.Thread(target=_pump_resp, daemon=True)
+            tr.start()
+            self.assertTrue(resp_active.wait(timeout=10.0), "Poisson responder channel did not become ACTIVE")
 
             init_proc = subprocess.Popen(
                 [BIN, "channel", "--key-file", kf, "--state", state_init,
@@ -927,12 +937,14 @@ class TestRustStandaloneBinary(unittest.TestCase):
                  "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
                  "--poisson",
                  "--msg", "TACTICAL_COORDINATES_ENCLAVE_ALPHA", "--recv-count", "1",
-                 "--drain-ticks", "6", "--timeout-ms", "8000"],
+                 "--drain-ticks", "6", "--timeout-ms", "12000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
 
-            init_out, init_err = init_proc.communicate(timeout=10)
-            resp_out, resp_err = resp_proc.communicate(timeout=10)
+            init_out, init_err = init_proc.communicate(timeout=20)
+            _, resp_err = resp_proc.communicate(timeout=20)
+            tr.join(timeout=2)
+            resp_out = "".join(resp_lines)
 
             self.assertEqual(init_proc.returncode, 0, f"Initiator failed:\nOUT: {init_out}\nERR: {init_err}")
             self.assertEqual(resp_proc.returncode, 0, f"Responder failed:\nOUT: {resp_out}\nERR: {resp_err}")

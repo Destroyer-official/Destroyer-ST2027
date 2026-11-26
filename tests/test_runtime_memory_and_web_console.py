@@ -539,9 +539,17 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
             # Responder: listen on free ports (mutual ML-DSA-87 auth)
             import socket as _sock, threading as _thr
             def _free_port():
-                with _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM) as s:
-                    s.bind(("127.0.0.1", 0))
-                    return s.getsockname()[1]
+                for _ in range(50):
+                    with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as st:
+                        st.bind(("127.0.0.1", 0))
+                        p = st.getsockname()[1]
+                    try:
+                        with _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM) as su:
+                            su.bind(("127.0.0.1", p))
+                        return p
+                    except OSError:
+                        continue
+                raise RuntimeError("No free dual TCP/UDP port found")
             p_r = _free_port()
             p_i = _free_port()
             while p_i == p_r:
@@ -554,7 +562,7 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
                 "--auth-sk-file", resp_sk, "--peer-auth-pk-file", init_pk,
                 "--require-mutual-auth",
                 "--state", os.path.join(td, "resp.state"),
-                "--headless", "--recv-count", "1", "--interval-ms", "20", "--timeout-ms", "10000"
+                "--headless", "--recv-count", "1", "--interval-ms", "20", "--timeout-ms", "15000"
             ]
 
             # Initiator: connect and send payload only once both UDP channels are ACTIVE
@@ -565,42 +573,63 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
                 "--auth-sk-file", init_sk, "--peer-auth-pk-file", resp_pk,
                 "--require-mutual-auth",
                 "--state", os.path.join(td, "init.state"),
-                "--headless", "--stdin", "--interval-ms", "20", "--timeout-ms", "10000"
+                "--headless", "--stdin", "--interval-ms", "20", "--timeout-ms", "15000"
             ]
 
             p_resp = subprocess.Popen(cmd_resp, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
-            time.sleep(0.2)
-            p_init = subprocess.Popen(cmd_init, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
-
             resp_lines: list[str] = []
-            init_lines: list[str] = []
+            resp_listening = _thr.Event()
             resp_active = _thr.Event()
-            init_active = _thr.Event()
             resp_got_msg = _thr.Event()
 
-            def _pump(pipe, dest, active_ev, msg_ev=None):
-                for line in pipe:
-                    dest.append(line)
+            def _pump_resp():
+                for line in p_resp.stdout:
+                    resp_lines.append(line)
+                    if "[KEX] Listening" in line:
+                        resp_listening.set()
                     if "channel: ACTIVE" in line:
-                        active_ev.set()
-                    if msg_ev is not None and "RECV_MSG" in line:
-                        msg_ev.set()
+                        resp_active.set()
+                    if "RECV_MSG" in line:
+                        resp_got_msg.set()
 
-            tr = _thr.Thread(target=_pump, args=(p_resp.stdout, resp_lines, resp_active, resp_got_msg), daemon=True)
-            ti = _thr.Thread(target=_pump, args=(p_init.stdout, init_lines, init_active), daemon=True)
+            tr = _thr.Thread(target=_pump_resp, daemon=True)
             tr.start()
+            self.assertTrue(resp_listening.wait(timeout=10.0), f"Responder KEX did not start listening: {''.join(resp_lines)}")
+            time.sleep(0.25)
+
+            p_init = subprocess.Popen(cmd_init, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+            init_lines: list[str] = []
+            init_active = _thr.Event()
+
+            def _pump_init():
+                for line in p_init.stdout:
+                    init_lines.append(line)
+                    if "channel: ACTIVE" in line:
+                        init_active.set()
+
+            ti = _thr.Thread(target=_pump_init, daemon=True)
             ti.start()
 
-            self.assertTrue(resp_active.wait(timeout=6.0), "Responder channel did not become ACTIVE")
-            self.assertTrue(init_active.wait(timeout=6.0), "Initiator channel did not become ACTIVE")
+            if not resp_active.wait(timeout=15.0):
+                p_init.kill()
+                p_resp.kill()
+                _, e_i = p_init.communicate(timeout=5)
+                _, e_r = p_resp.communicate(timeout=5)
+                self.fail(f"Responder channel did not become ACTIVE\nRESP OUT: {''.join(resp_lines)}\nRESP ERR: {e_r}\nINIT OUT: {''.join(init_lines)}\nINIT ERR: {e_i}")
+            if not init_active.wait(timeout=15.0):
+                p_init.kill()
+                p_resp.kill()
+                _, e_i = p_init.communicate(timeout=5)
+                _, e_r = p_resp.communicate(timeout=5)
+                self.fail(f"Initiator channel did not become ACTIVE\nINIT OUT: {''.join(init_lines)}\nINIT ERR: {e_i}")
             p_init.stdin.write("ALPHA-BRAVO-VERIFIED\n")
             p_init.stdin.flush()
-            self.assertTrue(resp_got_msg.wait(timeout=6.0), f"Responder did not receive message: {''.join(resp_lines)}")
+            self.assertTrue(resp_got_msg.wait(timeout=10.0), f"Responder did not receive message: {''.join(resp_lines)}")
             p_init.stdin.write("/zeroize\n")
             p_init.stdin.flush()
 
-            _, err_i = p_init.communicate(timeout=10)
-            _, err_r = p_resp.communicate(timeout=10)
+            _, err_i = p_init.communicate(timeout=15)
+            _, err_r = p_resp.communicate(timeout=15)
             tr.join(timeout=2)
             ti.join(timeout=2)
             out_i = "".join(init_lines)
