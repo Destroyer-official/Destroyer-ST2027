@@ -1031,7 +1031,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             )
 
             # Wait for initial advert exchange
-            time.sleep(0.5)
+            time.sleep(1.5)
 
             # Trigger interactive /rekey
             init_proc.stdin.write("/rekey\n")

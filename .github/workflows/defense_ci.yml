@@ -38,7 +38,7 @@ jobs:
           python scripts/audit_pins.py
 
       - name: TruffleHog Secret Scan Gate (Supply-Chain & Credential Leakage)
-        uses: trufflesecurity/trufflehog@34857b60098f98ec8a58a9e6eb1cf0c39f0e1a8b # v3.88.15 immutable pin
+        uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9 immutable pin
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
@@ -172,7 +172,7 @@ jobs:
   adversarial-gates:
     name: Adversarial Gates (KAT + Supply-Chain Traversal + Boot-Config Smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     continue-on-error: false
 
     steps:
@@ -267,11 +267,23 @@ jobs:
               print(f'SKIP: liboqs native lib absent and no SBOM/verifier pin to assert ({e})'); sys.exit(0)
           "
 
+      - name: Set up Rust Toolchain & Fetch Pinned Crates (for Orchestrator Doubles / DudeCT)
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
+      - name: Prefetch Rust Dependencies
+        run: cargo fetch --locked --manifest-path rust_data_plane/Cargo.toml
+
       - name: Formal handshake model (ProVerif 2.05 mandatory blocking gate)
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq proverif
+          sudo apt-get install -y -qq ocaml gcc make curl
+          curl -fsSL https://proverif.inria.fr/proverif2.05.tar.gz -o /tmp/proverif2.05.tar.gz
+          echo "4871f53c32ab4a04669a060c4886ba5d9080496963fb980a9a62d2c429ceabc4  /tmp/proverif2.05.tar.gz" | sha256sum -c -
+          rm -rf /tmp/proverif2.05
+          tar -xzf /tmp/proverif2.05.tar.gz -C /tmp
+          (cd /tmp/proverif2.05 && ./build -nointeract)
+          sudo ln -sf /tmp/proverif2.05/proverif /usr/local/bin/proverif
+          export P2P_PROVERIF=/tmp/proverif2.05/proverif
           sh docs/formal/check.sh --strict
 
       # F-06: cosign is not preinstalled on GitHub runners. Install a
@@ -367,7 +379,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -391,17 +403,43 @@ jobs:
           pip install --require-hashes -r requirements.txt
           pip install -r requirements-test.txt
 
+      - name: Install Pinned System liboqs 0.16.0 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          LIBOQS_PIN_SHA="5a1a854b0dc9f2141bdc771c555ee60c37950183"
+          git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          ACTUAL_SHA="$(git -C /tmp/liboqs rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "$LIBOQS_PIN_SHA" ]; then
+            echo "FAIL: liboqs 0.16.0 tag now points at $ACTUAL_SHA, expected pinned $LIBOQS_PIN_SHA" >&2
+            exit 1
+          fi
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build /tmp/liboqs/build -j$(nproc)
+          sudo cmake --install /tmp/liboqs/build
+          sudo ldconfig
+          OQS_SO=$(find /usr/local/lib /usr/local/lib64 -name 'liboqs.so*' -type f | head -n 1)
+          OQS_SHA384=$(sha384sum "$OQS_SO" | awk '{print $1}')
+          echo "P2P_OQS_POSIX_SHA384=${OQS_SHA384}" >> "$GITHUB_ENV"
+
+      - name: Set up Rust Toolchain & Build Native Data Plane / CLI
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
+      - name: Prefetch & Build Rust Artifacts + destroyer_core Extension
+        run: |
+          cargo fetch --locked --manifest-path rust_data_plane/Cargo.toml
+          pip install maturin
+          maturin develop -r --no-default-features -m rust_data_plane/Cargo.toml
+          cargo build --offline --manifest-path rust_data_plane/Cargo.toml --features lab-surfaces --bin secure-transmit
+
       # Blocking gate: full test suite minus live-hardware tests (which require real TPM/HSM silicon).
       # All 16 previously deselected tests (S-04) are fully resolved and re-enabled.
       - name: Run Python Test Suite (blocking)
         run: |
           python -m pytest tests/ -q -m "not live" --junitxml=test-results-${{ matrix.os }}.xml
 
-      # Advisory visibility: full suite (incl. known failures above). Output
-      # is uploaded; the step never blocks the pipeline (explicitly advisory,
-      # unlike silent stubs — see SAR step above).
-      - name: Run Full Suite (advisory, never blocks)
-        if: always()
+      # Advisory visibility on failure without duplicating passing runs.
+      - name: Run Full Suite (advisory traceback summary on failure)
+        if: failure()
         continue-on-error: true
         run: |
           python -m pytest tests/ -q -m "not live" --tb=no -rf || true
