@@ -23,7 +23,7 @@ import socket
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent
 REPORTS_DIR = REPO_ROOT / "compliance_reports"

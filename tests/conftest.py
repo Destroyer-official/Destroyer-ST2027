@@ -94,10 +94,14 @@ def pytest_sessionstart(session):
     except Exception:
         pass
 
-    # 1. Add rust_data_plane/python to sys.path so destroyer_core package is importable
+    # 1. Prefer an installed native destroyer_core wheel in site-packages;
+    # only append rust_data_plane/python when destroyer_core._native isn't already available
+    # (prepending rdp_py at sys.path[0] shadows the compiled site-packages _native extension in CI).
+    import importlib.util
     rdp_py = str(repo_root / "rust_data_plane" / "python")
-    if rdp_py not in sys.path:
-        sys.path.insert(0, rdp_py)
+    if importlib.util.find_spec("destroyer_core._native") is None:
+        if rdp_py not in sys.path:
+            sys.path.append(rdp_py)
 
     # 2. Locate cargo
     cargo = shutil.which("cargo")

@@ -133,12 +133,23 @@ class TestDudectConstantTimeAnalysis(unittest.TestCase):
     """DudeCT statistical leakage analysis test suite."""
 
     def setUp(self) -> None:
-        # Allocate distinct 64-byte heap objects per entry so Class 0 and Class 1 share identical cache footprint.
+        # Interleave Class 0 and Class 1 allocations one-by-one inside a compact pool (128 * 64B = 8 KB/class)
+        # so both classes fit inside L1D cache and occupy alternating pymalloc slots.
+        # Class 0 differs only on the final byte (63) so both classes return Py_False cleanly while forcing
+        # any early-exit comparator to scan all 64 bytes on Class 0 vs ~1 byte on Class 1, eliminating Python 3.11
+        # Py_True vs Py_False non-immortal refcount cache-line asymmetry.
         self.fixed_secret = b"\x5a" * 64
-        self.fixed_match_secrets = [bytes(bytearray(self.fixed_secret)) for _ in range(1000)]
-        self.rng_secrets = [os.urandom(64) for _ in range(1000)]
+        self.mismatch_last_byte = (b"\x5a" * 63) + b"\x00"
         self.mismatch_first_byte = b"\xa5" + (b"\x5a" * 63)
-        self.mismatch_first_secrets = [bytes(bytearray(self.mismatch_first_byte)) for _ in range(1000)]
+        self.fixed_match_secrets: list[bytes] = []
+        self.mismatch_last_secrets: list[bytes] = []
+        self.rng_secrets: list[bytes] = []
+        self.mismatch_first_secrets: list[bytes] = []
+        for _ in range(128):
+            self.fixed_match_secrets.append(bytes(bytearray(self.fixed_secret)))
+            self.mismatch_last_secrets.append(bytes(bytearray(self.mismatch_last_byte)))
+            self.rng_secrets.append(os.urandom(64))
+            self.mismatch_first_secrets.append(bytes(bytearray(self.mismatch_first_byte)))
 
     def test_01_welford_accumulator_numerical_stability(self) -> None:
         """Verify Welford's algorithm against known statistical distributions."""
@@ -158,7 +169,7 @@ class TestDudectConstantTimeAnalysis(unittest.TestCase):
         t_stat = _measure_dudect_t_stat(
             constant_time_byte_equals,
             self.fixed_secret,
-            self.fixed_match_secrets,
+            self.mismatch_last_secrets,
             self.rng_secrets,
         )
         print(f"\n[DudeCT] Constant-Time hmac.compare_digest: |t| = {abs(t_stat):.4f} (Threshold = 4.5)")
@@ -179,7 +190,7 @@ class TestDudectConstantTimeAnalysis(unittest.TestCase):
         t_stat = _measure_dudect_t_stat(
             leaky_byte_equals,
             self.fixed_secret,
-            self.fixed_match_secrets,
+            self.mismatch_last_secrets,
             self.mismatch_first_secrets,
         )
         print(f"[DudeCT] Leaky Early-Exit Comparator:       |t| = {abs(t_stat):.4f} (Threshold = 4.5)")

@@ -107,7 +107,7 @@ jobs:
       - name: Rust Dependency Security & License Audit (cargo-deny)
         run: |
           cargo install --locked cargo-deny
-          cargo deny check --manifest-path rust_data_plane/Cargo.toml
+          (cd rust_data_plane && cargo deny check)
 
       - name: Execute Rust Test Suites (data plane, ts_rt, seL4 MILS) + Clippy
         run: |
