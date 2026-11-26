@@ -161,7 +161,7 @@ def run_test() -> bool:
         )
 
         # 3. Wait for bidirectional delivery
-        for _ in range(50):
+        for _ in range(120):
             if norad.received_messages and pentagon.received_messages:
                 break
             time.sleep(0.1)

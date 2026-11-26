@@ -88,11 +88,8 @@ def pytest_sessionstart(session):
     os.environ.setdefault("P2P_AUDIT_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
     os.environ.setdefault("P2P_STORAGE_PASSPHRASE", "cnsa2_default_test_audit_passphrase_32b_hex")
 
-    try:
-        import report_trust
-        report_trust.load_or_create_audit_signer()
-    except Exception:
-        pass
+    # Ensure repo root is on sys.path (after any installed site-packages wheel)
+    # without pre-generating an ephemeral audit signer that shadows certs/.
 
     # 1. Prefer an installed native destroyer_core wheel in site-packages;
     # only append rust_data_plane/python when destroyer_core._native isn't already available
@@ -125,7 +122,7 @@ def pytest_sessionstart(session):
         data_plane_debug = repo_root / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
         if not data_plane_debug.exists():
             try:
-                subprocess.run([cargo, "build", "--manifest-path", str(repo_root / "rust_data_plane" / "Cargo.toml")],
+                subprocess.run([cargo, "build", "--manifest-path", str(repo_root / "rust_data_plane" / "Cargo.toml"), "--offline", "--features", "lab-surfaces", "--bin", "secure-transmit"],
                                check=True, timeout=120, capture_output=True)
             except Exception:
                 pass

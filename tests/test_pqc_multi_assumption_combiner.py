@@ -409,12 +409,20 @@ class TestPqcMultiAssumptionCombiner:
         # 1. Raw binary file
         raw_file = tmp_path / "h_psk_raw.bin"
         raw_file.write_bytes(raw_key)
+        try:
+            os.chmod(raw_file, 0o600)
+        except OSError:
+            pass
         psk_loaded = pma.load_hardware_psk(raw_file)
         assert secrets.compare_digest(psk_loaded.as_bytes(), raw_key) is True
 
         # 2. Hex text file
         hex_file = tmp_path / "h_psk_hex.txt"
         hex_file.write_text(raw_key.hex() + "\n", encoding="ascii")
+        try:
+            os.chmod(hex_file, 0o600)
+        except OSError:
+            pass
         psk_hex_loaded = pma.load_hardware_psk(hex_file)
         assert secrets.compare_digest(psk_hex_loaded.as_bytes(), raw_key) is True
 
@@ -582,6 +590,10 @@ class TestPqcMultiAssumptionCombiner:
         raw_key = secrets.token_bytes(32)
         b64_file = tmp_path / "psk.b64"
         b64_file.write_text(base64.b64encode(raw_key).decode("ascii") + "\n", encoding="ascii")
+        try:
+            os.chmod(b64_file, 0o600)
+        except OSError:
+            pass
 
         psk = pma.load_hardware_psk(b64_file)
         assert secrets.compare_digest(psk.as_bytes(), raw_key) is True

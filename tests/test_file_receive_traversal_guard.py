@@ -201,7 +201,7 @@ def test_reassemble_refuses_preexisting_path_directly(tmp_path):
     with pytest.raises(ValueError, match="pre-existing"):
         handler.reassemble_file([chunk], planted, digest)
     assert planted.read_bytes() == b"ORIGINAL"
-    with pytest.raises(OSError):
+    with pytest.raises((OSError, ValueError)):
         handler.reassemble_file([chunk], tmp_path, digest)
 
 

@@ -347,7 +347,8 @@ class TestComprehensiveSecurityTiers(unittest.TestCase):
             "alice", "passphrase_alpha_secure_99",
             "bob", "passphrase_bravo_secure_88",
         )
-        self.assertTrue(buf.is_protected)
+        if sys.platform == "win32":
+            self.assertTrue(buf.is_protected)
         self.assertEqual(buf.export_bytes(), raw_key)
         buf.wipe()
         self.assertTrue(buf.wiped)

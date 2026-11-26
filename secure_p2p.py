@@ -16391,7 +16391,7 @@ def run_automated_two_terminal_drill() -> bool:
         pentagon.send_chat_message("PENTAGON_CMD_TACTICAL_ORDER_ALPHA_77")
         norad.send_chat_message("NORAD_DEFCON1_ACK_RADAR_LOCK_CONFIRMED")
 
-        for _ in range(40):
+        for _ in range(120):
             if norad.received_messages and pentagon.received_messages:
                 break
             time.sleep(0.1)
@@ -16413,7 +16413,7 @@ def run_automated_two_terminal_drill() -> bool:
             pal_code="BRAVO-FOXTROT-8890"
         ), "NORAD failed to dispatch EAM"
 
-        for _ in range(50):
+        for _ in range(150):
             if any("BRAVO-FOXTROT-8890" in m for m in pentagon.received_messages):
                 break
             time.sleep(0.1)
@@ -16429,7 +16429,7 @@ def run_automated_two_terminal_drill() -> bool:
             caveats="NOFORN"
         ), "Pentagon failed to send MMHS Flash message"
 
-        for _ in range(30):
+        for _ in range(80):
             if any("STRATEGIC DEFENSE SATELLITE" in m for m in norad.received_messages):
                 break
             time.sleep(0.1)

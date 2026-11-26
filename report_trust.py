@@ -339,23 +339,40 @@ def verify_with_anchor(
     data = report_path.read_bytes()
     sig = sig_path.read_bytes()
 
-    if anchor_path is None:
-        anchor_path, _ = audit_signer_paths()
-    anchor_path = Path(anchor_path)
-    if anchor_path.exists():
+    if anchor_path is not None:
+        anchor_path = Path(anchor_path)
+        if not anchor_path.exists():
+            log.error("explicit report trust anchor missing: %s", anchor_path)
+            return False
         _assert_no_link(anchor_path)
         pk = anchor_path.read_bytes()
         if pub_path.exists() and not _hmac.compare_digest(pub_path.read_bytes(), pk):
             log.error("report embedded public key does not match the trust anchor")
             return False
     else:
-        if pub_path.exists():
-            pk = pub_path.read_bytes()
-        elif is_production():
-            log.error("report trust anchor missing in production (fail-closed)")
+        candidates: list[Path] = []
+        local_anchor, _ = audit_signer_paths()
+        if local_anchor.exists():
+            _assert_no_link(local_anchor)
+            candidates.append(local_anchor)
+        repo_anchor = REPO_ROOT / "certs" / "audit_signer.mldsa87.pub"
+        if repo_anchor.exists():
+            _assert_no_link(repo_anchor)
+            candidates.append(repo_anchor)
+        if not candidates:
+            log.error("report trust anchor missing (fail-closed)")
             return False
-        else:
+        pub_bytes = pub_path.read_bytes() if pub_path.exists() else None
+        matched_pk = None
+        for cand in candidates:
+            cand_pk = cand.read_bytes()
+            if pub_bytes is None or _hmac.compare_digest(pub_bytes, cand_pk):
+                matched_pk = cand_pk
+                break
+        if matched_pk is None:
+            log.error("report embedded public key does not match the trust anchor")
             return False
+        pk = matched_pk
 
     return bool(
         verifier.verify(pk, data, sig)

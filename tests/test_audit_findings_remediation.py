@@ -230,27 +230,38 @@ def test_f08_tactical_station_arms_production_gate_when_non_lab():
 
 def test_f08_canonical_production_dispatch_to_native_binary():
     """F-08: Verify main() with command 'node' in non-lab mode dispatches directly to native secure-transmit node."""
+    import tempfile
     import secure_p2p
 
-    fake_args = [
-        "node",
-        "--role", "initiator",
-        "--psk-file", "dummy.psk",
-        "--auth-sk-file", "dummy.auth.sk",
-        "--peer-auth-pk-file", "dummy.auth.pk",
-        "--require-mutual-auth"
-    ]
-    with patch("os.path.exists", return_value=True), \
-         patch("secure_p2p._validate_auth_material", return_value=(True, "OK")), \
-         patch("subprocess.call", return_value=0) as mock_call:
-        res = secure_p2p.main(fake_args)
-        assert res == 0
-        assert mock_call.called
-        cmd = mock_call.call_args[0][0]
-        assert "node" in cmd
-        assert "--role" in cmd
-        assert "initiator" in cmd
-        assert "--require-mutual-auth" in cmd
+    with tempfile.TemporaryDirectory() as td:
+        psk = os.path.join(td, "dummy.psk")
+        sk = os.path.join(td, "dummy.auth.sk")
+        pk = os.path.join(td, "dummy.auth.pk")
+        for p in (psk, sk, pk):
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("00" * 32 + "\n")
+            try:
+                os.chmod(p, 0o600)
+            except OSError:
+                pass
+        fake_args = [
+            "node",
+            "--role", "initiator",
+            "--psk-file", psk,
+            "--auth-sk-file", sk,
+            "--peer-auth-pk-file", pk,
+            "--require-mutual-auth"
+        ]
+        with patch("secure_p2p._validate_auth_material", return_value=(True, "OK")), \
+             patch("subprocess.call", return_value=0) as mock_call:
+            res = secure_p2p.main(fake_args)
+            assert res == 0
+            assert mock_call.called
+            cmd = mock_call.call_args[0][0]
+            assert "node" in cmd
+            assert "--role" in cmd
+            assert "initiator" in cmd
+            assert "--require-mutual-auth" in cmd
 
 
 def test_f04_deterministic_iv_expanded_subsystems():

@@ -183,6 +183,10 @@ def test_auth_tpm_seal_and_unseal(native_bin, mock_tpm_env):
     raw_seed = os.urandom(32)
     # Write 64 hex chars followed by newline
     seed_file.write_text(raw_seed.hex() + "\n", encoding="utf-8")
+    try:
+        os.chmod(seed_file, 0o600)
+    except OSError:
+        pass
 
     priv_path = tmp_path / "node_identity.priv"
     pub_path = tmp_path / "node_identity.pub"
@@ -220,6 +224,10 @@ def test_auth_tpm_unseal_tamper_fail_closed(native_bin, mock_tpm_env):
     env, tmp_path = mock_tpm_env
     seed_file = tmp_path / "tamper_seed.hex"
     seed_file.write_text(os.urandom(32).hex() + "\n", encoding="utf-8")
+    try:
+        os.chmod(seed_file, 0o600)
+    except OSError:
+        pass
 
     priv_path = tmp_path / "tamper_identity.priv"
     pub_path = tmp_path / "tamper_identity.pub"
@@ -290,6 +298,10 @@ def test_kex_loopback_with_auth_tpm_sealed(native_bin, mock_tpm_env):
 
     psk_file = tmp_path / "shared.psk"
     psk_file.write_text(os.urandom(32).hex() + "\n", encoding="utf-8")
+    try:
+        os.chmod(psk_file, 0o600)
+    except OSError:
+        pass
     resp_out_key = tmp_path / "resp_session.key"
     init_out_key = tmp_path / "init_session.key"
 

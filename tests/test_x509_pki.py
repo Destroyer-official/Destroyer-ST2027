@@ -117,6 +117,10 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         psk_file = self.tmp / "shared.psk"
         with open(psk_file, "w") as f:
             f.write(("42" * 32) + "\n")
+        try:
+            os.chmod(psk_file, 0o600)
+        except OSError:
+            pass
 
         resp_sk, resp_pk, resp_pk_bytes = self._generate_identity("resp")
         init_sk, init_pk, init_pk_bytes = self._generate_identity("init")
@@ -177,6 +181,10 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         psk_file = self.tmp / "shared.psk"
         with open(psk_file, "w") as f:
             f.write(("42" * 32) + "\n")
+        try:
+            os.chmod(psk_file, 0o600)
+        except OSError:
+            pass
 
         resp_sk, resp_pk, resp_pk_bytes = self._generate_identity("resp_bad")
         init_sk, init_pk, init_pk_bytes = self._generate_identity("init_bad")
@@ -231,6 +239,10 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         psk_file = self.tmp / "shared.psk"
         with open(psk_file, "w") as f:
             f.write(("42" * 32) + "\n")
+        try:
+            os.chmod(psk_file, 0o600)
+        except OSError:
+            pass
 
         resp_sk, resp_pk, resp_pk_bytes = self._generate_identity("resp_crl")
         init_sk, init_pk, init_pk_bytes = self._generate_identity("init_crl")

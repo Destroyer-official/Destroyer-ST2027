@@ -43,6 +43,10 @@ class TestPacedSocketWrapper(unittest.TestCase):
         key_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
         with open(self.key_path, "w") as f:
             f.write(key_hex)
+        try:
+            os.chmod(self.key_path, 0o600)
+        except OSError:
+            pass
 
     def tearDown(self):
         import shutil

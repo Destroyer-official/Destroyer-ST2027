@@ -277,7 +277,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq ocaml gcc make curl
-          curl -fsSL https://proverif.inria.fr/proverif2.05.tar.gz -o /tmp/proverif2.05.tar.gz
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 5 https://proverif.inria.fr/proverif2.05.tar.gz -o /tmp/proverif2.05.tar.gz
           echo "4871f53c32ab4a04669a060c4886ba5d9080496963fb980a9a62d2c429ceabc4  /tmp/proverif2.05.tar.gz" | sha256sum -c -
           rm -rf /tmp/proverif2.05
           tar -xzf /tmp/proverif2.05.tar.gz -C /tmp
@@ -428,11 +428,16 @@ jobs:
 
       - name: Set up Rust Toolchain & Build Native Data Plane / CLI
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
+        with:
+          targets: aarch64-unknown-none
       - name: Prefetch & Build Rust Artifacts + destroyer_core Extension
         run: |
           cargo fetch --locked --manifest-path rust_data_plane/Cargo.toml
+          cargo fetch --locked --manifest-path ts_rt/Cargo.toml
           pip install maturin
           python -c "import glob, os, subprocess, sys, tempfile; d = os.path.join(tempfile.gettempdir(), 'dw'); subprocess.check_call(['maturin', 'build', '-r', '--no-default-features', '--offline', '-m', 'rust_data_plane/Cargo.toml', '-i', sys.executable, '-o', d]); whls = glob.glob(os.path.join(d, 'destroyer_core-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--force-reinstall'] + whls)"
+          cargo build --release --offline --manifest-path ts_rt/Cargo.toml
+          cargo build --release --offline --manifest-path rust_data_plane/Cargo.toml --no-default-features --bin secure-transmit --bin verify-binaries
           cargo build --offline --manifest-path rust_data_plane/Cargo.toml --features lab-surfaces --bin secure-transmit
 
       # Blocking gate: full test suite minus live-hardware tests (which require real TPM/HSM silicon).

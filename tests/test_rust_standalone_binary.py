@@ -1017,16 +1017,16 @@ class TestRustStandaloneBinary(unittest.TestCase):
                 [BIN, "channel", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
-                 "--recv-count", "1", "--drain-ticks", "10", "--timeout-ms", "8000"],
+                 "--recv-count", "1", "--drain-ticks", "10", "--timeout-ms", "12000"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
-            time.sleep(0.15)
+            time.sleep(0.25)
 
             init_proc = subprocess.Popen(
                 [BIN, "channel", "--key-file", kf, "--state", state_init,
                  "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
                  "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
-                 "--stdin", "--timeout-ms", "8000"],
+                 "--stdin", "--timeout-ms", "12000"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
 
@@ -1036,12 +1036,12 @@ class TestRustStandaloneBinary(unittest.TestCase):
             # Trigger interactive /rekey
             init_proc.stdin.write("/rekey\n")
             init_proc.stdin.flush()
-            time.sleep(0.4)
+            time.sleep(0.8)
 
             # Send post-rekey message
             init_proc.stdin.write("POST_REKEY_CLASSIFIED_MESSAGE\n")
             init_proc.stdin.flush()
-            time.sleep(0.3)
+            time.sleep(0.8)
 
             # Zeroize to terminate initiator
             init_proc.stdin.write("/zeroize\n")

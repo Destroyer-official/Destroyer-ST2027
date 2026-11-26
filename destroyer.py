@@ -85,6 +85,14 @@ def probe_hardware_and_environment():
     # 3. LibOQS Post-Quantum Library
     oqs_dll = ROOT / ("oqs.dll" if os.name == "nt" else "liboqs.so")
     oqs_ok = oqs_dll.exists()
+    if not oqs_ok:
+        try:
+            import liboqs_wrapper
+            if liboqs_wrapper.LIBOQS_DLL_PATH and Path(liboqs_wrapper.LIBOQS_DLL_PATH).exists():
+                oqs_dll = Path(liboqs_wrapper.LIBOQS_DLL_PATH)
+                oqs_ok = True
+        except Exception:
+            pass
     status_oqs = (
         f"{GREEN}[PRESENT]{RESET} Native liboqs binary loaded (FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87; CMVP module certificate pending)"
         if oqs_ok else f"{RED}[ABSENT]{RESET}"

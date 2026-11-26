@@ -43,17 +43,17 @@ struct Bucket {
 }
 
 impl Bucket {
-    fn new(now: Instant) -> Self {
+    fn new(now: Instant, capacity: f64) -> Self {
         Bucket {
-            tokens: BUCKET_CAPACITY,
+            tokens: capacity,
             last: now,
         }
     }
 
     /// Returns true when one token could be consumed (and consumes it).
-    fn take(&mut self, now: Instant) -> bool {
+    fn take(&mut self, now: Instant, capacity: f64, refill_per_sec: f64) -> bool {
         let dt = now.duration_since(self.last).as_secs_f64();
-        self.tokens = (self.tokens + dt * BUCKET_REFILL_PER_SEC).min(BUCKET_CAPACITY);
+        self.tokens = (self.tokens + dt * refill_per_sec).min(capacity);
         self.last = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -67,6 +67,8 @@ impl Bucket {
 pub struct Endpoint {
     socket: UdpSocket,
     buckets: HashMap<IpAddr, Bucket>,
+    rate_capacity: f64,
+    rate_refill_per_sec: f64,
     /// Datagrams dropped for any reason (parse/auth/rate). Never signaled.
     pub drops: u64,
     /// Datagrams accepted past the rate limiter (still need AEAD check).
@@ -80,9 +82,18 @@ impl Endpoint {
         Ok(Endpoint {
             socket,
             buckets: HashMap::new(),
+            rate_capacity: BUCKET_CAPACITY,
+            rate_refill_per_sec: BUCKET_REFILL_PER_SEC,
             drops: 0,
             admitted: 0,
         })
+    }
+
+    /// Configure the per-source token bucket bounds (used by paced channels
+    /// whose constant cadence can exceed the default 16 pkt/s general limit).
+    pub fn set_rate_limit(&mut self, capacity: f64, refill_per_sec: f64) {
+        self.rate_capacity = capacity.max(BUCKET_CAPACITY);
+        self.rate_refill_per_sec = refill_per_sec.max(BUCKET_REFILL_PER_SEC);
     }
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -122,11 +133,13 @@ impl Endpoint {
         if !self.buckets.contains_key(&from.ip()) {
             self.evict_stale_buckets();
         }
+        let cap = self.rate_capacity;
+        let refill = self.rate_refill_per_sec;
         let bucket = self
             .buckets
             .entry(from.ip())
-            .or_insert_with(|| Bucket::new(now));
-        if !bucket.take(now) {
+            .or_insert_with(|| Bucket::new(now, cap));
+        if !bucket.take(now, cap, refill) {
             self.drops += 1;
             return Some(Err(OverBudget::Rate));
         }
@@ -709,7 +722,7 @@ mod tests {
             let c = (i >> 8) as u8;
             let d = i as u8;
             let ip: IpAddr = format!("10.{b}.{c}.{d}").parse().unwrap();
-            rx.buckets.insert(ip, Bucket::new(now));
+            rx.buckets.insert(ip, Bucket::new(now, BUCKET_CAPACITY));
         }
         assert!(rx.buckets.len() > MAX_BUCKETS);
         rx.evict_stale_buckets();

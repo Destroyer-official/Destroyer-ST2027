@@ -8568,7 +8568,16 @@ def enhanced_secure_random(num_bytes: int = 32) -> dict:
                 "Successfully gathered entropy from Windows CryptGenRandom")
             sources_used += 1
         elif IS_LINUX:
-            # Try reading directly from /dev/urandom first
+            # Gather OS CSPRNG via Python secrets (getrandom(2)) and /dev/urandom
+            try:
+                sec_bytes = secrets.token_bytes(num_bytes)
+                for i in range(num_bytes):
+                    entropy_pool[i] ^= sec_bytes[i]
+                result["sources_used"].append("secrets.token_bytes")
+                result["sources"].append("secrets.token_bytes")
+                sources_used += 1
+            except Exception:
+                pass
             try:
                 with open("/dev/urandom", "rb") as f:
                     random_bytes = f.read(num_bytes)
@@ -9448,10 +9457,8 @@ def _resolve_pkcs11_pin(pin, platform_config, pkcs11_lib_path):
         cfg = platform_config or {}
         try:
             if IS_LINUX and pkcs11_lib_path and "softhsm2" in pkcs11_lib_path:
-                current = cfg.get("softhsm2", {}).get("pin")
-            elif IS_WINDOWS:
-                current = cfg.get("pkcs11", {}).get("pin")
-            elif IS_DARWIN:
+                current = cfg.get("softhsm2", {}).get("pin") or cfg.get("pkcs11", {}).get("pin")
+            elif IS_WINDOWS or IS_DARWIN or IS_LINUX:
                 current = cfg.get("pkcs11", {}).get("pin")
         except Exception:
             current = None

@@ -229,7 +229,7 @@ class TestRustCoreSecuritySuite(unittest.TestCase):
             "rust_data_plane",
             "target",
             "release",
-            "secure-transmit.exe",
+            "secure-transmit.exe" if os.name == "nt" else "secure-transmit",
         )
         if not os.path.exists(exe_path):
             self.skipTest(f"Binary {exe_path} not built")

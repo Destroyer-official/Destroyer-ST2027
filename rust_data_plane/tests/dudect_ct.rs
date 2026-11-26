@@ -112,11 +112,7 @@ fn leaky_cmp(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
-fn measure_pair_t_statistic<T, F>(
-    pairs: &[(T, T)],
-    rng: &mut u64,
-    mut op: F,
-) -> f64
+fn measure_pair_t_statistic<T, F>(pairs: &[(T, T)], rng: &mut u64, mut op: F) -> f64
 where
     F: FnMut(&T) -> bool,
 {
@@ -171,7 +167,10 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
     let t = measure_pair_t_statistic(&pairs, &mut rng, |cand| {
         ct::ct_eq(black_box(&fixed_secret_a), black_box(cand))
     });
-    println!("\n[DudeCT-Rust] ct::ct_eq: |t| = {:.4} (Threshold = 4.5)", t.abs());
+    println!(
+        "\n[DudeCT-Rust] ct::ct_eq: |t| = {:.4} (Threshold = 4.5)",
+        t.abs()
+    );
     assert!(
         t.abs() < 4.5,
         "ct::ct_eq exhibited statistically significant timing leakage! |t| = {}",
@@ -182,7 +181,8 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
 #[test]
 fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
     let mut rng: u64 = 0xFEDCBA9876543210;
-    let fixed_secret_a = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
+    let fixed_secret_a =
+        nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
     let mut pairs: Vec<(
         nostd_microcore::StackSecretBuffer<32>,
         nostd_microcore::StackSecretBuffer<32>,
@@ -201,7 +201,10 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
     let t = measure_pair_t_statistic(&pairs, &mut rng, |cand| {
         fixed_secret_a.ct_eq(black_box(cand))
     });
-    println!("[DudeCT-Rust] StackSecretBuffer::ct_eq: |t| = {:.4} (Threshold = 4.5)", t.abs());
+    println!(
+        "[DudeCT-Rust] StackSecretBuffer::ct_eq: |t| = {:.4} (Threshold = 4.5)",
+        t.abs()
+    );
     assert!(
         t.abs() < 4.5,
         "StackSecretBuffer::ct_eq leaked timing! |t| = {}",
@@ -220,7 +223,10 @@ fn dudect_rust_leaky_comparator_detected_as_positive_control() {
     let t = measure_pair_t_statistic(&pairs, &mut rng, |cand| {
         leaky_cmp(black_box(&fixed_secret_a), black_box(cand))
     });
-    println!("[DudeCT-Rust] Leaky comparator: |t| = {:.4} (Threshold = 3.5)", t.abs());
+    println!(
+        "[DudeCT-Rust] Leaky comparator: |t| = {:.4} (Threshold = 3.5)",
+        t.abs()
+    );
     assert!(
         t.abs() > 3.5,
         "DudeCT detector failed to flag leaky comparator! |t| = {}",

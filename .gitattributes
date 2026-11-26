@@ -9,6 +9,8 @@ compliance_reports/**/*.sig* binary
 compliance_reports/*.pub* binary
 compliance_reports/**/*.pub* binary
 critical_modules.hashes text eol=lf
+docs/FIPS_140_3_SECURITY_POLICY.md text eol=lf
+config_production.json text eol=crlf
 
 # GitHub Linguist language bar overrides
 # Exclude local demonstration web UI and test suites from repository language statistics

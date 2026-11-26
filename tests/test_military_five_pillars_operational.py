@@ -35,6 +35,10 @@ class TestMilitaryFivePillars:
         self.psk_path = os.path.join(self.tmp_dir, "tactical.psk")
         with open(self.psk_path, "w", encoding="utf-8") as f:
             f.write(secrets.token_hex(32) + "\n")
+        try:
+            os.chmod(self.psk_path, 0o600)
+        except OSError:
+            pass
 
         # Set up Military Root CA
         self.ca = create_certificate_authority("US_STRATEGIC_DEFENSE_ROOT_CA")

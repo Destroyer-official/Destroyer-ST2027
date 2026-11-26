@@ -42,10 +42,10 @@ def test_military_base_alpha_and_bravo_automated_drill():
     """Execute live automated drill between Base Alpha (NORAD) and Base Bravo (Pentagon)."""
     port = _find_free_port_pair()
 
-    alpha_out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
-    alpha_err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
-    bravo_out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
-    bravo_err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+    alpha_out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    alpha_err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    bravo_out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    bravo_err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
 
     try:
         # Launch Base Alpha (NORAD Server)

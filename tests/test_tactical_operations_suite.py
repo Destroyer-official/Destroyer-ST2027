@@ -27,7 +27,15 @@ RELEASE_BIN = CRATE / "target" / "release" / ("secure-transmit.exe" if os.name =
 class TestTacticalOperationsSuite(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not BIN.exists():
+        need_build = not BIN.exists()
+        if not need_build:
+            probe = subprocess.run(
+                [str(BIN), "cot-beacon", "--callsign", "PROBE-01", "--lat", "0.0", "--lon", "0.0", "--type", "a-f"],
+                capture_output=True, text=True, cwd=str(CRATE), timeout=10,
+            )
+            if probe.returncode != 0:
+                need_build = True
+        if need_build:
             built = subprocess.run(
                 ["cargo", "build", "--offline", "--features", "lab-surfaces", "--bin", "secure-transmit"],
                 capture_output=True, text=True, cwd=str(CRATE), timeout=600

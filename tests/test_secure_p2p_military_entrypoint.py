@@ -92,6 +92,10 @@ def test_production_node_rejects_malformed_auth_material():
         sk = td / "local.sk"
         pk = td / "peer.pk"
         sk.write_text("00" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(sk, 0o600)
+        except OSError:
+            pass
         pk.write_text("00" * 32 + "\n", encoding="utf-8")  # too short
         res = _run(
             ["node", "--role", "responder", "--psk-file", str(psk),
@@ -114,6 +118,10 @@ def test_production_refuses_weak_crypto_env_overrides():
         sk = td / "local.sk"
         pk = td / "peer.pk"
         sk.write_text("11" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(sk, 0o600)
+        except OSError:
+            pass
         pk.write_text("22" * 2592 + "\n", encoding="utf-8")
         res = _run(
             ["node", "--role", "responder", "--psk-file", str(psk),
@@ -161,6 +169,10 @@ def test_production_node_with_require_hardware_fails_closed():
         sk = td / "local.sk"
         pk = td / "peer.pk"
         sk.write_text("11" * 32 + "\n", encoding="utf-8")
+        try:
+            os.chmod(sk, 0o600)
+        except OSError:
+            pass
         pk.write_text("22" * 2592 + "\n", encoding="utf-8")
         res = _run(
             ["node", "--role", "responder", "--psk-file", str(psk),

@@ -539,9 +539,14 @@ fn encode_state(st: &SessionState, key: &[u8; 32]) -> [u8; STATE_LEN] {
     b[8..24].copy_from_slice(&st.key_id);
     b[24..32].copy_from_slice(&st.send_seq.to_le_bytes());
     b[32..40].copy_from_slice(&st.recv_last.to_le_bytes());
-    for i in 0..destroyer_core::replay::WINDOW_WORDS {
+    for (i, word) in st
+        .recv_bitmap
+        .iter()
+        .enumerate()
+        .take(destroyer_core::replay::WINDOW_WORDS)
+    {
         let start = 40 + i * 8;
-        b[start..start + 8].copy_from_slice(&st.recv_bitmap[i].to_le_bytes());
+        b[start..start + 8].copy_from_slice(&word.to_le_bytes());
     }
     let mac = compute_state_hmac(key, &b[..STATE_RAW_LEN]);
     b[STATE_RAW_LEN..STATE_LEN].copy_from_slice(&mac);
@@ -2141,6 +2146,8 @@ fn cmd_channel(args: &[String]) {
         let mut ep = Endpoint::bind(&bind.to_string())
             .await
             .unwrap_or_else(|_| fail("channel bind failed"));
+        let cadence_hz = 1000.0 / interval_ms.max(1) as f64;
+        ep.set_rate_limit(256.0_f64.max(cadence_hz * 4.0), (cadence_hz * 2.5).max(32.0));
         let mut ticks_emitted = 0u64;
         let mut msgs_sent = 0u64;
         let mut msgs_received = 0u64;
@@ -2991,6 +2998,8 @@ fn cmd_terminal(args: &[String]) {
         let mut ep = Endpoint::bind(&bind.to_string())
             .await
             .unwrap_or_else(|_| fail("terminal UDP bind failed"));
+        let cadence_hz = 1000.0 / interval_ms.max(1) as f64;
+        ep.set_rate_limit(256.0_f64.max(cadence_hz * 4.0), (cadence_hz * 2.5).max(32.0));
         let mut ticks_emitted = 0u64;
         let mut msgs_sent = 0u64;
         let mut chaff_sent = 0u64;

@@ -108,9 +108,10 @@ class TestRuntimeMemoryBoundary(unittest.TestCase):
 
     def test_native_rust_node_binary_exists_and_selftests(self):
         """Verify native Rust binary secure-transmit runs selftest cleanly."""
-        exe_path = Path("rust_data_plane/target/debug/secure-transmit.exe")
+        bin_name = "secure-transmit.exe" if os.name == "nt" else "secure-transmit"
+        exe_path = Path(f"rust_data_plane/target/debug/{bin_name}")
         if not exe_path.exists():
-            exe_path = Path("rust_data_plane/target/release/secure-transmit.exe")
+            exe_path = Path(f"rust_data_plane/target/release/{bin_name}")
         self.assertTrue(exe_path.exists(), f"Compiled binary not found: {exe_path}")
 
         res = subprocess.run(
@@ -126,9 +127,10 @@ class TestRuntimeMemoryBoundary(unittest.TestCase):
 
     def test_native_rust_node_help_and_argument_parsing(self):
         """Verify native Rust binary secure-transmit node subcommand argument handling."""
-        exe_path = Path("rust_data_plane/target/debug/secure-transmit.exe")
+        bin_name = "secure-transmit.exe" if os.name == "nt" else "secure-transmit"
+        exe_path = Path(f"rust_data_plane/target/debug/{bin_name}")
         if not exe_path.exists():
-            exe_path = Path("rust_data_plane/target/release/secure-transmit.exe")
+            exe_path = Path(f"rust_data_plane/target/release/{bin_name}")
 
         res = subprocess.run(
             [str(exe_path), "node", "--help"],
@@ -513,9 +515,10 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
 
     def test_native_rust_node_loopback_e2e_communication(self):
         """Verify two standalone native secure-transmit node processes communicate via UDP."""
-        exe_path = Path("rust_data_plane/target/release/secure-transmit.exe")
+        bin_name = "secure-transmit.exe" if os.name == "nt" else "secure-transmit"
+        exe_path = Path(f"rust_data_plane/target/release/{bin_name}")
         if not exe_path.exists():
-            exe_path = Path("rust_data_plane/target/debug/secure-transmit.exe")
+            exe_path = Path(f"rust_data_plane/target/debug/{bin_name}")
         self.assertTrue(exe_path.exists(), f"Compiled binary not found: {exe_path}")
 
         with tempfile.TemporaryDirectory() as td:

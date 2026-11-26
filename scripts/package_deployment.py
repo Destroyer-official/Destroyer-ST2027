@@ -42,6 +42,7 @@ REQUIRED = [
 
 OPTIONAL = [
     "ts_rt/target/release/ts_rt.dll",
+    "ts_rt/target/release/libts_rt.so",
     "scripts/setup_tor_overlay.sh",
     "scripts/setup_wireguard.sh",
     "scripts/witnessed_key_ceremony.py",
