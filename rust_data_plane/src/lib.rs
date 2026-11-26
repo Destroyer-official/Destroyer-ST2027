@@ -442,6 +442,7 @@ impl NativeHybridKex {
         } else {
             kem::derive_session_key(&hybrid_ss, b"ST2027-SESSION-KEY-V2")
         };
+        ffi::check_production_key_export()?;
         Ok((eph_pub.to_vec(), ct, session_key.to_vec()))
     }
 
@@ -452,10 +453,7 @@ impl NativeHybridKex {
         peer_ml_ct: Vec<u8>,
         transcript_hash: Vec<u8>,
     ) -> PyResult<Vec<u8>> {
-        let keys = self
-            .keys
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
+        ffi::check_production_key_export()?;
         if peer_eph_p_pub.len() != kem::P384_PK {
             return Err(PyValueError::new_err("peer_eph_p_pub must be 97 bytes"));
         }
@@ -466,6 +464,10 @@ impl NativeHybridKex {
                 peer_ml_ct.len()
             )));
         }
+        let keys = self
+            .keys
+            .take()
+            .ok_or_else(|| PyValueError::new_err("keys already consumed"))?;
         let mut p_arr = [0u8; kem::P384_PK];
         p_arr.copy_from_slice(&peer_eph_p_pub);
         let hybrid_ss = keys

@@ -382,7 +382,7 @@ def test_13_simplex_direction_ast_enforcement():
 def test_14_receiver_bind_security():
     """Verify receiver refuses wildcard binds by default and invalid host/port configurations."""
     with pytest.raises(ValueError):
-        OpticalDiodeReceiver(bind_host="0.0.0.0", bind_port=55301)
+        OpticalDiodeReceiver(bind_host="0.0.0.0", bind_port=55301)  # nosec: B104 - intentional wildcard rejection test
     with pytest.raises(ValueError):
         OpticalDiodeReceiver(bind_host="::", bind_port=55302)
     with pytest.raises(ValueError):

@@ -411,7 +411,7 @@ class AODecisionEngine:
         )
         return sig_valid
 
-    def evaluate_all_and_package_evidence(self) -> Dict[str, Any]:
+    def evaluate_all_and_package_evidence(self, output_dir: Optional[Path] = None) -> Dict[str, Any]:
         """Evaluate all gates and write a SELF-ASSESSMENT evidence pack.
 
         Returns the decision dict and writes
@@ -481,7 +481,9 @@ class AODecisionEngine:
             },
         }
 
-        out_path = REPORTS_DIR / "ato_authorization_decision.json"
+        out_dir = Path(output_dir) if output_dir is not None else REPORTS_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "ato_authorization_decision.json"
         out_path.write_text(json.dumps(decision, indent=2), encoding="utf-8")
 
         print("-" * 80)

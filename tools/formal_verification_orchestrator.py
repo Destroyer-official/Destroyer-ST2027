@@ -132,7 +132,7 @@ def execute_rust_property_doubles() -> Tuple[bool, str, Dict[str, Any]]:
 
     try:
         proc = subprocess.run(
-            [cargo, "test", "--test", "kani_harness"],
+            [cargo, "test", "--offline", "--test", "kani_harness"],
             capture_output=True,
             text=True,
             timeout=180,
@@ -230,7 +230,7 @@ def execute_dudect_timing() -> Tuple[bool, str, Dict[str, Any]]:
     if cargo:
         try:
             proc = subprocess.run(
-                [cargo, "test", "--test", "dudect_ct", "--", "--nocapture"],
+                [cargo, "test", "--offline", "--test", "dudect_ct", "--", "--nocapture"],
                 capture_output=True,
                 text=True,
                 timeout=120,

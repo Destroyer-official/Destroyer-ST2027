@@ -23,75 +23,131 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-# Cryptographic domain constants
-GROUP_PROTO_ID = b"ST2027-SOVEREIGN-GROUP-v1"
+# Cryptographic domain constants (V2 canonical length-prefixed AAD matches Rust group_ratchet)
+GROUP_PROTO_ID = b"ST2027-SOVEREIGN-GROUP-v2"
 EPOCH_KDF_INFO = b"ST2027-Group-Epoch-Rekey-HKDF-SHA384"
 CHAIN_KDF_INFO = b"ST2027-Group-Chain-Ratchet-HKDF-SHA384"
 MSG_KDF_INFO = b"ST2027-Group-Message-Key-HKDF-SHA384"
+SENDER_SIG_DOMAIN = b"ST2027-GROUP-SENDER-SIG-V2:"
 
 # Maximum chain catch-up per message (bounds DoS via forged huge sequence numbers).
 MAX_CHAIN_CATCHUP = 1000
 
 
-def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
+def _wipe(buf: Optional[bytearray]) -> None:
+    if isinstance(buf, bytearray):
+        for i in range(len(buf)):
+            buf[i] = 0
+
+
+def _message_aad(group_id: str, epoch: int, sender_id: str, seq: int) -> bytes:
+    """Canonical length-prefixed AAD matching Rust `group_ratchet::message_aad`."""
+    gid_b = group_id.encode("utf-8")
+    sid_b = sender_id.encode("utf-8")
+    return (
+        GROUP_PROTO_ID
+        + struct.pack(">I", len(gid_b))
+        + gid_b
+        + struct.pack(">Q", epoch)
+        + struct.pack(">I", len(sid_b))
+        + sid_b
+        + struct.pack(">Q", seq)
+    )
+
+
+def _hkdf_expand(prk: bytes | bytearray, info: bytes, length: int) -> bytes:
     """HKDF-Expand using SHA-384."""
+    key_b = bytes(prk)
     out = b""
     t = b""
     counter = 1
     while len(out) < length:
-        h = hmac.new(prk, t + info + bytes([counter]), hashlib.sha384)
+        h = hmac.new(key_b, t + info + bytes([counter]), hashlib.sha384)
         t = h.digest()
         out += t
         counter += 1
     return out[:length]
 
 
-def _hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
+def _hkdf_extract(salt: bytes | bytearray, ikm: bytes | bytearray) -> bytes:
     """HKDF-Extract using SHA-384."""
-    return hmac.new(salt, ikm, hashlib.sha384).digest()
+    return hmac.new(bytes(salt), bytes(ikm), hashlib.sha384).digest()
 
 
 @dataclass
 class MemberSenderKey:
-    """Symmetric chain state for a specific group member."""
+    """Symmetric chain state for a specific group member (zeroizable bytearray storage)."""
     member_id: str
-    chain_key: bytes
+    chain_key: bytearray
     message_seq: int = 0
 
-    def ratchet_forward(self) -> Tuple[bytes, int]:
-        """Derive next message key and ratchet chain key forward."""
-        # Step 1: Derive 32-byte AES-256-GCM key for this message
-        msg_key = _hkdf_expand(self.chain_key, MSG_KDF_INFO + struct.pack(">Q", self.message_seq), 32)
-        # Step 2: Ratchet chain key forward for forward secrecy (erasing current key)
-        next_chain = _hkdf_expand(self.chain_key, CHAIN_KDF_INFO, len(self.chain_key))
+    def __post_init__(self) -> None:
+        if not isinstance(self.chain_key, bytearray):
+            self.chain_key = bytearray(self.chain_key)
+
+    def ratchet_forward(self) -> Tuple[bytearray, int]:
+        """Derive next wipeable message key and ratchet chain key forward."""
+        msg_key = bytearray(_hkdf_expand(self.chain_key, MSG_KDF_INFO + struct.pack(">Q", self.message_seq), 32))
+        next_chain = bytearray(_hkdf_expand(self.chain_key, CHAIN_KDF_INFO, len(self.chain_key)))
         seq = self.message_seq
+        _wipe(self.chain_key)
         self.chain_key = next_chain
         self.message_seq += 1
         return msg_key, seq
 
+    def wipe(self) -> None:
+        _wipe(self.chain_key)
+
 
 @dataclass
 class GroupMessage:
-    """Sealed group message packet."""
+    """Sealed group message packet with optional per-sender ML-DSA-87 signature."""
     group_id: str
     epoch: int
     sender_id: str
     seq: int
     ciphertext: bytes
+    sender_mldsa_sig: bytes = b""
 
 
 class SovereignGroupRatchet:
     """Sovereign Group Ratchet session manager."""
 
-    def __init__(self, group_id: str, local_member_id: str, initial_epoch_secret: bytes):
+    def __init__(
+        self,
+        group_id: str,
+        local_member_id: str,
+        initial_epoch_secret: bytes | bytearray,
+        local_mldsa_sk: Optional[bytes] = None,
+        require_sender_auth: Optional[bool] = None,
+    ):
         self.group_id = group_id
         self.local_member_id = local_member_id
         self.epoch = 0
-        self.epoch_secret = initial_epoch_secret
+        self.epoch_secret = bytearray(initial_epoch_secret)
         self.members: Dict[str, MemberSenderKey] = {}
         self.roster: List[str] = [local_member_id]
         self._tpi_officers: Dict[str, bytes] = {}
+        self._sender_pks: Dict[str, bytes] = {}
+        self._local_mldsa_sk: Optional[bytearray] = bytearray(local_mldsa_sk) if local_mldsa_sk else None
+        if require_sender_auth is None:
+            from production_gate import is_production
+            self._require_sender_auth = bool(is_production())
+        else:
+            self._require_sender_auth = bool(require_sender_auth)
         self._init_local_sender_key()
+
+    def enroll_sender_identity(self, member_id: str, mldsa87_public_key: bytes) -> None:
+        """Enroll a group member's ML-DSA-87 public key to prevent sender spoofing."""
+        if not member_id or not mldsa87_public_key:
+            raise ValueError("member_id and ML-DSA-87 public key required")
+        self._sender_pks[member_id] = bytes(mldsa87_public_key)
+
+    def set_local_signing_key(self, mldsa87_secret_key: bytes) -> None:
+        """Configure local ML-DSA-87 signing key for outbound message sender authentication."""
+        if self._local_mldsa_sk is not None:
+            _wipe(self._local_mldsa_sk)
+        self._local_mldsa_sk = bytearray(mldsa87_secret_key)
 
     def enroll_tpi_officer(self, officer_id: str, mldsa87_public_key: bytes) -> None:
         """Enroll one of exactly two distinct TPI officers (ML-DSA-87 public keys).
@@ -118,11 +174,13 @@ class SovereignGroupRatchet:
 
     def _init_local_sender_key(self) -> None:
         """Derive fresh sender chain key for local member under current epoch."""
-        member_ikm = _hkdf_expand(
+        if self.local_member_id in self.members:
+            self.members[self.local_member_id].wipe()
+        member_ikm = bytearray(_hkdf_expand(
             self.epoch_secret,
             self.local_member_id.encode("utf-8") + struct.pack(">Q", self.epoch),
             48
-        )
+        ))
         self.members[self.local_member_id] = MemberSenderKey(
             member_id=self.local_member_id,
             chain_key=member_ikm,
@@ -142,42 +200,57 @@ class SovereignGroupRatchet:
         for member_id in self.roster:
             if member_id == self.local_member_id:
                 continue
+            if member_id in self.members:
+                self.members[member_id].wipe()
             self.members[member_id] = MemberSenderKey(
                 member_id=member_id,
-                chain_key=self.derive_epoch_sender_key(member_id),
+                chain_key=bytearray(self.derive_epoch_sender_key(member_id)),
                 message_seq=0
             )
 
-    def register_peer_sender_key(self, peer_id: str, chain_key: bytes) -> None:
+    def register_peer_sender_key(self, peer_id: str, chain_key: bytes | bytearray) -> None:
         """Register or update a peer's sender chain key."""
+        if peer_id in self.members:
+            self.members[peer_id].wipe()
         self.members[peer_id] = MemberSenderKey(
             member_id=peer_id,
-            chain_key=chain_key,
+            chain_key=bytearray(chain_key),
             message_seq=0
         )
         if peer_id not in self.roster:
             self.roster.append(peer_id)
 
     def seal(self, plaintext: bytes) -> GroupMessage:
-        """Encrypt message to the group using local sender key ratchet."""
+        """Encrypt message to the group using local sender key ratchet (+ ML-DSA-87 when configured)."""
+        if self._require_sender_auth and self._local_mldsa_sk is None:
+            raise ValueError("Sender ML-DSA-87 signing key required in strict/production sender-auth mode")
         sender_state = self.members[self.local_member_id]
         msg_key, seq = sender_state.ratchet_forward()
 
-        # Nonce format: 12 bytes = epoch(4B) || seq(8B)
         nonce = struct.pack(">IQ", self.epoch, seq)
-        aad = GROUP_PROTO_ID + self.group_id.encode("utf-8") + struct.pack(">IQ", self.epoch, seq)
+        aad = _message_aad(self.group_id, self.epoch, self.local_member_id, seq)
 
-        ct = AESGCM(msg_key).encrypt(nonce, plaintext, aad)
+        try:
+            ct = AESGCM(bytes(msg_key)).encrypt(nonce, plaintext, aad)
+        finally:
+            _wipe(msg_key)
+
+        sender_sig = b""
+        if self._local_mldsa_sk is not None:
+            from liboqs_wrapper import LibOQS_MLDSA_87
+            sender_sig = bytes(LibOQS_MLDSA_87().sign(bytes(self._local_mldsa_sk), SENDER_SIG_DOMAIN + aad + ct))
+
         return GroupMessage(
             group_id=self.group_id,
             epoch=self.epoch,
             sender_id=self.local_member_id,
             seq=seq,
-            ciphertext=ct
+            ciphertext=ct,
+            sender_mldsa_sig=sender_sig,
         )
 
     def open(self, msg: GroupMessage) -> bytes:
-        """Decrypt message from a group member, verifying epoch and ratchet seq."""
+        """Decrypt message from a group member, verifying epoch, sender auth, AEAD, and ratchet seq."""
         if msg.group_id != self.group_id:
             raise ValueError(f"Group ID mismatch: expected {self.group_id}, got {msg.group_id}")
         if msg.epoch != self.epoch:
@@ -186,8 +259,6 @@ class SovereignGroupRatchet:
             raise ValueError(f"Unknown sender: {msg.sender_id}")
 
         sender_state = self.members[msg.sender_id]
-        # message_seq is the NEXT expected sequence, so a duplicate of an
-        # already-consumed message is seq < message_seq.
         if msg.seq < sender_state.message_seq:
             raise ValueError(f"Replay detected: seq {msg.seq} already processed")
         if msg.seq > sender_state.message_seq + MAX_CHAIN_CATCHUP:
@@ -196,27 +267,45 @@ class SovereignGroupRatchet:
                 f"{sender_state.message_seq + MAX_CHAIN_CATCHUP} (refusing unbounded catch-up)"
             )
 
-        # Derive the candidate key WITHOUT mutating receiver state, then
-        # commit only after the AEAD tag verifies (verify-before-commit).
-        # Advancing the chain before authentication would let a forged frame
-        # desynchronize the group ratchet permanently.
-        chain = sender_state.chain_key
+        aad = _message_aad(self.group_id, self.epoch, msg.sender_id, msg.seq)
+        enrolled_pk = self._sender_pks.get(msg.sender_id)
+        if enrolled_pk is not None or self._require_sender_auth:
+            if enrolled_pk is None or not msg.sender_mldsa_sig:
+                raise ValueError(f"Sender authentication failed: missing signature or key for {msg.sender_id}")
+            from liboqs_wrapper import LibOQS_MLDSA_87
+            try:
+                sig_ok = bool(LibOQS_MLDSA_87().verify(enrolled_pk, SENDER_SIG_DOMAIN + aad + msg.ciphertext, bytes(msg.sender_mldsa_sig)))
+            except Exception:
+                sig_ok = False
+            if not sig_ok:
+                raise ValueError(f"Sender ML-DSA-87 signature verification failed for {msg.sender_id}")
+
+        chain = bytearray(sender_state.chain_key)
         cur_seq = sender_state.message_seq
-        while cur_seq < msg.seq:
-            chain = _hkdf_expand(chain, CHAIN_KDF_INFO, len(chain))
-            cur_seq += 1
-        msg_key = _hkdf_expand(
-            chain, MSG_KDF_INFO + struct.pack(">Q", cur_seq), 32)
-        nonce = struct.pack(">IQ", self.epoch, cur_seq)
-        aad = GROUP_PROTO_ID + self.group_id.encode("utf-8") + struct.pack(">IQ", self.epoch, cur_seq)
+        msg_key: Optional[bytearray] = None
+        next_chain: Optional[bytearray] = None
+        try:
+            while cur_seq < msg.seq:
+                nxt = bytearray(_hkdf_expand(chain, CHAIN_KDF_INFO, len(chain)))
+                _wipe(chain)
+                chain = nxt
+                cur_seq += 1
+            msg_key = bytearray(_hkdf_expand(chain, MSG_KDF_INFO + struct.pack(">Q", cur_seq), 32))
+            nonce = struct.pack(">IQ", self.epoch, cur_seq)
 
-        plaintext = AESGCM(msg_key).decrypt(nonce, msg.ciphertext, aad)
+            plaintext = AESGCM(bytes(msg_key)).decrypt(nonce, msg.ciphertext, aad)
 
-        # Commit state only after successful authentication.
-        sender_state.chain_key = _hkdf_expand(
-            chain, CHAIN_KDF_INFO, len(chain))
-        sender_state.message_seq = cur_seq + 1
-        return plaintext
+            # Commit state only after successful authentication.
+            next_chain = bytearray(_hkdf_expand(chain, CHAIN_KDF_INFO, len(chain)))
+            _wipe(sender_state.chain_key)
+            sender_state.chain_key = next_chain
+            next_chain = None
+            sender_state.message_seq = cur_seq + 1
+            return plaintext
+        finally:
+            _wipe(chain)
+            _wipe(msg_key)
+            _wipe(next_chain)
 
     def advance_epoch(self, fresh_entropy: bytes, tpi_officer1_sig: bytes, tpi_officer2_sig: bytes) -> int:
         """Advance group epoch with fresh entropy and Two-Person Integrity co-authorization.
@@ -241,7 +330,6 @@ class SovereignGroupRatchet:
         sig1 = bytes(tpi_officer1_sig)
         sig2 = bytes(tpi_officer2_sig)
 
-        # Accept either officer ordering; both distinct officers must co-sign.
         try:
             authorized = (
                 mldsa.verify(pubs[0], message, sig1) and mldsa.verify(pubs[1], message, sig2)
@@ -253,12 +341,20 @@ class SovereignGroupRatchet:
         if not authorized:
             raise ValueError("NC3 Two-Person Integrity violation: invalid dual officer signatures for epoch rekey")
 
-        # Rekey epoch secret: PCS healing
-        new_secret = _hkdf_extract(self.epoch_secret, fresh_entropy + EPOCH_KDF_INFO)
+        # Rekey epoch secret: PCS healing & zeroize old epoch_secret
+        new_secret = bytearray(_hkdf_extract(self.epoch_secret, fresh_entropy + EPOCH_KDF_INFO))
+        _wipe(self.epoch_secret)
         self.epoch += 1
         self.epoch_secret = new_secret
 
-        # Re-derive local sender key under fresh epoch and synchronize enrolled roster members
         self._init_local_sender_key()
         self.sync_roster_epoch_keys()
         return self.epoch
+
+    def teardown(self) -> None:
+        """Zeroize epoch secret, sender chains, and local signing key."""
+        _wipe(self.epoch_secret)
+        _wipe(self._local_mldsa_sk)
+        for member_state in self.members.values():
+            member_state.wipe()
+        self.members.clear()

@@ -406,3 +406,55 @@ pub extern "C" fn tsrt_selftest() -> c_int {
     tsrt_replay_free(r);
     0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tsrt_selftest_passes() {
+        assert_eq!(tsrt_selftest(), 0);
+    }
+
+    #[test]
+    fn test_tsrt_alloc_write_free_and_bounds() {
+        assert!(tsrt_alloc_locked(0).is_null());
+        assert!(tsrt_alloc_locked(MAX_LOCKED_BYTES + 1).is_null());
+
+        let ptr = tsrt_alloc_locked(64);
+        assert!(!ptr.is_null());
+        assert_eq!(tsrt_write(ptr, 64, 0xA5), 0);
+        // Bounds check: size > MAX_LOCKED_BYTES or null rejected
+        assert_eq!(tsrt_write(core::ptr::null_mut(), 64, 0xA5), -1);
+        assert_eq!(tsrt_write(ptr, 0, 0xA5), -1);
+        tsrt_free(ptr, 64);
+
+        // Safe no-ops on null / zero size
+        tsrt_free(core::ptr::null_mut(), 0);
+    }
+
+    #[test]
+    fn test_tsrt_ct_eq_and_replay_window() {
+        let a = [0x11u8, 0x22, 0x33, 0x44];
+        let b = [0x11u8, 0x22, 0x33, 0x44];
+        let mut c = [0x11u8, 0x22, 0x33, 0x45];
+
+        assert_eq!(tsrt_ct_eq(a.as_ptr(), a.len(), b.as_ptr(), b.len()), 1);
+        assert_eq!(tsrt_ct_eq(a.as_ptr(), a.len(), c.as_ptr(), c.len()), 0);
+        assert_eq!(tsrt_ct_eq(a.as_ptr(), 4, b.as_ptr(), 3), 0);
+        assert_eq!(tsrt_ct_eq(core::ptr::null(), 4, b.as_ptr(), 4), -1);
+        volatile_zero(c.as_mut_ptr(), c.len());
+        assert_eq!(c, [0u8; 4]);
+
+        let rw = tsrt_replay_new(100);
+        assert!(!rw.is_null());
+        assert_eq!(tsrt_replay_check(rw, 100), 0);
+        assert_eq!(tsrt_replay_check(rw, 101), 1);
+        assert_eq!(tsrt_replay_mark(rw, 101), 1);
+        assert_eq!(tsrt_replay_check(rw, 101), 0);
+        assert_eq!(tsrt_replay_check_mark(rw, 102), 1);
+        assert_eq!(tsrt_replay_check_mark(rw, 102), 0);
+        tsrt_replay_free(rw);
+        tsrt_replay_free(core::ptr::null_mut());
+    }
+}

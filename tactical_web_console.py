@@ -415,6 +415,11 @@ def ensure_cac_piv_mtls_credentials(cert_dir: Optional[Union[str, Path]] = None)
             serialization.NoEncryption(),
         )
     )
+    for priv_path in (ca_key_path, srv_key_path, client_key_path):
+        try:
+            os.chmod(priv_path, 0o600)
+        except OSError:
+            pass
 
     return {
         "ca_cert": str(ca_crt_path),
@@ -432,6 +437,10 @@ def create_mtls_server_context(
     require_client_cert: bool = True,
 ) -> ssl.SSLContext:
     """Create a strict TLS 1.3 server context with mandatory client authentication (mTLS)."""
+    if not require_client_cert and _is_production():
+        raise RuntimeError(
+            "Production mode strictly requires mTLS client certificate authentication (CERT_REQUIRED)."
+        )
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     ctx.maximum_version = ssl.TLSVersion.TLSv1_3
@@ -460,16 +469,19 @@ class WebAuthnL3Manager:
         self._challenges: dict[str, float] = {}
         self._registered_keys: dict[str, dict] = {}
         self._ttl_seconds = 60.0
+        self._registration_token = secrets.token_urlsafe(32)
+        self._demo_hw_priv = None
 
-        # Pre-provision default operator test keypair
-        self._demo_hw_priv = ec.generate_private_key(ec.SECP256R1())
-        demo_cred_id = "fido2-l3-token-primary-001"
-        self._registered_keys[demo_cred_id] = {
-            "public_key": self._demo_hw_priv.public_key(),
-            "sign_count": 0,
-            "rp_id": "127.0.0.1",
-            "tier": "FIDO2_LEVEL_3_HARDWARE_FIPS",
-        }
+        if not _is_production():
+            # Pre-provision non-production lab operator test keypair only
+            self._demo_hw_priv = ec.generate_private_key(ec.SECP256R1())
+            demo_cred_id = "fido2-l3-token-primary-001"
+            self._registered_keys[demo_cred_id] = {
+                "public_key": self._demo_hw_priv.public_key(),
+                "sign_count": 0,
+                "rp_id": "127.0.0.1",
+                "tier": "FIDO2_LEVEL_3_LAB_SIMULATED",
+            }
 
     @property
     def credentials(self) -> dict:
@@ -574,9 +586,9 @@ class WebAuthnL3Manager:
             return False, f"authenticator_data length {len(ad_bytes)} < 37 bytes", {}
 
         rp_hash = ad_bytes[:32]
-        expected_hash = hashlib.sha256(expected_rp_id.encode("utf-8")).digest()
-        alt_hash = hashlib.sha256(b"localhost").digest()
-        if rp_hash != expected_hash and rp_hash != alt_hash:
+        expected_rp = key_entry.get("rp_id") or expected_rp_id
+        expected_hash = hashlib.sha256(str(expected_rp).encode("utf-8")).digest()
+        if not secrets.compare_digest(rp_hash, expected_hash):
             return False, "rpIdHash mismatch", {}
 
         flags = ad_bytes[32]
@@ -658,6 +670,8 @@ class WebAuthnL3Manager:
         cnt_bytes = sign_count.to_bytes(4, byteorder="big")
         ad_bytes = rp_hash + flags + cnt_bytes
 
+        if self._demo_hw_priv is None:
+            raise RuntimeError("Mock WebAuthn assertion generator disabled in production mode")
         sig = self._demo_hw_priv.sign(ad_bytes + cd_hash, ec.ECDSA(hashes.SHA256()))
         b64_cd = base64.b64encode(cd_bytes).decode("ascii")
         b64_ad = base64.b64encode(ad_bytes).decode("ascii")
@@ -737,7 +751,8 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             return False, reason, {}
 
         must_require = (
-            os.environ.get("P2P_WEB_REQUIRE_WEBAUTHN") == "1"
+            _is_production()
+            or os.environ.get("P2P_WEB_REQUIRE_WEBAUTHN") == "1"
             or getattr(getattr(self, "server", None), "require_webauthn", False)
         )
         if must_require:
@@ -768,6 +783,27 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_api_webauthn_register(self, payload: dict):
+        # Require authenticated enrollment: valid one-time/bootstrap registration token
+        # OR a valid WebAuthn Level 3 assertion from an already-registered admin credential.
+        supplied_token = str(payload.get("registration_token", ""))
+        token_ok = bool(supplied_token) and secrets.compare_digest(
+            supplied_token, _webauthn_manager._registration_token
+        )
+        assertion = payload.get("webauthn_assertion")
+        assertion_ok = False
+        if assertion:
+            assertion_ok, _, _ = _webauthn_manager.verify_assertion(assertion)
+
+        if not (token_ok or assertion_ok):
+            self._send_json(
+                {
+                    "status": "WEBAUTHN_ENROLLMENT_UNAUTHORIZED",
+                    "error": "Authenticated admin bootstrap token or existing FIDO2 L3 assertion required to register new credential",
+                },
+                status=403,
+            )
+            return
+
         cred_id = payload.get("credential_id")
         pub_pem = payload.get("public_key_pem")
         if not cred_id or not pub_pem:
@@ -777,7 +813,7 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         if ok:
             self._send_json({"status": "KEY_REGISTERED", "credential_id": cred_id})
         else:
-            self._send_json({"error": "Invalid public key PEM"}, status=400)
+            self._send_json({"error": "Invalid or duplicate public key PEM"}, status=400)
 
     def _handle_api_webauthn_verify(self, payload: dict):
         assertion = payload.get("assertion") or payload
@@ -812,14 +848,24 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        # A4-09: same-origin guard (CSRF). Browsers attach Origin to all
-        # cross-site form/fetch POSTs; a cross-origin caller is rejected
-        # before any handler runs. Missing Origin (curl/scripts/tests) is
-        # permitted, and destructive routes additionally require a token.
+        # A4-09: same-origin guard (CSRF) across both Origin and Referer headers.
         origin = self.headers.get("Origin")
         if origin and origin not in ALLOWED_ORIGINS:
             self._send_json({"error": "Cross-origin POST rejected"}, status=403)
             return
+        referer = self.headers.get("Referer")
+        if referer:
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            ref_origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+            if ref_origin not in ALLOWED_ORIGINS:
+                self._send_json({"error": "Cross-origin Referer POST rejected"}, status=403)
+                return
+        if _is_production() and hasattr(self, "connection") and hasattr(self.connection, "getpeercert"):
+            cert_info = self._get_client_cert_info()
+            if not cert_info.get("valid", False):
+                self._send_json({"error": "Valid CAC/PIV mTLS client certificate required in production"}, status=403)
+                return
 
         raw_len = self.headers.get("Content-Length", "0")
         try:
@@ -865,11 +911,18 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         if "console_mode" not in data:
             data["console_mode"] = "LOCAL_DEMO_LAB"
         body = json.dumps(data).encode("utf-8")
+        req_origin = None
+        if hasattr(self, "headers") and self.headers:
+            cand = self.headers.get("Origin")
+            if cand in ALLOWED_ORIGINS:
+                req_origin = cand
+        allow_origin = req_origin or "https://127.0.0.1:8443"
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         # Localhost restricted origin, not wild-card *
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:8443")
+        self.send_header("Access-Control-Allow-Origin", allow_origin)
+        self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1224,8 +1277,9 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
             except ImportError:
                 rust_avail = False
 
-            pipeline_a, ratchet_a = create_zero_gap_session(shared_secret=b"\x42" * 32, is_initiator=True)
-            pipeline_b, ratchet_b = create_zero_gap_session(shared_secret=b"\x42" * 32, is_initiator=False)
+            ephemeral_secret = secrets.token_bytes(32)
+            pipeline_a, ratchet_a = create_zero_gap_session(shared_secret=ephemeral_secret, is_initiator=True)
+            pipeline_b, ratchet_b = create_zero_gap_session(shared_secret=ephemeral_secret, is_initiator=False)
             sealed = pipeline_a.seal(message.encode("utf-8"), ratchet_a, msg_type=PIPELINE_TYPE_NC3)
             msg_type, opened = pipeline_b.open(sealed, ratchet_b)
 
@@ -1385,13 +1439,28 @@ class TacticalWebHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_api_drill(self, payload: dict):
+        verifier = getattr(self, "_verify_control_action_auth", None)
+        if callable(verifier):
+            auth_ok, auth_reason, _ = verifier(payload)
+        else:
+            auth_ok, auth_reason, _ = TacticalWebHandler._verify_control_action_auth(self, payload)
+        if not auth_ok:
+            self._send_json({
+                "status": "WEBAUTHN_L3_VERIFICATION_REQUIRED",
+                "error": auth_reason,
+                "required_flags": {"user_presence": True, "user_verification": True},
+            }, status=403)
+            return
         # Run demo check
         try:
             import secure_p2p
             success = secure_p2p.run_automated_two_terminal_drill()
-            self._send_json({"status": "DRILL_PASSED" if success else "DRILL_FAILED"})
+            self._send_json(
+                {"status": "DRILL_PASSED" if success else "DRILL_FAILED"},
+                status=200 if success else 500,
+            )
         except Exception as e:
-            self._send_json({"status": "DRILL_EXECUTED", "details": str(e)})
+            self._send_json({"status": "DRILL_FAILED", "error": str(e)}, status=500)
 
     def _handle_api_sovereignty(self):
         self._send_json({

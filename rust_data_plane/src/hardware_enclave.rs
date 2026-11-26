@@ -346,6 +346,145 @@ pub trait HardwareTrustAnchor: Send + Sync {
 }
 
 // -----------------------------------------------------------------------------
+// Ephemeral Non-Deterministic Lab Key Store (Non-Production Only)
+// -----------------------------------------------------------------------------
+
+mod ephemeral_schnorr {
+    use super::{HardwareEnclaveError, Sha256};
+    use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
+    use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+    use curve25519_dalek::scalar::Scalar as CurveScalar;
+    use sha2::{Digest, Sha512};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use zeroize::Zeroizing;
+
+    #[derive(Clone)]
+    struct KeyEntry {
+        sk: Zeroizing<[u8; 32]>,
+        pk: [u8; 32],
+    }
+
+    pub struct EphemeralSchnorrStore {
+        context: String,
+        keys: Arc<Mutex<HashMap<String, KeyEntry>>>,
+    }
+
+    impl EphemeralSchnorrStore {
+        pub fn new(context: &str) -> Self {
+            Self {
+                context: context.to_string(),
+                keys: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+
+        fn ensure_key(&self, key_id: &str) -> Result<KeyEntry, HardwareEnclaveError> {
+            let mut guard = self.keys.lock().map_err(|_| {
+                HardwareEnclaveError::DeviceError("enclave key store lock poisoned".into())
+            })?;
+            if let Some(entry) = guard.get(key_id) {
+                return Ok(entry.clone());
+            }
+            let mut wide = Zeroizing::new([0u8; 64]);
+            getrandom::fill(&mut wide[..])
+                .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("RNG failure: {e}")))?;
+            let scalar = CurveScalar::from_bytes_mod_order_wide(&wide);
+            let pk_pt = RISTRETTO_BASEPOINT_POINT * scalar;
+            let entry = KeyEntry {
+                sk: Zeroizing::new(scalar.to_bytes()),
+                pk: pk_pt.compress().to_bytes(),
+            };
+            guard.insert(key_id.to_string(), entry.clone());
+            Ok(entry)
+        }
+
+        pub fn public_key(&self, key_id: &str) -> Result<Vec<u8>, HardwareEnclaveError> {
+            Ok(self.ensure_key(key_id)?.pk.to_vec())
+        }
+
+        pub fn sign(&self, key_id: &str, digest: &[u8]) -> Result<Vec<u8>, HardwareEnclaveError> {
+            let entry = self.ensure_key(key_id)?;
+            let sk = CurveScalar::from_canonical_bytes(*entry.sk)
+                .into_option()
+                .ok_or_else(|| HardwareEnclaveError::CryptoFailure("corrupt key scalar".into()))?;
+            let mut r_wide = Zeroizing::new([0u8; 64]);
+            getrandom::fill(&mut r_wide[..])
+                .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("RNG failure: {e}")))?;
+            let r_scalar = CurveScalar::from_bytes_mod_order_wide(&r_wide);
+            let r_bytes = (RISTRETTO_BASEPOINT_POINT * r_scalar).compress().to_bytes();
+
+            let mut ch = Sha512::new();
+            ch.update(b"DESTROYER-ENCLAVE-SCHNORR-V2:");
+            ch.update(self.context.as_bytes());
+            ch.update(key_id.as_bytes());
+            ch.update(r_bytes);
+            ch.update(entry.pk);
+            ch.update(Sha256::digest(digest));
+            let c_bytes: [u8; 64] = ch.finalize().into();
+            let c = CurveScalar::from_bytes_mod_order_wide(&c_bytes);
+            let s = r_scalar + c * sk;
+
+            let mut sig = Vec::with_capacity(64);
+            sig.extend_from_slice(&r_bytes);
+            sig.extend_from_slice(&s.to_bytes());
+            Ok(sig)
+        }
+
+        pub fn verify(
+            &self,
+            key_id: &str,
+            digest: &[u8],
+            signature: &[u8],
+        ) -> Result<bool, HardwareEnclaveError> {
+            if signature.len() != 64 {
+                return Ok(false);
+            }
+            let entry = {
+                let guard = self.keys.lock().map_err(|_| {
+                    HardwareEnclaveError::DeviceError("enclave key store lock poisoned".into())
+                })?;
+                match guard.get(key_id) {
+                    Some(e) => e.clone(),
+                    None => return Ok(false),
+                }
+            };
+            let pk_pt = match CompressedRistretto(entry.pk).decompress() {
+                Some(p) => p,
+                None => return Ok(false),
+            };
+            let mut r_arr = [0u8; 32];
+            r_arr.copy_from_slice(&signature[..32]);
+            let r_pt = match CompressedRistretto(r_arr).decompress() {
+                Some(p) => p,
+                None => return Ok(false),
+            };
+            let mut s_arr = [0u8; 32];
+            s_arr.copy_from_slice(&signature[32..]);
+            let s = match CurveScalar::from_canonical_bytes(s_arr).into_option() {
+                Some(v) => v,
+                None => return Ok(false),
+            };
+
+            let mut ch = Sha512::new();
+            ch.update(b"DESTROYER-ENCLAVE-SCHNORR-V2:");
+            ch.update(self.context.as_bytes());
+            ch.update(key_id.as_bytes());
+            ch.update(r_arr);
+            ch.update(entry.pk);
+            ch.update(Sha256::digest(digest));
+            let c_bytes: [u8; 64] = ch.finalize().into();
+            let c = CurveScalar::from_bytes_mod_order_wide(&c_bytes);
+
+            let lhs: RistrettoPoint = RISTRETTO_BASEPOINT_POINT * s;
+            let rhs: RistrettoPoint = r_pt + (pk_pt * c);
+            Ok(lhs == rhs)
+        }
+    }
+}
+
+use ephemeral_schnorr::EphemeralSchnorrStore;
+
+// -----------------------------------------------------------------------------
 // TPM 2.0 PCR Seal Implementation
 // -----------------------------------------------------------------------------
 
@@ -354,21 +493,47 @@ pub trait HardwareTrustAnchor: Send + Sync {
 pub struct TpmPcrSealAnchor {
     anchor_id: String,
     hardware_backed: bool,
+    seal_root_secret: zeroize::Zeroizing<[u8; 32]>,
+    ephemeral: EphemeralSchnorrStore,
 }
 
 impl TpmPcrSealAnchor {
     pub fn new(anchor_id: &str, hardware_backed: bool) -> Self {
+        let mut root = [0u8; 32];
+        if getrandom::fill(&mut root).is_err() {
+            root.fill(0);
+        }
         Self {
             anchor_id: anchor_id.to_string(),
             hardware_backed,
+            seal_root_secret: zeroize::Zeroizing::new(root),
+            ephemeral: EphemeralSchnorrStore::new(&format!("tpm:{anchor_id}")),
         }
     }
 
-    /// Derive key encryption key from silicon root and composite PCR policy digest.
-    fn derive_pcr_kek(composite_policy: &[u8; 32], salt: &[u8]) -> Result<[u8; 32], HardwareEnclaveError> {
-        let hk = Hkdf::<Sha256>::new(Some(salt), composite_policy);
+    /// Derive key encryption key mixing non-serialized silicon/enclave root secret
+    /// and composite PCR policy digest.
+    fn derive_pcr_kek(
+        &self,
+        composite_policy: &[u8; 32],
+        salt: &[u8],
+    ) -> Result<[u8; 32], HardwareEnclaveError> {
+        if crate::policy::is_production_env() && !self.hardware_backed {
+            return Err(HardwareEnclaveError::DeviceError(
+                "TPM 2.0 hardware sealing secret unavailable in production mode".to_string(),
+            ));
+        }
+        if self.seal_root_secret.iter().all(|&b| b == 0) {
+            return Err(HardwareEnclaveError::CryptoFailure(
+                "Enclave seal root secret uninitialized".to_string(),
+            ));
+        }
+        let mut ikm = zeroize::Zeroizing::new([0u8; 64]);
+        ikm[..32].copy_from_slice(&self.seal_root_secret[..]);
+        ikm[32..].copy_from_slice(composite_policy);
+        let hk = Hkdf::<Sha256>::new(Some(salt), &ikm[..]);
         let mut okm = [0u8; 32];
-        hk.expand(b"DESTROYER-TPM2-PCR-0-7-SEAL-KEK-v1", &mut okm)
+        hk.expand(b"DESTROYER-TPM2-PCR-0-7-SEAL-KEK-v2", &mut okm)
             .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("HKDF KEK derivation failed: {e}")))?;
         Ok(okm)
     }
@@ -387,16 +552,13 @@ impl HardwareTrustAnchor for TpmPcrSealAnchor {
         self.hardware_backed
     }
 
-    fn sign_in_silicon(&self, _key_id: &str, digest: &[u8]) -> Result<Vec<u8>, HardwareEnclaveError> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"TPM2_SILICON_SIGN_AUTH:");
-        hasher.update(self.anchor_id.as_bytes());
-        hasher.update(digest);
-        let sig = hasher.finalize();
-        let mut full_sig = Vec::with_capacity(64);
-        full_sig.extend_from_slice(&sig);
-        full_sig.extend_from_slice(&sig); // 64 bytes R || S
-        Ok(full_sig)
+    fn sign_in_silicon(&self, key_id: &str, digest: &[u8]) -> Result<Vec<u8>, HardwareEnclaveError> {
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "TpmPcrSealAnchor does not provide direct signing in production; use CngPlatformTrustAnchor or Pkcs11TrustAnchor".to_string(),
+            ));
+        }
+        self.ephemeral.sign(key_id, digest)
     }
 
     fn verify_in_silicon(
@@ -405,15 +567,21 @@ impl HardwareTrustAnchor for TpmPcrSealAnchor {
         digest: &[u8],
         signature: &[u8],
     ) -> Result<bool, HardwareEnclaveError> {
-        let expected = self.sign_in_silicon(key_id, digest)?;
-        Ok(expected == signature)
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "TpmPcrSealAnchor verification unavailable in production".to_string(),
+            ));
+        }
+        self.ephemeral.verify(key_id, digest, signature)
     }
 
     fn get_public_key(&self, key_id: &str) -> Result<Vec<u8>, HardwareEnclaveError> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"TPM2_SILICON_PUBKEY:");
-        hasher.update(key_id.as_bytes());
-        Ok(hasher.finalize().to_vec())
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "TpmPcrSealAnchor public key export unavailable in production".to_string(),
+            ));
+        }
+        self.ephemeral.public_key(key_id)
     }
 
     fn seal_identity_to_pcrs(
@@ -434,7 +602,7 @@ impl HardwareTrustAnchor for TpmPcrSealAnchor {
         getrandom::fill(&mut salt)
             .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("RNG failure: {e}")))?;
 
-        let mut kek = Self::derive_pcr_kek(&policy_digest, &salt)?;
+        let mut kek = self.derive_pcr_kek(&policy_digest, &salt)?;
         let cipher = Aes256Gcm::new_from_slice(&kek)
             .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("AES-GCM init failed: {e}")))?;
 
@@ -526,7 +694,7 @@ impl HardwareTrustAnchor for TpmPcrSealAnchor {
         }
 
         // Step 3: Decrypt payload using derived KEK with the sealed salt
-        let mut kek = Self::derive_pcr_kek(&sealed.pcr_policy_digest, &sealed.salt)?;
+        let mut kek = self.derive_pcr_kek(&sealed.pcr_policy_digest, &sealed.salt)?;
         let cipher = Aes256Gcm::new_from_slice(&kek)
             .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("AES-GCM init failed: {e}")))?;
 
@@ -560,6 +728,7 @@ pub struct CngPlatformTrustAnchor {
     anchor_id: String,
     hardware_backed: bool,
     fallback_sealer: TpmPcrSealAnchor,
+    ephemeral: EphemeralSchnorrStore,
 }
 
 impl CngPlatformTrustAnchor {
@@ -573,6 +742,7 @@ impl CngPlatformTrustAnchor {
             anchor_id: anchor_id.to_string(),
             hardware_backed: hw,
             fallback_sealer: TpmPcrSealAnchor::new(anchor_id, hw),
+            ephemeral: EphemeralSchnorrStore::new(&format!("cng-lab:{anchor_id}")),
         }
     }
 
@@ -790,17 +960,12 @@ impl HardwareTrustAnchor for CngPlatformTrustAnchor {
             }
         }
 
-        // Hardware-simulated deterministic in-silicon signature
-        let mut hasher = Sha256::new();
-        hasher.update(b"WINDOWS_CNG_PLATFORM_CRYPTO_SIGN:");
-        hasher.update(key_id.as_bytes());
-        hasher.update(digest);
-        let hash = hasher.finalize();
-
-        let mut sig = Vec::with_capacity(64);
-        sig.extend_from_slice(&hash);
-        sig.extend_from_slice(&hash);
-        Ok(sig)
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "Windows CNG Platform Crypto Provider key missing or unavailable in production mode (no software fallback permitted)".into(),
+            ));
+        }
+        self.ephemeral.sign(key_id, digest)
     }
 
     fn verify_in_silicon(
@@ -809,15 +974,100 @@ impl HardwareTrustAnchor for CngPlatformTrustAnchor {
         digest: &[u8],
         signature: &[u8],
     ) -> Result<bool, HardwareEnclaveError> {
-        let expected = self.sign_in_silicon(key_id, digest)?;
-        Ok(expected == signature)
+        #[cfg(windows)]
+        {
+            unsafe {
+                let mut h_provider: usize = 0;
+                let prov_name = to_wide_str("Microsoft Platform Crypto Provider");
+                let rc = NCryptOpenStorageProvider(&mut h_provider, prov_name.as_ptr(), 0);
+                if rc == 0 && h_provider != 0 {
+                    let mut h_key: usize = 0;
+                    let k_name = to_wide_str(key_id);
+                    let open_rc = NCryptOpenKey(h_provider, &mut h_key, k_name.as_ptr(), 0, 0);
+                    if open_rc == 0 && h_key != 0 {
+                        let ver_rc = NCryptVerifySignature(
+                            h_key,
+                            std::ptr::null(),
+                            digest.as_ptr(),
+                            digest.len() as u32,
+                            signature.as_ptr(),
+                            signature.len() as u32,
+                            0,
+                        );
+                        NCryptFreeObject(h_key);
+                        NCryptFreeObject(h_provider);
+                        return Ok(ver_rc == 0);
+                    }
+                    NCryptFreeObject(h_provider);
+                }
+            }
+        }
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "Windows CNG key unavailable for verification in production mode".into(),
+            ));
+        }
+        self.ephemeral.verify(key_id, digest, signature)
     }
 
     fn get_public_key(&self, key_id: &str) -> Result<Vec<u8>, HardwareEnclaveError> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"CNG_PLATFORM_CRYPTO_ECC_PUBKEY:");
-        hasher.update(key_id.as_bytes());
-        Ok(hasher.finalize().to_vec())
+        #[cfg(windows)]
+        {
+            unsafe {
+                let mut h_provider: usize = 0;
+                let prov_name = to_wide_str("Microsoft Platform Crypto Provider");
+                let rc = NCryptOpenStorageProvider(&mut h_provider, prov_name.as_ptr(), 0);
+                if rc == 0 && h_provider != 0 {
+                    let mut h_key: usize = 0;
+                    let k_name = to_wide_str(key_id);
+                    let open_rc = NCryptOpenKey(h_provider, &mut h_key, k_name.as_ptr(), 0, 0);
+                    if open_rc == 0 && h_key != 0 {
+                        let blob_type = to_wide_str("ECCPUBLICBLOB");
+                        let mut cb_res: u32 = 0;
+                        let sz_rc = NCryptExportKey(
+                            h_key,
+                            0,
+                            blob_type.as_ptr(),
+                            std::ptr::null(),
+                            std::ptr::null_mut(),
+                            0,
+                            &mut cb_res,
+                            0,
+                        );
+                        if sz_rc == 0 && cb_res > 0 && cb_res <= 4096 {
+                            let mut buf = vec![0u8; cb_res as usize];
+                            let ex_rc = NCryptExportKey(
+                                h_key,
+                                0,
+                                blob_type.as_ptr(),
+                                std::ptr::null(),
+                                buf.as_mut_ptr(),
+                                cb_res,
+                                &mut cb_res,
+                                0,
+                            );
+                            NCryptFreeObject(h_key);
+                            NCryptFreeObject(h_provider);
+                            if ex_rc == 0 {
+                                buf.truncate(cb_res as usize);
+                                return Ok(buf);
+                            }
+                        } else {
+                            NCryptFreeObject(h_key);
+                            NCryptFreeObject(h_provider);
+                        }
+                    } else {
+                        NCryptFreeObject(h_provider);
+                    }
+                }
+            }
+        }
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "Windows CNG public key unavailable in production mode".into(),
+            ));
+        }
+        self.ephemeral.public_key(key_id)
     }
 
     fn seal_identity_to_pcrs(
@@ -851,6 +1101,7 @@ pub struct Pkcs11TrustAnchor {
     anchor_id: String,
     hardware_backed: bool,
     fallback_sealer: TpmPcrSealAnchor,
+    ephemeral: EphemeralSchnorrStore,
 }
 
 impl Pkcs11TrustAnchor {
@@ -859,6 +1110,7 @@ impl Pkcs11TrustAnchor {
             anchor_id: anchor_id.to_string(),
             hardware_backed,
             fallback_sealer: TpmPcrSealAnchor::new(anchor_id, hardware_backed),
+            ephemeral: EphemeralSchnorrStore::new(&format!("pkcs11-lab:{anchor_id}")),
         }
     }
 }
@@ -877,16 +1129,22 @@ impl HardwareTrustAnchor for Pkcs11TrustAnchor {
     }
 
     fn sign_in_silicon(&self, key_id: &str, digest: &[u8]) -> Result<Vec<u8>, HardwareEnclaveError> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"PKCS11_HSM_IN_SILICON_SIGN:");
-        hasher.update(key_id.as_bytes());
-        hasher.update(digest);
-        let hash = hasher.finalize();
-
-        let mut sig = Vec::with_capacity(64);
-        sig.extend_from_slice(&hash);
-        sig.extend_from_slice(&hash);
-        Ok(sig)
+        let hsm_configured = std::env::var_os("P2P_PKCS11_MODULE").is_some();
+        if hsm_configured || crate::policy::is_production_env() {
+            let mut cfg = crate::auth::HsmConfig::from_env();
+            if cfg.key_label.is_none() {
+                cfg.key_label = Some(key_id.to_string());
+            }
+            let session = crate::auth::HsmSession::open(&cfg)
+                .map_err(|e| HardwareEnclaveError::DeviceError(format!("PKCS#11 session failed: {e}")))?;
+            let key_handle = session
+                .find_private_key(cfg.key_label.as_deref(), cfg.key_id.as_deref())
+                .map_err(|e| HardwareEnclaveError::KeyNotFound(format!("PKCS#11 key missing: {e}")))?;
+            return session
+                .sign(key_handle, digest)
+                .map_err(|e| HardwareEnclaveError::CryptoFailure(format!("PKCS#11 sign failed: {e}")));
+        }
+        self.ephemeral.sign(key_id, digest)
     }
 
     fn verify_in_silicon(
@@ -895,15 +1153,30 @@ impl HardwareTrustAnchor for Pkcs11TrustAnchor {
         digest: &[u8],
         signature: &[u8],
     ) -> Result<bool, HardwareEnclaveError> {
-        let expected = self.sign_in_silicon(key_id, digest)?;
-        Ok(expected == signature)
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "PKCS#11 hardware verification requires public key / X.509 certificate verification against token".into(),
+            ));
+        }
+        self.ephemeral.verify(key_id, digest, signature)
     }
 
     fn get_public_key(&self, key_id: &str) -> Result<Vec<u8>, HardwareEnclaveError> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"PKCS11_HSM_PUBKEY:");
-        hasher.update(key_id.as_bytes());
-        Ok(hasher.finalize().to_vec())
+        if std::env::var_os("P2P_PKCS11_MODULE").is_some() || crate::policy::is_production_env() {
+            let mut cfg = crate::auth::HsmConfig::from_env();
+            if cfg.key_label.is_none() {
+                cfg.key_label = Some(key_id.to_string());
+            }
+            let session = crate::auth::HsmSession::open(&cfg)
+                .map_err(|e| HardwareEnclaveError::DeviceError(format!("PKCS#11 session failed: {e}")))?;
+            let pub_handle = session
+                .find_public_key(cfg.key_label.as_deref(), cfg.key_id.as_deref())
+                .map_err(|e| HardwareEnclaveError::KeyNotFound(format!("PKCS#11 public key missing: {e}")))?;
+            return session
+                .get_public_key_bytes(pub_handle)
+                .map_err(|e| HardwareEnclaveError::DeviceError(format!("PKCS#11 pubkey read failed: {e}")));
+        }
+        self.ephemeral.public_key(key_id)
     }
 
     fn seal_identity_to_pcrs(
@@ -931,11 +1204,12 @@ impl HardwareTrustAnchor for Pkcs11TrustAnchor {
 // Mock Silicon Anchor for Testing
 // -----------------------------------------------------------------------------
 
-/// In-memory simulated silicon anchor for tests.
+/// In-memory simulated silicon anchor for tests (never deterministic, forbidden in prod).
 pub struct MockHardwareTrustAnchor {
     anchor_id: String,
     sealer: TpmPcrSealAnchor,
     keys: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    ephemeral: EphemeralSchnorrStore,
 }
 
 impl MockHardwareTrustAnchor {
@@ -944,11 +1218,15 @@ impl MockHardwareTrustAnchor {
             anchor_id: anchor_id.to_string(),
             sealer: TpmPcrSealAnchor::new(anchor_id, false),
             keys: Arc::new(Mutex::new(HashMap::new())),
+            ephemeral: EphemeralSchnorrStore::new(&format!("mock:{anchor_id}")),
         }
     }
 
     pub fn insert_test_key(&self, key_id: &str, pubkey: Vec<u8>) {
-        self.keys.lock().unwrap().insert(key_id.to_string(), pubkey);
+        self.keys
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key_id.to_string(), pubkey);
     }
 }
 
@@ -966,16 +1244,12 @@ impl HardwareTrustAnchor for MockHardwareTrustAnchor {
     }
 
     fn sign_in_silicon(&self, key_id: &str, digest: &[u8]) -> Result<Vec<u8>, HardwareEnclaveError> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"MOCK_SILICON_SIGN:");
-        hasher.update(key_id.as_bytes());
-        hasher.update(digest);
-        let hash = hasher.finalize();
-
-        let mut sig = Vec::with_capacity(64);
-        sig.extend_from_slice(&hash);
-        sig.extend_from_slice(&hash);
-        Ok(sig)
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "MockHardwareTrustAnchor forbidden in production mode".into(),
+            ));
+        }
+        self.ephemeral.sign(key_id, digest)
     }
 
     fn verify_in_silicon(
@@ -984,18 +1258,23 @@ impl HardwareTrustAnchor for MockHardwareTrustAnchor {
         digest: &[u8],
         signature: &[u8],
     ) -> Result<bool, HardwareEnclaveError> {
-        let expected = self.sign_in_silicon(key_id, digest)?;
-        Ok(expected == signature)
+        if crate::policy::is_production_env() {
+            return Err(HardwareEnclaveError::DeviceError(
+                "MockHardwareTrustAnchor forbidden in production mode".into(),
+            ));
+        }
+        self.ephemeral.verify(key_id, digest, signature)
     }
 
     fn get_public_key(&self, key_id: &str) -> Result<Vec<u8>, HardwareEnclaveError> {
-        if let Some(pk) = self.keys.lock().unwrap().get(key_id) {
+        let guard = self.keys.lock().map_err(|_| {
+            HardwareEnclaveError::DeviceError("mock enclave key store lock poisoned".into())
+        })?;
+        if let Some(pk) = guard.get(key_id) {
             return Ok(pk.clone());
         }
-        let mut hasher = Sha256::new();
-        hasher.update(b"MOCK_SILICON_PUBKEY:");
-        hasher.update(key_id.as_bytes());
-        Ok(hasher.finalize().to_vec())
+        drop(guard);
+        self.ephemeral.public_key(key_id)
     }
 
     fn seal_identity_to_pcrs(
@@ -1139,6 +1418,18 @@ mod tests {
             .verify_in_silicon("device_key", &digest, &sig)
             .expect("verification failed");
         assert!(ok);
+
+        // Forged legacy deterministic SHA-256 signature must be rejected
+        let mut h = Sha256::new();
+        h.update(b"WINDOWS_CNG_PLATFORM_CRYPTO_SIGN:device_key");
+        h.update(digest);
+        let d = h.finalize();
+        let mut forged = Vec::with_capacity(64);
+        forged.extend_from_slice(&d);
+        forged.extend_from_slice(&d);
+        assert!(!cng
+            .verify_in_silicon("device_key", &digest, &forged)
+            .expect("verify returned err"));
     }
 
     #[test]
@@ -1154,6 +1445,29 @@ mod tests {
             .verify_in_silicon("hsm_key", &digest, &sig)
             .expect("verification failed");
         assert!(ok);
+
+        let mut h = Sha256::new();
+        h.update(b"PKCS11_HSM_IN_SILICON_SIGN:hsm_key");
+        h.update(digest);
+        let d = h.finalize();
+        let mut forged = Vec::with_capacity(64);
+        forged.extend_from_slice(&d);
+        forged.extend_from_slice(&d);
+        assert!(!hsm
+            .verify_in_silicon("hsm_key", &digest, &forged)
+            .expect("verify returned err"));
+    }
+
+    #[test]
+    fn test_cross_anchor_pcr_kek_isolation() {
+        // Two independent TPM seal anchors must NOT decrypt each other's sealed blobs offline
+        let tpm_a = TpmPcrSealAnchor::new("tpm-a", true);
+        let tpm_b = TpmPcrSealAnchor::new("tpm-b", true);
+        let pcrs = sample_pcrs();
+        let sealed = tpm_a
+            .seal_identity_to_pcrs("isolated", b"TOP_SECRET_ROOT", &[0, 1, 2, 3, 4, 5, 6, 7], &pcrs)
+            .unwrap();
+        assert!(tpm_b.unseal_identity_from_pcrs(&sealed, &pcrs).is_err());
     }
 
     #[test]

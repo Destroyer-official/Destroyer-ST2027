@@ -30,8 +30,8 @@ if str(ROOT) not in sys.path:
 
 # Fail-closed default: arm production posture unless explicitly running under lab opt-in or under test harness
 if os.environ.get("P2P_LAB_MODE") != "1" and "pytest" not in sys.modules and not os.environ.get("PYTEST_CURRENT_TEST"):
-    os.environ.setdefault("P2P_PRODUCTION", "1")
-    os.environ.setdefault("SECURE_P2P_PRODUCTION", "1")
+    import production_gate
+    production_gate.arm_production_gate("destroyer_cli_default")
     os.environ.setdefault("P2P_DATA_PLANE", "rust")
 
 # ANSI Color & Styling
@@ -135,8 +135,8 @@ def probe_hardware_and_environment():
 
 
 def launch_web_console():
-    """Launch the Tactical Web Console (DEFCON-1 GUI)."""
-    print(f"\n{BOLD}{CYAN}[COMMAND] Launching Tactical Web Console on http://localhost:8080...{RESET}")
+    """Launch the Tactical Web Console (local mTLS 1.3 Command Center)."""
+    print(f"\n{BOLD}{CYAN}[COMMAND] Launching Tactical Web Console on https://127.0.0.1:8443...{RESET}")
     cmd = [sys.executable, str(ROOT / "tactical_web_console.py")]
     subprocess.run(cmd)
 
@@ -189,20 +189,29 @@ def _provision_diode_key_material():
             raise SystemExit(2)
         key_hex = env_psk.lower()
         source = "P2P_DIODE_PSK environment"
-    elif key_path.exists():
-        try:
-            key_hex = key_path.read_text(encoding="ascii").strip()
-        except OSError as e:
-            print(f"{RED}Cannot read persisted diode key {key_path}: {e}{RESET}")
-            raise
-        if len(key_hex) != 64:
-            key_hex = secrets.token_hex(32)
-            source = "regenerated (persisted key malformed)"
-        else:
-            source = "persisted per-user key"
     else:
-        key_hex = secrets.token_hex(32)
-        source = "new random per-user key"
+        try:
+            from production_gate import is_production
+            in_prod = bool(is_production())
+        except Exception:
+            in_prod = True
+        if in_prod:
+            print(f"{RED}[DIODE FAIL-CLOSED] Production mode requires explicit out-of-band P2P_DIODE_PSK (64 hex chars). Refusing auto-generated local key file.{RESET}")
+            raise SystemExit(2)
+        if key_path.exists():
+            try:
+                key_hex = key_path.read_text(encoding="ascii").strip()
+            except OSError as e:
+                print(f"{RED}Cannot read persisted diode key {key_path}: {e}{RESET}")
+                raise
+            if len(key_hex) != 64:
+                key_hex = secrets.token_hex(32)
+                source = "regenerated (persisted key malformed)"
+            else:
+                source = "persisted per-user key"
+        else:
+            key_hex = secrets.token_hex(32)
+            source = "new random per-user key"
 
     try:
         fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
@@ -461,15 +470,29 @@ def launch_dual_tactical_terminals():
             except OSError:
                 pass
     psk_path = str(psk_file)
-    print(f"{YELLOW}Spawning Terminal 1 (NORAD Alpha)...{RESET}")
+    from paced_socket_wrapper import NATIVE_BIN
+    alpha_sk = key_dir / "norad_alpha.sk"
+    alpha_pk = key_dir / "norad_alpha.pk"
+    bravo_sk = key_dir / "pentagon_bravo.sk"
+    bravo_pk = key_dir / "pentagon_bravo.pk"
+    if not (alpha_sk.exists() and alpha_pk.exists()):
+        subprocess.run([str(NATIVE_BIN), "auth-keygen", "--out-sk", str(alpha_sk), "--out-pk", str(alpha_pk)], check=True)
+    if not (bravo_sk.exists() and bravo_pk.exists()):
+        subprocess.run([str(NATIVE_BIN), "auth-keygen", "--out-sk", str(bravo_sk), "--out-pk", str(bravo_pk)], check=True)
+
+    print(f"{YELLOW}Spawning Terminal 1 (NORAD Alpha with ML-DSA-87 mutual auth)...{RESET}")
     subprocess.Popen([sys.executable, str(ROOT / "secure_p2p.py"), "node",
                       "--role", "responder", "--bind", "127.0.0.1", "--peer", "127.0.0.1",
-                      "--name", "NORAD_ALPHA", "--psk-file", psk_path])
+                      "--name", "NORAD_ALPHA", "--psk-file", psk_path,
+                      "--auth-sk-file", str(alpha_sk), "--peer-auth-pk-file", str(bravo_pk),
+                      "--require-mutual-auth"])
     time.sleep(1.5)
-    print(f"{YELLOW}Spawning Terminal 2 (Pentagon Bravo)...{RESET}")
+    print(f"{YELLOW}Spawning Terminal 2 (Pentagon Bravo with ML-DSA-87 mutual auth)...{RESET}")
     subprocess.Popen([sys.executable, str(ROOT / "secure_p2p.py"), "node",
                       "--role", "initiator", "--bind", "127.0.0.1", "--peer", "127.0.0.1",
-                      "--name", "PENTAGON_BRAVO", "--psk-file", psk_path])
+                      "--name", "PENTAGON_BRAVO", "--psk-file", psk_path,
+                      "--auth-sk-file", str(bravo_sk), "--peer-auth-pk-file", str(alpha_pk),
+                      "--require-mutual-auth"])
 
 
 def inspect_tpm_quote():
@@ -563,13 +586,13 @@ def run_slsa_provenance_cmd():
 
 
 def run_master_certify_cmd():
-    """Execute complete Master 100% Accreditation & Certification Battery."""
+    """Execute local self-check and pre-assessment diagnostic battery."""
     print(f"\n{BOLD}{CYAN}================================================================================")
-    print("  ST2027 MASTER 100% ACCREDITATION & CERTIFICATION BATTERY (2027 STANDARDS)")
+    print("  ST2027 LOCAL PRE-ASSESSMENT DIAGNOSTIC BATTERY")
     print(f"================================================================================{RESET}\n")
 
     steps = [
-        ("NIST ACVP PQC Validation (FIPS 203/204)", ROOT / "scripts" / "acvp_pqc_validator.py"),
+        ("NIST ACVP PQC Functional Self-Check (FIPS 203/204)", ROOT / "scripts" / "acvp_pqc_validator.py"),
         ("Statistical Constant-Time Dudect Analysis", ROOT / "scripts" / "verify_constant_time.py"),
         ("ProVerif Formal Symbolic Protocol Verification", ROOT / "scripts" / "run_formal_verification.py"),
         ("NIST OSCAL v1.1.0 System Security Plan", ROOT / "scripts" / "generate_oscal_ssp.py"),
@@ -589,20 +612,20 @@ def run_master_certify_cmd():
         results.append((title, ok))
 
     print(f"\n{BOLD}{CYAN}================================================================================")
-    print("  SOVEREIGN DEFENSE 100% ACCREDITATION STATUS MATRIX")
+    print("  LOCAL SELF-CHECK DIAGNOSTIC MATRIX")
     print(f"================================================================================{RESET}")
     passed_count = sum(1 for _, ok in results if ok)
     total_count = len(results)
 
     for title, ok in results:
-        status_tag = f"{GREEN}[PASS 100%]{RESET}" if ok else f"{RED}[FAIL]{RESET}"
+        status_tag = f"{GREEN}[PASS]{RESET}" if ok else f"{RED}[FAIL/UNVERIFIED]{RESET}"
         print(f"  {status_tag} {title}")
 
     print("--------------------------------------------------------------------------------")
     score_pct = (passed_count / total_count) * 100.0
-    print(f"  {BOLD}Accreditation Readiness: {passed_count}/{total_count} Passed ({score_pct:.1f}%){RESET}")
+    print(f"  {BOLD}Self-Check Gates Executed: {passed_count}/{total_count} Passed ({score_pct:.1f}%){RESET}")
     if passed_count == total_count:
-        print(f"  {BOLD}{GREEN}[VERDICT: UNCONDITIONAL 100% TECHNICAL ACCREDITATION READY]{RESET}")
+        print(f"  {BOLD}{GREEN}[LOCAL SCRIPTS GREEN — EXTERNAL LAB/CMVP/DAO ACCREDITATION STILL REQUIRED FOR ATO]{RESET}")
     else:
         print(f"  {BOLD}{RED}[VERDICT: REMEDIATION REQUIRED BEFORE FORMAL LAB SUBMITTAL]{RESET}")
     print("================================================================================\n")
@@ -634,12 +657,12 @@ def interactive_menu_loop():
         print(f"  {GREEN}[18] Run Statistical Constant-Time Side-Channel Analysis (CT-KAT/Dudect){RESET}")
         print(f"  {GREEN}[19] Generate NIST OSCAL v1.1.0 System Security Plan (SSP){RESET}")
         print(f"  {GREEN}[20] Generate Signed SLSA Level 4 Software Supply Chain Provenance{RESET}")
-        print(f"  {BOLD}{MAGENTA}[21] Run MASTER 100% Sovereign Defense Accreditation Battery{RESET}")
+        print(f"  {BOLD}{MAGENTA}[21] Run Master Local Pre-Accreditation Diagnostic Battery{RESET}")
         print(f"  {WHITE}[15] Exit Command Center{RESET}")
         print("=" * 86)
 
         try:
-            choice = input(f"{BOLD}{YELLOW}Enter Option (1-21, C for Certify, P for PQC): {RESET}").strip()
+            choice = input(f"{BOLD}{YELLOW}Enter Option (1-21, C for Certify, P for PQC, S for seL4): {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting Command Center...")
             break

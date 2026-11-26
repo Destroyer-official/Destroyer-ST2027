@@ -119,18 +119,25 @@ def create_key_fill(*, fill_id: str, payload: Dict[str, Any],
             raise KeyFillError("payload too large (32KB cap)")
         enc_nonce, enc_ct = _aes_seal(
             dek, payload_blob, f"{FILL_MAGIC}:payload:{fill_id}".encode("utf-8"))
+        dek_shares = [bytearray(secrets.token_bytes(32))]
+        dek_shares.append(bytearray(a ^ b for a, b in zip(dek, dek_shares[0])))
         wraps = []
-        for oid, pw in zip(officers, passphrases):
-            salt = secrets.token_bytes(32)
-            kek = _scrypt_kek(pw, salt)
-            try:
-                w_nonce, w_ct = _aes_seal(
-                    kek, dek, f"{FILL_MAGIC}:wrap:{fill_id}:{oid}".encode("utf-8"))
-            finally:
-                for i in range(len(kek)):
-                    kek[i] = 0
-            wraps.append({"officer_id": oid, "salt": _b64e(salt),
-                          "nonce": _b64e(w_nonce), "ct": _b64e(w_ct)})
+        try:
+            for idx, (oid, pw, share_buf) in enumerate(zip(officers, passphrases, dek_shares)):
+                salt = secrets.token_bytes(32)
+                kek = _scrypt_kek(pw, salt)
+                try:
+                    w_nonce, w_ct = _aes_seal(
+                        kek, share_buf, f"{FILL_MAGIC}:wrap:{fill_id}:{oid}:{idx}".encode("utf-8"))
+                finally:
+                    for i in range(len(kek)):
+                        kek[i] = 0
+                wraps.append({"officer_id": oid, "share_index": idx, "salt": _b64e(salt),
+                              "nonce": _b64e(w_nonce), "ct": _b64e(w_ct)})
+        finally:
+            for share_buf in dek_shares:
+                for i in range(len(share_buf)):
+                    share_buf[i] = 0
         doc = {
             "v": FILL_VERSION,
             "magic": FILL_MAGIC,
@@ -294,23 +301,40 @@ def import_key_fill(*, fill_path: Optional[str] = None,
         if fill_id in reg:
             raise KeyFillError(f"fill {fill_id!r} already imported (replay refused)")
 
-        # 3. Open both wraps -> DEK (2-of-2, either order).
-        wraps = {w.get("officer_id"): w for w in doc["wraps"]
+        # 3. Open both 2-of-2 XOR DEK shares -> reconstruct DEK (either order).
+        wraps = {w.get("officer_id"): (idx, w) for idx, w in enumerate(doc["wraps"])
                  if isinstance(w, dict)}
-        dek = None
-        for oid, pw in zip(officers, passphrases):
-            w = wraps.get(oid)
-            if not isinstance(w, dict):
-                raise KeyFillError(f"no wrap for officer {oid!r}")
-            kek = _scrypt_kek(pw, _b64d(str(w["salt"])))
-            try:
-                dek = bytearray(_aes_open(
-                    kek, _b64d(str(w["nonce"])), _b64d(str(w["ct"])),
-                    f"{FILL_MAGIC}:wrap:{fill_id}:{oid}".encode("utf-8")))
-            finally:
-                for i in range(len(kek)):
-                    kek[i] = 0
-        if dek is None or len(dek) != 32:
+        if len(wraps) != 2:
+            raise KeyFillError("fill must contain exactly two distinct officer wraps")
+        opened_shares: List[bytearray] = []
+        dek = bytearray(32)
+        try:
+            for oid, pw in zip(officers, passphrases):
+                if oid not in wraps:
+                    raise KeyFillError(f"no wrap for officer {oid!r}")
+                wrap_idx, w = wraps[oid]
+                share_idx = int(w.get("share_index", wrap_idx))
+                kek = _scrypt_kek(pw, _b64d(str(w["salt"])))
+                try:
+                    share_pt = bytearray(_aes_open(
+                        kek, _b64d(str(w["nonce"])), _b64d(str(w["ct"])),
+                        f"{FILL_MAGIC}:wrap:{fill_id}:{oid}:{share_idx}".encode("utf-8")))
+                finally:
+                    for i in range(len(kek)):
+                        kek[i] = 0
+                if len(share_pt) != 32:
+                    for i in range(len(share_pt)):
+                        share_pt[i] = 0
+                    raise KeyFillError("DEK share recovery failed (bad length)")
+                opened_shares.append(share_pt)
+            for s in opened_shares:
+                for i in range(32):
+                    dek[i] ^= s[i]
+        finally:
+            for s in opened_shares:
+                for i in range(len(s)):
+                    s[i] = 0
+        if len(dek) != 32:
             raise KeyFillError("DEK recovery failed")
 
         # 4. Unseal payload + integrity pin.

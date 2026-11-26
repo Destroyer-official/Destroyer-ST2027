@@ -47,8 +47,18 @@ try:
     except ImportError:
         pass
     IS_NATIVE = True
-except ImportError:
+except ImportError as _native_import_err:
     IS_NATIVE = False
+    try:
+        from production_gate import is_production as _pg_is_production
+        if _pg_is_production():
+            raise ImportError(
+                "FAIL-CLOSED: native destroyer_core._native extension is mandatory in production posture"
+            ) from _native_import_err
+    except ImportError as _prod_exc:
+        if "FAIL-CLOSED" in str(_prod_exc):
+            raise
+
     import hashlib
     import struct
     from cryptography.hazmat.primitives import hashes
@@ -57,6 +67,9 @@ except ImportError:
 
     class SecureEngine:  # type: ignore[no-redef]
         def __init__(self):
+            from production_gate import is_production as _pg_is_production
+            if _pg_is_production():
+                raise RuntimeError("FAIL-CLOSED: Pure-Python SecureEngine fallback prohibited in production")
             self._connected = False
             self.key = None
             self.hp_key = None
@@ -189,78 +202,31 @@ except ImportError:
         def drop_count(self) -> int:
             return self.drops
 
-    class _DummyCore:
+    class _FailClosedNativeStub:
+        """Fail-closed placeholder when native destroyer_core._native is absent in non-prod."""
+
         def __init__(self, *args, **kwargs):
-            self._scores = {}
+            raise RuntimeError(
+                "FAIL-CLOSED: native destroyer_core._native extension unavailable"
+            )
 
-        def verify_read(self, *args, **kwargs):
-            return True
+        def __getattr__(self, name):
+            raise RuntimeError(
+                f"FAIL-CLOSED: native destroyer_core._native unavailable for '{name}'"
+            )
 
-        def register_peer(self, peer=None, role="operator", *args, **kwargs):
-            if peer:
-                self._scores[str(peer)] = 75
-            return True
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError(
+                "FAIL-CLOSED: native destroyer_core._native unavailable"
+            )
 
-        def verifying_bytes(self, *args, **kwargs):
-            return b"\x00" * 32
+        @staticmethod
+        def _deny(*args, **kwargs):
+            raise RuntimeError(
+                "FAIL-CLOSED: native destroyer_core._native extension unavailable"
+            )
 
-        def get_public_keys(self, *args, **kwargs):
-            return b"\x00" * 32
-
-        def is_quarantined(self, *args, **kwargs):
-            return False
-
-        def is_emergency_isolated(self, *args, **kwargs):
-            return False
-
-        def create_cookie(self, *args, **kwargs):
-            return b"\x00" * 32
-
-        def create_challenge(self, *args, **kwargs):
-            return b"\x00" * 32
-
-        @classmethod
-        def solve_challenge(cls, *args, **kwargs):
-            return 0
-
-        def secure_wipe(self, *args, **kwargs):
-            pass
-
-        def process_incoming_m1(self, *args, **kwargs):
-            return b"\x00" * 32
-
-        def trust_score(self, peer=None, *args, **kwargs):
-            if peer and str(peer) in self._scores:
-                return self._scores[str(peer)]
-            return 75
-
-        def score(self, *args, **kwargs):
-            return 75
-
-        def is_trusted(self, peer=None, *args, **kwargs):
-            return self.trust_score(peer) >= 50
-
-        def record_action(self, *args, **kwargs):
-            pass
-
-        def record_event(self, *args, **kwargs):
-            pass
-
-        def record_success(self, peer=None, *args, **kwargs):
-            if peer:
-                self._scores[str(peer)] = min(100, self._scores.get(str(peer), 75))
-
-        def record_penalty(self, peer, points: int = 15):
-            p = str(peer) if peer else "default"
-            curr = self._scores.get(p, 75)
-            new_s = curr - points
-            if new_s < 50:
-                self._scores[p] = 0
-                raise ValueError("zero-trust continuous verification failure: trust score below floor")
-            self._scores[p] = new_s
-
-        def record_anomaly(self, *args, **kwargs):
-            pass
+    _DummyCore = _FailClosedNativeStub  # backward-compatible symbol name only; always raises
 
     NativeHybridKex = _DummyCore  # type: ignore[assignment,misc]
     CoreMldsaSigner = _DummyCore  # type: ignore[assignment,misc]
@@ -590,19 +556,19 @@ except ImportError:
             return (0, 0, 0, 0, 0, 0, 0, self.profile)
 
     def transcript_len(a, b):
-        return 0
+        raise RuntimeError("FAIL-CLOSED: native destroyer_core._native unavailable for transcript_len")
 
     def derive_frame_key(a, b):
-        return b"\x00" * 32
+        raise RuntimeError("FAIL-CLOSED: native destroyer_core._native unavailable for derive_frame_key")
 
     def derive_ratchet_root(a, b):
-        return b"\x00" * 32
+        raise RuntimeError("FAIL-CLOSED: native destroyer_core._native unavailable for derive_ratchet_root")
 
     def pki_tbs_bytes(*args):
-        return b""
+        raise RuntimeError("FAIL-CLOSED: native destroyer_core._native unavailable for pki_tbs_bytes")
 
     def pki_revoke_bytes(*args):
-        return b""
+        raise RuntimeError("FAIL-CLOSED: native destroyer_core._native unavailable for pki_revoke_bytes")
 
     def triple_kex_derive_master(transcript, ss_mlkem, ss_mceliece, h_psk):
         import hmac, hashlib, secrets

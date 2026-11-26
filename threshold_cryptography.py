@@ -122,9 +122,14 @@ P2P_ENABLE_EXPERIMENTAL_ENV = "P2P_ENABLE_EXPERIMENTAL"
 def is_custom_threshold_enabled() -> bool:
     """Check if experimental unaudited custom threshold arithmetic is explicitly permitted.
 
-    Explicit operator opt-in ONLY. Historical argv-sniffing (auto-enable
-    under pytest) was removed: tests must set P2P_ENABLE_EXPERIMENTAL=1.
+    Explicit operator opt-in ONLY, and unconditionally refused in production mode.
     """
+    try:
+        from production_gate import is_production
+        if is_production():
+            return False
+    except Exception:
+        return False
     exp_val = os.environ.get(P2P_ENABLE_EXPERIMENTAL_ENV, "").strip().lower()
     t_val = os.environ.get(P2P_ENABLE_CUSTOM_THRESHOLD_ENV, "").strip().lower()
     return exp_val in ("1", "true", "yes", "enabled") or t_val in ("1", "true", "yes", "enabled")
@@ -382,6 +387,25 @@ class ThresholdKeyManager:
         
         return shares
     
+    def _reconstruct_from_subset(self, subset: List[ThresholdShare]) -> int:
+        secret = 0
+        for i, share_i in enumerate(subset):
+            xi = share_i.index
+            yi = int.from_bytes(share_i.value, 'big')
+            if yi >= self.PRIME:
+                raise ReconstructionError(f"Share {xi} value outside field modulus")
+            numerator = 1
+            denominator = 1
+            for j, share_j in enumerate(subset):
+                if i != j:
+                    xj = share_j.index
+                    numerator = (numerator * xj) % self.PRIME
+                    denominator = (denominator * (xj - xi)) % self.PRIME
+            denominator_inv = self._mod_inverse(denominator, self.PRIME)
+            term = (yi * numerator * denominator_inv) % self.PRIME
+            secret = (secret + term) % self.PRIME
+        return secret
+
     def reconstruct_key(
         self,
         shares: List[ThresholdShare],
@@ -390,23 +414,11 @@ class ThresholdKeyManager:
         """
         Reconstruct the original key from k or more shares.
         
-        Uses Lagrange interpolation to recover the secret.
-        
-        Args:
-            shares: List of ThresholdShare objects (at least k shares)
-            key_length: Expected length of the original key
-            
-        Returns:
-            Reconstructed key bytes
-            
-        Raises:
-            InsufficientSharesError: If fewer than k shares provided
-            ReconstructionError: If reconstruction fails
-            
-        Requirements:
-            - 3.3: Require threshold reconstruction for key operations
-            - 3.5: Refuse key operations when fewer than k shares available
+        Uses Lagrange interpolation to recover the secret and verifies
+        consistency whenever more than k shares are supplied.
         """
+        if not isinstance(key_length, int) or key_length < 1 or key_length > 32:
+            raise ReconstructionError(f"Invalid key_length {key_length!r}: expected 1..32 bytes")
         if not shares:
             raise InsufficientSharesError(0, self.threshold)
         
@@ -417,7 +429,7 @@ class ThresholdKeyManager:
         if len(shares) < k:
             raise InsufficientSharesError(len(shares), k)
         
-        # Verify consistent thresholds and enforce index validity.
+        # Verify consistent thresholds, fixed field width, and index >= 1.
         # Index 0 is forbidden: l_0(0) = 1, so a share at x=0 IS the secret.
         for share in shares:
             if share.threshold != shares[0].threshold:
@@ -426,86 +438,66 @@ class ThresholdKeyManager:
                 raise ReconstructionError(
                     f"Invalid share index {share.index!r}: indices must be integers >= 1"
                 )
+            if not isinstance(share.value, (bytes, bytearray)) or len(share.value) != 32:
+                raise ReconstructionError(
+                    f"Invalid share value length for index {share.index}"
+                )
         
-        # Deduplicate shares by index (keep first occurrence)
+        # Deduplicate shares by index (reject conflicting duplicate indices)
         unique_shares: Dict[int, ThresholdShare] = {}
         for share in shares:
-            if share.index not in unique_shares:
+            existing = unique_shares.get(share.index)
+            if existing is not None:
+                if not secrets.compare_digest(existing.value, share.value):
+                    raise ReconstructionError(f"Conflicting duplicate share values for index {share.index}")
+            else:
                 unique_shares[share.index] = share
         
         if len(unique_shares) < k:
             raise InsufficientSharesError(len(unique_shares), k)
         
-        # Use exactly k shares for reconstruction
-        shares_to_use = list(unique_shares.values())[:k]
+        unique_list = list(unique_shares.values())
+        shares_to_use = unique_list[:k]
+        secret = self._reconstruct_from_subset(shares_to_use)
+
+        # Cross-verify redundant shares (> k) against primary k-subset interpolation
+        if len(unique_list) > k:
+            for extra_idx in range(k, len(unique_list)):
+                alt_subset = unique_list[:k - 1] + [unique_list[extra_idx]]
+                if self._reconstruct_from_subset(alt_subset) != secret:
+                    raise ReconstructionError(
+                        f"Inconsistent share detected at index {unique_list[extra_idx].index}"
+                    )
         
-        # Lagrange interpolation at x = 0
-        # secret = sum(y_i * l_i(0)) mod PRIME
-        # where l_i(0) = prod(x_j / (x_j - x_i)) for j != i
-        secret = 0
-        
-        for i, share_i in enumerate(shares_to_use):
-            xi = share_i.index
-            yi = int.from_bytes(share_i.value, 'big')
-            
-            # Compute Lagrange basis polynomial l_i(0)
-            numerator = 1
-            denominator = 1
-            
-            for j, share_j in enumerate(shares_to_use):
-                if i != j:
-                    xj = share_j.index
-                    numerator = (numerator * xj) % self.PRIME
-                    denominator = (denominator * (xj - xi)) % self.PRIME
-            
-            # Compute modular inverse of denominator
-            denominator_inv = self._mod_inverse(denominator, self.PRIME)
-            
-            # Compute term: y_i * numerator * denominator_inv mod PRIME
-            term = (yi * numerator * denominator_inv) % self.PRIME
-            secret = (secret + term) % self.PRIME
-        
-        # Convert back to bytes
         secret_bytes = secret.to_bytes(32, 'big')
-        
-        # Trim to requested key length
-        # The key was right-padded with zeros, so we take the first key_length bytes
-        result = secret_bytes[:key_length] if key_length <= 32 else secret_bytes
-        
+        result = secret_bytes[:key_length]
         logger.info(f"Reconstructed key from {len(shares_to_use)} shares")
-        
         return result
     
     def verify_share(self, share: ThresholdShare, commitment: bytes) -> bool:
         """
         Verify a share against its VSS commitment and mathematical validity.
-        
-        Args:
-            share: ThresholdShare to verify
-            commitment: Expected commitment value
-            
-        Returns:
-            True if share is valid, False otherwise
-            
-        Requirements:
-            - 3.4: Verifiable secret sharing with commitment verification
         """
-        if not share or not share.value or not share.commitment:
+        if not share or not share.value or not share.commitment or not commitment:
+            return False
+        if not isinstance(share.value, (bytes, bytearray)) or len(share.value) != 32:
+            return False
+        if not isinstance(share.index, int) or share.index < 1:
             return False
 
         # Reject all-zero dummy commitments immediately
         if secrets.compare_digest(commitment, b'\x00' * len(commitment)):
             return False
 
-        # Verify share value is within finite field
+        # Verify share value is within finite field [0, PRIME)
         val_int = int.from_bytes(share.value, 'big')
-        if not (0 < val_int < self.PRIME):
+        if not (0 <= val_int < self.PRIME):
             return False
 
         # If commitment passed is the combined commitment
         expected_share_comm = hashlib.sha3_256(
             self.COMMITMENT_DOMAIN + b"::share::" +
-            share.index.to_bytes(4, 'big') + share.value + commitment
+            share.index.to_bytes(4, 'big') + bytes(share.value) + commitment
         ).digest()
         if secrets.compare_digest(share.commitment, expected_share_comm):
             return True
@@ -514,7 +506,7 @@ class ThresholdKeyManager:
         if hasattr(self, '_last_combined_commitment') and self._last_combined_commitment:
             expected_from_manager = hashlib.sha3_256(
                 self.COMMITMENT_DOMAIN + b"::share::" +
-                share.index.to_bytes(4, 'big') + share.value + self._last_combined_commitment
+                share.index.to_bytes(4, 'big') + bytes(share.value) + self._last_combined_commitment
             ).digest()
             if secrets.compare_digest(commitment, expected_from_manager) and secrets.compare_digest(share.commitment, expected_from_manager):
                 return True
@@ -836,9 +828,13 @@ class DistributedKeyStorage:
         self.threshold_manager = threshold_manager
         self._master_kek = None
         
-        # Ensure storage directories exist
+        # Ensure storage directories exist with owner-only permissions
         for location in storage_locations:
             location.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(location, 0o700)
+            except OSError:
+                pass
         
         logger.info(
             f"DistributedKeyStorage initialized with {len(storage_locations)} locations"
@@ -929,7 +925,7 @@ class DistributedKeyStorage:
             "No threshold KEK available: set P2P_THRESHOLD_STORAGE_KEY or ensure SecureKeyManager storage works")
     
     def _encrypt_share_data(self, key_id: str, share_index: int, data: bytes) -> bytes:
-        """Encrypt share bytes at rest using AES-256-GCM with master KEK and HKDF."""
+        """Encrypt share bytes at rest using AES-256-GCM with master KEK and deterministic IV."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives import hashes
@@ -943,16 +939,20 @@ class DistributedKeyStorage:
             info=f"SecureP2P::ThresholdShareDEK::v2::{share_index}".encode('utf-8'),
             backend=default_backend()
         )
-        dek = hkdf.derive(kek)
-        aesgcm = AESGCM(dek)
+        dek = bytearray(hkdf.derive(kek))
         try:
-            from p2p_core import generate_deterministic_gcm_iv
+            aesgcm = AESGCM(bytes(dek))
+            try:
+                from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+            except ImportError:
+                from p2p_core import generate_deterministic_gcm_iv
             nonce = generate_deterministic_gcm_iv()
-        except Exception:
-            nonce = secrets.token_bytes(12)
-        aad = f"threshold_share:{key_id}:{share_index}".encode('utf-8')
-        ciphertext = aesgcm.encrypt(nonce, data, aad)
-        return b"ENC_SHARE\x02" + nonce + ciphertext
+            aad = f"threshold_share:{key_id}:{share_index}".encode('utf-8')
+            ciphertext = aesgcm.encrypt(nonce, data, aad)
+            return b"ENC_SHARE\x02" + nonce + ciphertext
+        finally:
+            for idx in range(len(dek)):
+                dek[idx] = 0
 
     def _decrypt_share_data(self, key_id: str, share_index: int, data: bytes) -> bytes:
         """Decrypt share bytes from at-rest storage. Rejects unencrypted data fail-closed."""
@@ -962,6 +962,8 @@ class DistributedKeyStorage:
         from cryptography.hazmat.backends import default_backend
 
         if data.startswith(b"ENC_SHARE\x02"):
+            if len(data) < 22 + 16:
+                raise ThresholdError(f"Truncated encrypted share envelope for {key_id}:{share_index}")
             kek = self._get_master_kek()
             hkdf = HKDF(
                 algorithm=hashes.SHA384(),
@@ -970,12 +972,16 @@ class DistributedKeyStorage:
                 info=f"SecureP2P::ThresholdShareDEK::v2::{share_index}".encode('utf-8'),
                 backend=default_backend()
             )
-            dek = hkdf.derive(kek)
-            aesgcm = AESGCM(dek)
-            nonce = data[10:22]
-            ciphertext = data[22:]
-            aad = f"threshold_share:{key_id}:{share_index}".encode('utf-8')
-            return aesgcm.decrypt(nonce, ciphertext, aad)
+            dek = bytearray(hkdf.derive(kek))
+            try:
+                aesgcm = AESGCM(bytes(dek))
+                nonce = data[10:22]
+                ciphertext = data[22:]
+                aad = f"threshold_share:{key_id}:{share_index}".encode('utf-8')
+                return aesgcm.decrypt(nonce, ciphertext, aad)
+            finally:
+                for idx in range(len(dek)):
+                    dek[idx] = 0
 
         if data.startswith(b"ENC_SHARE\x01"):
             # v1 removed: deterministic SHA3(key_id) DEK offered no
@@ -988,120 +994,118 @@ class DistributedKeyStorage:
     def store_key(self, key_id: str, key: bytes) -> bool:
         """
         Split and store a key across distributed locations with AES-256-GCM encryption at rest.
-        
-        Args:
-            key_id: Unique identifier for the key
-            key: Key bytes to store
-            
-        Returns:
-            True if storage succeeded
-            
-        Requirements:
-            - 3.2: Distribute identity key shares across multiple secure storage locations
         """
-        # Split key into shares
+        if not key_id or "/" in key_id or "\\" in key_id or ".." in key_id:
+            raise ThresholdError(f"Unsafe threshold key_id: {key_id!r}")
         shares = self.threshold_manager.split_key(key)
-        
-        # Store each share in a different location
+
         for i, share in enumerate(shares):
             location = self.storage_locations[i]
             share_path = location / f"{key_id}_share_{share.index}.bin"
-            
-            # Serialize share and encrypt at rest
-            share_data = self._serialize_share(share)
-            encrypted_data = self._encrypt_share_data(key_id, share.index, share_data)
-            
-            # Write encrypted share to storage
-            with open(share_path, 'wb') as f:
-                f.write(encrypted_data)
-            
+            if share_path.is_symlink():
+                raise ThresholdError(f"Refusing symlink target at {share_path}")
+
+            share_data = bytearray(self._serialize_share(share))
+            try:
+                encrypted_data = self._encrypt_share_data(key_id, share.index, bytes(share_data))
+            finally:
+                for idx in range(len(share_data)):
+                    share_data[idx] = 0
+
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(share_path), flags, 0o600)
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(encrypted_data)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except Exception:
+                raise
+            try:
+                os.chmod(share_path, 0o600)
+            except OSError:
+                pass
             logger.debug(f"Stored encrypted share {share.index} at {share_path}")
-        
+
         logger.info(f"Stored key '{key_id}' across {len(shares)} locations (AES-256-GCM encrypted)")
         return True
-    
+
     def retrieve_key(self, key_id: str, key_length: int = 32) -> bytes:
         """
         Retrieve and reconstruct a key from distributed shares.
-        
-        Args:
-            key_id: Unique identifier for the key
-            key_length: Expected length of the key
-            
-        Returns:
-            Reconstructed key bytes
-            
-        Raises:
-            InsufficientSharesError: If not enough shares available
-            
-        Requirements:
-            - 3.3: Require threshold reconstruction for identity key operations
-            - 3.5: Refuse key operations when fewer than k shares available
         """
-        # Collect shares from storage locations
+        if not isinstance(key_length, int) or key_length < 1 or key_length > 32:
+            raise ThresholdError(f"Invalid key_length {key_length!r}")
         shares = []
-        
-        for i, location in enumerate(self.storage_locations):
-            # Try to find share file
+
+        for location in self.storage_locations:
             share_files = list(location.glob(f"{key_id}_share_*.bin"))
-            
+
             for share_file in share_files:
+                if share_file.is_symlink():
+                    logger.warning(f"Skipping symlink share file {share_file}")
+                    continue
                 try:
                     filename = share_file.name
-                    # Extract share index from filename: e.g. key_share_1.bin
                     share_idx = int(filename.split('_')[-1].replace('.bin', ''))
                     with open(share_file, 'rb') as f:
                         encrypted_data = f.read()
-                    share_data = self._decrypt_share_data(key_id, share_idx, encrypted_data)
-                    share = self._deserialize_share(share_data)
+                    plain_buf = bytearray(self._decrypt_share_data(key_id, share_idx, encrypted_data))
+                    try:
+                        share = self._deserialize_share(bytes(plain_buf))
+                    finally:
+                        for idx in range(len(plain_buf)):
+                            plain_buf[idx] = 0
+                    if share.index != share_idx:
+                        raise ThresholdError(f"Share filename index {share_idx} mismatches payload index {share.index}")
                     shares.append(share)
                 except Exception as e:
                     logger.warning(f"Failed to read share from {share_file}: {e}")
-        
-        # Check if we have enough shares
+
         if len(shares) < self.threshold_manager.threshold:
             raise InsufficientSharesError(
                 len(shares),
                 self.threshold_manager.threshold
             )
-        
-        # Reconstruct key
+
         key = self.threshold_manager.reconstruct_key(shares, key_length)
-        
         logger.info(f"Retrieved key '{key_id}' from {len(shares)} shares")
         return key
-    
+
     def delete_key(self, key_id: str) -> bool:
         """
-        Securely delete all shares of a key.
-        
-        Args:
-            key_id: Unique identifier for the key
-            
-        Returns:
-            True if deletion succeeded
+        Securely delete all shares of a key (NIST SP 800-88 multi-pass overwrite).
         """
         deleted_count = 0
-        
+
         for location in self.storage_locations:
             share_files = list(location.glob(f"{key_id}_share_*.bin"))
-            
+
             for share_file in share_files:
+                if share_file.is_symlink():
+                    share_file.unlink()
+                    deleted_count += 1
+                    continue
                 try:
-                    # Overwrite with random data before deletion
                     file_size = share_file.stat().st_size
-                    with open(share_file, 'wb') as f:
-                        f.write(secrets.token_bytes(file_size))
-                    
-                    # Delete file
+                    if file_size > 0:
+                        with open(share_file, 'r+b') as f:
+                            for pattern in (b"\x00" * file_size, b"\xFF" * file_size, secrets.token_bytes(file_size)):
+                                f.seek(0)
+                                f.write(pattern)
+                                f.flush()
+                                os.fsync(f.fileno())
+                            f.truncate(0)
+                            f.flush()
+                            os.fsync(f.fileno())
                     share_file.unlink()
                     deleted_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to delete share {share_file}: {e}")
-        
+
         logger.info(f"Deleted {deleted_count} shares for key '{key_id}'")
         return deleted_count > 0
-    
+
     def _serialize_share(self, share: ThresholdShare) -> bytes:
         """Serialize a share to bytes."""
         # Format: index (4) + threshold (4) + total (4) + commitment (32) + value
@@ -1112,15 +1116,19 @@ class DistributedKeyStorage:
         data.extend(share.commitment)
         data.extend(share.value)
         return bytes(data)
-    
+
     def _deserialize_share(self, data: bytes) -> ThresholdShare:
-        """Deserialize a share from bytes."""
+        """Deserialize a share from bytes with strict framing validation."""
+        if len(data) < 44 + 32:
+            raise ThresholdError(f"Truncated threshold share payload ({len(data)} bytes)")
         index = int.from_bytes(data[0:4], 'big')
         threshold = int.from_bytes(data[4:8], 'big')
         total_shares = int.from_bytes(data[8:12], 'big')
         commitment = data[12:44]
         value = data[44:]
-        
+        if index < 1 or threshold < 2 or total_shares < threshold or len(value) != 32:
+            raise ThresholdError("Malformed threshold share metadata or length")
+
         return ThresholdShare(
             index=index,
             value=value,

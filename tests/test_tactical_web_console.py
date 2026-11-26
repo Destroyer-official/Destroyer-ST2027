@@ -156,6 +156,50 @@ class TestTacticalWebConsole(unittest.TestCase):
         self.assertIn("Referrer-Policy: strict-origin-when-cross-origin", headers_raw)
         self.assertIn("Cache-Control: no-store, no-cache, must-revalidate, private", headers_raw)
 
+    def test_webauthn_register_requires_auth_and_csrf_referer_and_drill_gated(self):
+        """Unauthenticated WebAuthn registration fails closed (403); CSRF Referer rejected; /api/drill gated."""
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        import tactical_web_console as twc
+
+        pub_pem = (
+            ec.generate_private_key(ec.SECP256R1())
+            .public_key()
+            .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+            .decode("utf-8")
+        )
+        # Missing bootstrap token / admin assertion -> 403
+        handler, wfile = self._create_handler(
+            "POST",
+            "/api/auth/webauthn/register",
+            {"credential_id": "rogue-cred", "public_key_pem": pub_pem},
+        )
+        handler._handle_api_webauthn_register({"credential_id": "rogue-cred", "public_key_pem": pub_pem})
+        data = self._parse_response(wfile)
+        self.assertEqual(data.get("status"), "WEBAUTHN_ENROLLMENT_UNAUTHORIZED")
+
+        # Valid registration_token succeeds
+        handler_ok, wfile_ok = self._create_handler("POST", "/api/auth/webauthn/register", {})
+        handler_ok._handle_api_webauthn_register({
+            "credential_id": f"auth-cred-{hash(pub_pem)}",
+            "public_key_pem": pub_pem,
+            "registration_token": twc._webauthn_manager._registration_token,
+        })
+        self.assertEqual(self._parse_response(wfile_ok).get("status"), "KEY_REGISTERED")
+
+        # Cross-origin Referer blocked on do_POST
+        handler_csrf, wfile_csrf = self._create_handler("POST", "/api/cot", {"callsign": "X"})
+        handler_csrf.headers["Referer"] = "https://attacker.invalid/csrf.html"
+        handler_csrf.do_POST()
+        self.assertIn("Cross-origin Referer", self._parse_response(wfile_csrf).get("error", ""))
+
+        # /api/drill enforces WebAuthn gate when server.require_webauthn=True
+        handler_drill, wfile_drill = self._create_handler("POST", "/api/drill", {})
+        handler_drill.server = MagicMock(require_webauthn=True)
+        handler_drill._handle_api_drill({})
+        self.assertEqual(self._parse_response(wfile_drill).get("status"), "WEBAUTHN_L3_VERIFICATION_REQUIRED")
+
+
 
 if __name__ == "__main__":
     unittest.main()

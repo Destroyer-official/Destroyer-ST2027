@@ -259,11 +259,8 @@ class CrossDomainGuard:
                                     caveat: str, plaintext_bytes: bytes) -> Dict[str, Any]:
         """Encrypts data inside a cryptographically isolated classification compartment."""
         comp_key = self.derive_compartment_key(master_secret, classification, caveat)
-        try:
-            from p2p_core import generate_deterministic_gcm_iv
-            nonce = generate_deterministic_gcm_iv()
-        except Exception:
-            nonce = secrets.token_bytes(12)
+        from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+        nonce = generate_deterministic_gcm_iv()
         cipher = ChaCha20Poly1305(comp_key)
         aad = f"{classification.name}:{caveat}".encode("utf-8")
         ciphertext = cipher.encrypt(nonce, plaintext_bytes, aad)

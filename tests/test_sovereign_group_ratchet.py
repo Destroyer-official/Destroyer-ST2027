@@ -137,3 +137,36 @@ def test_group_epoch_advancement_synchronization():
     m1_reply = bravo.seal(b"POST_REKEY_EPOCH_1_ACK")
     assert alpha.open(m1_reply) == b"POST_REKEY_EPOCH_1_ACK"
 
+
+def test_per_sender_mldsa87_auth_aad_separation_and_zeroize():
+    """Enrolled sender ML-DSA-87 keys block insider sender spoofing, V2 AAD prevents boundary ambiguity, teardown wipes."""
+    from liboqs_wrapper import LibOQS_MLDSA_87
+    from sovereign_group_ratchet import _message_aad
+
+    assert _message_aad("ab", 1, "c", 0) != _message_aad("a", 1, "bc", 0)
+
+    mldsa = LibOQS_MLDSA_87()
+    pk_a, sk_a = mldsa.keygen()
+    pk_b, sk_b = mldsa.keygen()
+    secret = os.urandom(48)
+
+    alpha = SovereignGroupRatchet("G-AUTH", "ALPHA", secret, local_mldsa_sk=sk_a, require_sender_auth=True)
+    bravo = SovereignGroupRatchet("G-AUTH", "BRAVO", secret, local_mldsa_sk=sk_b, require_sender_auth=True)
+    alpha.enroll_sender_identity("BRAVO", pk_b)
+    bravo.enroll_sender_identity("ALPHA", pk_a)
+    alpha.register_peer_sender_key("BRAVO", alpha.derive_epoch_sender_key("BRAVO"))
+    bravo.register_peer_sender_key("ALPHA", bravo.derive_epoch_sender_key("ALPHA"))
+
+    # Forger without ALPHA's ML-DSA-87 secret key cannot impersonate ALPHA even with group epoch_secret
+    evil_alpha = SovereignGroupRatchet("G-AUTH", "ALPHA", secret)
+    spoofed = evil_alpha.seal(b"FAKE ORDER")
+    with pytest.raises(ValueError, match="Sender authentication failed"):
+        bravo.open(spoofed)
+
+    genuine = alpha.seal(b"AUTHENTICATED DIRECTIVE")
+    assert bravo.open(genuine) == b"AUTHENTICATED DIRECTIVE"
+
+    alpha.teardown()
+    assert all(b == 0 for b in alpha.epoch_secret)
+
+

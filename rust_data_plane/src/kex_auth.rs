@@ -72,10 +72,10 @@ pub enum KexRole {
 }
 
 /// Check if the runtime environment allows lab-only surfaces.
-/// Returns false if `P2P_PRODUCTION=1` is asserted or if neither `P2P_LAB_MODE`
-/// nor `ST2027_LAB_MODE` is set to "1".
+/// Returns false if production posture is asserted (`policy::is_production_env()`)
+/// or if neither `P2P_LAB_MODE` nor `ST2027_LAB_MODE` is set to "1".
 pub fn is_lab_mode() -> bool {
-    if std::env::var("P2P_PRODUCTION").as_deref() == Ok("1") {
+    if crate::policy::is_production_env() {
         return false;
     }
     std::env::var("P2P_LAB_MODE").as_deref() == Ok("1")

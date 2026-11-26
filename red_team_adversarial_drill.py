@@ -305,7 +305,7 @@ class RedTeamDrillHarness:
         )
         return passed
 
-    def run_full_drill(self) -> Dict[str, Any]:
+    def run_full_drill(self, output_dir: Optional[Path] = None) -> Dict[str, Any]:
         """Execute all five red-team assault vectors and export report."""
         print("=" * 80)
         print("  RED-TEAM ADVERSARIAL PENETRATION DRILL & THREAT SIMULATION")
@@ -341,7 +341,9 @@ class RedTeamDrillHarness:
             "drill_results": self.results,
         }
 
-        report_path = REPORTS_DIR / "red_team_drill_report.json"
+        out_dir = Path(output_dir) if output_dir is not None else REPORTS_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+        report_path = out_dir / "red_team_drill_report.json"
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
         print("-" * 80)

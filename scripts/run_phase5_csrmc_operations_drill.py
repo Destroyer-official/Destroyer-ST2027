@@ -66,8 +66,9 @@ DRILL_PUB_FILE = COMPLIANCE_DIR / "csrmc_phase5_drill_report.json.mldsa87.pub"
 class Phase5OperationsMissionDrill:
     """Orchestrates comprehensive DoD CSRMC Phase 5 operational mission drills."""
 
-    def __init__(self, drill_id: Optional[str] = None):
+    def __init__(self, drill_id: Optional[str] = None, output_dir: Optional[Path] = None):
         self.drill_id = drill_id or f"CSRMC-PHASE5-DRILL-{int(time.time())}"
+        self.output_dir = Path(output_dir) if output_dir is not None else COMPLIANCE_DIR
         self.results: Dict[str, Any] = {
             "drill_id": self.drill_id,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -173,9 +174,12 @@ class Phase5OperationsMissionDrill:
 
     def _probe_2_ddil_disruption_reconciliation(self) -> Dict[str, Any]:
         """Probe 2: Tactical DDIL Comms Disruption & Merkle-DAG Delta Reconciliation."""
+        from tactical_mesh_ddil import TacticalKeyring
+
         log.info("[PROBE 2/5] Simulating Tactical DDIL Contested Link Disruption...")
-        node_alpha = DDILNodeMesh(node_id="TACTICAL-ALPHA")
-        node_bravo = DDILNodeMesh(node_id="TACTICAL-BRAVO")
+        probe_ring = TacticalKeyring()
+        node_alpha = DDILNodeMesh(node_id="TACTICAL-ALPHA", keyring=probe_ring)
+        node_bravo = DDILNodeMesh(node_id="TACTICAL-BRAVO", keyring=probe_ring)
 
         # Simulate complete communication blackout
         node_alpha.set_peer_connectivity("TACTICAL-BRAVO", False)
@@ -194,6 +198,7 @@ class Phase5OperationsMissionDrill:
             sender_pk=pk_a,
             symmetric_key=sym_key,
             priority=BundlePriority.STANDARD,
+            keyring=probe_ring,
         )
 
         # Create emergency flash order
@@ -206,26 +211,23 @@ class Phase5OperationsMissionDrill:
             sender_pk=pk_a,
             symmetric_key=sym_key,
             priority=BundlePriority.EMERGENCY,
+            keyring=probe_ring,
         )
 
-        # Enqueue in Node Alpha store-and-forward queue
+        # Enqueue signed bundles in Node Alpha store-and-forward queue
         node_alpha.enqueue_bundle(
             recipient_id="TACTICAL-BRAVO",
             seq=b_std.seq,
             ciphertext_bytes=b_std.ciphertext_bytes,
             auth_tag=b_std.auth_tag,
-            signature=b_std.signature,
-            sender_pubkey=b_std.sender_pubkey,
-            priority=b_std.priority,
+            bundle=b_std,
         )
         node_alpha.enqueue_bundle(
             recipient_id="TACTICAL-BRAVO",
             seq=b_flash.seq,
             ciphertext_bytes=b_flash.ciphertext_bytes,
             auth_tag=b_flash.auth_tag,
-            signature=b_flash.signature,
-            sender_pubkey=b_flash.sender_pubkey,
-            priority=b_flash.priority,
+            bundle=b_flash,
         )
 
         # Verify flash preemption in store-and-forward queue
@@ -265,7 +267,10 @@ class Phase5OperationsMissionDrill:
 
     def _probe_3_rfc9172_bpsec_compression(self) -> Dict[str, Any]:
         """Probe 3: RFC 9172 BPsec Encapsulation & 32-Byte Key-ID Wire Compression."""
+        from tactical_mesh_ddil import TacticalKeyring
+
         log.info("[PROBE 3/5] Evaluating RFC 9172 BPsec Security Blocks & Key-ID Compression...")
+        probe_ring = TacticalKeyring()
         pk_signer, sk_signer = self.signer.keygen()
         sym_key = secrets.token_bytes(32)
 
@@ -279,6 +284,7 @@ class Phase5OperationsMissionDrill:
             sender_pk=pk_signer,
             symmetric_key=sym_key,
             compress_key=True,
+            keyring=probe_ring,
         )
 
         rfc_blocks = b_comp.get_rfc9172_security_blocks()
@@ -286,7 +292,7 @@ class Phase5OperationsMissionDrill:
         has_bcb = ("rfc9172_bcb" in rfc_blocks and rfc_blocks["rfc9172_bcb"]["block_type"] == "BLOCK_CONFIDENTIALITY_BLOCK")
 
         # Decrypt using pre-pinned keyring lookup
-        decrypted = decrypt_bpsec_bundle(b_comp, sym_key)
+        decrypted = decrypt_bpsec_bundle(b_comp, sym_key, keyring=probe_ring)
         payload_verified = (decrypted == b"Tactical low-bandwidth telemetry message")
 
         # Wire savings: Raw pubkey (2592B) vs Key-ID (32B) = 2560 bytes saved
@@ -392,7 +398,7 @@ class Phase5OperationsMissionDrill:
     def _probe_5_anti_tamper_zeroization(self) -> Dict[str, Any]:
         """Probe 5: Anti-Tamper Scorched-Earth Memory Zeroization & Cold-Boot Defense."""
         log.info("[PROBE 5/5] Testing Anti-Tamper 3-Pass Zeroization & Cold-Boot Defense...")
-        engine = EmergencyZeroizationEngine()
+        engine = EmergencyZeroizationEngine(audit_dir=self.output_dir)
 
         # Allocate 3 sensitive test buffers
         buf1 = bytearray(b"CRYPTO_KEY_MATERIAL_CNSA2_MLKEM_1024_SECRET")
@@ -434,8 +440,8 @@ class Phase5OperationsMissionDrill:
         return probe_res
 
     def _sign_and_save_report(self) -> None:
-        """Sign canonical drill JSON with ML-DSA-87 and persist to compliance_reports/."""
-        COMPLIANCE_DIR.mkdir(parents=True, exist_ok=True)
+        """Sign canonical drill JSON with ML-DSA-87 and persist to output_dir."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         canonical_bytes = json.dumps(self.results, sort_keys=True, indent=2).encode("utf-8")
         sig = self.signer.sign(self.sk, canonical_bytes)
 
@@ -446,25 +452,33 @@ class Phase5OperationsMissionDrill:
             "signed_at_utc": datetime.now(timezone.utc).isoformat(),
         }
 
-        with open(DRILL_REPORT_FILE, "w", encoding="utf-8") as f:
+        report_file = self.output_dir / "csrmc_phase5_drill_report.json"
+        sig_file = self.output_dir / "csrmc_phase5_drill_report.json.mldsa87.sig"
+        pub_file = self.output_dir / "csrmc_phase5_drill_report.json.mldsa87.pub"
+
+        with open(report_file, "w", encoding="utf-8") as f:
             json.dump(self.results, f, indent=2)
-        with open(DRILL_SIG_FILE, "wb") as f:
+        with open(sig_file, "wb") as f:
             f.write(sig)
-        with open(DRILL_PUB_FILE, "wb") as f:
+        with open(pub_file, "wb") as f:
             f.write(self.pk)
 
 
-def verify_phase5_drill_report() -> bool:
-    """Audit and verify cryptographic signature on compliance_reports/csrmc_phase5_drill_report.json."""
-    if not (DRILL_REPORT_FILE.exists() and DRILL_SIG_FILE.exists() and DRILL_PUB_FILE.exists()):
-        print(f"[FAIL] Missing mission drill files in {COMPLIANCE_DIR}")
+def verify_phase5_drill_report(report_dir: Optional[Path] = None) -> bool:
+    """Audit and verify cryptographic signature on csrmc_phase5_drill_report.json."""
+    target_dir = Path(report_dir) if report_dir is not None else COMPLIANCE_DIR
+    report_file = target_dir / "csrmc_phase5_drill_report.json"
+    sig_file = target_dir / "csrmc_phase5_drill_report.json.mldsa87.sig"
+    pub_file = target_dir / "csrmc_phase5_drill_report.json.mldsa87.pub"
+    if not (report_file.exists() and sig_file.exists() and pub_file.exists()):
+        print(f"[FAIL] Missing mission drill files in {target_dir}")
         return False
 
-    with open(DRILL_REPORT_FILE, "r", encoding="utf-8") as f:
+    with open(report_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-    with open(DRILL_SIG_FILE, "rb") as f:
+    with open(sig_file, "rb") as f:
         sig = f.read()
-    with open(DRILL_PUB_FILE, "rb") as f:
+    with open(pub_file, "rb") as f:
         pk = f.read()
 
     # Reconstruct canonical data before signature_metadata injection
@@ -474,7 +488,7 @@ def verify_phase5_drill_report() -> bool:
 
     signer = LibOQS_MLDSA_87()
     valid = signer.verify(pk, canonical_bytes, sig)
-    print(f"[*] Phase 5 Mission Drill Audit Report: {DRILL_REPORT_FILE}")
+    print(f"[*] Phase 5 Mission Drill Audit Report: {report_file}")
     print(f"[*] ML-DSA-87 Digital Signature Valid: {valid}")
     print(f"[*] Operational Verdict: {data.get('summary', {}).get('operational_verdict', 'UNKNOWN')}")
     print(f"[*] Probes: {data.get('summary', {}).get('probes_passed', 0)}/{data.get('summary', {}).get('total_probes', 0)} Passed")

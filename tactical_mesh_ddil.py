@@ -65,6 +65,14 @@ def _wipe_key_buffer(buffer: bytearray) -> None:
         buffer[index] = 0
 
 
+def _is_production() -> bool:
+    try:
+        from production_gate import is_production
+        return bool(is_production())
+    except Exception:
+        return True
+
+
 class TacticalKeyring:
     """Pre-pinned Post-Quantum Keyring for Tactical DDIL Nodes (TETA Architecture)."""
 
@@ -77,12 +85,36 @@ class TacticalKeyring:
         self._epoch_by_node: Dict[str, Dict[int, Tuple[bytearray, str]]] = {}
         self._epoch_by_id: Dict[str, Tuple[str, int]] = {}
 
-    def register_peer_key(self, node_id: str, pubkey_bytes: bytes) -> str:
-        """Register a tactical node's public key and return its 32-byte Key ID."""
+    def register_peer_key(
+        self, node_id: str, pubkey_bytes: bytes, allow_rotation: bool = False
+    ) -> str:
+        """Pin a tactical node's public key and return its 32-char Key ID.
+
+        Refuses silent overwrite of an already-pinned peer identity unless
+        ``allow_rotation=True`` is supplied explicitly.
+        """
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("peer key node_id must be a non-empty string")
+        if not isinstance(pubkey_bytes, (bytes, bytearray)) or len(pubkey_bytes) == 0:
+            raise ValueError("peer public key must be non-empty bytes")
+        pk_bytes = bytes(pubkey_bytes)
         with self.lock:
-            key_id = hashlib.sha3_256(pubkey_bytes).hexdigest()[:32]
-            self._by_node[node_id] = (pubkey_bytes, key_id)
-            self._by_id[key_id] = pubkey_bytes
+            key_id = hashlib.sha3_256(pk_bytes).hexdigest()[:32]
+            existing = self._by_node.get(node_id)
+            if existing is not None:
+                prev_pk, prev_key_id = existing
+                if not hmac.compare_digest(prev_pk, pk_bytes):
+                    if not allow_rotation:
+                        raise ValueError(
+                            f"peer public key for {node_id!r} is already pinned; "
+                            "pass allow_rotation=True for explicit key rotation"
+                        )
+                    self._by_id.pop(prev_key_id, None)
+            existing_id_pk = self._by_id.get(key_id)
+            if existing_id_pk is not None and not hmac.compare_digest(existing_id_pk, pk_bytes):
+                raise ValueError(f"peer key ID collision detected for key_id={key_id!r}")
+            self._by_node[node_id] = (pk_bytes, key_id)
+            self._by_id[key_id] = pk_bytes
             return key_id
 
     def get_key_by_id(self, key_id: str) -> Optional[bytes]:
@@ -239,15 +271,18 @@ def _bundle_aad(
     epoch: int,
     encryption_key_id: Optional[str],
 ) -> bytes:
-    base = sender_id.encode("utf-8") + recipient_id.encode("utf-8")
+    sender_b = sender_id.encode("utf-8")
+    recip_b = recipient_id.encode("utf-8")
     if epoch <= 0:
-        return base
+        return sender_b + recip_b
+    key_id_b = (encryption_key_id or "").encode("utf-8")
     return (
-        base
-        + b"\x00DDILv2\x00"
+        b"DDILv2\x00"
+        + struct.pack(">I", len(sender_b)) + sender_b
+        + struct.pack(">I", len(recip_b)) + recip_b
         + int(seq).to_bytes(8, "big")
         + int(epoch).to_bytes(4, "big")
-        + (encryption_key_id or "").encode("utf-8")
+        + struct.pack(">I", len(key_id_b)) + key_id_b
     )
 
 
@@ -383,7 +418,10 @@ class GovernanceEnvelope:
             "valid_until_utc": self.valid_until_utc,
             "required_signatures": self.required_signatures,
         }
-        return json.dumps(payload, sort_keys=True).encode("utf-8")
+        return (
+            b"SecureP2P::GovernanceEnvelope::v1\x00"
+            + json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
 
     def add_signature(self, signer_id: str, signature: bytes) -> None:
         self.signatures[signer_id] = signature
@@ -395,7 +433,9 @@ class GovernanceEnvelope:
         return sig
 
     def verify(self, keyring: Optional[TacticalKeyring] = None) -> bool:
-        """Verify that the pre-mission consensus envelope meets threshold signatures."""
+        """Verify that the pre-mission consensus envelope meets distinct-key threshold signatures."""
+        if not isinstance(self.required_signatures, int) or self.required_signatures < 1:
+            return False
         if time.time() > self.valid_until_utc:
             logger.warning(f"Governance envelope {self.envelope_id} has expired.")
             return False
@@ -409,7 +449,7 @@ class GovernanceEnvelope:
 
         kr = keyring or get_tactical_keyring()
         verifier = LibOQS_MLDSA_87()
-        valid_count = 0
+        verified_pubkey_digests: Set[bytes] = set()
         canonical = self.canonical_bytes()
 
         for signer_id, sig in self.signatures.items():
@@ -418,11 +458,11 @@ class GovernanceEnvelope:
                 continue
             try:
                 if verifier.verify(pubkey, canonical, sig):
-                    valid_count += 1
+                    verified_pubkey_digests.add(hashlib.sha3_256(pubkey).digest())
             except Exception as e:
                 logger.warning(f"Signature verification failed for signer {signer_id}: {e}")
 
-        return valid_count >= self.required_signatures
+        return len(verified_pubkey_digests) >= self.required_signatures
 
 
 class DDILBundle:
@@ -466,21 +506,25 @@ class DDILBundle:
         return time.time() > (self.timestamp_utc + self.ttl_sec)
 
     def canonical_signable_bytes(self) -> bytes:
-        """Produce deterministic canonical bytes for signature and hash calculation."""
+        """Produce domain-separated, length-prefixed canonical bytes for signatures and hashes."""
         h = hashlib.sha3_512()
-        h.update(self.bundle_id.encode("utf-8"))
-        h.update(self.sender_id.encode("utf-8"))
-        h.update(self.recipient_id.encode("utf-8"))
-        h.update(self.seq.to_bytes(8, "big"))
-        h.update(self.priority.to_bytes(2, "big"))
-        h.update(self.ciphertext_bytes)
-        h.update(self.auth_tag)
-        if self.sender_key_id:
-            h.update(self.sender_key_id.encode("utf-8"))
-        if self.key_epoch > 0:
-            h.update(b"DDILv2")
-            h.update(self.key_epoch.to_bytes(4, "big"))
-            h.update((self.encryption_key_id or "").encode("utf-8"))
+        h.update(b"SecureP2P::DDILBundle::v2\x00")
+        for field_bytes in (
+            self.bundle_id.encode("utf-8"),
+            self.sender_id.encode("utf-8"),
+            self.recipient_id.encode("utf-8"),
+            self.ciphertext_bytes,
+            self.auth_tag,
+            (self.sender_key_id or "").encode("utf-8"),
+            (self.encryption_key_id or "").encode("utf-8"),
+        ):
+            h.update(struct.pack(">I", len(field_bytes)))
+            h.update(field_bytes)
+        h.update(int(self.seq).to_bytes(8, "big"))
+        h.update(int(self.priority).to_bytes(2, "big"))
+        h.update(int(self.key_epoch).to_bytes(4, "big"))
+        h.update(struct.pack(">d", float(self.timestamp_utc)))
+        h.update(struct.pack(">d", float(self.ttl_sec)))
         return h.digest()
 
     def compute_bundle_hash(self) -> str:
@@ -518,16 +562,48 @@ class DDILBundle:
         self.signature = sig
         return sig
 
-    def verify_signature(self, verifier: Optional[LibOQS_MLDSA_87] = None, pk: Optional[bytes] = None) -> bool:
-        """Verify ML-DSA-87 signature on the bundle (resolving from keyring if needed)."""
+    def verify_signature(
+        self,
+        verifier: Optional[LibOQS_MLDSA_87] = None,
+        pk: Optional[bytes] = None,
+        keyring: Optional[TacticalKeyring] = None,
+    ) -> bool:
+        """Verify ML-DSA-87 signature against an explicit or keyring-pinned sender public key.
+
+        Self-asserted inline ``bundle.sender_pubkey`` values are never trusted on
+        their own without either an explicit ``pk`` pin or a matching pinned
+        entry in the ``TacticalKeyring``.
+        """
         if not self.signature:
             return False
-        pub = pk or self.sender_pubkey
-        if not pub and self.sender_key_id:
-            pub = get_tactical_keyring().get_key_by_id(self.sender_key_id)
+        ring = keyring or get_tactical_keyring()
+        pub: Optional[bytes] = None
+        if pk is not None:
+            pub = pk
+        else:
+            pinned_node_pk = ring.get_key_by_node(self.sender_id)
+            pinned_id_pk = ring.get_key_by_id(self.sender_key_id) if self.sender_key_id else None
+            if pinned_node_pk is not None and pinned_id_pk is not None:
+                if not hmac.compare_digest(pinned_node_pk, pinned_id_pk):
+                    logger.warning(
+                        f"Sender key ID {self.sender_key_id} conflicts with pinned key for {self.sender_id}"
+                    )
+                    return False
+            pub = pinned_node_pk if pinned_node_pk is not None else pinned_id_pk
         if not pub:
-            logger.warning(f"Unable to resolve public key for bundle {self.bundle_id} (key_id={self.sender_key_id})")
+            logger.warning(
+                f"Refusing bundle {self.bundle_id}: no pinned public key for sender "
+                f"{self.sender_id!r} (key_id={self.sender_key_id!r})"
+            )
             return False
+        if self.sender_pubkey is not None and not hmac.compare_digest(self.sender_pubkey, pub):
+            logger.warning(f"Sender pubkey substitution rejected on bundle {self.bundle_id}")
+            return False
+        if self.sender_key_id:
+            expected_id = hashlib.sha3_256(pub).hexdigest()[:32]
+            if not hmac.compare_digest(self.sender_key_id, expected_id):
+                logger.warning(f"Sender key ID mismatch on bundle {self.bundle_id}")
+                return False
         v = verifier or LibOQS_MLDSA_87()
         try:
             return v.verify(pub, self.canonical_signable_bytes(), self.signature)
@@ -548,6 +624,7 @@ def create_bpsec_bundle(
     priority: int = BundlePriority.STANDARD,
     compress_key: bool = False,
     key_epoch: int = 1,
+    keyring: Optional[TacticalKeyring] = None,
 ) -> DDILBundle:
     """
     Encapsulate payload into a quantum-resistant BPsec bundle:
@@ -560,12 +637,14 @@ def create_bpsec_bundle(
         raise RuntimeError(
             "MILITARY FATAL: AES-256-GCM/HKDF-SHA3-512 unavailable "
             "(cryptography package missing); refusing to emit tactical bundles.")
+    if not isinstance(seq, int) or seq < 0:
+        raise ValueError("seq must be a non-negative integer")
     if not isinstance(key_epoch, int) or key_epoch < 1:
         raise ValueError("key_epoch must be an integer >= 1")
 
-    keyring = get_tactical_keyring()
+    ring = keyring or get_tactical_keyring()
     if symmetric_key is None:
-        active = keyring.get_active_epoch_key(recipient_id)
+        active = ring.get_active_epoch_key(recipient_id)
         if active is None:
             raise ValueError(
                 f"no pre-pinned DDIL epoch key for recipient {recipient_id!r}; "
@@ -593,8 +672,7 @@ def create_bpsec_bundle(
     tag = ct_with_tag[-16:]
 
     bundle_id = f"{sender_id}:{recipient_id}:{seq}:{time.time_ns()}"
-    signing_key_id = hashlib.sha3_256(sender_pk).hexdigest()[:32]
-    keyring.register_peer_key(sender_id, sender_pk)
+    signing_key_id = ring.register_peer_key(sender_id, sender_pk)
 
     bundle = DDILBundle(
         bundle_id=bundle_id,
@@ -629,22 +707,29 @@ def decrypt_bpsec_bundle(
     Verify BPsec bundle signature and decrypt authenticated payload.
 
     The epoch root may be supplied explicitly or resolved from the tactical
-    keyring by encryption-key ID. Epoch 0 is legacy (raw root key) and is
-    accepted only for already-issued bundles.
+    keyring by encryption-key ID. Epoch <= 0 is refused in production and only
+    accepted in non-production legacy fixtures.
     """
-    pub = expected_sender_pk or bundle.sender_pubkey
-    if not pub and bundle.sender_key_id:
-        pub = get_tactical_keyring().get_key_by_id(bundle.sender_key_id)
+    if _is_production() and bundle.key_epoch <= 0:
+        raise ValueError(
+            f"DDIL legacy key_epoch={bundle.key_epoch} rejected fail-closed in production"
+        )
+    if not isinstance(bundle.seq, int) or bundle.seq < 0:
+        raise ValueError("Invalid negative or non-integer DDIL bundle seq")
 
-    if not bundle.verify_signature(pk=pub):
+    ring = keyring or get_tactical_keyring()
+    if not bundle.verify_signature(pk=expected_sender_pk, keyring=ring):
         raise ValueError(f"Invalid ML-DSA-87 signature on BPsec bundle {bundle.bundle_id}")
 
     if AESGCM is None:
         raise RuntimeError(
             "MILITARY FATAL: AES-256-GCM unavailable (cryptography "
             "package missing); refusing to open tactical bundles.")
+    if not isinstance(bundle.ciphertext_bytes, (bytes, bytearray)) or len(bundle.ciphertext_bytes) < 12:
+        raise ValueError(f"Malformed DDIL ciphertext in bundle {bundle.bundle_id}")
+    if not isinstance(bundle.auth_tag, (bytes, bytearray)) or len(bundle.auth_tag) != 16:
+        raise ValueError(f"Malformed DDIL auth_tag in bundle {bundle.bundle_id}")
 
-    ring = keyring or get_tactical_keyring()
     root_key = symmetric_key
     if root_key is None and bundle.encryption_key_id:
         root_key = ring.get_epoch_key_by_id(bundle.encryption_key_id)
@@ -664,9 +749,14 @@ def decrypt_bpsec_bundle(
                 f"DDIL encryption key ID mismatch for bundle {bundle.bundle_id}"
             )
 
-    nonce = bundle.ciphertext_bytes[:12]
-    ct = bundle.ciphertext_bytes[12:]
-    ct_with_tag = ct + bundle.auth_tag
+    nonce = bytes(bundle.ciphertext_bytes[:12])
+    if bundle.key_epoch > 0:
+        expected_nonce = struct.pack(">Q", bundle.seq) + struct.pack(">I", bundle.key_epoch & 0xFFFFFFFF)
+        if not hmac.compare_digest(nonce, expected_nonce):
+            raise ValueError(f"DDIL nonce/header mismatch for bundle {bundle.bundle_id}")
+
+    ct = bytes(bundle.ciphertext_bytes[12:])
+    ct_with_tag = ct + bytes(bundle.auth_tag)
 
     if bundle.key_epoch <= 0:
         return AESGCM(root_key).decrypt(
@@ -700,9 +790,15 @@ def decrypt_bpsec_bundle(
 class DDILNodeMesh:
     """Tactical DDIL Mesh Router & Store-and-Forward Reconciler."""
 
-    def __init__(self, node_id: str, max_queue_bytes: int = 64 * 1024 * 1024):
+    def __init__(
+        self,
+        node_id: str,
+        max_queue_bytes: int = 64 * 1024 * 1024,
+        keyring: Optional[TacticalKeyring] = None,
+    ):
         self.node_id = node_id
-        self.max_queue_bytes = max_queue_bytes
+        self.max_queue_bytes = max(1, int(max_queue_bytes))
+        self.keyring = keyring or get_tactical_keyring()
         self.lock = threading.Lock()
 
         # TETA Architecture: Tactical Identity Cache, Authority Decay, and Governance Envelopes
@@ -715,6 +811,8 @@ class DDILNodeMesh:
 
         # Inbound delivered bundles history: bundle_id -> bundle_hash
         self.delivered_bundles: Dict[str, str] = {}
+        # Sequence-level replay defense across altered bundle IDs: (sender_id, key_epoch, seq)
+        self._seen_sequences: Set[Tuple[str, int, int]] = set()
 
         # Connection status: peer_id -> bool
         self.peer_connectivity: Dict[str, bool] = {}
@@ -723,10 +821,35 @@ class DDILNodeMesh:
         self.total_bundles_stored = 0
         self.total_bundles_reconciled = 0
 
+    @staticmethod
+    def _estimate_bundle_bytes(bundle: DDILBundle) -> int:
+        return (
+            len(bundle.ciphertext_bytes)
+            + len(bundle.auth_tag)
+            + (len(bundle.signature) if bundle.signature else 0)
+            + (len(bundle.sender_pubkey) if bundle.sender_pubkey else 0)
+            + len(bundle.bundle_id.encode("utf-8"))
+        )
+
+    def _current_queue_bytes(self) -> int:
+        total = 0
+        for bundles in self.outbound_store.values():
+            for b in bundles:
+                total += self._estimate_bundle_bytes(b)
+        return total
+
+    def _prune_expired_locked(self) -> None:
+        for peer_id in list(self.outbound_store.keys()):
+            kept = [b for b in self.outbound_store[peer_id] if not b.is_expired()]
+            if kept:
+                self.outbound_store[peer_id] = kept
+            else:
+                self.outbound_store.pop(peer_id, None)
+
     def load_governance_envelope(self, envelope: GovernanceEnvelope) -> bool:
         """Load and verify a pre-mission consensus governance envelope."""
         with self.lock:
-            if envelope.verify():
+            if envelope.verify(self.keyring):
                 self.governance_envelopes[envelope.envelope_id] = envelope
                 logger.info(f"[TETA] Ingested verified pre-mission governance envelope: {envelope.envelope_id}")
                 return True
@@ -737,7 +860,7 @@ class DDILNodeMesh:
         """Check if action is authorized under TETA authority decay or pre-mission envelope."""
         with self.lock:
             for env in self.governance_envelopes.values():
-                if env.authorized_action == action and env.verify():
+                if env.authorized_action == action and env.verify(self.keyring):
                     return True, f"Action '{action}' permitted via Pre-Mission Governance Envelope {env.envelope_id}."
             return self.authority_decay.can_execute_action(action)
 
@@ -765,23 +888,61 @@ class DDILNodeMesh:
         signature: Optional[bytes] = None,
         sender_pubkey: Optional[bytes] = None,
         priority: int = BundlePriority.STANDARD,
+        bundle: Optional[DDILBundle] = None,
     ) -> DDILBundle:
-        """Queue an encrypted bundle for store-and-forward transmission with priority sorting."""
+        """Queue an encrypted bundle for store-and-forward transmission with bounded capacity."""
         with self.lock:
-            bundle_id = f"{self.node_id}:{recipient_id}:{seq}:{time.time_ns()}"
-            bundle = DDILBundle(
-                bundle_id=bundle_id,
-                sender_id=self.node_id,
-                recipient_id=recipient_id,
-                seq=seq,
-                ciphertext_bytes=ciphertext_bytes,
-                auth_tag=auth_tag,
-                timestamp_utc=time.time(),
-                ttl_sec=ttl_sec,
-                signature=signature,
-                sender_pubkey=sender_pubkey,
-                priority=priority,
-            )
+            if bundle is None:
+                if not isinstance(seq, int) or seq < 0:
+                    raise ValueError("DDIL seq must be a non-negative integer")
+                if ttl_sec <= 0:
+                    raise ValueError("DDIL ttl_sec must be > 0")
+                bundle_id = f"{self.node_id}:{recipient_id}:{seq}:{time.time_ns()}"
+                bundle = DDILBundle(
+                    bundle_id=bundle_id,
+                    sender_id=self.node_id,
+                    recipient_id=recipient_id,
+                    seq=seq,
+                    ciphertext_bytes=ciphertext_bytes,
+                    auth_tag=auth_tag,
+                    timestamp_utc=time.time(),
+                    ttl_sec=ttl_sec,
+                    signature=signature,
+                    sender_pubkey=sender_pubkey,
+                    priority=priority,
+                )
+            else:
+                if not isinstance(bundle.seq, int) or bundle.seq < 0:
+                    raise ValueError("DDIL seq must be a non-negative integer")
+                recipient_id = bundle.recipient_id
+
+            incoming_size = self._estimate_bundle_bytes(bundle)
+            if incoming_size > self.max_queue_bytes:
+                raise ValueError(
+                    f"DDIL bundle ({incoming_size}B) exceeds max_queue_bytes ({self.max_queue_bytes}B)"
+                )
+
+            self._prune_expired_locked()
+            current_bytes = self._current_queue_bytes()
+            if current_bytes + incoming_size > self.max_queue_bytes:
+                # Evict strictly lower-priority oldest bundles before refusing admission
+                evictable: List[Tuple[int, float, str, int, DDILBundle]] = []
+                for p_id, b_list in self.outbound_store.items():
+                    for idx, existing in enumerate(b_list):
+                        if existing.priority > bundle.priority:
+                            evictable.append((-existing.priority, existing.timestamp_utc, p_id, idx, existing))
+                evictable.sort(key=lambda item: (item[0], item[1]))
+                for _, _, p_id, _, victim in evictable:
+                    if current_bytes + incoming_size <= self.max_queue_bytes:
+                        break
+                    if victim in self.outbound_store[p_id]:
+                        self.outbound_store[p_id].remove(victim)
+                        current_bytes -= self._estimate_bundle_bytes(victim)
+                if current_bytes + incoming_size > self.max_queue_bytes:
+                    raise ValueError(
+                        f"DDIL outbound queue saturated ({current_bytes}/{self.max_queue_bytes}B)"
+                    )
+
             self.outbound_store[recipient_id].append(bundle)
             # Maintain priority order: EMERGENCY (0) -> COMMAND (1) -> STANDARD (2)
             self.outbound_store[recipient_id].sort(key=lambda b: (b.priority, b.timestamp_utc))
@@ -823,18 +984,38 @@ class DDILNodeMesh:
             self.total_bundles_reconciled += len(delta_to_send)
             return delta_to_send
 
-    def receive_reconciled_bundle(self, bundle: DDILBundle) -> bool:
-        """Receive and ingest reconciled bundle, rejecting duplicates and expired packets."""
+    def receive_reconciled_bundle(
+        self,
+        bundle: DDILBundle,
+        expected_sender_pk: Optional[bytes] = None,
+    ) -> bool:
+        """Receive, authenticate, deduplicate, and ingest a reconciled DDIL bundle."""
         with self.lock:
-            if bundle.is_expired():
+            if not isinstance(bundle.seq, int) or bundle.seq < 0:
+                logger.warning(f"[DDIL DROP] Invalid seq={bundle.seq} on bundle {bundle.bundle_id}")
+                return False
+            if bundle.ttl_sec <= 0 or bundle.is_expired():
                 logger.warning(f"[DDIL DROP] Dropped expired bundle {bundle.bundle_id}")
                 return False
+            if bundle.timestamp_utc > time.time() + 300.0:
+                logger.warning(f"[DDIL DROP] Dropped future-dated bundle {bundle.bundle_id}")
+                return False
 
-            if bundle.bundle_id in self.delivered_bundles:
-                # Duplicate suppression
+            if bundle.signature is not None:
+                if not bundle.verify_signature(pk=expected_sender_pk, keyring=self.keyring):
+                    logger.warning(f"[DDIL DROP] Invalid ML-DSA-87 signature on {bundle.bundle_id}")
+                    return False
+            elif _is_production():
+                logger.warning(f"[DDIL DROP] Unsigned bundle {bundle.bundle_id} refused in production")
+                return False
+
+            seq_key = (bundle.sender_id, int(bundle.key_epoch), int(bundle.seq))
+            if bundle.bundle_id in self.delivered_bundles or seq_key in self._seen_sequences:
+                # Duplicate / replay suppression across re-wrapped bundle IDs
                 return False
 
             self.delivered_bundles[bundle.bundle_id] = bundle.compute_bundle_hash()
+            self._seen_sequences.add(seq_key)
             return True
 
 

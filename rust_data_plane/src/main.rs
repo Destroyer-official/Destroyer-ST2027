@@ -175,6 +175,18 @@ fn reject_forbidden_cli(args: &[String]) {
     if get_flag(args, "--psk").is_some() {
         fail("refusing --psk on command line (secret in ps argv); use --psk-file");
     }
+    if destroyer_core::policy::is_production_env() {
+        if get_flag(args, "--seed-hex").is_some() {
+            fail("refusing --seed-hex on command line in production (secret in ps argv); use --in-seed-file or --seed-stdin");
+        }
+        if get_flag(args, "--pin1").is_some()
+            || get_flag(args, "--pin2").is_some()
+            || get_flag(args, "--token1-pin").is_some()
+            || get_flag(args, "--token2-pin").is_some()
+        {
+            fail("refusing smartcard PIN flags (--pin1/--pin2/--token*-pin) on command line in production (secret in ps argv); use --pin*-file or --pin*-stdin");
+        }
+    }
 }
 
 /// Load a 32-byte PSK from `--psk-file` into a stack array for HKDF-salt
@@ -1953,8 +1965,9 @@ fn cmd_stream_chaff(args: &[String]) {
 #[allow(unused_variables, unused_mut)]
 fn cmd_channel(args: &[String]) {
     reject_forbidden_cli(args);
+    let key_file_path = get_flag(args, "--key-file");
     let (kb, key_id) = load_key_material(args);
-    let key_bytes: [u8; 32] = *kb.as_bytes();
+    let mut key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind: SocketAddr = get_flag(args, "--bind")
         .unwrap_or_else(|| usage())
@@ -2124,7 +2137,7 @@ fn cmd_channel(args: &[String]) {
         .build()
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
-    rt.block_on(async {
+    let channel_stats = rt.block_on(async {
         let mut ep = Endpoint::bind(&bind.to_string())
             .await
             .unwrap_or_else(|_| fail("channel bind failed"));
@@ -2133,6 +2146,7 @@ fn cmd_channel(args: &[String]) {
         let mut msgs_received = 0u64;
         let mut chaff_received = 0u64;
         let mut draining: Option<u64> = None;
+        let mut zeroized = false;
 
         let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(32);
         if use_stdin {
@@ -2192,6 +2206,7 @@ fn cmd_channel(args: &[String]) {
                         let trimmed = line.trim();
                         if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
                             println!("channel: OPERATOR_REQUEST_ZEROIZE");
+                            zeroized = true;
                             break;
                         } else if trimmed == "/rekey" || trimmed == "REKEY" {
                             if pcs_ratchet.peer_bundle().is_some() && pending_frame_key.is_none() && outbound_rekeys.is_empty() {
@@ -2706,11 +2721,48 @@ fn cmd_channel(args: &[String]) {
         tpm_nv::checkpoint_recv(&state, &key_bytes, next_send_seq, last)
             .unwrap_or_else(|e| fail(&e));
 
-        println!(
-            "channel: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={}",
-            ep.drops
-        );
+        (msgs_sent, msgs_received, chaff_received, ticks_emitted, ep.drops, zeroized)
     });
+
+    if channel_stats.5 {
+        drop(current_frame_key);
+        drop(pending_frame_key.take());
+        drop(prev_frame_key.take());
+        drop(state_file);
+        if let Some(ref kf) = key_file_path {
+            let _ = purge::purge_file(kf);
+        }
+        let _ = purge::purge_file(&state);
+        for suffix in [".seqlog", ".nvck", ".crl_seq"] {
+            let side = format!("{state}{suffix}");
+            if std::path::Path::new(&side).exists() {
+                let _ = purge::purge_file(&side);
+            }
+        }
+        key_bytes.zeroize();
+        println!("channel: ZEROIZE COMPLETE: KEY & STATE SANITIZED (NIST SP 800-88).");
+        return;
+    }
+
+    let (msgs_sent, msgs_received, chaff_received, ticks_emitted, ep_drops, _) = channel_stats;
+    let (last, bitmap) = window.parts();
+    let st = SessionState {
+        key_id,
+        send_seq: next_send_seq,
+        recv_last: last,
+        recv_bitmap: bitmap,
+    };
+    write_state_locked(&mut state_file, &st, &key_bytes);
+    // Final write gives unused reservations back (send_seq may drop to
+    // the consumed value): re-anchor the NV chain so the next guard
+    // sees sidecar == state instead of a false rollback.
+    tpm_nv::checkpoint_recv(&state, &key_bytes, next_send_seq, last)
+        .unwrap_or_else(|e| fail(&e));
+    key_bytes.zeroize();
+
+    println!(
+        "channel: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={ep_drops}"
+    );
 }
 
 fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
@@ -2752,6 +2804,7 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             "--ca",
             "--crl-file",
             "--crl",
+            "--peer-subject",
             "--auth-tpm-sealed",
             "--auth-tpm-pub",
             "--pcrs",
@@ -2793,6 +2846,7 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             "--ca",
             "--crl-file",
             "--crl",
+            "--peer-subject",
             "--auth-tpm-sealed",
             "--auth-tpm-pub",
             "--pcrs",
@@ -2826,7 +2880,7 @@ fn cmd_terminal(args: &[String]) {
     }
     let key_file_path = get_flag(&effective_args, "--key-file");
     let (kb, key_id) = load_key_material(&effective_args);
-    let key_bytes: [u8; 32] = *kb.as_bytes();
+    let mut key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind: SocketAddr = get_flag(args, "--bind")
         .unwrap_or_else(|| usage())
@@ -2897,8 +2951,8 @@ fn cmd_terminal(args: &[String]) {
     drop(kb);
 
     let state_fresh = tpm_nv::state_is_fresh(&state);
-    let mut term_state_file: Option<std::fs::File> = Some(open_locked_state(&state));
-    let initial_st = read_state_locked(term_state_file.as_mut().unwrap(), &key_bytes, &key_id);
+    let mut state_file = open_locked_state(&state);
+    let initial_st = read_state_locked(&mut state_file, &key_bytes, &key_id);
     tpm_nv::guard_recv(&state, &key_bytes, initial_st.send_seq, initial_st.recv_last, state_fresh)
         .unwrap_or_else(|e| fail(&e));
     let mut next_send_seq = initial_st.send_seq;
@@ -2907,9 +2961,10 @@ fn cmd_terminal(args: &[String]) {
     let mut reserved_limit = next_send_seq
         .checked_add(512)
         .unwrap_or_else(|| fail("sequence exhausted"));
-    let mut st = read_state_locked(term_state_file.as_mut().unwrap(), &key_bytes, &key_id);
+    let mut st = read_state_locked(&mut state_file, &key_bytes, &key_id);
     st.send_seq = reserved_limit;
-    write_state_locked(term_state_file.as_mut().unwrap(), &st, &key_bytes);
+    write_state_locked(&mut state_file, &st, &key_bytes);
+    let mut term_state_file: Option<std::fs::File> = Some(state_file);
     tpm_nv::checkpoint_recv(&state, &key_bytes, reserved_limit, initial_st.recv_last).unwrap_or_else(|e| fail(&e));
 
     let zt_peer_id = format!("{:?}", to);
@@ -3078,6 +3133,11 @@ fn cmd_terminal(args: &[String]) {
                         } else if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
                             println!("\n[CRITICAL] OPERATOR EMERGENCY ZEROIZATION INITIATED...");
                             drop(term_state_file.take());
+                            drop(pending_frame_key.take());
+                            drop(prev_frame_key.take());
+                            let _old_fk = std::mem::replace(&mut current_frame_key, FrameKey::from_slice(&[0u8; 32]));
+                            drop(_old_fk);
+                            key_bytes.zeroize();
                             if let Some(ref kf) = key_file_path {
                                 let _ = purge::purge_file(kf);
                             }
@@ -3085,7 +3145,7 @@ fn cmd_terminal(args: &[String]) {
                                 let _ = purge::purge_file(ek);
                             }
                             let _ = purge::purge_file(&state);
-                            for suffix in [".seqlog", ".nvck"] {
+                            for suffix in [".seqlog", ".nvck", ".crl_seq"] {
                                 let side = format!("{state}{suffix}");
                                 if std::path::Path::new(&side).exists() {
                                     let _ = purge::purge_file(&side);
@@ -3363,6 +3423,7 @@ fn cmd_terminal(args: &[String]) {
         drop(term_state_file.take());
         tpm_nv::checkpoint_recv(&state, &key_bytes, next_send_seq, last)
             .unwrap_or_else(|e| fail(&e));
+        key_bytes.zeroize();
 
         println!(
             "terminal: TERMINATED ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={}",
@@ -3484,6 +3545,11 @@ fn cmd_kex_listen(args: &[String]) {
     } else {
         None
     };
+    let peer_subject = get_flag(args, "--peer-subject");
+
+    if policy::is_production_env() && is_pki && pinned_peer_vk.is_none() && peer_subject.is_none() {
+        fail("production PKI KEX requires peer identity pinning (--peer-subject NAME or --peer-auth-pk-file PATH)");
+    }
 
     if (mutual || is_pki) && psk_bytes.is_none() {
         fail("mutual ML-DSA-87 authentication also requires --psk-file (defense in depth)");
@@ -3571,6 +3637,15 @@ fn cmd_kex_listen(args: &[String]) {
                         .unwrap_or(0.0);
                     init_cert.verify_threshold(custodians, now)
                         .map_err(|_| "initiator X.509 certificate failed 3-of-5 threshold CA verification")?;
+                    if let Some(ref expected_subj) = peer_subject {
+                        let exp_norm = pki::norm_ident(expected_subj)
+                            .map_err(|_| "invalid --peer-subject")?;
+                        let got_norm = pki::norm_ident(&init_cert.subject)
+                            .map_err(|_| "invalid initiator certificate subject")?;
+                        if got_norm != exp_norm {
+                            return Err("initiator certificate subject does not match --peer-subject pin");
+                        }
+                    }
 
                     let mut init_crl_len_buf = [0u8; 4];
                     socket.read_exact(&mut init_crl_len_buf).await.map_err(|_| "read init crl len failed")?;
@@ -3740,6 +3815,11 @@ fn cmd_kex_connect(args: &[String]) {
     } else {
         None
     };
+    let peer_subject = get_flag(args, "--peer-subject");
+
+    if policy::is_production_env() && is_pki && pinned_peer_vk.is_none() && peer_subject.is_none() {
+        fail("production PKI KEX requires peer identity pinning (--peer-subject NAME or --peer-auth-pk-file PATH)");
+    }
 
     if (mutual || is_pki) && psk_bytes.is_none() {
         fail("mutual ML-DSA-87 authentication also requires --psk-file (defense in depth)");
@@ -3819,6 +3899,15 @@ fn cmd_kex_connect(args: &[String]) {
                         .unwrap_or(0.0);
                     resp_cert.verify_threshold(custodians, now)
                         .map_err(|_| "responder X.509 certificate failed 3-of-5 threshold CA verification")?;
+                    if let Some(ref expected_subj) = peer_subject {
+                        let exp_norm = pki::norm_ident(expected_subj)
+                            .map_err(|_| "invalid --peer-subject")?;
+                        let got_norm = pki::norm_ident(&resp_cert.subject)
+                            .map_err(|_| "invalid responder certificate subject")?;
+                        if got_norm != exp_norm {
+                            return Err("responder certificate subject does not match --peer-subject pin");
+                        }
+                    }
 
                     let mut resp_crl_len_buf = [0u8; 4];
                     socket.read_exact(&mut resp_crl_len_buf).await.map_err(|_| "read resp crl len failed")?;
@@ -4546,16 +4635,31 @@ fn cmd_eam_auth_hw(args: &[String]) {
     let slot1: usize = get_flag(args, "--token1-slot")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let pin1 = get_flag(args, "--pin1")
-        .or_else(|| get_flag(args, "--token1-pin"));
+    let load_cli_pin = |args: &[String], flag1: &str, flag2: &str, file_flag: &str, stdin_flag: &str| -> Option<Zeroizing<String>> {
+        if let Some(p) = get_flag(args, file_flag) {
+            let raw = std::fs::read_to_string(&p)
+                .unwrap_or_else(|_| fail(&format!("failed to read PIN file for {file_flag}")));
+            return Some(Zeroizing::new(raw.trim().to_string()));
+        }
+        if has_flag(args, stdin_flag) {
+            let mut s = String::new();
+            std::io::stdin()
+                .read_to_string(&mut s)
+                .unwrap_or_else(|_| fail(&format!("failed to read PIN from stdin for {stdin_flag}")));
+            return Some(Zeroizing::new(s.trim().to_string()));
+        }
+        get_flag(args, flag1)
+            .or_else(|| get_flag(args, flag2))
+            .map(Zeroizing::new)
+    };
+    let pin1 = load_cli_pin(args, "--pin1", "--token1-pin", "--pin1-file", "--pin1-stdin");
     let label1 = get_flag(args, "--token1-key-label");
 
     let mod2 = get_flag(args, "--token2-module");
     let slot2: usize = get_flag(args, "--token2-slot")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
-    let pin2 = get_flag(args, "--pin2")
-        .or_else(|| get_flag(args, "--token2-pin"));
+    let pin2 = load_cli_pin(args, "--pin2", "--token2-pin", "--pin2-file", "--pin2-stdin");
     let label2 = get_flag(args, "--token2-key-label");
 
     let mock_skew_ms: Option<u64> = get_flag(args, "--mock-skew-ms")
@@ -4563,12 +4667,11 @@ fn cmd_eam_auth_hw(args: &[String]) {
     let mock_same_slot = has_flag(args, "--mock-same-slot");
     let mock_same_serial = has_flag(args, "--mock-same-serial");
 
-    let is_production = std::env::var("P2P_PRODUCTION").as_deref() == Ok("1")
-        || std::env::var("SECURE_P2P_PRODUCTION").as_deref() == Ok("1")
+    let is_production = destroyer_core::policy::is_production_env()
         || has_flag(args, "--production");
 
     if is_mock && is_production {
-        fail("SECURITY VIOLATION: Mock dual smartcards prohibited in production (P2P_PRODUCTION=1). Physical split-knowledge hardware smartcards required under DoD 5210.41M.");
+        fail("SECURITY VIOLATION: Mock dual smartcards prohibited in production. Physical split-knowledge hardware smartcards required under DoD 5210.41M.");
     }
 
     let (wire_hex, hash_hex, skew_ms) = if is_mock {
@@ -4731,11 +4834,10 @@ fn cmd_eam_verify_hw(args: &[String]) {
         .unwrap_or_default()
         .as_millis() as u64;
 
-    let is_prod = std::env::var("P2P_PRODUCTION").map(|v| v == "1").unwrap_or(false)
-        || std::env::var("SECURE_P2P_PRODUCTION").map(|v| v == "1").unwrap_or(false);
+    let is_prod = destroyer_core::policy::is_production_env();
 
     if is_prod && roster_path.is_none() {
-        fail("production mode (P2P_PRODUCTION=1) strictly requires --officer-roster <PATH> to verify authorized officers");
+        fail("production mode strictly requires --officer-roster <PATH> to verify authorized officers");
     }
 
     if let Some(r_path) = roster_path {

@@ -50,6 +50,7 @@ __all__ = [
     "is_ts_mode",
     "production_reason",
     "force_production",
+    "arm_production_gate",
     "TRUTHY",
     "PRODUCTION_VARS",
     "ControlPlaneBoundaryViolation",
@@ -170,6 +171,16 @@ def force_production(reason: str = "forced") -> None:
         _sticky = True
         _sticky_reason = reason
         _log.critical("production_gate: FORCE-ARMED (%s)", reason)
+
+
+def arm_production_gate(reason: str = "armed") -> None:
+    """Arm canonical production posture across environment variables and sticky latch."""
+    with _lock:
+        for var in PRODUCTION_VARS:
+            cur = os.environ.get(var)
+            if cur is None or cur.strip().lower() not in TRUTHY:
+                os.environ[var] = "1"
+    force_production(reason)
 
 
 def reset_for_tests() -> None:

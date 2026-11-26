@@ -193,3 +193,28 @@ def test_concurrent_double_import_single_winner(ceremony_keys, workdir):
         t.join(timeout=120)
     assert sorted(results) == ["ok", "refused"]  # nosec: B101
 
+
+def test_single_officer_wrap_cannot_decrypt_payload(ceremony_keys):
+    """Compromising one officer's passphrase reveals only a random XOR share, never the DEK."""
+    fill, _ = _make_fill(ceremony_keys)
+    w0 = fill["wraps"][0]
+    kek0 = kfi._scrypt_kek("correct horse 1", kfi._b64d(w0["salt"]))
+    try:
+        share0 = kfi._aes_open(
+            kek0,
+            kfi._b64d(w0["nonce"]),
+            kfi._b64d(w0["ct"]),
+            f"{kfi.FILL_MAGIC}:wrap:{fill['fill_id']}:{w0['officer_id']}:{w0['share_index']}".encode("utf-8"),
+        )
+    finally:
+        for i in range(len(kek0)):
+            kek0[i] = 0
+    assert len(share0) == 32  # nosec: B101
+    with pytest.raises(KeyFillError):
+        kfi._aes_open(
+            share0,
+            kfi._b64d(fill["enc"]["nonce"]),
+            kfi._b64d(fill["enc"]["ct"]),
+            f"{kfi.FILL_MAGIC}:payload:{fill['fill_id']}".encode("utf-8"),
+        )
+

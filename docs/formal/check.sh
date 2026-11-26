@@ -12,13 +12,17 @@
 
 set -eu
 
-STRICT=0
-if [ "${1:-}" = "--strict" ]; then
+STRICT=1
+ALLOW_STRUCTURAL_ONLY=0
+if [ "${1:-}" = "--allow-structural-only" ]; then
+    STRICT=0
+    ALLOW_STRUCTURAL_ONLY=1
+elif [ "${1:-}" = "--strict" ]; then
     STRICT=1
 elif [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-    echo "Usage: sh docs/formal/check.sh [--strict]"
-    echo "  default : Run models if proverif present, else exit 0"
-    echo "  --strict: Mandatory blocking gate (FAIL exit 1 if proverif missing or query fails)"
+    echo "Usage: sh docs/formal/check.sh [--strict | --allow-structural-only]"
+    echo "  default                : Fail closed (exit 1) if ProVerif is missing or any query fails"
+    echo "  --allow-structural-only: Lab-only structural AST test when ProVerif is absent"
     exit 0
 fi
 
@@ -50,21 +54,20 @@ if [ -n "$PROVERIF_BIN" ]; then
     echo "[+] All formal verification models executed."
     if command -v python3 >/dev/null 2>&1; then
         echo "=== Generating Machine-Checked Verification Certificate ==="
-        python3 "$ROOT/tools/formal_verification_orchestrator.py" --strict --out-dir "$ROOT/docs/formal" || true
+        python3 "$ROOT/tools/formal_verification_orchestrator.py" --strict --out-dir "$ROOT/docs/formal"
     fi
     exit 0
 else
-    if [ "$STRICT" = "1" ] || [ "${CI:-}" = "true" ]; then
-        echo "FAIL: proverif not installed (--strict / CI mode requires ProVerif >= 2.05 from https://proverif.inria.fr/)" >&2
+    if [ "$STRICT" = "1" ] || [ "$ALLOW_STRUCTURAL_ONLY" != "1" ] || [ "${CI:-}" = "true" ]; then
+        echo "FAIL: proverif not installed (fail-closed default requires ProVerif >= 2.05 from https://proverif.inria.fr/; pass --allow-structural-only for structural checks only)" >&2
         exit 1
     fi
-    # Non-strict fallback to structural AST formal verification test suite
     if command -v python3 >/dev/null 2>&1; then
-        echo "=== Executing Structural & Semantic AST Formal Model Verifier ==="
+        echo "=== Executing Structural AST Model Check Only (NOT a formal proof) ==="
         python3 -m unittest "$ROOT/tests/test_formal_proverif_models.py"
-        echo "[+] AST_STRUCTURAL_CHECK_PASS: Formal models verified via Python AST engine (ProVerif not installed; structural check only)."
+        echo "[+] STRUCTURAL_CHECK_ONLY: ProVerif not installed; formal properties remain unverified."
         exit 0
     fi
-    echo "SKIP: proverif not installed in local environment"
-    exit 0
+    echo "FAIL: neither proverif nor python3 available" >&2
+    exit 1
 fi

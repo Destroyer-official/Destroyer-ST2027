@@ -110,17 +110,21 @@ class StratcomIdentityAccumulator:
         return idx
 
     def _rebuild(self) -> None:
-        """Reconstructs the 256-leaf Merkle accumulator tree."""
+        """Reconstructs the Ristretto255 clearance ring accumulator strictly via native Rust."""
         self._leaf_hashes = [id_rec.leaf_hash() for id_rec in self._identities]
-        if not self._leaf_hashes:
-            self._leaf_hashes = [b"\x00" * 32]
-
-        try:
-            root_bytes, leaves_out = CorePqZkp.build_merkle_accumulator(self._leaf_hashes)
-            self.root = bytes(root_bytes)
-        except Exception as e:
-            logger.warning(f"CorePqZkp accumulator build fallback: {e}")
-            self.root = self._pure_python_build_root(self._leaf_hashes)
+        if not self._identities:
+            self.root = b"\x00" * 32
+            return
+        records = [
+            (
+                id_rec.callsign,
+                id_rec.serial_number,
+                int(id_rec.clearance_level),
+                id_rec.public_key_fingerprint,
+            )
+            for id_rec in self._identities
+        ]
+        self.root = bytes(CorePqZkp.build_ring_accumulator(records))
 
     @staticmethod
     def _pure_python_build_root(leaves: List[bytes]) -> bytes:
@@ -192,37 +196,46 @@ class PqZkpIdentityProver:
         if blinding_salt is None:
             blinding_salt = secrets.token_bytes(32)
 
-        # Generate proof via Rust data plane CorePqZkp
+        # Generate sound Ristretto255 bLSAG proof via native Rust data plane CorePqZkp
+        records = [
+            (
+                id_rec.callsign,
+                id_rec.serial_number,
+                int(id_rec.clearance_level),
+                id_rec.public_key_fingerprint,
+            )
+            for id_rec in self.accumulator._identities
+        ]
         try:
             wire_bytes = CorePqZkp.prove_identity(
                 self.identity.callsign,
                 self.identity.serial_number,
                 int(self.identity.clearance_level),
                 self.identity.public_key_fingerprint,
-                self.accumulator._leaf_hashes,
-                self.leaf_index,
+                records,
                 int(claimed_min_clearance),
                 epoch_id,
                 session_nonce,
-                blinding_salt,
             )
             return bytes(wire_bytes)
         except Exception as e:
             logger.error(f"CorePqZkp prove_identity error: {e}")
-            raise ForgedProofError(f"Failed to generate ZKP proof: {e}")
+            raise ForgedProofError(f"Failed to generate ring ZKP proof: {e}")
 
 
 class PqZkpIdentityVerifier:
     """
-    Sovereign Zero-Knowledge Attestation Verifier.
-    Verifies anonymous tactical node clearance membership in constant time.
-    Prevents SIGINT correlation while strictly validating STRATCOM clearance.
+    Sovereign Anonymous Attestation Verifier (Ristretto255 bLSAG).
+    Verifies ring membership, epoch nullifier binding, and clearance level fail-closed.
+    Note: Ristretto255 bLSAG provides classical 128-bit DL security (not CRQC-resistant);
+    passing strict_pq=True fails closed until a post-quantum STARK prover is integrated.
     """
 
-    def __init__(self, trusted_accumulator_root: bytes):
+    def __init__(self, trusted_accumulator_root: bytes, strict_pq: bool = False):
         if len(trusted_accumulator_root) != 32:
             raise ValueError("trusted_accumulator_root must be 32 bytes")
         self.trusted_root = trusted_accumulator_root
+        self.strict_pq = strict_pq
         self._epoch_nullifiers: Dict[bytes, Set[bytes]] = {}
         self._lock = threading.Lock()
 
@@ -234,24 +247,16 @@ class PqZkpIdentityVerifier:
         epoch_id: Optional[bytes] = None,
     ) -> Tuple[bool, ClearanceLevel, str]:
         """
-        Verifies an anonymous tactical node zero-knowledge attestation:
-        1. Checks Merkle path consistency against trusted root.
-        2. Validates session challenge-response.
-        3. Enforces clearance hierarchy.
-        4. Detects and rejects sybil double-attestation via nullifier cache.
-
-        Returns:
-            (is_valid, verified_clearance_level, nullifier_hex)
+        Verifies an anonymous tactical node attestation via PQZKP2 wire format.
         """
         if len(expected_session_nonce) != 32:
             raise ValueError("expected_session_nonce must be 32 bytes")
 
         with self._lock:
-            # Extract epoch_id from wire if not provided
+            # Extract epoch_id from PQZKP2 header if not provided: [magic:6][root:32][clearance:1][epoch:16]
             if epoch_id is None:
-                if len(proof_wire) >= 73 and proof_wire[:6] == b"PQZKP1":
-                    # offset 6 + 32 (root) + 32 (commit) + 1 (clearance) = 71
-                    epoch_id = proof_wire[71:87]
+                if len(proof_wire) >= 55 and proof_wire[:6] == b"PQZKP2":
+                    epoch_id = proof_wire[39:55]
                 else:
                     epoch_id = b"\x00" * 16
 
@@ -264,13 +269,16 @@ class PqZkpIdentityVerifier:
                     expected_session_nonce,
                     int(expected_min_clearance),
                     seen_nullifiers,
+                    self.strict_pq,
                 )
             except Exception as e:
                 err_msg = str(e).lower()
+                if "classical" in err_msg:
+                    raise ForgedProofError(f"Post-quantum ZKP required (bLSAG is classical DL): {e}")
                 if "stale" in err_msg or "double" in err_msg:
                     log_event(
                         AuditEventType.SECURITY_VIOLATION,
-                        "PQ-ZKP Double-attestation / Sybil replay detected in active epoch.",
+                        "ZKP Double-attestation / Sybil replay detected in active epoch.",
                         AuditSeverity.CRITICAL,
                     )
                     raise DoubleAttestationError("Nullifier double-attestation in current epoch")
@@ -278,7 +286,7 @@ class PqZkpIdentityVerifier:
                     raise InsufficientClearanceError(f"Clearance verification failed: {e}")
                 log_event(
                     AuditEventType.SECURITY_VIOLATION,
-                    f"PQ-ZKP Identity attestation verification failed fail-closed: {e}",
+                    f"ZKP Identity attestation verification failed fail-closed: {e}",
                     AuditSeverity.HIGH,
                 )
                 raise ForgedProofError(f"Proof verification failed: {e}")

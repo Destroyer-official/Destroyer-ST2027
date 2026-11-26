@@ -51,28 +51,32 @@ jobs:
           pip install bandit==1.8.3
           bandit -r . --exclude "./.venv,./__pycache__,./archive,./redesign,./notupload,./downloads,./logs,./compliance_reports,./.hypothesis,./.pytest_cache,./.git" -f txt --severity-level medium
 
-      # F-02: liboqs MUST be installed BEFORE the CAVP step. Prior order ran
-      # KATs against a missing native lib and failed CI on every runner.
-      - name: Install System Cryptographic Dependencies (liboqs)
+      # F-02 / F-09: Build pinned commit 0.16.0 liboqs from source (no unpinned apt package)
+      # and export its exact SHA-384 digest into P2P_OQS_POSIX_SHA384 so production verification
+      # enforces fail-closed POSIX library pinning.
+      - name: Install & Pin System Cryptographic Dependencies (liboqs 0.16.0)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y liboqs-dev || true
-          if [ ! -f /usr/local/lib/liboqs.so ] && [ ! -f /usr/lib/x86_64-linux-gnu/liboqs.so ] && [ ! -f /usr/lib/liboqs.so ]; then
-            # F-09: tags are mutable refs — clone the 0.16.0 tag but HARD-PIN
-            # the build to the release commit SHA and fail closed on mismatch.
-            LIBOQS_PIN_SHA="5a1a854b0dc9f2141bdc771c555ee60c37950183"
-            git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
-            ACTUAL_SHA="$(git -C /tmp/liboqs rev-parse HEAD)"
-            if [ "$ACTUAL_SHA" != "$LIBOQS_PIN_SHA" ]; then
-              echo "FAIL: liboqs 0.16.0 tag now points at $ACTUAL_SHA, expected pinned $LIBOQS_PIN_SHA (tag moved or supply-chain tamper)" >&2
-              exit 1
-            fi
-            echo "liboqs pin OK: 0.16.0 -> $ACTUAL_SHA"
-            cmake -S /tmp/liboqs -B /tmp/liboqs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local
-            cmake --build /tmp/liboqs/build -j$(nproc)
-            sudo cmake --install /tmp/liboqs/build
-            sudo ldconfig
+          set -euo pipefail
+          LIBOQS_PIN_SHA="5a1a854b0dc9f2141bdc771c555ee60c37950183"
+          git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          ACTUAL_SHA="$(git -C /tmp/liboqs rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "$LIBOQS_PIN_SHA" ]; then
+            echo "FAIL: liboqs 0.16.0 tag now points at $ACTUAL_SHA, expected pinned $LIBOQS_PIN_SHA (tag moved or supply-chain tamper)" >&2
+            exit 1
           fi
+          echo "liboqs pin OK: 0.16.0 -> $ACTUAL_SHA"
+          cmake -S /tmp/liboqs -B /tmp/liboqs/build -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build /tmp/liboqs/build -j$(nproc)
+          sudo cmake --install /tmp/liboqs/build
+          sudo ldconfig
+          OQS_SO=$(find /usr/local/lib /usr/local/lib64 -name 'liboqs.so*' -type f | head -n 1)
+          if [ -z "$OQS_SO" ]; then
+            echo "FAIL: compiled liboqs.so not found after install" >&2
+            exit 1
+          fi
+          OQS_SHA384=$(sha384sum "$OQS_SO" | awk '{print $1}')
+          echo "P2P_OQS_POSIX_SHA384=${OQS_SHA384}" >> "$GITHUB_ENV"
+          echo "Exported P2P_OQS_POSIX_SHA384=$OQS_SHA384 ($OQS_SO)"
 
       - name: Execute NIST CAVP Known Answer Tests (KAT)
         run: |
@@ -102,12 +106,16 @@ jobs:
 
       - name: Rust Dependency Security & License Audit (cargo-deny)
         run: |
-          cargo install --locked cargo-deny || true
+          cargo install --locked cargo-deny
           cargo deny check --manifest-path rust_data_plane/Cargo.toml
 
-      - name: Execute Rust Data-Plane Unit & Integration Tests
+      - name: Execute Rust Test Suites (data plane, ts_rt, seL4 MILS) + Clippy
         run: |
-          cargo test --manifest-path rust_data_plane/Cargo.toml
+          cargo clippy --manifest-path rust_data_plane/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
+          cargo test --manifest-path ts_rt/Cargo.toml
+          cargo test --manifest-path sel4_mils_appliance/Cargo.toml
+          python sel4_mils_appliance/validate_mils.py --strict
 
       - name: Release Build (LTO, panic-abort) + Binary Selftest + Loopback Smoke
         # Proves the shipped artifact path: release profile compiles, the
@@ -261,14 +269,9 @@ jobs:
 
       - name: Formal handshake model (ProVerif 2.05 mandatory blocking gate)
         run: |
-          sudo apt-get update -qq || true
-          sudo apt-get install -y -qq proverif || {
-            echo "Installing ProVerif binary from INRIA..."
-            curl -sSL https://proverif.inria.fr/proverif2.05.tar.gz -o /tmp/proverif.tar.gz || true
-            if [ -f /tmp/proverif.tar.gz ]; then
-              tar -xzf /tmp/proverif.tar.gz -C /tmp/ && sudo cp /tmp/proverif*/proverif /usr/local/bin/ || true
-            fi
-          }
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq proverif
           sh docs/formal/check.sh --strict
 
       # F-06: cosign is not preinstalled on GitHub runners. Install a

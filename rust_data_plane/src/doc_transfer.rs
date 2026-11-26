@@ -105,6 +105,15 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
     Ok(out)
 }
 
+fn is_safe_doc_filename(filename: &str) -> bool {
+    if filename.is_empty() || filename.len() > 128 || filename == "." || filename == ".." {
+        return false;
+    }
+    filename
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 /// Compute SHA-384 integrity digest as lowercase hex string.
 pub fn compute_sha384_hex(content: &[u8]) -> String {
     let mut hasher = Sha384::new();
@@ -141,7 +150,11 @@ pub fn unpack_and_verify_document(payload: &[u8]) -> Result<(DocTransferMeta, Ve
         return Err(CoreError::Malformed);
     }
 
-    let filename = parts[1].to_string();
+    let raw_name = parts[1].trim();
+    if !is_safe_doc_filename(raw_name) {
+        return Err(CoreError::Malformed);
+    }
+    let filename = raw_name.to_string();
     let expected_sha384 = parts[2].trim().to_lowercase();
     let b64_data = parts[3];
 
@@ -187,5 +200,29 @@ mod tests {
         tampered.push(b'A'); // Corrupt payload
 
         assert!(unpack_and_verify_document(&tampered).is_err());
+    }
+
+    #[test]
+    fn traversal_document_filename_rejected() {
+        let content = b"PAYLOAD";
+        let digest = compute_sha384_hex(content);
+        let b64 = base64_encode(content);
+        for bad_name in [
+            "../evil.txt",
+            "..\\evil.txt",
+            "/etc/passwd",
+            "C:\\Windows\\win.ini",
+            "..",
+            ".",
+            "",
+        ] {
+            let wire = format!("DOC:{}:{}:{}", bad_name, digest, b64).into_bytes();
+            assert_eq!(
+                unpack_and_verify_document(&wire).unwrap_err(),
+                CoreError::Malformed,
+                "unsafe filename must fail closed: {:?}",
+                bad_name
+            );
+        }
     }
 }

@@ -173,10 +173,10 @@ class TestTamperEvidentSiemForwarder:
 class TestRedTeamAdversarialDrill:
     """Automated Red-Team Penetration Drill Verification Suite."""
 
-    def test_red_team_full_drill_execution(self):
+    def test_red_team_full_drill_execution(self, tmp_path):
         """Execute all 5 red-team assault vectors and assert 100% defense."""
         harness = RedTeamDrillHarness(verbose=False)
-        report = harness.run_full_drill()
+        report = harness.run_full_drill(output_dir=tmp_path)
 
         summary = report["summary"]
         assert summary["total_vectors"] == 5  # nosec: B101
@@ -394,10 +394,10 @@ class TestAoDecisionEngineAndAto:
     its decision record is explicitly self-assessment (never GRANTED).
     """
 
-    def test_ao_evaluation_and_evidence_pack_complete(self):
+    def test_ao_evaluation_and_evidence_pack_complete(self, tmp_path):
         """Evaluate all 10 gates and assert the evidence pack is complete."""
         engine = AODecisionEngine(verbose=False)
-        decision = engine.evaluate_all_and_package_evidence()
+        decision = engine.evaluate_all_and_package_evidence(output_dir=tmp_path)
 
         assert decision["assessment_kind"].startswith("SELF-ASSESSMENT")  # nosec: B101
         summary = decision["evaluation_summary"]

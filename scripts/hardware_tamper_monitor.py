@@ -50,11 +50,11 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
-# Check production mode
+# Check production mode via canonical fail-closed gate
 def is_production_mode() -> bool:
     """Return True if strict production gate is armed."""
-    return os.environ.get("P2P_PRODUCTION", "").strip() in ("1", "true", "TRUE") or \
-           os.environ.get("PRODUCTION_GATE_ARMED", "").strip() in ("1", "true", "TRUE")
+    from production_gate import is_production
+    return bool(is_production())
 
 # DoD 5220.22-M (ECE) 7-Pass Wiping Specification
 DOD_7_PASS_PATTERNS = [

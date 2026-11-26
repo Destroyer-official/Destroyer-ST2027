@@ -138,7 +138,7 @@ class TestTacticalMeshDDILSuite:
         assert len(delta_none) == 0  # nosec: B101
 
     def test_bundle_priority_preemption_and_rfc9172_compression(self):
-        from tactical_mesh_ddil import BundlePriority, create_bpsec_bundle, decrypt_bpsec_bundle
+        from tactical_mesh_ddil import BundlePriority, TacticalKeyring, create_bpsec_bundle, decrypt_bpsec_bundle
 
         mesh = DDILNodeMesh("COMMAND_BASE")
         mesh.set_peer_connectivity("REMOTE_POST", True)
@@ -157,6 +157,7 @@ class TestTacticalMeshDDILSuite:
         assert reconciled[0].seq == 999  # nosec: B101
 
         # Test RFC 9172 BPsec blocks and Key-ID compression
+        ring = TacticalKeyring()
         signer = LibOQS_MLDSA_87()
         pk, sk = signer.keygen()
         sym_key = secrets.token_bytes(32)
@@ -172,6 +173,7 @@ class TestTacticalMeshDDILSuite:
             symmetric_key=sym_key,
             priority=BundlePriority.EMERGENCY,
             compress_key=True,
+            keyring=ring,
         )
 
         assert bundle.sender_pubkey is None  # nosec: B101
@@ -182,7 +184,7 @@ class TestTacticalMeshDDILSuite:
         assert sec_blocks["rfc9172_bib"]["block_type"] == "BLOCK_INTEGRITY_BLOCK"  # nosec: B101
         assert sec_blocks["rfc9172_bcb"]["block_type"] == "BLOCK_CONFIDENTIALITY_BLOCK"  # nosec: B101
 
-        decrypted = decrypt_bpsec_bundle(bundle, sym_key)
+        decrypted = decrypt_bpsec_bundle(bundle, sym_key, keyring=ring)
         assert decrypted == plaintext  # nosec: B101
 
     def test_teta_authority_decay_progression(self):
@@ -442,10 +444,10 @@ class TestTwinFileParityPhase5:
 class TestPhase5MissionDrillAndChat:
     """End-to-end Master Phase 5 Operations Mission Drill & Chat Integration."""
 
-    def test_phase5_operations_mission_drill_execution(self):
+    def test_phase5_operations_mission_drill_execution(self, tmp_path):
         from run_phase5_csrmc_operations_drill import Phase5OperationsMissionDrill, verify_phase5_drill_report
 
-        drill = Phase5OperationsMissionDrill(drill_id="TEST-MISSION-DRILL-001")
+        drill = Phase5OperationsMissionDrill(drill_id="TEST-MISSION-DRILL-001", output_dir=tmp_path)
         report = drill.run_full_drill()
 
         assert report["overall_status"] == "PASS"  # nosec: B101
@@ -453,7 +455,7 @@ class TestPhase5MissionDrillAndChat:
         assert report["summary"]["probes_passed"] == 5  # nosec: B101
         assert report["summary"]["operational_verdict"] == "CSRMC_PHASE5_OPERATIONAL_AUTHORIZATION_ACTIVE"  # nosec: B101
 
-        assert verify_phase5_drill_report() is True  # nosec: B101
+        assert verify_phase5_drill_report(report_dir=tmp_path) is True  # nosec: B101
 
     def test_interactive_chat_ddil_and_display_integration(self, capsys):
         import simple_chat_implementation
@@ -531,14 +533,14 @@ class TestCJADC2AlliedGateway:
                 is_noforn=False
             )
 
-    def test_gateway_report_generation_and_verification(self):
+    def test_gateway_report_generation_and_verification(self, tmp_path):
         from cjadc2_allied_gateway import generate_cjadc2_report, verify_cjadc2_report
 
-        report_p, sig_p, pub_p = generate_cjadc2_report()
+        report_p, sig_p, pub_p = generate_cjadc2_report(output_dir=tmp_path)
         assert report_p.exists()  # nosec: B101
         assert sig_p.exists()  # nosec: B101
         assert pub_p.exists()  # nosec: B101
-        assert verify_cjadc2_report() is True  # nosec: B101
+        assert verify_cjadc2_report(report_p, sig_p, pub_p) is True  # nosec: B101
 
 
 

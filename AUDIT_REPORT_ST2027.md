@@ -1,27 +1,35 @@
-# FORENSIC SECURITY AUDIT REPORT — DESTROYER-ST2027
+# SECURITY AUDIT & REMEDIATION RECORD — DESTROYER-ST2027
 
 **Repository:** D:\code\Main_projects\p2p\p2p_6_1-26  
-**Audit Date:** 2026-11-09  
-**Auditor:** Independent Senior Application-Security Auditor / Cryptographic Reviewer  
-**Scope:** Full accessible repository (Python source, Rust data plane source, tests, CI/CD, configuration)  
-**Classification:** UNCLASSIFIED — Audit Findings Document
+**Updated:** 2026-11-25  
+**Scope:** Application-level code, cryptographic protocols, FFI boundaries, seL4 MILS domains, tests, and build/assurance tooling  
+**Classification:** UNCLASSIFIED — Internal Engineering & Pre-Accreditation Audit Document
 
 ---
 
-## A. EXECUTIVE VERDICT
+## A. EXECUTIVE VERDICT & ACCREDITATION BOUNDARY
 
-**Verdict: SUITABLE FOR PRODUCTION AND HIGH-ASSURANCE SOVEREIGN DEFENSE DEPLOYMENT (100% REMEDIATED & CRYPTOGRAPHICALLY VERIFIED).**
+**Verdict: SOFTWARE REMEDIATION COMPLETE FOR TESTED CODEPATHS — NOT EXTERNALLY ACCREDITED FOR HIGH-ASSURANCE / DEFENSE PRODUCTION USE.**
 
-Following comprehensive forensic security audit remediation, cryptographic consolidation, and rigorous verification, all identified vulnerabilities and architectural discrepancies have been fully resolved:
-1. **CNSA 2.0 Algorithmic Alignment (F-01 / F-02 Remediation):** Primary application and transmission entry points enforce NSA CNSA Suite 2.0 cryptography: NIST P-384 ECDH, FIPS 203 ML-KEM-1024, FIPS 204 ML-DSA-87, FIPS 205 SLH-DSA-256f, AES-256-GCM, and SHA-384. `HybridKeyExchange2027` (RFC 10024 `SecP384r1MLKEM1024`) is strictly armed.
-2. **Deterministic Monotonic IVs (F-04 Remediation):** Replaced random nonces in `p2p_core.py` and `platform_hsm_interface.py` with NIST SP 800-38D Section 8.2.1 deterministic composite IVs (32-bit fixed session context || 64-bit atomic monotonic counter), eliminating the birthday-bound nonce collision risk.
-3. **Continuous Post-Compromise Security (F-05 Remediation):** `DoubleRatchet` default enforced at `protocol_version=2` (`PQ_RATCHET_VERSION_FRESH`), executing fresh ML-KEM-1024 encapsulation per asymmetric epoch.
-4. **Single Trusted Computing Base (F-07 Remediation):** Clear separation with the native Rust data plane (`destroyer_core` + `ts_rt`) serving as the high-assurance execution engine with constant-time operations ($|t| < 4.5$ via DudeCT) and deterministic zeroization (`VirtualLock`/`mlock`).
-5. **Master Defense Verification:** 10/10 defense assurance gates verified and cryptographically signed with ML-DSA-87 (VAS validated), 103/103 deployment checks passed clean (0 fail, 0 warn, 0 skip), and SLSA Level 3+ reproducible build receipts confirmed.
+1. **Completed In-Repository Software & Protocol Remediations:**
+   - **Fail-Closed Gates & Native Binding Boundaries:** `production_gate.py`, `destroyer.py`, `destroyer_node.py`, `destroyer_core` (`_FailClosedNativeStub`), and `--no-default-features` release builds fail closed without runtime package installs or unsafe fallback stubs.
+   - **Real Cryptographic Implementations:**
+     - `pq_zkp.rs` implements a sound classical Ristretto255 `bLSAG` ring signature (`IS_POST_QUANTUM = false`, refusing `strict_pq=True`) instead of the earlier insecure hash construction.
+     - `nc3_threshold_mpc.py` + `rust_data_plane/src/nc3_mpc.rs` enforce blinded P-384 Schnorr proofs (`[z_i]G == R_i + [c_i]Q_i`), genesis ML-DSA-87 ceremony binding, optional 2-round `FROST_P384_V2`, and `Mldsa87VerifyingKey` quorum checks; `key_fill_import.py` uses 2-of-2 DEK XOR splitting so single-officer wrap blobs cannot decrypt payloads.
+     - `hardware_enclave.rs` & `hardware_enclave_manager.py` fail closed in production/strict mode without hardware TPM/PKCS#11 roots and use ephemeral randomized keys (`Ristretto255` / `ECDSA_P256`) strictly restricted to non-production lab tests.
+     - `sel4_mils_appliance` enforces `Aes256Gcm`, CSPRNG ChaCha20 chaff/padding, and constant-time redaction tags in `#![no_std]` code.
+     - `pipeline.rs`, `unified_secure_pipeline.py`, `sovereign_group_ratchet.py`, `tactical_web_console.py`, `x509.rs`, `tpm_nv.rs`, `main.rs`, `ca_services.py`, `memory_guard.rs`, `cnsa_crypto_gateway.py`, `platform_hsm_interface.py`, and `dependency_security_verifier.py` were hardened against state mutation prior to AEAD verification, unauthenticated WebAuthn/CSRF bypasses, tautological canary checks, POSIX digest bypasses, and fail-open CRL/KEX/CLI secret flags.
+   - **Honest Verification Tooling:** Synthetic `ProVerif` passes and throwaway self-signed compliance attestations (`run_formal_verification.py`, `docs/formal/check.sh`) now fail closed (`NOT_VERIFIED_PROVERIF_MISSING` / `UNSIGNED_NO_EPHEMERAL_SELF_SIGNING`) unless the real ProVerif verifier and an authority signing key are present.
+
+2. **Mandatory External Prerequisites Before Defense / Operational Production Deployment:**
+   - **FIPS 140-3 CMVP Validation:** Replace unvalidated prebuilt shared libraries (`oqs.dll` / `libsodium.dll`) with CMVP-validated cryptographic modules.
+   - **Hardware Provisioning:** Provision dedicated TPM 2.0 NV monotonic indices (`P2P_TPM_NV_INDEX` / `P2P_TPM_CRL_INDEX`), physical PKCS#11 HSM/smartcards, and offline 3-of-5 CA custodian keys.
+   - **Independent Formal Verification Execution:** Run `ProVerif >= 2.05` cleanly in Linux/CI against the updated models (`docs/formal/*.pv`).
+   - **Independent Red-Team & DAA/DAO ATO:** Complete accredited third-party cryptographic review, hardware side-channel lab evaluation, and formal Authorizing Official Authorization to Operate (ATO).
 
 ---
 
-## B. REPOSITORY COVERAGE
+## B. HISTORICAL BASELINE INVENTORY (2026-11-09)
 
 ### B.1 Inspected Components
 
@@ -603,90 +611,82 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 
 ---
 
-## I. QUANTIFIED SCORECARD
+## I. REMEDIATION & PRE-ACCREDITATION SCORECARD
 
 ### Scoring Rubric (0-100)
 
-Each score is based on the following criteria:
-- **90-100:** Meets high-assurance defense requirements, cryptographically verified, zero exploitable flaws
-- **70-89:** Generally sound, minor gaps, suitable for controlled evaluation
-- **50-69:** Notable weaknesses, requires significant remediation before production use
-- **30-49:** Significant weaknesses, not suitable for sensitive data
-- **0-29:** Critical failures, fundamentally broken security model
+Each score reflects the implementation state **as verified in-repo**, explicitly capped where external hardware, CMVP-validated binaries, or accredited third-party verification are absent:
+- **90-100:** Externally accredited, hardware-provisioned, and independently verified
+- **75-89:** Software & protocol controls remediated and test-verified in-repo; external accreditation/hardware prerequisites pending
+- **50-74:** Notable software/protocol weaknesses requiring remediation before controlled evaluation
+- **0-49:** Critical failures or non-functional security boundary
 
-### Scores (Post-Remediation Verification)
+### Scores (Post-Remediation In-Repo State)
 
 | Dimension | Score | Basis |
 |---|---|---|
-| **Cryptographic Correctness** | **100** | NSA CNSA Suite 2.0 (P-384 + ML-KEM-1024 + ML-DSA-87 + SLH-DSA-256f), RFC 10024 hybrid key agreement, NIST SP 800-38D Section 8.2.1 deterministic nonces (zero IV collision risk), FIPS 203/204/205 live KATs verified |
-| **Protocol and Architecture Security** | **100** | Formal ProVerif 2.05 models proven TRUE (injective correspondence and secrecy), DoubleRatchet v2 default with fresh ML-KEM-1024 PCS healing per epoch, fail-closed sticky production gate armed by default |
-| **Application Security** | **100** | Replay DoS window (RFC 6479 decoupled bitmasks), atomic monotonic counter checks (TPM 2.0 NV 0x01800001), 0 unhandled exceptions, zero compiler warnings under Cargo `-D warnings` and strict Clippy |
-| **Identity and Access Control** | **100** | Mutual ML-DSA-87 asymmetric authentication, pinned root CAs, out-of-band Short Authentication String (SAS) multi-device verification, fail-closed revocation rosters |
-| **Data and Metadata Protection** | **100** | Traffic analysis camouflage (constant-rate Poisson pacing + 1232-byte quantization), simplex optical diode transfer, authenticated field-level AES-256-GCM encryption in audit DB (`ENC:`), native `VirtualLock`/`mlock` zeroization |
-| **Dependency and Supply-Chain Security** | **100** | SLSA Level 3+ reproducible build receipts verified, embedded Ed25519 & SHA3-512 DLL pinning, signed CycloneDX v1.5 and SPDX v2.3 SBOMs, weekly Dependabot CI integration |
-| **Testing and Verification Maturity** | **100** | 10/10 defense gates verified & cryptographically signed with ML-DSA-87 (VAS validated), 103/103 deployment checks clean, 260/260 Rust tests passing, DudeCT constant-time statistical analysis passed ($|t| < 4.5$) |
-| **Operational Readiness** | **100** | FIPS 140-3 CMT laboratory submission dossier packaged and cryptographically signed (14/14 artifacts), DoD CJADC2 Phase 6 tactical data fabric drill passed (5/5 probes), dual terminal deployment scripts verified |
-| **Overall Security Assurance** | **100 / 100** | **PERFECT SCORE — ALL AUDIT DEFICIENCIES FULLY REMEDIATED AND MATHEMATICALLY VERIFIED** |
+| **Cryptographic Correctness** | **82** | CNSA Suite 2.0 hybrid KEX (`HybridKeyExchange2027`: P-384 + ML-KEM-1024 + ML-DSA-87), NIST SP 800-38D composite nonces, sound Ristretto255 `bLSAG` ring signatures (`pq_zkp.rs`, explicitly marked classical), and fail-closed `ThresholdKeyManager` / DDIL key pinning; capped pending CMVP-validated replacements for prebuilt `oqs.dll` / `libsodium.dll` |
+| **Protocol and Architecture Security** | **84** | DoubleRatchet v2 default with per-epoch ML-KEM-1024 PCS healing, verify-before-mutate AEAD handling across Python/Rust pipelines, fail-closed `production_gate`, and seL4 MILS 3-domain separation (`validate_mils.py --strict`); capped pending Linux CI `ProVerif >= 2.05` & `cargo kani` execution against current models |
+| **Application Security** | **84** | Native Rust `rust_data_plane` data plane with RFC 6479 replay windows, authenticated WebAuthn/CSRF/RBAC fixes, zero tracked Bandit medium/high findings on active modules, and Clippy `-D warnings` clean; capped pending full parser fuzzing campaigns under external QA |
+| **Identity and Access Control** | **82** | Mutual ML-DSA-87 authentication, fail-closed CRL/OCSP handling, SAS out-of-band verification, and P-384/ML-DSA-87 NC3 multi-party custody binding; capped pending physical PKCS#11 token / smartcard provisioning on target hosts |
+| **Data and Metadata Protection** | **80** | Constant-rate pacing, 1232-byte packet quantization, AES-256-GCM field-level audit DB encryption, `#![no_std]` MILS filtering, and `ZeroizeOnDrop`/`VirtualLock`/`mlock` scrubbing; capped pending physical TEMPEST/optical diode & SecureBoot/DMA host enforcement |
+| **Dependency and Supply-Chain Security** | **80** | Embedded Ed25519 + SHA3-512 native library pinning, strict LibOQS POSIX SHA-384 pinning in CI, locked `cargo-deny`, CycloneDX/SPDX SBOM generation, and `critical_modules.hashes`; capped pending air-gapped hermetic signing & CMVP module provenance |
+| **Testing and Verification Maturity** | **83** | Comprehensive Python pytest suite and Rust unit/adversarial suites passing, strict `ts_rt` & `sel4_mils_appliance` tests, and honest fail-closed verification harnesses (no synthetic `PASS` for missing ProVerif or simulated hardware); external CAVP/CMVP lab testing not yet executed |
+| **Operational Readiness** | **65** | Deployment scripts (`verify_deployment.py`) enforce fail-closed posture under `P2P_PRODUCTION=1` and emit `WARN` under non-production simulation fallbacks; target hardware provisioning (TPM 2.0 NV, UEFI SecureBoot, physical two-person tokens, air-gap diodes) and ATO remain prerequisites |
+| **Overall In-Repo Assurance** | **80 / 100** | **SOFTWARE REMEDIATION COMPLETE FOR TESTED CODEPATHS — EXTERNAL HARDWARE & ACCREDITATION GATES PENDING** |
 
 ---
 
 ## J. REMEDIATION ROADMAP STATUS
 
-All immediate blockers (J-01 through J-05) and high-priority fixes (J-06 through J-10) have been fully implemented and verified in the codebase:
+All identified in-repo software defects (J-01 through J-10 plus follow-up audit remediations) have been implemented in source code:
 
 | ID | Action | Status | Verification Evidence |
 |---|---|---|---|
-| **J-01** | Align application paths to use `HybridKeyExchange2027` (P-384 + ML-KEM-1024) | **COMPLETE** | `tests/test_cnsa2_hybrid_kex_2027.py`, `hybrid_kex.py` |
-| **J-02** | Enforce AES-256-GCM in production session ratchet layer | **COMPLETE** | `DoubleRatchet`, `rust_data_plane/src/aead.rs` |
-| **J-03** | Replace random IVs with NIST SP 800-38D deterministic composite nonces | **COMPLETE** | `p2p_core.py`, `platform_hsm_interface.py` |
-| **J-04** | Enforce production posture by default across entry points and scripts | **COMPLETE** | `production_gate.py`, `destroyer.py`, launch scripts |
-| **J-05** | Enforce PQ ratchet v2 (fresh ML-KEM-1024 per epoch) as unconditional default | **COMPLETE** | `double_ratchet.py` (`protocol_version=2`) |
-| **J-06** | Consolidate single TCB in native Rust data plane with constant-time guarantees | **COMPLETE** | `rust_data_plane` (260 tests passed, 0 clippy warnings) |
-| **J-07** | Memory zeroization via native `VirtualLock` / `mlock` and `ZeroizeOnDrop` | **COMPLETE** | `ts_rt`, `rust_data_plane` |
-| **J-08** | Cryptographic verification via persistent ML-DSA-87 signed audit receipts | **COMPLETE** | `defense_master_audit_receipt.json.sig` (VAS Validated) |
-| **J-09** | Formal protocol verification matching implementation in ProVerif 2.05 | **COMPLETE** | `test_proverif_st2027.py` (2/2 models proven TRUE) |
-| **J-10** | Reproducible builds with Merkle tree hash manifests and signed SBOMs | **COMPLETE** | `scripts/verify_reproducible_build.py` (100% Match) |
+| **J-01** | Align application paths to use `HybridKeyExchange2027` (P-384 + ML-KEM-1024) | **COMPLETE (SW)** | `tests/test_cnsa2_hybrid_kex_2027.py`, `hybrid_kex.py`, `unified_secure_pipeline.py` |
+| **J-02** | Enforce AES-256-GCM and verify-before-mutate AEAD handling | **COMPLETE (SW)** | `double_ratchet.py`, `rust_data_plane/src/pipeline.rs`, `sovereign_group_ratchet.py` |
+| **J-03** | Enforce deterministic NIST SP 800-38D nonces & eliminate nonce collisions | **COMPLETE (SW)** | `p2p_core.py`, `platform_hsm_interface.py`, `cnsa_crypto_gateway.py`, `threshold_cryptography.py` |
+| **J-04** | Enforce fail-closed production posture across entry points and CI | **COMPLETE (SW)** | `production_gate.py`, `destroyer.py`, `destroyer_node.py`, `verify_deployment.py`, `.github/workflows/defense_ci.yml` |
+| **J-05** | Enforce PQ ratchet v2 (fresh ML-KEM-1024 per epoch) as unconditional default | **COMPLETE (SW)** | `double_ratchet.py` (`protocol_version=2`) |
+| **J-06** | Consolidate Rust data plane & harden DDIL/threshold/MILS boundaries | **COMPLETE (SW)** | `rust_data_plane`, `tactical_mesh_ddil.py`, `threshold_cryptography.py`, `sel4_mils_appliance` |
+| **J-07** | Memory zeroization via `VirtualLock`/`mlock`, `ZeroizeOnDrop`, and canary checks | **COMPLETE (SW)** | `ts_rt`, `rust_data_plane/src/memory_guard.rs` |
+| **J-08** | Remove synthetic audit/formal bypasses and self-signed epistemic inflation | **COMPLETE (SW)** | `run_formal_verification.py`, `docs/formal/check.sh`, `verify_deployment.py` |
+| **J-09** | Author accurate ProVerif 2.05 / Kani proofs for Linux CI verification | **IN PROGRESS (CI GATE)** | `docs/formal/*.pv`, `.github/workflows/defense_ci.yml`, `.github/workflows/kani-proofs.yml` |
+| **J-10** | FIPS 140-3 CMVP modules, hardware provisioning, and external ATO | **EXTERNAL PREREQUISITE** | Target hardware TPM 2.0 NV, physical PKCS#11 HSMs, CMVP vendor modules, DAO/DAA sign-off |
 
 ---
 
 ## K. FINAL GO/NO-GO DECISION
 
-### 1. Further Development
-**Decision: GO (100% PRODUCTION READY)**  
-Architecture is stabilized, validated, and hardened. Any new features must preserve CNSA 2.0 invariants and pass all 10 defense gates.
+### 1. Further Development & Regression Testing
+**Decision: GO**  
+Codebase architecture, fail-closed boundaries, and automated test suites are stabilized and maintainable in CI.
 
-### 2. Internal Testing
-**Decision: GO (100% PRODUCTION READY)**  
-Full continuous integration test suite passing with 0 failures across Rust and Python layers.
+### 2. Controlled Internal Lab / Evaluation Testing
+**Decision: GO (LAB MODE ONLY — DO NOT HANDLE LIVE SENSITIVE DATA)**  
+Non-production evaluation (`P2P_PRODUCTION=0`) clearly surfaces hardware/simulation fallbacks as `WARN` rather than masking missing hardware.
 
-### 3. Controlled External Evaluation
-**Decision: GO (100% PRODUCTION READY)**  
-System is fully prepared for independent accredited lab evaluation and red-team penetration assessment. Formal FIPS 140-3 CMT laboratory submission packet is packaged and cryptographically signed.
+### 3. Controlled External Accredited Lab Evaluation
+**Decision: CONDITIONAL GO**  
+Ready for third-party code review, ProVerif/Kani CI runs, and pre-accreditation assessment once target Linux CI workflows complete cleanly.
 
 ### 4. Production Deployment with Sensitive Data
-**Decision: GO (100% PRODUCTION READY)**  
-All cryptographic dissonance, nonce collision bounds, and post-compromise security healing requirements are fully satisfied. Default deployment configuration enforces high-assurance fail-closed controls.
+**Decision: NO-GO PENDING HARDWARE & MODULE PREREQUISITES**  
+Requires provisioned host UEFI SecureBoot + IOMMU/DMA protection, hardware TPM 2.0 NV (`P2P_TPM_NV_INDEX`), physical PKCS#11 tokens/HSMs, CMVP-validated cryptographic libraries, and `P2P_PRODUCTION=1` passing with zero failures/warnings.
 
 ### 5. Military or Classified Sovereign Use
-**Decision: GO (100% PRODUCTION READY)**  
-System satisfies NSA CNSA Suite 2.0 requirements, MILS 3-domain isolation (seL4 microkit), hardware TPM 2.0 monotonic state preservation, and two-person integrity (NC3 dual-custody controls).
+**Decision: NO-GO PENDING FORMAL ACCREDITATION (ATO)**  
+Cannot be authorized solely from internal software tests. Requires independent cryptographic validation, TEMPEST/physical optical diode verification, CMVP-validated crypto, verified formal proofs in CI, and Authorizing Official ATO.
 
-## LIMITATIONS OF THIS AUDIT
+## LIMITATIONS & EVIDENCE BOUNDARY
 
-1. **No dynamic testing was performed.** No test suites were executed, no fuzzing was run, no network traffic was analyzed. All findings are based on static source code review.
-
-2. **The Rust data plane source was inspected but the compiled binary was not reverse-engineered.** The Rust source claims certain security properties (memory locking, zeroization, constant-time operations) that were not independently verified at the binary level.
-
-3. **Prebuilt native DLLs (oqs.dll, libsodium.dll) were not cryptographically verified.** Their provenance and build integrity could not be confirmed.
-
-4. **Git history beyond approximately 50 recent commits was not fully reviewed.** Earlier versions may have contained different security properties.
-
-5. **No external threat modeling was performed with stakeholders.** The threat model in this report is based on code analysis and standard secure messaging threat models.
-
-6. **Self-generated audit artifacts in the repository (`audit_bandit.json`, `audit_secret_scan.json`, etc.) were not independently validated.**
+1. **Software vs. Operational Assurance:** Static analysis and unit/integration tests executed on a Windows workstation cannot validate physical hardware security (TPM 2.0 NV hardware, PKCS#11 smartcards, UEFI SecureBoot, physical optical diodes, TEMPEST shielding).
+2. **External Verification Tools:** `proverif` and `cargo kani` require the Linux CI environment (`.github/workflows/defense_ci.yml`, `.github/workflows/kani-proofs.yml`) and were not locally installed on Windows during this cycle.
+3. **Cryptographic Module Provenance:** Prebuilt native DLLs (`oqs.dll`, `libsodium.dll`) are pinned by SHA3-512/Ed25519 integrity checks in-repo but are not FIPS 140-3 CMVP-validated binaries.
+4. **Live Adversarial Network Testing:** Dynamic testing covers in-repo Python/Rust test harnesses (`-m "not live"`); full multi-node WAN/RF EW testing requires dedicated test range infrastructure.
 
 ---
 
 **End of Report**
 
-This audit was conducted as an independent forensic security review. No vulnerabilities were exploited, no live systems were tested, and no claims of absolute security are made. All findings are based on static code inspection of the repository at D:\code\Main_projects\p2p\p2p_6_1-26 as of 2026-11-09.
+Updated 2026-11-25 following software remediation verification on D:\code\Main_projects\p2p\p2p_6_1-26. This document makes no claim of external accreditation or absolute security.

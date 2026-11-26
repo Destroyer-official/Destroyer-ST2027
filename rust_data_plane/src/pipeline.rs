@@ -193,20 +193,42 @@ impl ZeroGapPipeline {
         }
     }
 
-    /// Rotate Continuous Epoch Ratchet (CER) for post-compromise security healing.
+    /// Rotate Continuous Epoch Ratchet (CER) symmetrically (forward-only key evolution).
+    /// NOTE: Symmetric rotation without fresh out-of-band entropy does NOT provide
+    /// Post-Compromise Security (PCS) if an attacker holds `epoch_root`; use
+    /// `rotate_epoch_asymmetric` or `rotate_epoch_with_entropy` for PCS healing.
     pub fn rotate_epoch(&mut self) -> Result<u64, CoreError> {
-        self.current_epoch = self
+        self.rotate_epoch_internal(None)
+    }
+
+    /// Rotate Continuous Epoch Ratchet (CER) mixing external fresh entropy (e.g. from KEM rekey).
+    pub fn rotate_epoch_with_entropy(&mut self, extra_entropy: &[u8]) -> Result<u64, CoreError> {
+        if extra_entropy.len() < 16 {
+            return Err(CoreError::Malformed);
+        }
+        self.rotate_epoch_internal(Some(extra_entropy))
+    }
+
+    fn rotate_epoch_internal(&mut self, extra_entropy: Option<&[u8]>) -> Result<u64, CoreError> {
+        let next_epoch = self
             .current_epoch
             .checked_add(1)
             .ok_or(CoreError::Oversize)?;
-        let epoch_info = (self.current_epoch as u32).to_be_bytes();
+        let epoch_info = (next_epoch as u32).to_be_bytes();
 
-        let hk = Hkdf::<Sha512>::new(Some(CER_HKDF_SALT), &self.epoch_root[..]);
+        let mut ikm = Zeroizing::new(Vec::with_capacity(32 + extra_entropy.map_or(0, |e| e.len())));
+        ikm.extend_from_slice(&self.epoch_root[..]);
+        if let Some(extra) = extra_entropy {
+            ikm.extend_from_slice(extra);
+        }
+
+        let hk = Hkdf::<Sha512>::new(Some(CER_HKDF_SALT), &ikm[..]);
         let mut next_root = [0u8; 32];
         hk.expand(&epoch_info, &mut next_root)
             .map_err(|_| CoreError::Malformed)?;
 
         let next_fk = derive_frame_key_sha512(&next_root)?;
+        self.current_epoch = next_epoch;
         self.frame_key = Some(FrameKey::from_bytes(next_fk));
         self.epoch_root = Zeroizing::new(next_root);
         next_root.zeroize();
@@ -352,41 +374,48 @@ impl ZeroGapPipeline {
                 (PIPELINE_TYPE_MSG, frame.to_vec())
             };
 
-        // ── Step 2: Layer 2 Outer AEAD Strip with Anti-Replay Gate ───────
-        let mut fk = self.frame_key.clone().ok_or(CoreError::AuthRequired)?;
+        // ── Step 2: Layer 2 Outer AEAD Strip with Verify-Before-Commit ───
+        let active_fk = self.frame_key.clone().ok_or(CoreError::AuthRequired)?;
+        let mut staged_epoch_update: Option<(u64, [u8; 32], FrameKey)> = None;
 
-        // Peek with current frame key; if that fails or seq is in a future epoch, attempt epoch synchronization
-        let mut peeked = aead::peek_seq(&fk, &sealed_body);
+        // Peek with current frame key; if that fails or seq is in a future epoch, stage
+        // candidate epoch keys WITHOUT mutating `self` until AEAD tag authenticates.
+        let mut peeked = aead::peek_seq(&active_fk, &sealed_body);
         if peeked.is_none()
             || peeked
                 .map(|s| s > 0 && (s - 1) / CER_EPOCH_INTERVAL > self.current_epoch)
                 .unwrap_or(false)
         {
             let mut trial_epoch = self.current_epoch;
-            let mut trial_root = *self.epoch_root;
+            let mut trial_root = Zeroizing::new(*self.epoch_root);
             for _ in 0..8 {
-                trial_epoch += 1;
+                trial_epoch = match trial_epoch.checked_add(1) {
+                    Some(v) => v,
+                    None => break,
+                };
                 let epoch_info = (trial_epoch as u32).to_be_bytes();
                 let hk = Hkdf::<Sha512>::new(Some(CER_HKDF_SALT), &trial_root[..]);
-                let mut next_root = [0u8; 32];
-                if hk.expand(&epoch_info, &mut next_root).is_ok() {
+                let mut next_root = Zeroizing::new([0u8; 32]);
+                if hk.expand(&epoch_info, &mut next_root[..]).is_ok() {
                     if let Ok(next_fk_bytes) = derive_frame_key_sha512(&next_root) {
                         let candidate_fk = FrameKey::from_bytes(next_fk_bytes);
                         if let Some(s) = aead::peek_seq(&candidate_fk, &sealed_body) {
                             if s > 0 && (s - 1) / CER_EPOCH_INTERVAL == trial_epoch {
-                                self.current_epoch = trial_epoch;
-                                self.epoch_root = Zeroizing::new(next_root);
-                                self.frame_key = Some(candidate_fk.clone());
-                                fk = candidate_fk;
+                                staged_epoch_update = Some((trial_epoch, *next_root, candidate_fk));
                                 peeked = Some(s);
                                 break;
                             }
                         }
                     }
-                    trial_root = next_root;
+                    *trial_root = *next_root;
                 }
             }
         }
+
+        let fk_ref = match staged_epoch_update.as_ref() {
+            Some((_, _, candidate_fk)) => candidate_fk,
+            None => &active_fk,
+        };
 
         let peeked = peeked.ok_or(CoreError::Malformed)?;
         if !self.replay.check(peeked) {
@@ -394,15 +423,26 @@ impl ZeroGapPipeline {
             return Err(CoreError::Malformed);
         }
 
-        let (seq, _ftype, inner_sealed) = aead::open_indexed(&fk, self.recv_dir(), &sealed_body)
-            .map_err(|_| CoreError::Malformed)?;
+        let (seq, _ftype, inner_sealed) = match aead::open_indexed(fk_ref, self.recv_dir(), &sealed_body) {
+            Ok(v) => v,
+            Err(_) => {
+                self.replay.note_drop();
+                return Err(CoreError::Malformed);
+            }
+        };
 
         if seq != peeked {
             self.replay.note_drop();
             return Err(CoreError::Malformed);
         }
 
-        // Authentication verified! Mutate replay window
+        // Outer AEAD tag verified! Commit any epoch sync update and replay watermark now.
+        if let Some((new_epoch, mut new_root, new_fk)) = staged_epoch_update {
+            self.current_epoch = new_epoch;
+            self.epoch_root = Zeroizing::new(new_root);
+            self.frame_key = Some(new_fk);
+            new_root.zeroize();
+        }
         self.replay.mark(seq);
 
         // ── Step 3: Layer 1 Inner Ratchet Open ───────────────────────────
@@ -603,5 +643,50 @@ mod tests {
 
         assert_eq!(p_send.current_epoch(), 1);
         assert_eq!(p_recv.current_epoch(), 1);
+    }
+
+    #[test]
+    fn forged_future_epoch_frame_does_not_mutate_epoch_or_key() {
+        let root = [0xBBu8; 32];
+        let mut p_send = ZeroGapPipeline::new(&root, true, true).expect("init send");
+        let mut p_recv = ZeroGapPipeline::new(&root, false, true).expect("init recv");
+        let mut r_send = PcsRatchet::new(&root).expect("r_send");
+        let mut r_recv = PcsRatchet::new(&root).expect("r_recv");
+        let (bx, bek) = r_recv.advertise();
+
+        let (step, honest) = p_send
+            .seal(b"HONEST", PIPELINE_TYPE_MSG, ClearanceLevel::TopSecret, &mut r_send, &bx, &bek)
+            .unwrap();
+
+        // Forge a ciphertext whose first header bytes mimic epoch-1 seq-129 peek header
+        // by wrapping a packet sealed after epoch rotation and flipping its GCM tag.
+        let mut p_attacker = ZeroGapPipeline::new(&root, true, true).unwrap();
+        p_attacker.rotate_epoch().unwrap();
+        let mut r_att = PcsRatchet::new(&root).unwrap();
+        p_attacker.send_seq = CER_EPOCH_INTERVAL + 1;
+        let (_step_bad, mut forged) = p_attacker
+            .seal(b"FORGED", PIPELINE_TYPE_MSG, ClearanceLevel::TopSecret, &mut r_att, &bx, &bek)
+            .unwrap();
+        let last = forged.len() - 1;
+        forged[last] ^= 0xFF;
+
+        let res = p_recv.open(&forged, &mut r_recv, &step.eph_p_pub, &step.ml_ct);
+        assert_eq!(res.unwrap_err(), CoreError::Malformed);
+        // Must remain untouched at epoch 0
+        assert_eq!(p_recv.current_epoch(), 0);
+        // Honest frame must still open cleanly
+        let (_, pt) = p_recv.open(&honest, &mut r_recv, &step.eph_p_pub, &step.ml_ct).unwrap();
+        assert_eq!(pt, b"HONEST");
+    }
+
+    #[test]
+    fn rotate_epoch_with_entropy_differs_from_deterministic_step() {
+        let root = [0xCCu8; 32];
+        let mut p1 = ZeroGapPipeline::new(&root, true, true).unwrap();
+        let mut p2 = ZeroGapPipeline::new(&root, true, true).unwrap();
+        p1.rotate_epoch().unwrap();
+        p2.rotate_epoch_with_entropy(&[0x55u8; 32]).unwrap();
+        assert_ne!(p1.epoch_root.as_slice(), p2.epoch_root.as_slice());
+        assert!(p1.rotate_epoch_with_entropy(&[0x11u8; 4]).is_err());
     }
 }

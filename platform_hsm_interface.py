@@ -13,10 +13,28 @@ from utils.helpers import is_env_true
 
 # NIST SP 800-38D Section 8.2.1 Deterministic Nonce/IV Generator
 # 96 bits = 32-bit fixed context/device field + 64-bit atomic monotonic counter.
-# Eliminates birthday-bound collision risk for invocations under the same key.
+# Reseeds automatically on fork to prevent cross-process AES-GCM nonce reuse.
 _gcm_iv_lock = threading.Lock()
+_gcm_iv_pid = os.getpid()
 _gcm_iv_fixed = secrets.token_bytes(4)
 _gcm_iv_counter = 0
+
+
+def _reseed_gcm_iv_locked() -> None:
+    global _gcm_iv_pid, _gcm_iv_fixed, _gcm_iv_counter
+    _gcm_iv_pid = os.getpid()
+    _gcm_iv_fixed = secrets.token_bytes(4)
+    _gcm_iv_counter = 0
+
+
+def _on_gcm_fork_child() -> None:
+    with _gcm_iv_lock:
+        _reseed_gcm_iv_locked()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_on_gcm_fork_child)
+
 
 def generate_deterministic_gcm_iv() -> bytes:
     """Generate 96-bit deterministic IV per NIST SP 800-38D Section 8.2.1.
@@ -24,6 +42,8 @@ def generate_deterministic_gcm_iv() -> bytes:
     """
     global _gcm_iv_counter
     with _gcm_iv_lock:
+        if os.getpid() != _gcm_iv_pid:
+            _reseed_gcm_iv_locked()
         _gcm_iv_counter += 1
         if _gcm_iv_counter >= (1 << 64) - 1:
             raise OverflowError("NIST SP 800-38D counter exhaustion: rekey required")
@@ -3492,10 +3512,10 @@ def get_hardware_unique_id() -> bytes:
             if len(existing) == 16:
                 return existing
     except Exception as e:
-        logger.warning("Fallback ID generation failed: %s", e)
+        logger.error("Fallback ID generation failed: %s", e)
+        raise RuntimeError(f"Fail-closed: unable to derive or persist 128-bit device ID: {e}") from e
 
-    # Worst-case: zero bytes (should be avoided in production)
-    return b"\x00" * 16
+    raise RuntimeError("Fail-closed: unable to obtain non-zero 128-bit hardware or persistent device ID")
 
 
 # -------------------------------------------------------------------------
@@ -4652,11 +4672,8 @@ def store_key_file_secure(label: str, key_data: bytes) -> bool:
         label = _validate_keyfile_label(label)
         master = _keyfile_master_key()
         salt = secrets.token_bytes(32)
-        try:
-            from p2p_core import generate_deterministic_gcm_iv
-            nonce = generate_deterministic_gcm_iv()
-        except Exception:
-            nonce = secrets.token_bytes(12)
+        from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+        nonce = generate_deterministic_gcm_iv()
         aad = _KEYFILE_AAD_PREFIX + label.encode("utf-8")
         ciphertext = AESGCM(_keyfile_file_key(master, salt, label)).encrypt(
             nonce, key_data, aad

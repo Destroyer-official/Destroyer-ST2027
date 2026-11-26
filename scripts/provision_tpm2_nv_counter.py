@@ -221,13 +221,19 @@ class TPM2NvCounterProvisioner:
             }
 
         is_monotonic = (v1 == v0 + 1)
+        is_simulated = not self._tool_available("tpm2_nvincrement")
         return {
             "verified": is_monotonic,
+            "simulated": is_simulated,
             "index": self.index_hex,
             "initial_value": v0,
             "incremented_value": v1,
             "strictly_monotonic": is_monotonic,
-            "hardware_rollback_guarantee": "Hardware Silicon NVRAM Protection Enforced",
+            "hardware_rollback_guarantee": (
+                "Lab File Simulation (non-hardware fallback)"
+                if is_simulated
+                else "Hardware Silicon NVRAM Protection Enforced"
+            ),
             "message": f"Verified: {v0} -> {v1} (Monotonic Increment Confirmed)",
         }
 

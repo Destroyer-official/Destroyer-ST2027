@@ -23,6 +23,7 @@ Production Verification:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 import subprocess
@@ -612,3 +613,28 @@ def test_rust_hardware_enclave_native_tests():
     assert "test hardware_enclave::tests::test_cng_platform_in_silicon_signing ... ok" in res.stdout
     assert "test hardware_enclave::tests::test_pkcs11_in_silicon_signing ... ok" in res.stdout
     assert "test hardware_enclave::tests::test_windows_tbs_live_pcr_read ... ok" in res.stdout
+    assert "test hardware_enclave::tests::test_cross_anchor_pcr_kek_isolation ... ok" in res.stdout
+
+
+def test_hardware_enclave_production_refuses_software_signing_and_forged_hash(monkeypatch):
+    """Production mode refuses non-hardware fallback, and forged legacy SHA-256 signatures fail."""
+    digest = b"\x22" * 32
+    mgr_lab = HardwareEnclaveManager(allow_mock_in_lab=True)
+    hsm_key = mgr_lab.create_identity_key("hsm_forged_test", backend_override=EnclaveBackendType.PKCS11_HSM)
+    assert hsm_key.hardware_backed is False
+    forged = hashlib.sha256(b"IN_SILICON_SIGNATURE:pkcs11_hsmhsm_forged_test" + digest).digest() * 2
+    assert mgr_lab.verify_in_silicon(hsm_key, digest, forged) is False
+
+    # Cross-enclave PCR seal isolation: distinct enclave instances cannot unseal offline
+    mgr_other = HardwareEnclaveManager(allow_mock_in_lab=True)
+    clean = mgr_lab.read_pcr_measurements(CANONICAL_PCR_INDICES)
+    blob = mgr_lab.seal_identity_to_pcrs("iso_key", b"TOP_SECRET_MATERIAL", custom_pcrs=clean)
+    with pytest.raises(PlatformMeasurementDriftError):
+        mgr_other.unseal_identity_from_pcrs(blob, live_pcrs=clean)
+
+    # Strict non-mock mode refuses software fallback for PKCS11 without token
+    monkeypatch.setenv("P2P_PRODUCTION", "1")
+    with pytest.raises(SiliconDeviceError):
+        strict_mgr = HardwareEnclaveManager(backend_type=EnclaveBackendType.PKCS11_HSM, allow_mock_in_lab=False)
+        strict_mgr.create_identity_key("prod_hsm_must_fail")
+

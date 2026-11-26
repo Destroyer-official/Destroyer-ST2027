@@ -90,7 +90,7 @@ impl CoreMldsaSigner {
     }
 }
 
-fn check_production_key_export() -> PyResult<()> {
+pub(crate) fn check_production_key_export() -> PyResult<()> {
     if crate::policy::is_production_env() {
         return Err(pyo3::exceptions::PyPermissionError::new_err(
             "Production key boundary violation: exporting raw cryptographic keys to CPython runtime is strictly prohibited under production posture (F-03). All operational key handling must remain in native Rust memory.",
@@ -1585,6 +1585,31 @@ impl CoreZeroGapPipeline {
         Ok(Self { inner: Some(inner) })
     }
 
+    #[staticmethod]
+    pub fn from_key_file(key_path: String, is_initiator: bool, stealth: bool) -> PyResult<Self> {
+        let raw = Zeroizing::new(
+            std::fs::read_to_string(&key_path)
+                .map_err(|e| PyValueError::new_err(format!("failed to read key file: {e}")))?,
+        );
+        let trimmed = raw.trim();
+        let bytes = trimmed.as_bytes();
+        if bytes.len() != 64 {
+            return Err(PyValueError::new_err("key file must contain 64 hex characters"));
+        }
+        let mut a = Zeroizing::new([0u8; 32]);
+        for i in 0..32 {
+            let hi = (bytes[i * 2] as char)
+                .to_digit(16)
+                .ok_or_else(|| PyValueError::new_err("invalid hex in key file"))? as u8;
+            let lo = (bytes[i * 2 + 1] as char)
+                .to_digit(16)
+                .ok_or_else(|| PyValueError::new_err("invalid hex in key file"))? as u8;
+            a[i] = (hi << 4) | lo;
+        }
+        let inner = ZeroGapPipeline::new(&a, is_initiator, stealth).map_err(err)?;
+        Ok(Self { inner: Some(inner) })
+    }
+
     pub fn rotate_epoch(&mut self) -> PyResult<u64> {
         let pipe = self
             .inner
@@ -2223,18 +2248,43 @@ impl CorePqZkp {
     }
 
     #[staticmethod]
+    pub fn is_post_quantum() -> bool {
+        crate::pq_zkp::PqZkpIdentityProof::is_post_quantum()
+    }
+
+    #[staticmethod]
+    pub fn build_ring_accumulator(
+        identities: Vec<(String, String, u8, Vec<u8>)>,
+    ) -> PyResult<Vec<u8>> {
+        let mut recs = Vec::with_capacity(identities.len());
+        for (callsign, serial_number, clearance_level, fp_vec) in identities {
+            if fp_vec.len() != 32 {
+                return Err(PyValueError::new_err("public_key_fingerprint must be 32 bytes"));
+            }
+            let mut fp = [0u8; 32];
+            fp.copy_from_slice(&fp_vec);
+            recs.push(crate::pq_zkp::TacticalIdentityRecord {
+                callsign,
+                serial_number,
+                clearance_level,
+                public_key_fingerprint: fp,
+            });
+        }
+        let acc = crate::pq_zkp::RingAccumulator::build(&recs).map_err(err)?;
+        Ok(acc.root.to_vec())
+    }
+
+    #[staticmethod]
     #[allow(clippy::too_many_arguments)]
     pub fn prove_identity(
         callsign: String,
         serial_number: String,
         clearance_level: u8,
         public_key_fingerprint: Vec<u8>,
-        leaf_hashes: Vec<Vec<u8>>,
-        leaf_index: usize,
+        identities: Vec<(String, String, u8, Vec<u8>)>,
         claimed_min_clearance: u8,
         epoch_id: Vec<u8>,
         session_nonce: Vec<u8>,
-        blinding_salt: Vec<u8>,
     ) -> PyResult<Vec<u8>> {
         if public_key_fingerprint.len() != 32 {
             return Err(PyValueError::new_err("public_key_fingerprint must be 32 bytes"));
@@ -2245,9 +2295,6 @@ impl CorePqZkp {
         if session_nonce.len() != 32 {
             return Err(PyValueError::new_err("session_nonce must be 32 bytes"));
         }
-        if blinding_salt.len() != 32 {
-            return Err(PyValueError::new_err("blinding_salt must be 32 bytes"));
-        }
 
         let mut fp = [0u8; 32];
         fp.copy_from_slice(&public_key_fingerprint);
@@ -2255,8 +2302,6 @@ impl CorePqZkp {
         ep.copy_from_slice(&epoch_id);
         let mut sn = [0u8; 32];
         sn.copy_from_slice(&session_nonce);
-        let mut bs = [0u8; 32];
-        bs.copy_from_slice(&blinding_salt);
 
         let id = crate::pq_zkp::TacticalIdentityRecord {
             callsign,
@@ -2265,25 +2310,28 @@ impl CorePqZkp {
             public_key_fingerprint: fp,
         };
 
-        let mut leaves = Vec::with_capacity(leaf_hashes.len());
-        for lh in leaf_hashes {
-            if lh.len() != 32 {
-                return Err(PyValueError::new_err("leaf hash must be 32 bytes"));
+        let mut recs = Vec::with_capacity(identities.len());
+        for (c, s, lvl, fp_v) in identities {
+            if fp_v.len() != 32 {
+                return Err(PyValueError::new_err("identity public_key_fingerprint must be 32 bytes"));
             }
             let mut arr = [0u8; 32];
-            arr.copy_from_slice(&lh);
-            leaves.push(arr);
+            arr.copy_from_slice(&fp_v);
+            recs.push(crate::pq_zkp::TacticalIdentityRecord {
+                callsign: c,
+                serial_number: s,
+                clearance_level: lvl,
+                public_key_fingerprint: arr,
+            });
         }
-        let acc = crate::pq_zkp::MerkleAccumulator::build(leaves);
+        let acc = crate::pq_zkp::RingAccumulator::build(&recs).map_err(err)?;
 
-        let proof = crate::pq_zkp::PqZkpIdentityProof::prove(
+        let proof = crate::pq_zkp::PqZkpIdentityProof::prove_ring(
             &id,
             &acc,
-            leaf_index,
             claimed_min_clearance,
             &ep,
             &sn,
-            &bs,
         )
         .map_err(err)?;
 
@@ -2297,6 +2345,7 @@ impl CorePqZkp {
         session_nonce: Vec<u8>,
         expected_min_clearance: u8,
         epoch_seen_nullifiers: Vec<Vec<u8>>,
+        strict_pq: Option<bool>,
     ) -> PyResult<(u8, Vec<u8>)> {
         if trusted_root.len() != 32 {
             return Err(PyValueError::new_err("trusted_root must be 32 bytes"));
@@ -2319,9 +2368,15 @@ impl CorePqZkp {
         }
 
         let proof = crate::pq_zkp::PqZkpIdentityProof::from_bytes(&wire_bytes).map_err(err)?;
-        let verified_clearance = proof
-            .verify(&tr, &sn, expected_min_clearance, &mut cache)
-            .map_err(err)?;
+        let verified_clearance = if strict_pq.unwrap_or(false) {
+            proof
+                .verify_strict_pq(&tr, &sn, expected_min_clearance, &mut cache)
+                .map_err(err)?
+        } else {
+            proof
+                .verify(&tr, &sn, expected_min_clearance, &mut cache)
+                .map_err(err)?
+        };
 
         let nullifier_used = proof.nullifier.to_vec();
         Ok((verified_clearance, nullifier_used))

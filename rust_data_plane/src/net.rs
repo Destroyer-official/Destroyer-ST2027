@@ -273,8 +273,12 @@ impl ActiveTransmissionLoop {
                 .next_send_seq
                 .checked_add(1)
                 .ok_or(CoreError::Oversize)?;
+            let prev_key = self
+                .previous_frame_key
+                .as_ref()
+                .ok_or(CoreError::Malformed)?;
             let frame = crate::pacing::build_epoch_rekey_frame_directed(
-                self.previous_frame_key.as_ref().unwrap(),
+                prev_key,
                 seq,
                 self.send_dir,
                 self.quantum,
@@ -450,11 +454,11 @@ impl ActiveTransmissionLoop {
         }
 
         let open_res = if use_prev {
-            aead::open_indexed(
-                self.previous_frame_key.as_ref().unwrap(),
-                self.recv_dir,
-                &bytes,
-            )
+            let Some(ref prev_key) = self.previous_frame_key else {
+                self.endpoint.note_auth_drop();
+                return Ok(None);
+            };
+            aead::open_indexed(prev_key, self.recv_dir, &bytes)
         } else {
             aead::open_indexed(&self.current_frame_key, self.recv_dir, &bytes)
         };

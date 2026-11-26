@@ -1,7 +1,7 @@
 {
   "engine": "ProVerif 2.05+ Automated Protocol Model Checker",
   "threat_model": "Dolev-Yao Active Network Attacker (Full Control over net)",
-  "timestamp": "2026-11-20T13:29:04.637253+00:00",
+  "timestamp": "2026-11-25T07:48:45.165352+00:00",
   "models_evaluated": [
     {
       "file": "st2027_handshake.pv",
@@ -9,41 +9,41 @@
       "verified_properties": [
         {
           "property_id": "Secrecy_Payload",
-          "formal_query": "query attacker(secret_payload)",
-          "mathematical_result": "not attacker(secret_payload) is true",
+          "formal_query_pattern": "attacker(secret_payload)",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "PFS Confidentiality",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         },
         {
           "property_id": "Mutual_Auth_Client",
-          "formal_query": "inj-event(S_Accepts) ==> inj-event(C_Accepts)",
-          "mathematical_result": "inj-event(S_Accepts(k, tr, pk(sksC))) ==> inj-event(C_Accepts(k, tr)) is true",
+          "formal_query_pattern": "inj-event(S_Accepts",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Mutual Identity Agreement",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         },
         {
           "property_id": "Auth_Responder_M2",
-          "formal_query": "event(C_VerifiedM2) ==> event(S_SentM2)",
-          "mathematical_result": "event(C_VerifiedM2(trpre)) ==> event(S_SentM2(trpre)) is true",
+          "formal_query_pattern": "event(C_VerifiedM2",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Responder Authenticity",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         },
         {
           "property_id": "Record_Anti_Replay",
-          "formal_query": "inj-event(R_Receives) ==> inj-event(C_Sends)",
-          "mathematical_result": "inj-event(R_Receives(k, s, m, pk(sksC))) ==> inj-event(C_Sends(k, s, m)) is true",
+          "formal_query_pattern": "inj-event(R_Receives",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Injective Nonce Anti-Replay",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         },
         {
           "property_id": "Initiator_Identity_Privacy",
-          "formal_query": "query attacker(pk(sksC2))",
-          "mathematical_result": "not attacker(pk(sksC2)) is true",
+          "formal_query_pattern": "attacker",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Initiator Identity Confidentiality",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         }
       ],
-      "status": "PASS"
+      "status": "NOT_VERIFIED_PROVERIF_MISSING"
     },
     {
       "file": "st2027_pcs.pv",
@@ -51,20 +51,20 @@
       "verified_properties": [
         {
           "property_id": "Break_In_Recovery_PCS",
-          "formal_query": "query secret pcs_payload",
-          "mathematical_result": "not attacker(pcs_payload) is true",
+          "formal_query_pattern": "pcs_payload",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Post-Compromise Healing",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         },
         {
           "property_id": "Forward_Secrecy_Epoch",
-          "formal_query": "query secret epoch_key",
-          "mathematical_result": "not attacker(epoch_key) is true",
+          "formal_query_pattern": "epoch_key",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Epoch Forward Secrecy",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         }
       ],
-      "status": "PASS"
+      "status": "NOT_VERIFIED_PROVERIF_MISSING"
     },
     {
       "file": "nc3_dual_custody.pv",
@@ -72,23 +72,24 @@
       "verified_properties": [
         {
           "property_id": "Dual_Officer_Authentication",
-          "formal_query": "inj-event(ExecuteEAM) ==> inj-event(Officer1Sign) && inj-event(Officer2Sign)",
-          "mathematical_result": "true",
+          "formal_query_pattern": "ExecuteEAM",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Two-Person Rule Injective Binding",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         },
         {
           "property_id": "Single_Officer_Rejection",
-          "formal_query": "not attacker(UnauthorizedEAM)",
-          "mathematical_result": "true",
+          "formal_query_pattern": "UnauthorizedEAM",
+          "mathematical_result": "ProVerif binary absent; theorem NOT proven",
           "security_guarantee": "Split-Knowledge Isolation",
-          "status": "PASS"
+          "status": "NOT_VERIFIED_PROVERIF_MISSING"
         }
       ],
-      "status": "PASS"
+      "status": "NOT_VERIFIED_PROVERIF_MISSING"
     }
   ],
-  "overall_status": "PASS",
-  "theorems_proven": 9,
-  "theorems_total": 9
+  "overall_status": "NOT_VERIFIED_PROVERIF_MISSING",
+  "theorems_proven": 0,
+  "theorems_total": 9,
+  "signature_status": "UNSIGNED_NO_EPHEMERAL_SELF_SIGNING"
 }

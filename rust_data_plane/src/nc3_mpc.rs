@@ -1,21 +1,29 @@
 //! NC3 Decentralized Multi-Party Computation (MPC) Threshold Signatures.
 //!
-//! Upgrades the NC3 Two-Person Rule to decentralized t-of-n Shamir/Feldman VSS
-//! threshold post-quantum signature verification for ML-DSA-87 and DoD Directive S-5210.41M.
-//!
-//! SECURITY INVARIANTS:
-//! 1. Master strategic authorization key is never reconstructed on any single machine.
-//! 2. Simultaneous co-signing by t distinct silos within strict 2.0-second window
-//!    (`MAX_TEMPORAL_SKEW_MILLIS = 2000`).
-//! 3. Cryptographic commitment verification using SHA-384 Feldman VSS commitments.
-//! 4. Fail-closed rejection of tampered partial signatures, invalid quorums,
-//!    or duplicate silo IDs.
+//! Upgrades the NC3 Two-Person Rule to decentralized t-of-n verifiable threshold
+//! authentication combining:
+//! 1. ML-DSA-87 genesis ceremony certification binding the master public key to `P_0`
+//!    and every silo share public point `Q_i`.
+//! 2. Per-silo blinded Secp384r1 Schnorr ZKPs (`[z_i]G == R_i + [c_i]Q_i`) or
+//!    2-round blinded `FROST_P384_V2` (`[z_agg]G == R + [c]P_0`), never exposing `s_i`.
+//! 3. Per-silo sovereign ML-DSA-87 quorum signatures over canonical V2 transcripts.
+//! 4. Strict 2.0-second co-signing window (`MAX_TEMPORAL_SKEW_MILLIS = 2000`).
 
+use std::collections::{HashMap, HashSet};
+
+use p384::elliptic_curve::ff::PrimeField;
+use p384::elliptic_curve::ops::Reduce;
+use p384::elliptic_curve::sec1::FromSec1Point;
+#[cfg(test)]
+use p384::elliptic_curve::sec1::ToSec1Point;
+use p384::{AffinePoint, FieldBytes, ProjectivePoint, Scalar, Sec1Point};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
 use zeroize::Zeroize;
 
+use crate::auth::Mldsa87VerifyingKey;
 use crate::ct::ct_eq;
-use crate::policy::{CoreError, MLDSA87_PK};
+use crate::policy::{CoreError, MLDSA87_PK, MLDSA87_SIG};
 
 /// Magic header for NC3 MPC threshold signature wire packages.
 pub const MPC_WIRE_MAGIC: &[u8; 10] = b"NC3-MPC-T1";
@@ -99,6 +107,27 @@ pub struct MpcPartialSignature {
     pub share_commitment: [u8; SHA384_DIGEST_LEN],
 }
 
+/// Certified roster share public point from ceremony certificate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertifiedSiloPoint {
+    pub index: u32,
+    pub silo_id: String,
+    pub q_hex: String,
+}
+
+/// Cryptographic proof emitted by an individual Operator Silo Node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiloProofEntry {
+    pub silo_id: String,
+    pub share_index: u32,
+    pub timestamp_ms: u64,
+    pub z_scalar_hex: String,
+    pub r_point_hex: String,
+    pub q_point_hex: String,
+    pub silo_pk_hex: String,
+    pub silo_mldsa_sig_hex: String,
+}
+
 /// Fully aggregated decentralized threshold signature package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MpcThresholdSignature {
@@ -111,12 +140,41 @@ pub struct MpcThresholdSignature {
     pub threshold: u16,
     pub master_public_key: Vec<u8>,
     pub vss_commitment: [u8; SHA384_DIGEST_LEN],
+    pub protocol_mode: String,
+    pub ceremony_salt: Vec<u8>,
+    pub master_p0_point: Vec<u8>,
+    pub total_shares: u16,
+    pub ceremony_cert_sig: Vec<u8>,
+    pub silo_roster: Vec<CertifiedSiloPoint>,
+    pub silo_proofs: Vec<SiloProofEntry>,
+    pub frost_group_r: Vec<u8>,
+}
+
+fn hex_encode_bytes(data: &[u8]) -> String {
+    let mut s = String::with_capacity(data.len() * 2);
+    for b in data {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{b:02x}");
+    }
+    s
+}
+
+fn hex_decode_bytes(s: &str) -> Result<Vec<u8>, CoreError> {
+    if !s.len().is_multiple_of(2) {
+        return Err(CoreError::Malformed);
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for i in (0..s.len()).step_by(2) {
+        let byte = u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| CoreError::Malformed)?;
+        out.push(byte);
+    }
+    Ok(out)
 }
 
 impl MpcThresholdSignature {
     /// Serialize the threshold signature package to binary wire representation.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(MIN_MPC_WIRE_LEN + 128);
+        let mut out = Vec::with_capacity(MIN_MPC_WIRE_LEN + 8192);
         out.extend_from_slice(MPC_WIRE_MAGIC);
         out.extend_from_slice(&self.threshold.to_be_bytes());
         out.extend_from_slice(&self.sync_skew_ms.to_be_bytes());
@@ -124,12 +182,20 @@ impl MpcThresholdSignature {
         out.extend_from_slice(&self.aggregated_signature);
         out.extend_from_slice(&self.vss_commitment);
 
-        // Serialize metadata (silos, indices, timestamps, master_pk)
         let meta = serde_json::to_vec(&serde_json::json!({
             "signers": self.signer_silos,
             "indices": self.signer_indices,
             "timestamps": self.timestamps_ms,
             "master_pub": self.master_public_key,
+            "master_pub_hex": hex_encode_bytes(&self.master_public_key),
+            "mode": self.protocol_mode,
+            "salt_hex": hex_encode_bytes(&self.ceremony_salt),
+            "master_p0_hex": hex_encode_bytes(&self.master_p0_point),
+            "total_shares": self.total_shares,
+            "ceremony_cert_sig_hex": hex_encode_bytes(&self.ceremony_cert_sig),
+            "silo_roster": self.silo_roster,
+            "silo_proofs": self.silo_proofs,
+            "frost_r_hex": hex_encode_bytes(&self.frost_group_r),
         }))
         .unwrap_or_default();
 
@@ -173,32 +239,79 @@ impl MpcThresholdSignature {
             .and_then(|v| v.as_array())
             .ok_or(CoreError::Malformed)?
             .iter()
-            .filter_map(|s| s.as_str().map(|x| x.to_string()))
-            .collect::<Vec<_>>();
+            .map(|s| s.as_str().map(|x| x.to_string()).ok_or(CoreError::Malformed))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let signer_indices = meta
             .get("indices")
             .and_then(|v| v.as_array())
             .ok_or(CoreError::Malformed)?
             .iter()
-            .filter_map(|i| i.as_u64().map(|x| x as u32))
-            .collect::<Vec<_>>();
+            .map(|i| i.as_u64().and_then(|x| u32::try_from(x).ok()).ok_or(CoreError::Malformed))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let timestamps_ms = meta
             .get("timestamps")
             .and_then(|v| v.as_array())
             .ok_or(CoreError::Malformed)?
             .iter()
-            .filter_map(|t| t.as_u64())
-            .collect::<Vec<_>>();
+            .map(|t| t.as_u64().ok_or(CoreError::Malformed))
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let master_public_key = meta
-            .get("master_pub")
-            .and_then(|v| v.as_array())
-            .ok_or(CoreError::Malformed)?
-            .iter()
-            .filter_map(|b| b.as_u64().map(|x| x as u8))
-            .collect::<Vec<_>>();
+        let master_public_key = if let Some(arr) = meta.get("master_pub").and_then(|v| v.as_array()) {
+            arr.iter()
+                .map(|b| b.as_u64().and_then(|x| u8::try_from(x).ok()).ok_or(CoreError::Malformed))
+                .collect::<Result<Vec<_>, _>>()?
+        } else if let Some(hex_s) = meta.get("master_pub_hex").and_then(|v| v.as_str()) {
+            hex_decode_bytes(hex_s)?
+        } else {
+            return Err(CoreError::Malformed);
+        };
+
+        let protocol_mode = meta
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let ceremony_salt = meta
+            .get("salt_hex")
+            .and_then(|v| v.as_str())
+            .map(hex_decode_bytes)
+            .transpose()?
+            .unwrap_or_default();
+        let master_p0_point = meta
+            .get("master_p0_hex")
+            .and_then(|v| v.as_str())
+            .map(hex_decode_bytes)
+            .transpose()?
+            .unwrap_or_default();
+        let total_shares = meta
+            .get("total_shares")
+            .and_then(|v| v.as_u64())
+            .and_then(|x| u16::try_from(x).ok())
+            .unwrap_or(0);
+        let ceremony_cert_sig = meta
+            .get("ceremony_cert_sig_hex")
+            .and_then(|v| v.as_str())
+            .map(hex_decode_bytes)
+            .transpose()?
+            .unwrap_or_default();
+        let silo_roster: Vec<CertifiedSiloPoint> = meta
+            .get("silo_roster")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|_| CoreError::Malformed))
+            .transpose()?
+            .unwrap_or_default();
+        let silo_proofs: Vec<SiloProofEntry> = meta
+            .get("silo_proofs")
+            .map(|v| serde_json::from_value(v.clone()).map_err(|_| CoreError::Malformed))
+            .transpose()?
+            .unwrap_or_default();
+        let frost_group_r = meta
+            .get("frost_r_hex")
+            .and_then(|v| v.as_str())
+            .map(hex_decode_bytes)
+            .transpose()?
+            .unwrap_or_default();
 
         Ok(Self {
             payload_digest,
@@ -210,6 +323,14 @@ impl MpcThresholdSignature {
             threshold,
             master_public_key,
             vss_commitment,
+            protocol_mode,
+            ceremony_salt,
+            master_p0_point,
+            total_shares,
+            ceremony_cert_sig,
+            silo_roster,
+            silo_proofs,
+            frost_group_r,
         })
     }
 }
@@ -253,6 +374,125 @@ pub fn verify_silo_quorum(signer_indices: &[u32], threshold: u16) -> Result<(), 
 }
 
 /// Verify canonical SHA-384 digest of an Emergency Action Message payload.
+fn parse_p384_point(raw: &[u8]) -> Result<ProjectivePoint, CoreError> {
+    if raw.len() != 49 || (raw[0] != 0x02 && raw[0] != 0x03) {
+        return Err(CoreError::Malformed);
+    }
+    let sec1 = Sec1Point::from_bytes(raw).map_err(|_| CoreError::Malformed)?;
+    let affine = Option::<AffinePoint>::from(AffinePoint::from_sec1_point(&sec1))
+        .ok_or(CoreError::Malformed)?;
+    let proj = ProjectivePoint::from(affine);
+    if proj == ProjectivePoint::IDENTITY {
+        return Err(CoreError::Malformed);
+    }
+    Ok(proj)
+}
+
+#[cfg(test)]
+fn encode_p384_point(pt: &ProjectivePoint) -> Result<[u8; 49], CoreError> {
+    let sec1 = pt.to_affine().to_sec1_point(true);
+    let b: &[u8] = sec1.as_ref();
+    if b.len() != 49 {
+        return Err(CoreError::Malformed);
+    }
+    let mut out = [0u8; 49];
+    out.copy_from_slice(b);
+    Ok(out)
+}
+
+fn parse_p384_scalar_nonzero(raw: &[u8]) -> Result<Scalar, CoreError> {
+    if raw.len() != 48 {
+        return Err(CoreError::Malformed);
+    }
+    let mut arr = [0u8; 48];
+    arr.copy_from_slice(raw);
+    let fb = FieldBytes::from(arr);
+    let s = Option::<Scalar>::from(Scalar::from_repr(fb)).ok_or(CoreError::Malformed)?;
+    if bool::from(s.is_zero()) {
+        return Err(CoreError::Malformed);
+    }
+    Ok(s)
+}
+
+fn scalar_from_u32(val: u32) -> Scalar {
+    let mut arr = [0u8; 48];
+    arr[44..48].copy_from_slice(&val.to_be_bytes());
+    Scalar::from_repr(FieldBytes::from(arr)).expect("u32 fits in P-384 scalar field")
+}
+
+fn hash_to_p384_scalar(digest: [u8; 48]) -> Scalar {
+    let s = Scalar::reduce(&FieldBytes::from(digest));
+    if bool::from(s.is_zero()) {
+        Scalar::ONE
+    } else {
+        s
+    }
+}
+
+fn lagrange_coeff_zero(i_idx: u32, indices: &[u32]) -> Result<Scalar, CoreError> {
+    let i_s = scalar_from_u32(i_idx);
+    let mut num = Scalar::ONE;
+    let mut den = Scalar::ONE;
+    for &j_idx in indices {
+        if j_idx == i_idx {
+            continue;
+        }
+        let j_s = scalar_from_u32(j_idx);
+        num *= -j_s;
+        den *= i_s - j_s;
+    }
+    let den_inv = Option::<Scalar>::from(den.invert()).ok_or(CoreError::AuthRequired)?;
+    Ok(num * den_inv)
+}
+
+fn build_ceremony_cert_tbs(sig: &MpcThresholdSignature) -> Result<Vec<u8>, CoreError> {
+    if sig.ceremony_salt.len() != 32 || sig.master_p0_point.len() != 49 {
+        return Err(CoreError::Malformed);
+    }
+    let mut roster = sig.silo_roster.clone();
+    roster.sort_by_key(|r| r.index);
+    let mut buf = Vec::with_capacity(256 + roster.len() * 70);
+    buf.extend_from_slice(b"NC3-CEREMONY-COMMIT-CERT-V2:");
+    buf.extend_from_slice(&sig.threshold.to_be_bytes());
+    buf.extend_from_slice(&sig.total_shares.to_be_bytes());
+    buf.extend_from_slice(&sig.ceremony_salt);
+    buf.extend_from_slice(&sig.vss_commitment);
+    buf.extend_from_slice(&sig.master_p0_point);
+    for r in roster {
+        let q_bytes = hex_decode_bytes(&r.q_hex)?;
+        if q_bytes.len() != 49 {
+            return Err(CoreError::Malformed);
+        }
+        let sb = r.silo_id.as_bytes();
+        let slen = u32::try_from(sb.len()).map_err(|_| CoreError::Malformed)?;
+        buf.extend_from_slice(&r.index.to_be_bytes());
+        buf.extend_from_slice(&slen.to_be_bytes());
+        buf.extend_from_slice(sb);
+        buf.extend_from_slice(&q_bytes);
+    }
+    Ok(buf)
+}
+
+fn build_silo_partial_transcript(
+    proof: &SiloProofEntry,
+    payload_digest: &[u8; 48],
+    z_bytes: &[u8],
+    r_bytes: &[u8],
+) -> Result<Vec<u8>, CoreError> {
+    let sb = proof.silo_id.as_bytes();
+    let slen = u32::try_from(sb.len()).map_err(|_| CoreError::Malformed)?;
+    let mut buf = Vec::with_capacity(64 + sb.len() + 97);
+    buf.extend_from_slice(b"NC3-SILO-PARTIAL-AUTH-V2:");
+    buf.extend_from_slice(&slen.to_be_bytes());
+    buf.extend_from_slice(sb);
+    buf.extend_from_slice(&proof.share_index.to_be_bytes());
+    buf.extend_from_slice(&proof.timestamp_ms.to_be_bytes());
+    buf.extend_from_slice(payload_digest);
+    buf.extend_from_slice(z_bytes);
+    buf.extend_from_slice(r_bytes);
+    Ok(buf)
+}
+
 pub fn compute_canonical_eam_digest(payload_bytes: &[u8]) -> [u8; SHA384_DIGEST_LEN] {
     let mut hasher = Sha384::new();
     hasher.update(b"NC3-EAM-PAYLOAD-V1:");
@@ -262,13 +502,20 @@ pub fn compute_canonical_eam_digest(payload_bytes: &[u8]) -> [u8; SHA384_DIGEST_
     out
 }
 
-/// Verify a complete threshold MPC signature package against payload bytes and master public key.
+/// Cryptographically verify an aggregated NC3 threshold MPC signature.
+///
+/// Enforces:
+/// 1. `master_public_key == expected_master_pk` and genesis ceremony ML-DSA-87 certificate check
+/// 2. Threshold quorum (`>= threshold`), distinct indices & distinct silo IDs, skew `<= 2000ms`
+/// 3. Canonical SHA-384 payload digest match
+/// 4. Feldman P-384 master commitment `C_0` and Lagrange master point `P_0 == sum(lambda_i * Q_i)`
+/// 5. Per-silo ML-DSA-87 sovereign signature + blinded P-384 Schnorr ZKP (`[z_i]G == R_i + [c_i]Q_i`)
+///    or aggregate `FROST_P384_V2` (`[z_agg]G == R_frost + [c_frost]P_0`)
 pub fn verify_threshold_mpc(
     sig: &MpcThresholdSignature,
     payload_bytes: &[u8],
     expected_master_pk: &[u8],
 ) -> Result<(), CoreError> {
-    // 1. Validate master public key
     if expected_master_pk.len() != MLDSA87_PK || sig.master_public_key.len() != MLDSA87_PK {
         return Err(CoreError::Malformed);
     }
@@ -276,23 +523,176 @@ pub fn verify_threshold_mpc(
         return Err(CoreError::KeyMismatch);
     }
 
-    // 2. Validate quorum
     verify_silo_quorum(&sig.signer_indices, sig.threshold)?;
+    if sig.signer_silos.len() != sig.signer_indices.len()
+        || sig.timestamps_ms.len() != sig.signer_indices.len()
+        || sig.silo_proofs.len() != sig.signer_indices.len()
+    {
+        return Err(CoreError::Malformed);
+    }
+    let mut seen_silos = HashSet::with_capacity(sig.signer_silos.len());
+    for s in &sig.signer_silos {
+        if !seen_silos.insert(s.as_str()) {
+            return Err(CoreError::AuthRequired);
+        }
+    }
 
-    // 3. Validate simultaneous co-signing window (<= 2000 ms)
     let skew = verify_temporal_window(&sig.timestamps_ms)?;
     if skew != sig.sync_skew_ms {
         return Err(CoreError::Malformed);
     }
 
-    // 4. Validate canonical payload digest
     let expected_digest = compute_canonical_eam_digest(payload_bytes);
     if !ct_eq(&sig.payload_digest, &expected_digest) {
         return Err(CoreError::BadSignature);
     }
 
-    // 5. Validate aggregated signature presence
-    if sig.aggregated_signature == [0u8; SHA384_DIGEST_LEN] {
+    if sig.ceremony_salt.len() != 32
+        || sig.master_p0_point.len() != 49
+        || sig.ceremony_cert_sig.len() != MLDSA87_SIG
+        || sig.total_shares < sig.threshold
+        || sig.silo_roster.len() != sig.total_shares as usize
+    {
+        return Err(CoreError::Malformed);
+    }
+
+    // 1. Verify ceremony ML-DSA-87 certificate under expected_master_pk
+    let master_vk = Mldsa87VerifyingKey::from_bytes(expected_master_pk)?;
+    let ceremony_tbs = build_ceremony_cert_tbs(sig)?;
+    master_vk.verify(&[], &ceremony_tbs, &sig.ceremony_cert_sig)?;
+
+    // 2. Verify master commitment C_0 matches P_0 and salt
+    let p0_point = parse_p384_point(&sig.master_p0_point)?;
+    let mut c0_hasher = Sha384::new();
+    c0_hasher.update(b"NC3-FELDMAN-SHA384-COEFF-V1:");
+    c0_hasher.update(&sig.ceremony_salt);
+    c0_hasher.update(0u32.to_be_bytes());
+    c0_hasher.update(&sig.master_p0_point);
+    let expected_c0: [u8; 48] = c0_hasher.finalize().into();
+    if !ct_eq(&expected_c0, &sig.vss_commitment) {
+        return Err(CoreError::BadSignature);
+    }
+
+    // Build certified roster lookup map
+    let mut roster_map: HashMap<u32, (&str, Vec<u8>)> = HashMap::with_capacity(sig.silo_roster.len());
+    for r in &sig.silo_roster {
+        let qb = hex_decode_bytes(&r.q_hex)?;
+        let _ = parse_p384_point(&qb)?;
+        if roster_map.insert(r.index, (r.silo_id.as_str(), qb)).is_some() {
+            return Err(CoreError::Malformed);
+        }
+    }
+
+    if sig.protocol_mode == "FROST_P384_V2" {
+        let r_group_pt = parse_p384_point(&sig.frost_group_r)?;
+        let z_agg = parse_p384_scalar_nonzero(&sig.aggregated_signature)?;
+        let mut c_hasher = Sha384::new();
+        c_hasher.update(b"NC3-FROST-CHALLENGE-V2:");
+        c_hasher.update(&sig.frost_group_r);
+        c_hasher.update(&sig.master_p0_point);
+        c_hasher.update(&sig.ceremony_salt);
+        c_hasher.update(expected_digest);
+        let c_frost = hash_to_p384_scalar(c_hasher.finalize().into());
+
+        let lhs = ProjectivePoint::GENERATOR * z_agg;
+        let rhs = r_group_pt + (p0_point * c_frost);
+        if lhs != rhs {
+            return Err(CoreError::BadSignature);
+        }
+
+        for ((&idx, expected_silo), (&ts_ms, proof)) in sig
+            .signer_indices
+            .iter()
+            .zip(sig.signer_silos.iter())
+            .zip(sig.timestamps_ms.iter().zip(sig.silo_proofs.iter()))
+        {
+            if proof.share_index != idx
+                || proof.silo_id != *expected_silo
+                || proof.timestamp_ms != ts_ms
+                || !roster_map.contains_key(&idx)
+            {
+                return Err(CoreError::Malformed);
+            }
+            let z_bytes = hex_decode_bytes(&proof.z_scalar_hex)?;
+            let r_bytes = hex_decode_bytes(&proof.r_point_hex)?;
+            let silo_pk = hex_decode_bytes(&proof.silo_pk_hex)?;
+            let silo_sig = hex_decode_bytes(&proof.silo_mldsa_sig_hex)?;
+            let silo_vk = Mldsa87VerifyingKey::from_bytes(&silo_pk)?;
+            let transcript = build_silo_partial_transcript(proof, &expected_digest, &z_bytes, &r_bytes)?;
+            silo_vk.verify(&[], &transcript, &silo_sig)?;
+        }
+        return Ok(());
+    }
+
+    if sig.protocol_mode != "SCHNORR_P384_MLDSA87_QUORUM_V2" {
+        return Err(CoreError::Malformed);
+    }
+
+    let mut proof_hasher = Sha384::new();
+    proof_hasher.update(b"NC3-QUORUM-PROOF-V2:");
+    proof_hasher.update(expected_digest);
+
+    let mut q_reconstructed = ProjectivePoint::IDENTITY;
+
+    for ((&idx, expected_silo), (&ts_ms, proof)) in sig
+        .signer_indices
+        .iter()
+        .zip(sig.signer_silos.iter())
+        .zip(sig.timestamps_ms.iter().zip(sig.silo_proofs.iter()))
+    {
+        if proof.share_index != idx || proof.silo_id != *expected_silo || proof.timestamp_ms != ts_ms {
+            return Err(CoreError::Malformed);
+        }
+        let z_bytes = hex_decode_bytes(&proof.z_scalar_hex)?;
+        let r_bytes = hex_decode_bytes(&proof.r_point_hex)?;
+        let q_bytes = hex_decode_bytes(&proof.q_point_hex)?;
+        let silo_pk = hex_decode_bytes(&proof.silo_pk_hex)?;
+        let silo_sig = hex_decode_bytes(&proof.silo_mldsa_sig_hex)?;
+
+        let (_, certified_q) = roster_map.get(&idx).ok_or(CoreError::BadSignature)?;
+        if !ct_eq(&q_bytes, certified_q) {
+            return Err(CoreError::BadSignature);
+        }
+
+        let silo_vk = Mldsa87VerifyingKey::from_bytes(&silo_pk)?;
+        let transcript = build_silo_partial_transcript(proof, &expected_digest, &z_bytes, &r_bytes)?;
+        silo_vk.verify(&[], &transcript, &silo_sig)?;
+
+        let r_pt = parse_p384_point(&r_bytes)?;
+        let q_pt = parse_p384_point(&q_bytes)?;
+        let z_i = parse_p384_scalar_nonzero(&z_bytes)?;
+
+        let mut c_hasher = Sha384::new();
+        c_hasher.update(b"NC3-MPC-SCHNORR-P384-V2:");
+        c_hasher.update(&r_bytes);
+        c_hasher.update(&q_bytes);
+        c_hasher.update(&sig.ceremony_salt);
+        c_hasher.update(idx.to_be_bytes());
+        c_hasher.update(ts_ms.to_be_bytes());
+        c_hasher.update(expected_digest);
+        let c_i = hash_to_p384_scalar(c_hasher.finalize().into());
+
+        let lhs = ProjectivePoint::GENERATOR * z_i;
+        let rhs = r_pt + (q_pt * c_i);
+        if lhs != rhs {
+            return Err(CoreError::BadSignature);
+        }
+
+        let lambda_i = lagrange_coeff_zero(idx, &sig.signer_indices)?;
+        q_reconstructed += q_pt * lambda_i;
+
+        proof_hasher.update(&r_bytes);
+        proof_hasher.update(&z_bytes);
+        proof_hasher.update(&silo_pk);
+        proof_hasher.update(&silo_sig);
+    }
+
+    if q_reconstructed != p0_point {
+        return Err(CoreError::BadSignature);
+    }
+
+    let expected_agg: [u8; 48] = proof_hasher.finalize().into();
+    if !ct_eq(&expected_agg, &sig.aggregated_signature) {
         return Err(CoreError::BadSignature);
     }
 
@@ -302,9 +702,124 @@ pub fn verify_threshold_mpc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Mldsa87SigningKey;
 
-    fn dummy_pk() -> Vec<u8> {
-        vec![0x42u8; MLDSA87_PK]
+    fn scalar_to_48(s: &Scalar) -> [u8; 48] {
+        let fb = s.to_repr();
+        let mut out = [0u8; 48];
+        out.copy_from_slice(fb.as_ref());
+        out
+    }
+
+    fn build_real_mpc_fixture(payload: &[u8], ts1: u64, ts2: u64) -> (MpcThresholdSignature, Vec<u8>) {
+        let (master_sk, master_vk) = Mldsa87SigningKey::generate().expect("master keygen");
+        let master_pk = master_vk.to_bytes();
+        let digest = compute_canonical_eam_digest(payload);
+        let salt = [0x5Au8; 32];
+
+        let mut a0_raw = [0u8; 48];
+        getrandom::fill(&mut a0_raw).unwrap();
+        let a0 = hash_to_p384_scalar(a0_raw);
+        let mut a1_raw = [0u8; 48];
+        getrandom::fill(&mut a1_raw).unwrap();
+        let a1 = hash_to_p384_scalar(a1_raw);
+
+        let p0 = ProjectivePoint::GENERATOR * a0;
+        let p0_bytes = encode_p384_point(&p0).unwrap();
+
+        let mut c0_h = Sha384::new();
+        c0_h.update(b"NC3-FELDMAN-SHA384-COEFF-V1:");
+        c0_h.update(salt);
+        c0_h.update(0u32.to_be_bytes());
+        c0_h.update(p0_bytes);
+        let vss_commitment: [u8; 48] = c0_h.finalize().into();
+
+        let shares: [(u32, &str, Scalar); 3] = [
+            (1, "SILO-01", a0 + a1 * scalar_from_u32(1)),
+            (2, "SILO-02", a0 + a1 * scalar_from_u32(2)),
+            (3, "SILO-03", a0 + a1 * scalar_from_u32(3)),
+        ];
+        let mut roster = Vec::new();
+        for &(idx, sid, sc) in &shares {
+            let q = ProjectivePoint::GENERATOR * sc;
+            roster.push(CertifiedSiloPoint {
+                index: idx,
+                silo_id: sid.to_string(),
+                q_hex: hex_encode_bytes(&encode_p384_point(&q).unwrap()),
+            });
+        }
+
+        let mut sig = MpcThresholdSignature {
+            payload_digest: digest,
+            aggregated_signature: [0u8; 48],
+            signer_indices: vec![1, 2],
+            signer_silos: vec!["SILO-01".into(), "SILO-02".into()],
+            timestamps_ms: vec![ts1, ts2],
+            sync_skew_ms: ts2.saturating_sub(ts1),
+            threshold: 2,
+            master_public_key: master_pk.clone(),
+            vss_commitment,
+            protocol_mode: "SCHNORR_P384_MLDSA87_QUORUM_V2".to_string(),
+            ceremony_salt: salt.to_vec(),
+            master_p0_point: p0_bytes.to_vec(),
+            total_shares: 3,
+            ceremony_cert_sig: Vec::new(),
+            silo_roster: roster,
+            silo_proofs: Vec::new(),
+            frost_group_r: Vec::new(),
+        };
+
+        let ceremony_tbs = build_ceremony_cert_tbs(&sig).unwrap();
+        sig.ceremony_cert_sig = master_sk.sign(&[], &ceremony_tbs);
+
+        let mut proof_hasher = Sha384::new();
+        proof_hasher.update(b"NC3-QUORUM-PROOF-V2:");
+        proof_hasher.update(digest);
+
+        for ((idx, sid, s_i), ts_ms) in shares[..2].iter().zip([ts1, ts2]) {
+            let mut r_raw = [0u8; 48];
+            getrandom::fill(&mut r_raw).unwrap();
+            let r_i = hash_to_p384_scalar(r_raw);
+            let r_bytes = encode_p384_point(&(ProjectivePoint::GENERATOR * r_i)).unwrap();
+            let q_bytes = encode_p384_point(&(ProjectivePoint::GENERATOR * *s_i)).unwrap();
+
+            let mut c_hasher = Sha384::new();
+            c_hasher.update(b"NC3-MPC-SCHNORR-P384-V2:");
+            c_hasher.update(r_bytes);
+            c_hasher.update(q_bytes);
+            c_hasher.update(salt);
+            c_hasher.update(idx.to_be_bytes());
+            c_hasher.update(ts_ms.to_be_bytes());
+            c_hasher.update(digest);
+            let c_i = hash_to_p384_scalar(c_hasher.finalize().into());
+
+            let z_i = r_i + c_i * *s_i;
+            let z_bytes = scalar_to_48(&z_i);
+
+            let (silo_sk, silo_vk) = Mldsa87SigningKey::generate().unwrap();
+            let mut proof = SiloProofEntry {
+                silo_id: (*sid).to_string(),
+                share_index: *idx,
+                timestamp_ms: ts_ms,
+                z_scalar_hex: hex_encode_bytes(&z_bytes),
+                r_point_hex: hex_encode_bytes(&r_bytes),
+                q_point_hex: hex_encode_bytes(&q_bytes),
+                silo_pk_hex: hex_encode_bytes(&silo_vk.to_bytes()),
+                silo_mldsa_sig_hex: String::new(),
+            };
+            let transcript = build_silo_partial_transcript(&proof, &digest, &z_bytes, &r_bytes).unwrap();
+            let silo_sig = silo_sk.sign(&[], &transcript);
+            proof.silo_mldsa_sig_hex = hex_encode_bytes(&silo_sig);
+
+            proof_hasher.update(r_bytes);
+            proof_hasher.update(z_bytes);
+            proof_hasher.update(silo_vk.to_bytes());
+            proof_hasher.update(silo_sig);
+            sig.silo_proofs.push(proof);
+        }
+
+        sig.aggregated_signature = proof_hasher.finalize().into();
+        (sig, master_pk)
     }
 
     #[test]
@@ -317,44 +832,23 @@ mod tests {
 
     #[test]
     fn test_temporal_window_exceeded_fails() {
-        // Skew is 2001 ms (> 2000 ms)
         let ts = vec![1000000, 1001000, 1002001];
-        let res = verify_temporal_window(&ts);
-        assert_eq!(res, Err(CoreError::Stale));
+        assert_eq!(verify_temporal_window(&ts), Err(CoreError::Stale));
     }
 
     #[test]
     fn test_quorum_verification() {
-        // 2 of 3 valid
         assert!(verify_silo_quorum(&[1, 2], 2).is_ok());
-        // 3 of 5 valid
         assert!(verify_silo_quorum(&[1, 3, 5], 3).is_ok());
-
-        // Insufficient count
         assert_eq!(verify_silo_quorum(&[1], 2), Err(CoreError::AuthRequired));
-
-        // Duplicate silo index
         assert_eq!(verify_silo_quorum(&[1, 1], 2), Err(CoreError::AuthRequired));
-
-        // Index 0 invalid
         assert_eq!(verify_silo_quorum(&[0, 2], 2), Err(CoreError::AuthRequired));
     }
 
     #[test]
     fn test_wire_format_roundtrip() {
-        let master_pk = dummy_pk();
-        let sig = MpcThresholdSignature {
-            payload_digest: [0x11u8; SHA384_DIGEST_LEN],
-            aggregated_signature: [0x22u8; SHA384_DIGEST_LEN],
-            signer_indices: vec![1, 2],
-            signer_silos: vec!["SILO-01".into(), "SILO-02".into()],
-            timestamps_ms: vec![1700000000000, 1700000000500],
-            sync_skew_ms: 500,
-            threshold: 2,
-            master_public_key: master_pk.clone(),
-            vss_commitment: [0x33u8; SHA384_DIGEST_LEN],
-        };
-
+        let payload = b"{\"directive\": \"DEFCON-1-LAUNCH\", \"target\": \"STRATCOM\"}";
+        let (sig, _) = build_real_mpc_fixture(payload, 1700000000000, 1700000000500);
         let raw = sig.to_bytes();
         let decoded = MpcThresholdSignature::from_bytes(&raw).expect("wire decode failed");
         assert_eq!(sig, decoded);
@@ -362,38 +856,48 @@ mod tests {
 
     #[test]
     fn test_verify_threshold_mpc_success_and_tamper() {
-        let master_pk = dummy_pk();
         let payload = b"{\"directive\": \"DEFCON-1-LAUNCH\", \"target\": \"STRATCOM\"}";
-        let digest = compute_canonical_eam_digest(payload);
+        let (sig, master_pk) = build_real_mpc_fixture(payload, 1700000000000, 1700000001000);
 
-        let sig = MpcThresholdSignature {
-            payload_digest: digest,
-            aggregated_signature: [0xaa; SHA384_DIGEST_LEN],
-            signer_indices: vec![1, 2],
-            signer_silos: vec!["SILO-01".into(), "SILO-02".into()],
-            timestamps_ms: vec![1700000000000, 1700000001000],
-            sync_skew_ms: 1000,
-            threshold: 2,
-            master_public_key: master_pk.clone(),
-            vss_commitment: [0xbb; SHA384_DIGEST_LEN],
-        };
+        verify_threshold_mpc(&sig, payload, &master_pk).expect("valid threshold MPC signature");
 
-        // Valid package
-        assert!(verify_threshold_mpc(&sig, payload, &master_pk).is_ok());
-
-        // Tampered payload
         let tampered_payload = b"{\"directive\": \"DEFCON-1-ABORT\", \"target\": \"STRATCOM\"}";
         assert_eq!(
             verify_threshold_mpc(&sig, tampered_payload, &master_pk),
             Err(CoreError::BadSignature)
         );
 
-        // Wrong master key
         let mut wrong_pk = master_pk.clone();
         wrong_pk[0] ^= 0xff;
         assert_eq!(
             verify_threshold_mpc(&sig, payload, &wrong_pk),
             Err(CoreError::KeyMismatch)
         );
+
+        let mut forged_cert = sig.clone();
+        forged_cert.ceremony_cert_sig[0] ^= 0x44;
+        assert_eq!(
+            verify_threshold_mpc(&forged_cert, payload, &master_pk),
+            Err(CoreError::BadSignature)
+        );
+
+        let mut forged_agg = sig.clone();
+        forged_agg.aggregated_signature[0] ^= 0x11;
+        assert_eq!(
+            verify_threshold_mpc(&forged_agg, payload, &master_pk),
+            Err(CoreError::BadSignature)
+        );
+
+        let mut bad_scalar = sig.clone();
+        let mut zb = hex_decode_bytes(&bad_scalar.silo_proofs[0].z_scalar_hex).unwrap();
+        zb[0] ^= 0x01;
+        bad_scalar.silo_proofs[0].z_scalar_hex = hex_encode_bytes(&zb);
+        assert!(verify_threshold_mpc(&bad_scalar, payload, &master_pk).is_err());
+
+        let mut vacuous = sig;
+        vacuous.silo_proofs.clear();
+        vacuous.ceremony_cert_sig.clear();
+        vacuous.aggregated_signature = [0xaa; 48];
+        assert!(verify_threshold_mpc(&vacuous, payload, &master_pk).is_err());
     }
 }

@@ -264,10 +264,7 @@ def seal_share_to_file(
         iterations=220_000,
     )
     derived_key = kdf.derive(passphrase)
-    try:
-        nonce = generate_deterministic_gcm_iv()
-    except Exception:
-        nonce = secrets.token_bytes(12)
+    nonce = generate_deterministic_gcm_iv()
 
     share_dict = {
         "share_index": share.share_index,
@@ -365,12 +362,93 @@ def load_sealed_share_from_file(
         autonomous_emergency_zeroize(key_buf, pt_buf)
 
 
+def _ceremony_cert_tbs(
+    threshold: int,
+    total_shares: int,
+    salt: bytes,
+    master_commitment: bytes,
+    master_p0_bytes: bytes,
+    silo_roster_points: List[Tuple[int, str, bytes]],
+) -> bytes:
+    """Canonical TBS transcript signed by the genesis master ML-DSA-87 key during ceremony."""
+    buf = bytearray(b"NC3-CEREMONY-COMMIT-CERT-V2:")
+    buf.extend(threshold.to_bytes(2, "big"))
+    buf.extend(total_shares.to_bytes(2, "big"))
+    buf.extend(salt)
+    buf.extend(master_commitment)
+    buf.extend(master_p0_bytes)
+    for idx, silo_id, q_bytes in sorted(silo_roster_points, key=lambda item: item[0]):
+        silo_b = silo_id.encode("utf-8")
+        buf.extend(idx.to_bytes(4, "big"))
+        buf.extend(len(silo_b).to_bytes(4, "big"))
+        buf.extend(silo_b)
+        buf.extend(q_bytes)
+    return bytes(buf)
+
+
+def _schnorr_challenge(
+    r_bytes: bytes,
+    q_bytes: bytes,
+    salt: bytes,
+    share_index: int,
+    timestamp_ms: int,
+    digest: bytes,
+    field_order: int = _P384_N,
+) -> int:
+    """Compute canonical domain-separated P-384 Schnorr challenge scalar in [1, N-1]."""
+    h = hashlib.sha384()
+    h.update(b"NC3-MPC-SCHNORR-P384-V2:")
+    h.update(r_bytes)
+    h.update(q_bytes)
+    h.update(salt)
+    h.update(share_index.to_bytes(4, "big"))
+    h.update(timestamp_ms.to_bytes(8, "big"))
+    h.update(digest)
+    return (int.from_bytes(h.digest(), "big") % field_order) or 1
+
+
+def _silo_partial_transcript(
+    silo_id: str,
+    share_index: int,
+    timestamp_ms: int,
+    digest: bytes,
+    z_bytes: bytes,
+    r_bytes: bytes,
+) -> bytes:
+    """Canonical silo partial signature transcript authenticated via ML-DSA-87."""
+    silo_b = silo_id.encode("utf-8")
+    return (
+        b"NC3-SILO-PARTIAL-AUTH-V2:"
+        + len(silo_b).to_bytes(4, "big")
+        + silo_b
+        + share_index.to_bytes(4, "big")
+        + timestamp_ms.to_bytes(8, "big")
+        + digest
+        + z_bytes
+        + r_bytes
+    )
+
+
+def _lagrange_zero(indices: List[int], field_order: int = _P384_N) -> Dict[int, int]:
+    """Compute Lagrange interpolation coefficients lambda_i(0) mod N for sorted indices."""
+    lambdas: Dict[int, int] = {}
+    for i_idx in indices:
+        num = 1
+        den = 1
+        for j_idx in indices:
+            if j_idx == i_idx:
+                continue
+            num = (num * (-j_idx)) % field_order
+            den = (den * (i_idx - j_idx)) % field_order
+        lambdas[i_idx] = (num * pow(den, field_order - 2, field_order)) % field_order
+    return lambdas
+
+
 @dataclass
 class FeldmanCommitments:
     """
     SHA-384 and Secp384r1 Feldman Verifiable Secret Sharing Public Commitments.
-    Allows any node or third party to verify that a share is mathematically consistent
-    with the master secret without revealing any mutual information.
+    Anchored to the ceremony ML-DSA-87 master public key via `ceremony_cert_sig`.
     """
     threshold: int
     total_shares: int
@@ -383,6 +461,27 @@ class FeldmanCommitments:
     master_public_key: bytes                      # ML-DSA-87 master public key (2592 bytes)
     created_at: float
     field_order: int = _P384_N
+    ceremony_cert_sig: bytes = b""
+    silo_roster_points: List[Tuple[int, str, bytes]] = field(default_factory=list)
+
+    def verify_ceremony_cert(self, master_public_key: bytes) -> bool:
+        """Verify ceremony genesis signature binding Feldman commitments to master_public_key."""
+        if not self.ceremony_cert_sig or len(self.coeff_points) == 0:
+            return False
+        if not secrets.compare_digest(self.master_public_key, master_public_key):
+            return False
+        p0_bytes = _point_to_bytes(self.coeff_points[0])
+        if len(p0_bytes) != 49 or len(self.silo_roster_points) != self.total_shares:
+            return False
+        tbs = _ceremony_cert_tbs(
+            self.threshold,
+            self.total_shares,
+            self.salt,
+            self.master_commitment,
+            p0_bytes,
+            self.silo_roster_points,
+        )
+        return EnhancedMLDSA_87().verify(master_public_key, tbs, self.ceremony_cert_sig)
 
     def verify_share(self, share: ThresholdShare) -> bool:
         """Verifies an individual share against the Feldman commitments."""
@@ -423,12 +522,21 @@ class FeldmanCommitments:
             "salt": self.salt.hex(),
             "master_public_key": self.master_public_key.hex(),
             "created_at": self.created_at,
+            "ceremony_cert_sig": self.ceremony_cert_sig.hex(),
+            "silo_roster_points": [
+                {"index": idx, "silo_id": sid, "q_hex": q.hex()}
+                for idx, sid, q in self.silo_roster_points
+            ],
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FeldmanCommitments":
         coeff_pts = [_bytes_to_point(bytes.fromhex(p)) for p in data["coeff_points"]]
         share_pts = {int(k): _bytes_to_point(bytes.fromhex(v)) for k, v in data["share_points"].items()}
+        roster = [
+            (int(r["index"]), str(r["silo_id"]), bytes.fromhex(r["q_hex"]))
+            for r in data.get("silo_roster_points", [])
+        ]
         return cls(
             threshold=int(data["threshold"]),
             total_shares=int(data["total_shares"]),
@@ -440,23 +548,41 @@ class FeldmanCommitments:
             salt=bytes.fromhex(data["salt"]),
             master_public_key=bytes.fromhex(data["master_public_key"]),
             created_at=float(data["created_at"]),
+            ceremony_cert_sig=bytes.fromhex(data.get("ceremony_cert_sig", "")),
+            silo_roster_points=roster,
         )
+
+
+@dataclass
+class FrostNonceCommitment:
+    """Round-1 blinded FROST-P384 nonce commitment emitted by an Operator Silo Node."""
+    silo_id: str
+    share_index: int
+    commitment_id: str
+    d_point_bytes: bytes                      # 49B compressed P-384 hiding commitment D_i
+    e_point_bytes: bytes                      # 49B compressed P-384 binding commitment E_i
+    payload_digest: bytes                     # 48B SHA-384 EAM digest
+    silo_public_key: bytes                    # 2592B ML-DSA-87 PK
+    silo_mldsa_sig: bytes                     # 4627B ML-DSA-87 signature
 
 
 @dataclass
 class PartialSignature:
     """
-    Partial signature produced by an Operator Silo Node on a verified DoD S-5210.41M payload.
-    Binds the silo's polynomial share component with its sovereign ML-DSA-87 identity.
+    Blinded partial signature produced by an Operator Silo Node on a verified DoD S-5210.41M payload.
+    Combines a zero-knowledge blinded Secp384r1 Schnorr/FROST response scalar (never exposing s_i)
+    with the silo's sovereign ML-DSA-87 signature.
     """
     silo_id: str
     share_index: int
     timestamp_utc: float
     payload_digest: bytes                     # 48 bytes (SHA-384)
-    partial_signature_bytes: bytes            # 48 bytes (w_i scalar)
+    partial_signature_bytes: bytes            # 48 bytes (blinded response scalar z_i mod N)
     share_commitment: bytes                   # 48 bytes (SHA-384)
     silo_public_key: bytes                    # 2592 bytes (ML-DSA-87)
     silo_mldsa_sig: bytes                     # 4627 bytes (ML-DSA-87)
+    nonce_commitment: bytes = b""             # 49 bytes compressed P-384 nonce point R_i
+    protocol_mode: str = "SCHNORR_P384_MLDSA87_QUORUM_V2"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -468,6 +594,8 @@ class PartialSignature:
             "share_commitment_hex": self.share_commitment.hex(),
             "silo_public_key_hex": self.silo_public_key.hex(),
             "silo_mldsa_sig_hex": self.silo_mldsa_sig.hex(),
+            "nonce_commitment_hex": self.nonce_commitment.hex(),
+            "protocol_mode": self.protocol_mode,
         }
 
     @classmethod
@@ -481,25 +609,36 @@ class PartialSignature:
             share_commitment=bytes.fromhex(data["share_commitment_hex"]),
             silo_public_key=bytes.fromhex(data["silo_public_key_hex"]),
             silo_mldsa_sig=bytes.fromhex(data["silo_mldsa_sig_hex"]),
+            nonce_commitment=bytes.fromhex(data.get("nonce_commitment_hex", "")),
+            protocol_mode=str(data.get("protocol_mode", "SCHNORR_P384_MLDSA87_QUORUM_V2")),
         )
 
 
 @dataclass
 class ThresholdSignature:
     """
-    Full aggregated multi-party threshold signature.
-    Verifies against the master public key without the master private key ever having
-    been reconstructed on any machine.
+    Full aggregated multi-party threshold signature with embedded verifiable proofs:
+    - Ceremony ML-DSA-87 genesis certificate binding P_0, salt, and roster share points Q_i
+    - Per-silo blinded Schnorr P-384 ZKP + ML-DSA-87 quorum signatures (or FROST_P384_V2 (R, z_agg))
+    Master secret is NEVER reconstructed or stored on any machine.
     """
     payload_digest: bytes                     # 48 bytes (SHA-384)
-    aggregated_signature: bytes               # 48 bytes (W scalar)
+    aggregated_signature: bytes               # 48 bytes (SHA-384 proof digest or FROST z_agg scalar)
     signer_indices: List[int]
     signer_silos: List[str]
     timestamps: List[float]
     sync_skew_seconds: float
     threshold: int
     master_public_key: bytes                  # 2592 bytes (ML-DSA-87)
-    vss_commitment: bytes                     # 48 bytes (SHA-384)
+    vss_commitment: bytes                     # 48 bytes (SHA-384 C_0)
+    protocol_mode: str = "SCHNORR_P384_MLDSA87_QUORUM_V2"
+    ceremony_salt: bytes = b""
+    master_p0_point: bytes = b""
+    total_shares: int = 0
+    ceremony_cert_sig: bytes = b""
+    silo_roster_points: List[Tuple[int, str, bytes]] = field(default_factory=list)
+    silo_proofs: List[Dict[str, Any]] = field(default_factory=list)
+    frost_group_r: bytes = b""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -512,10 +651,25 @@ class ThresholdSignature:
             "threshold": self.threshold,
             "master_public_key_hex": self.master_public_key.hex(),
             "vss_commitment_hex": self.vss_commitment.hex(),
+            "protocol_mode": self.protocol_mode,
+            "ceremony_salt_hex": self.ceremony_salt.hex(),
+            "master_p0_point_hex": self.master_p0_point.hex(),
+            "total_shares": self.total_shares,
+            "ceremony_cert_sig_hex": self.ceremony_cert_sig.hex(),
+            "silo_roster_points": [
+                {"index": idx, "silo_id": sid, "q_hex": q.hex()}
+                for idx, sid, q in self.silo_roster_points
+            ],
+            "silo_proofs": self.silo_proofs,
+            "frost_group_r_hex": self.frost_group_r.hex(),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ThresholdSignature":
+        roster = [
+            (int(r["index"]), str(r["silo_id"]), bytes.fromhex(r["q_hex"]))
+            for r in data.get("silo_roster_points", [])
+        ]
         return cls(
             payload_digest=bytes.fromhex(data["payload_digest_hex"]),
             aggregated_signature=bytes.fromhex(data["aggregated_signature_hex"]),
@@ -526,6 +680,14 @@ class ThresholdSignature:
             threshold=int(data["threshold"]),
             master_public_key=bytes.fromhex(data["master_public_key_hex"]),
             vss_commitment=bytes.fromhex(data["vss_commitment_hex"]),
+            protocol_mode=str(data.get("protocol_mode", "SCHNORR_P384_MLDSA87_QUORUM_V2")),
+            ceremony_salt=bytes.fromhex(data.get("ceremony_salt_hex", "")),
+            master_p0_point=bytes.fromhex(data.get("master_p0_point_hex", "")),
+            total_shares=int(data.get("total_shares", 0)),
+            ceremony_cert_sig=bytes.fromhex(data.get("ceremony_cert_sig_hex", "")),
+            silo_roster_points=roster,
+            silo_proofs=list(data.get("silo_proofs", [])),
+            frost_group_r=bytes.fromhex(data.get("frost_group_r_hex", "")),
         )
 
     def to_bytes(self) -> bytes:
@@ -538,12 +700,24 @@ class ThresholdSignature:
         wire_hdr.extend(self.payload_digest)
         wire_hdr.extend(self.aggregated_signature)
         wire_hdr.extend(self.vss_commitment)
+        ts_ms = [int(round(t * 1000)) if t < 1e11 else int(round(t)) for t in self.timestamps]
         meta = json.dumps({
             "signers": self.signer_silos,
             "indices": self.signer_indices,
-            "timestamps": [int(round(t * 1000)) if t < 1e11 else int(round(t)) for t in self.timestamps],
+            "timestamps": ts_ms,
             "master_pub": list(self.master_public_key),
             "master_pub_hex": self.master_public_key.hex(),
+            "mode": self.protocol_mode,
+            "salt_hex": self.ceremony_salt.hex(),
+            "master_p0_hex": self.master_p0_point.hex(),
+            "total_shares": self.total_shares,
+            "ceremony_cert_sig_hex": self.ceremony_cert_sig.hex(),
+            "silo_roster": [
+                {"index": idx, "silo_id": sid, "q_hex": q.hex()}
+                for idx, sid, q in self.silo_roster_points
+            ],
+            "silo_proofs": self.silo_proofs,
+            "frost_r_hex": self.frost_group_r.hex(),
         }).encode("utf-8")
         wire_hdr.extend(len(meta).to_bytes(4, "big"))
         wire_hdr.extend(meta)
@@ -571,6 +745,10 @@ class ThresholdSignature:
             master_pub = bytes.fromhex(meta["master_pub_hex"])
         else:
             raise NC3SecurityError("Missing master_pub in wire metadata")
+        roster = [
+            (int(r["index"]), str(r["silo_id"]), bytes.fromhex(r["q_hex"]))
+            for r in meta.get("silo_roster", [])
+        ]
         return cls(
             payload_digest=digest,
             aggregated_signature=sig_w,
@@ -581,6 +759,14 @@ class ThresholdSignature:
             threshold=threshold,
             master_public_key=master_pub,
             vss_commitment=vss_comm,
+            protocol_mode=str(meta.get("mode", "SCHNORR_P384_MLDSA87_QUORUM_V2")),
+            ceremony_salt=bytes.fromhex(meta.get("salt_hex", "")),
+            master_p0_point=bytes.fromhex(meta.get("master_p0_hex", "")),
+            total_shares=int(meta.get("total_shares", 0)),
+            ceremony_cert_sig=bytes.fromhex(meta.get("ceremony_cert_sig_hex", "")),
+            silo_roster_points=roster,
+            silo_proofs=list(meta.get("silo_proofs", [])),
+            frost_group_r=bytes.fromhex(meta.get("frost_r_hex", "")),
         )
 
 
@@ -745,6 +931,20 @@ class NC3ThresholdKeyGenerator:
             )
             shares.append(share_obj)
 
+        silo_roster_points = [
+            (s.share_index, s.silo_id, _point_to_bytes(share_points[s.share_index]))
+            for s in shares
+        ]
+        ceremony_tbs = _ceremony_cert_tbs(
+            threshold,
+            total_shares,
+            salt,
+            master_commitment,
+            _point_to_bytes(coeff_points[0]),
+            silo_roster_points,
+        )
+        ceremony_cert_sig = self.mldsa.sign(master_sk, ceremony_tbs)
+
         commitments = FeldmanCommitments(
             threshold=threshold,
             total_shares=total_shares,
@@ -757,6 +957,8 @@ class NC3ThresholdKeyGenerator:
             master_public_key=master_pk,
             created_at=now_utc,
             field_order=self.field_order,
+            ceremony_cert_sig=ceremony_cert_sig,
+            silo_roster_points=silo_roster_points,
         )
 
         # 6. CRITICAL SECURITY INVARIANT: DoD 5220.22-M 7-pass zeroize master secret and coeffs
@@ -812,6 +1014,7 @@ class OperatorSiloNode:
 
         # Self-verify share against public commitments on initialization
         self.verify_own_share()
+        self._frost_nonces: Dict[str, Tuple[int, int, bytes]] = {}
 
     def verify_own_share(self) -> bool:
         """Verifies this node's share against the Feldman commitments."""
@@ -898,38 +1101,181 @@ class OperatorSiloNode:
 
         timestamp_utc = simulated_timestamp if simulated_timestamp is not None else time.time()
 
-        # Compute deterministic challenge scalar e = H(digest || salt) mod N
-        hasher = hashlib.sha384()
-        hasher.update(b"NC3-MPC-CHALLENGE-V1:")
-        hasher.update(digest)
-        hasher.update(self.commitments.salt)
-        e_scalar = int.from_bytes(hasher.digest(), "big") % (self.field_order - 1) + 1
+        timestamp_ms = int(round(timestamp_utc * 1000))
+        norm_ts_utc = timestamp_ms / 1000.0
 
-        # Partial signature component: w_i = s_i * e mod N
-        w_i = (self._share.share_value * e_scalar) % self.field_order
-        w_bytes = w_i.to_bytes(48, "big")
+        # Generate fresh CSPRNG blinding scalar r_i in [1, N-1] (never exposed, single-use)
+        r_secret = (int.from_bytes(secrets.token_bytes(64), "big") % (self.field_order - 1)) + 1
+        try:
+            r_pt = _scalar_mul(r_secret, _P384_G)
+            if r_pt is None:
+                raise NC3SecurityError("Nonce commitment point generation failed")
+            r_bytes = _point_to_bytes(r_pt)
+            q_pt = self.commitments.share_points.get(self._share.share_index)
+            if q_pt is None:
+                raise VSSChecksumMismatchError(f"Unknown share index {self._share.share_index}")
+            q_bytes = _point_to_bytes(q_pt)
 
-        # Bind with sovereign ML-DSA-87 signature over partial parameters
-        sig_transcript = (
-            b"NC3-SILO-PARTIAL-AUTH:" +
-            self.silo_id.encode("utf-8") +
-            self._share.share_index.to_bytes(4, "big") +
-            struct.pack(">d", timestamp_utc) +
-            digest +
-            w_bytes
+            c_i = _schnorr_challenge(
+                r_bytes,
+                q_bytes,
+                self.commitments.salt,
+                self._share.share_index,
+                timestamp_ms,
+                digest,
+                self.field_order,
+            )
+            # Blinded Schnorr ZKP response: z_i = (r_i + c_i * s_i) mod N
+            z_i = (r_secret + c_i * self._share.share_value) % self.field_order
+            z_bytes = z_i.to_bytes(48, "big")
+        finally:
+            r_secret = 0
+
+        # Bind with sovereign ML-DSA-87 signature over canonical partial transcript
+        sig_transcript = _silo_partial_transcript(
+            self.silo_id,
+            self._share.share_index,
+            timestamp_ms,
+            digest,
+            z_bytes,
+            r_bytes,
         )
         silo_mldsa_sig = self.mldsa.sign(self._silo_sk, sig_transcript)
 
         return PartialSignature(
             silo_id=self.silo_id,
             share_index=self._share.share_index,
-            timestamp_utc=timestamp_utc,
+            timestamp_utc=norm_ts_utc,
             payload_digest=digest,
-            partial_signature_bytes=w_bytes,
+            partial_signature_bytes=z_bytes,
             share_commitment=self._share.share_commitment,
             silo_public_key=self.silo_pk,
             silo_mldsa_sig=silo_mldsa_sig,
+            nonce_commitment=r_bytes,
+            protocol_mode="SCHNORR_P384_MLDSA87_QUORUM_V2",
         )
+
+    def frost_round1_commit(self, payload: Dict[str, Any] | bytes) -> FrostNonceCommitment:
+        """
+        Round 1 of 2-round blinded FROST-P384 threshold signing.
+        NOTE: Custom Secp384r1 profile (classical ECDLP; not RFC 9591 suites, not post-quantum without silo ML-DSA-87 bindings).
+        """
+        verified_data = self.verify_payload(payload)
+        digest = _canonical_payload_digest(verified_data)
+        d_i = (int.from_bytes(secrets.token_bytes(64), "big") % (self.field_order - 1)) + 1
+        e_i = (int.from_bytes(secrets.token_bytes(64), "big") % (self.field_order - 1)) + 1
+        d_pt = _scalar_mul(d_i, _P384_G)
+        e_pt = _scalar_mul(e_i, _P384_G)
+        if d_pt is None or e_pt is None:
+            raise NC3SecurityError("FROST Round-1 nonce generation failure")
+        d_bytes = _point_to_bytes(d_pt)
+        e_bytes = _point_to_bytes(e_pt)
+        cid = secrets.token_hex(16)
+        with self._lock:
+            self._frost_nonces[cid] = (d_i, e_i, digest)
+        tbs = (
+            b"NC3-FROST-R1-V2:"
+            + cid.encode("ascii")
+            + self.silo_id.encode("utf-8")
+            + self._share.share_index.to_bytes(4, "big")
+            + digest
+            + d_bytes
+            + e_bytes
+        )
+        sig = self.mldsa.sign(self._silo_sk, tbs)
+        return FrostNonceCommitment(
+            silo_id=self.silo_id,
+            share_index=self._share.share_index,
+            commitment_id=cid,
+            d_point_bytes=d_bytes,
+            e_point_bytes=e_bytes,
+            payload_digest=digest,
+            silo_public_key=self.silo_pk,
+            silo_mldsa_sig=sig,
+        )
+
+    def frost_round2_sign(
+        self,
+        commitment_id: str,
+        payload_digest: bytes,
+        round1_commitments: List[FrostNonceCommitment],
+        simulated_timestamp: Optional[float] = None,
+    ) -> PartialSignature:
+        """Round 2 of 2-round blinded FROST-P384 threshold signing (single-use nonce consumption)."""
+        with self._lock:
+            nonce_entry = self._frost_nonces.pop(commitment_id, None)
+        if nonce_entry is None:
+            raise NC3SecurityError("FROST nonce not found or already consumed")
+        d_i, e_i, expected_digest = nonce_entry
+        try:
+            if not secrets.compare_digest(payload_digest, expected_digest):
+                raise NC3SecurityError("FROST Round-2 digest mismatch")
+            selected = sorted(round1_commitments, key=lambda c: c.share_index)
+            if len(selected) < self.commitments.threshold:
+                raise DualCustodyViolation("FROST Round-2 insufficient commitments")
+            binding_transcript = bytearray(b"NC3-FROST-BIND-V2:")
+            binding_transcript.extend(self.commitments.salt)
+            binding_transcript.extend(payload_digest)
+            for c in selected:
+                binding_transcript.extend(c.share_index.to_bytes(4, "big"))
+                binding_transcript.extend(c.d_point_bytes)
+                binding_transcript.extend(c.e_point_bytes)
+            r_group: Optional[Tuple[int, int]] = None
+            my_rho = 1
+            for c in selected:
+                rho_j = (
+                    int.from_bytes(
+                        hashlib.sha384(bytes(binding_transcript) + c.share_index.to_bytes(4, "big")).digest(),
+                        "big",
+                    )
+                    % self.field_order
+                ) or 1
+                if c.share_index == self._share.share_index:
+                    my_rho = rho_j
+                d_pt = _bytes_to_point(c.d_point_bytes)
+                e_pt = _bytes_to_point(c.e_point_bytes)
+                if d_pt is None or e_pt is None:
+                    raise VSSChecksumMismatchError("Invalid FROST Round-1 commitment point")
+                term = _point_add(d_pt, _scalar_mul(rho_j, e_pt))
+                r_group = _point_add(r_group, term)
+            if r_group is None:
+                raise NC3SecurityError("FROST group commitment collapsed to identity")
+            r_group_bytes = _point_to_bytes(r_group)
+            p0_bytes = _point_to_bytes(self.commitments.coeff_points[0])
+            c_frost = (
+                int.from_bytes(
+                    hashlib.sha384(
+                        b"NC3-FROST-CHALLENGE-V2:" + r_group_bytes + p0_bytes + self.commitments.salt + payload_digest
+                    ).digest(),
+                    "big",
+                )
+                % self.field_order
+            ) or 1
+            indices = [c.share_index for c in selected]
+            lambda_i = _lagrange_zero(indices, self.field_order)[self._share.share_index]
+            z_i = (d_i + e_i * my_rho + lambda_i * self._share.share_value * c_frost) % self.field_order
+            z_bytes = z_i.to_bytes(48, "big")
+            timestamp_ms = int(round((simulated_timestamp if simulated_timestamp is not None else time.time()) * 1000))
+            norm_ts_utc = timestamp_ms / 1000.0
+            sig_transcript = _silo_partial_transcript(
+                self.silo_id, self._share.share_index, timestamp_ms, payload_digest, z_bytes, r_group_bytes
+            )
+            silo_sig = self.mldsa.sign(self._silo_sk, sig_transcript)
+            return PartialSignature(
+                silo_id=self.silo_id,
+                share_index=self._share.share_index,
+                timestamp_utc=norm_ts_utc,
+                payload_digest=payload_digest,
+                partial_signature_bytes=z_bytes,
+                share_commitment=self._share.share_commitment,
+                silo_public_key=self.silo_pk,
+                silo_mldsa_sig=silo_sig,
+                nonce_commitment=r_group_bytes,
+                protocol_mode="FROST_P384_V2",
+            )
+        finally:
+            d_i = 0
+            e_i = 0
 
 
 # =========================================================================
@@ -1033,82 +1379,161 @@ class NC3ThresholdAggregator:
                         f"Mismatched payload digests among partial signatures ({p.silo_id} vs {selected[0].silo_id})"
                     )
 
-        # 5. Challenge scalar
-        hasher = hashlib.sha384()
-        hasher.update(b"NC3-MPC-CHALLENGE-V1:")
-        hasher.update(digest)
-        hasher.update(self.commitments.salt)
-        e_scalar = int.from_bytes(hasher.digest(), "big") % (self.field_order - 1) + 1
-
-        # 6. Verify each partial signature's sovereign ML-DSA-87 signature and Feldman commitment
-        for p in selected:
-            # 6a. Sovereign ML-DSA-87 authentication
-            sig_transcript = (
-                b"NC3-SILO-PARTIAL-AUTH:" +
-                p.silo_id.encode("utf-8") +
-                p.share_index.to_bytes(4, "big") +
-                struct.pack(">d", p.timestamp_utc) +
-                digest +
-                p.partial_signature_bytes
-            )
-            if not self.mldsa.verify(p.silo_public_key, sig_transcript, p.silo_mldsa_sig):
-                raise VSSChecksumMismatchError(
-                    f"Silo {p.silo_id} sovereign ML-DSA-87 signature verification failed!"
-                )
-
-            # 6b. Feldman public commitment verification: [w_i] G == [e] Q_i
-            w_i = int.from_bytes(p.partial_signature_bytes, "big")
-            q_i = self.commitments.share_points.get(p.share_index)
-            if q_i is None:
-                raise VSSChecksumMismatchError(f"Unknown share index {p.share_index}")
-
-            pt_w = _scalar_mul(w_i, _P384_G)
-            pt_expected = _scalar_mul(e_scalar, q_i)
-            if pt_w is None or pt_expected is None or pt_w != pt_expected:
-                raise VSSChecksumMismatchError(
-                    f"Silo {p.silo_id} partial signature failed Feldman commitment evaluation!"
-                )
-
-        # 7. Lagrange interpolation over partial signatures
-        # W = sum_{i in S} lambda_i(0) * w_i mod N
-        # Where lambda_i(0) = prod_{j in S, j != i} (-j / (i - j)) mod N
-        # Notice: Master secret S is NEVER computed or reconstructed!
-        # Aggregator only computes a linear combination of w_i.
-        w_agg = 0
-        for i_idx in indices:
-            # Compute Lagrange coefficient lambda_i(0)
-            num = 1
-            den = 1
-            for j_idx in indices:
-                if j_idx == i_idx:
-                    continue
-                num = (num * (-j_idx)) % self.field_order
-                den = (den * (i_idx - j_idx)) % self.field_order
-            lambda_i = (num * pow(den, self.field_order - 2, self.field_order)) % self.field_order
-
-            p_obj = next(p for p in selected if p.share_index == i_idx)
-            w_i = int.from_bytes(p_obj.partial_signature_bytes, "big")
-            w_agg = (w_agg + lambda_i * w_i) % self.field_order
-
-        # 8. Verify aggregated signature W against master public commitment point P_0
-        # Check: [W] G == [e] P_0
-        master_p0 = self.commitments.coeff_points[0]
-        lhs = _scalar_mul(w_agg, _P384_G)
-        rhs = _scalar_mul(e_scalar, master_p0)
-        if lhs is None or rhs is None or lhs != rhs:
+        # 5. Verify genesis ceremony certificate under master_public_key
+        if not self.commitments.verify_ceremony_cert(self.master_public_key):
             raise VSSChecksumMismatchError(
-                "Aggregated threshold signature failed master verification against P_0!"
+                "Ceremony genesis ML-DSA-87 certificate verification failed against master_public_key!"
             )
+
+        roster_map = {idx: (sid, q_b) for idx, sid, q_b in self.commitments.silo_roster_points}
+
+        # 6. Verify each partial signature's ML-DSA-87 signature, roster binding, and blinded P-384 Schnorr proof
+        silo_proofs: List[Dict[str, Any]] = []
+        mode = selected[0].protocol_mode
+        if any(p.protocol_mode != mode for p in selected):
+            raise NC3SecurityError("Mixed protocol modes in partial signatures")
+
+        p0_point = self.commitments.coeff_points[0]
+        p0_bytes = _point_to_bytes(p0_point)
+
+        if mode == "FROST_P384_V2":
+            r_group_bytes = selected[0].nonce_commitment
+            r_group_pt = _bytes_to_point(r_group_bytes)
+            if r_group_pt is None or any(not secrets.compare_digest(p.nonce_commitment, r_group_bytes) for p in selected):
+                raise VSSChecksumMismatchError("Inconsistent or invalid FROST group nonce commitment")
+            lambdas = _lagrange_zero(indices, self.field_order)
+            c_frost = (
+                int.from_bytes(
+                    hashlib.sha384(
+                        b"NC3-FROST-CHALLENGE-V2:" + r_group_bytes + p0_bytes + self.commitments.salt + digest
+                    ).digest(),
+                    "big",
+                )
+                % self.field_order
+            ) or 1
+            z_agg = 0
+            for p in selected:
+                timestamp_ms = int(round(p.timestamp_utc * 1000))
+                z_i = int.from_bytes(p.partial_signature_bytes, "big")
+                if len(p.partial_signature_bytes) != 48 or not (0 < z_i < self.field_order):
+                    raise VSSChecksumMismatchError(f"Silo {p.silo_id} invalid FROST scalar")
+                sig_transcript = _silo_partial_transcript(
+                    p.silo_id, p.share_index, timestamp_ms, digest, p.partial_signature_bytes, p.nonce_commitment
+                )
+                if not self.mldsa.verify(p.silo_public_key, sig_transcript, p.silo_mldsa_sig):
+                    raise VSSChecksumMismatchError(f"Silo {p.silo_id} sovereign ML-DSA-87 signature verification failed!")
+                q_i = self.commitments.share_points.get(p.share_index)
+                q_bytes = _point_to_bytes(q_i)
+                z_agg = (z_agg + z_i) % self.field_order
+                silo_proofs.append({
+                    "silo_id": p.silo_id,
+                    "share_index": p.share_index,
+                    "timestamp_ms": timestamp_ms,
+                    "z_scalar_hex": p.partial_signature_bytes.hex(),
+                    "r_point_hex": p.nonce_commitment.hex(),
+                    "q_point_hex": q_bytes.hex(),
+                    "silo_pk_hex": p.silo_public_key.hex(),
+                    "silo_mldsa_sig_hex": p.silo_mldsa_sig.hex(),
+                })
+            # Check aggregate FROST Schnorr equation: [z_agg]G == R_group + [c_frost] P_0
+            lhs = _scalar_mul(z_agg, _P384_G)
+            rhs = _point_add(r_group_pt, _scalar_mul(c_frost, p0_point))
+            if lhs is None or rhs is None or lhs != rhs:
+                raise VSSChecksumMismatchError("FROST-P384 aggregate verification [z]G == R + [c]P_0 failed!")
+            agg_sig_bytes = z_agg.to_bytes(48, "big")
+            frost_group_r = r_group_bytes
+        else:
+            proof_digest_hasher = hashlib.sha384()
+            proof_digest_hasher.update(b"NC3-QUORUM-PROOF-V2:")
+            proof_digest_hasher.update(digest)
+            lambdas = _lagrange_zero(indices, self.field_order)
+            q_reconstructed: Optional[Tuple[int, int]] = None
+
+            for p in selected:
+                timestamp_ms = int(round(p.timestamp_utc * 1000))
+                if len(p.partial_signature_bytes) != 48 or len(p.nonce_commitment) != 49:
+                    raise VSSChecksumMismatchError(f"Silo {p.silo_id} malformed blinded Schnorr proof lengths")
+                r_pt = _bytes_to_point(p.nonce_commitment)
+                if r_pt is None:
+                    raise VSSChecksumMismatchError(f"Silo {p.silo_id} invalid nonce point R_i")
+                z_i = int.from_bytes(p.partial_signature_bytes, "big")
+                if not (0 < z_i < self.field_order):
+                    raise VSSChecksumMismatchError(f"Silo {p.silo_id} scalar out of field bounds")
+
+                # 6a. Sovereign ML-DSA-87 authentication over canonical V2 transcript
+                sig_transcript = _silo_partial_transcript(
+                    p.silo_id,
+                    p.share_index,
+                    timestamp_ms,
+                    digest,
+                    p.partial_signature_bytes,
+                    p.nonce_commitment,
+                )
+                if not self.mldsa.verify(p.silo_public_key, sig_transcript, p.silo_mldsa_sig):
+                    raise VSSChecksumMismatchError(
+                        f"Silo {p.silo_id} sovereign ML-DSA-87 signature verification failed!"
+                    )
+
+                # 6b. Feldman commitment & Blinded Schnorr ZKP check: [z_i] G == R_i + [c_i] Q_i
+                q_i = self.commitments.share_points.get(p.share_index)
+                roster_entry = roster_map.get(p.share_index)
+                if q_i is None or roster_entry is None:
+                    raise VSSChecksumMismatchError(f"Unknown share index {p.share_index}")
+                q_bytes = _point_to_bytes(q_i)
+                if not secrets.compare_digest(q_bytes, roster_entry[1]):
+                    raise VSSChecksumMismatchError(f"Silo {p.silo_id} Q_i disagrees with certified roster")
+
+                c_i = _schnorr_challenge(
+                    p.nonce_commitment,
+                    q_bytes,
+                    self.commitments.salt,
+                    p.share_index,
+                    timestamp_ms,
+                    digest,
+                    self.field_order,
+                )
+                lhs = _scalar_mul(z_i, _P384_G)
+                rhs = _point_add(r_pt, _scalar_mul(c_i, q_i))
+                if lhs is None or rhs is None or lhs != rhs:
+                    raise VSSChecksumMismatchError(
+                        f"Silo {p.silo_id} partial signature failed blinded Schnorr ZKP verification!"
+                    )
+
+                q_reconstructed = _point_add(q_reconstructed, _scalar_mul(lambdas[p.share_index], q_i))
+
+                proof_entry = {
+                    "silo_id": p.silo_id,
+                    "share_index": p.share_index,
+                    "timestamp_ms": timestamp_ms,
+                    "z_scalar_hex": p.partial_signature_bytes.hex(),
+                    "r_point_hex": p.nonce_commitment.hex(),
+                    "q_point_hex": q_bytes.hex(),
+                    "silo_pk_hex": p.silo_public_key.hex(),
+                    "silo_mldsa_sig_hex": p.silo_mldsa_sig.hex(),
+                }
+                silo_proofs.append(proof_entry)
+                proof_digest_hasher.update(p.nonce_commitment)
+                proof_digest_hasher.update(p.partial_signature_bytes)
+                proof_digest_hasher.update(p.silo_public_key)
+                proof_digest_hasher.update(p.silo_mldsa_sig)
+
+            # 7. Verify Feldman Lagrange polynomial consistency: sum(lambda_i * Q_i) == P_0
+            if q_reconstructed is None or q_reconstructed != p0_point:
+                raise VSSChecksumMismatchError(
+                    "Lagrange evaluation over silo points {Q_i} failed to match master point P_0!"
+                )
+            agg_sig_bytes = proof_digest_hasher.digest()
+            frost_group_r = b""
 
         log_event(
             AuditEventType.AUTHENTICATION_SUCCESS,
-            f"NC3 Threshold Signature aggregated successfully ({len(indices)} silos, skew={skew:.4f}s).",
+            f"NC3 Threshold Signature aggregated successfully ({len(indices)} silos, skew={skew:.4f}s, mode={mode}).",
             AuditSeverity.CRITICAL,
         )
 
         return ThresholdSignature(
             payload_digest=digest,
-            aggregated_signature=w_agg.to_bytes(48, "big"),
+            aggregated_signature=agg_sig_bytes,
             signer_indices=indices,
             signer_silos=silos,
             timestamps=timestamps,
@@ -1116,24 +1541,34 @@ class NC3ThresholdAggregator:
             threshold=self.threshold,
             master_public_key=self.master_public_key,
             vss_commitment=self.commitments.master_commitment,
+            protocol_mode=mode,
+            ceremony_salt=self.commitments.salt,
+            master_p0_point=p0_bytes,
+            total_shares=self.commitments.total_shares,
+            ceremony_cert_sig=self.commitments.ceremony_cert_sig,
+            silo_roster_points=list(self.commitments.silo_roster_points),
+            silo_proofs=silo_proofs,
+            frost_group_r=frost_group_r,
         )
+
+    def aggregate_frost(
+        self,
+        payload: Optional[Dict[str, Any] | bytes],
+        partial_signatures: List[PartialSignature],
+    ) -> ThresholdSignature:
+        """Aggregate Round-2 FROST_P384_V2 partial signatures into a verifiable ThresholdSignature."""
+        return self.aggregate_signatures(payload, partial_signatures)
 
     def verify(
         self,
         master_public_key: bytes,
         payload: Dict[str, Any] | bytes,
         signature: ThresholdSignature | bytes,
+        expected_silo_pks: Optional[Dict[str, bytes]] = None,
     ) -> bool:
         """
-        Verifies a threshold signature against the master public key and Feldman commitments.
-
-        Args:
-            master_public_key: 2592-byte master ML-DSA-87 public key.
-            payload: Emergency Action Message payload.
-            signature: ThresholdSignature instance or raw wire bytes.
-
-        Returns:
-            True if signature satisfies all threshold and cryptographic checks, False otherwise.
+        Verifies a threshold signature against the master public key, genesis ceremony certificate,
+        Feldman commitments, blinded Schnorr ZKP equations, and sovereign ML-DSA-87 quorum signatures.
         """
         if isinstance(signature, bytes):
             try:
@@ -1145,8 +1580,10 @@ class NC3ThresholdAggregator:
         else:
             return False
 
-        # 1. Master public key match
+        # 1. Master public key match & ceremony certificate
         if not secrets.compare_digest(sig_obj.master_public_key, master_public_key):
+            return False
+        if not self.commitments.verify_ceremony_cert(master_public_key):
             return False
 
         # Fast path via Rust data plane (destroyer_core) when available
@@ -1159,21 +1596,23 @@ class NC3ThresholdAggregator:
             if "exceed" in err_msg or "quorum" in err_msg or "duplicate" in err_msg:
                 return False
 
-        # 2. Quorum check
+        # 2. Quorum & distinctness check
         if len(sig_obj.signer_indices) < self.threshold or sig_obj.threshold != self.threshold:
             return False
-
-        # 3. Distinct signers check
+        if len(sig_obj.signer_silos) != len(sig_obj.signer_indices):
+            return False
+        if len(sig_obj.timestamps) != len(sig_obj.signer_indices):
+            return False
         if len(set(sig_obj.signer_indices)) != len(sig_obj.signer_indices):
             return False
         if len(set(sig_obj.signer_silos)) != len(sig_obj.signer_silos):
             return False
 
-        # 4. Temporal synchronization skew check (<= 2.0s)
+        # 3. Temporal synchronization skew check (<= 2.0s)
         if sig_obj.sync_skew_seconds < 0.0 or sig_obj.sync_skew_seconds > MAX_CO_SIGNING_WINDOW_SECONDS:
             return False
 
-        # 5. Payload digest verification
+        # 4. Payload digest verification
         if isinstance(payload, bytes) and len(payload) == 48 and secrets.compare_digest(payload, sig_obj.payload_digest):
             expected_digest = payload
         else:
@@ -1181,24 +1620,132 @@ class NC3ThresholdAggregator:
         if not secrets.compare_digest(sig_obj.payload_digest, expected_digest):
             return False
 
-        # 6. Master commitment check
+        # 5. Master commitment & master point P_0 verification
         if not secrets.compare_digest(sig_obj.vss_commitment, self.commitments.master_commitment):
             return False
-
-        # 7. Cryptographic evaluation: [W] G == [e] P_0
-        w_val = int.from_bytes(sig_obj.aggregated_signature, "big")
-        hasher = hashlib.sha384()
-        hasher.update(b"NC3-MPC-CHALLENGE-V1:")
-        hasher.update(expected_digest)
-        hasher.update(self.commitments.salt)
-        e_scalar = int.from_bytes(hasher.digest(), "big") % (self.field_order - 1) + 1
-
-        master_p0 = self.commitments.coeff_points[0]
-        lhs = _scalar_mul(w_val, _P384_G)
-        rhs = _scalar_mul(e_scalar, master_p0)
-
-        if lhs is None or rhs is None or lhs != rhs:
+        p0_point = self.commitments.coeff_points[0]
+        p0_bytes = _point_to_bytes(p0_point)
+        if sig_obj.master_p0_point and not secrets.compare_digest(sig_obj.master_p0_point, p0_bytes):
             return False
+
+        # 6. Mandatory verifiable cryptographic proof verification
+        if len(sig_obj.silo_proofs) != len(sig_obj.signer_indices):
+            return False
+
+        roster_map = {idx: (sid, q_b) for idx, sid, q_b in self.commitments.silo_roster_points}
+        lambdas = _lagrange_zero(sig_obj.signer_indices, self.field_order)
+
+        if sig_obj.protocol_mode == "FROST_P384_V2":
+            r_group_pt = _bytes_to_point(sig_obj.frost_group_r)
+            z_agg = int.from_bytes(sig_obj.aggregated_signature, "big")
+            if r_group_pt is None or len(sig_obj.aggregated_signature) != 48 or not (0 < z_agg < self.field_order):
+                return False
+            c_frost = (
+                int.from_bytes(
+                    hashlib.sha384(
+                        b"NC3-FROST-CHALLENGE-V2:"
+                        + sig_obj.frost_group_r
+                        + p0_bytes
+                        + self.commitments.salt
+                        + expected_digest
+                    ).digest(),
+                    "big",
+                )
+                % self.field_order
+            ) or 1
+            lhs = _scalar_mul(z_agg, _P384_G)
+            rhs = _point_add(r_group_pt, _scalar_mul(c_frost, p0_point))
+            if lhs is None or rhs is None or lhs != rhs:
+                return False
+        elif sig_obj.protocol_mode == "SCHNORR_P384_MLDSA87_QUORUM_V2":
+            proof_digest_hasher = hashlib.sha384()
+            proof_digest_hasher.update(b"NC3-QUORUM-PROOF-V2:")
+            proof_digest_hasher.update(expected_digest)
+            q_reconstructed: Optional[Tuple[int, int]] = None
+
+            for idx, silo_name, proof in zip(sig_obj.signer_indices, sig_obj.signer_silos, sig_obj.silo_proofs):
+                if int(proof.get("share_index", -1)) != idx or str(proof.get("silo_id", "")) != silo_name:
+                    return False
+                try:
+                    ts_ms = int(proof["timestamp_ms"])
+                    z_bytes = bytes.fromhex(proof["z_scalar_hex"])
+                    r_bytes = bytes.fromhex(proof["r_point_hex"])
+                    q_bytes = bytes.fromhex(proof["q_point_hex"])
+                    silo_pk = bytes.fromhex(proof["silo_pk_hex"])
+                    silo_sig = bytes.fromhex(proof["silo_mldsa_sig_hex"])
+                except Exception:
+                    return False
+
+                if expected_silo_pks is not None:
+                    pinned_pk = expected_silo_pks.get(silo_name)
+                    if pinned_pk is None or not secrets.compare_digest(silo_pk, pinned_pk):
+                        return False
+
+                roster_entry = roster_map.get(idx)
+                q_expected_pt = self.commitments.share_points.get(idx)
+                if roster_entry is None or q_expected_pt is None:
+                    return False
+                if not secrets.compare_digest(q_bytes, _point_to_bytes(q_expected_pt)) or not secrets.compare_digest(
+                    q_bytes, roster_entry[1]
+                ):
+                    return False
+
+                r_pt = _bytes_to_point(r_bytes)
+                if r_pt is None or len(z_bytes) != 48:
+                    return False
+                z_i = int.from_bytes(z_bytes, "big")
+                if not (0 < z_i < self.field_order):
+                    return False
+
+                sig_transcript = _silo_partial_transcript(
+                    silo_name, idx, ts_ms, expected_digest, z_bytes, r_bytes
+                )
+                if not self.mldsa.verify(silo_pk, sig_transcript, silo_sig):
+                    return False
+
+                c_i = _schnorr_challenge(
+                    r_bytes, q_bytes, self.commitments.salt, idx, ts_ms, expected_digest, self.field_order
+                )
+                lhs = _scalar_mul(z_i, _P384_G)
+                rhs = _point_add(r_pt, _scalar_mul(c_i, q_expected_pt))
+                if lhs is None or rhs is None or lhs != rhs:
+                    return False
+
+                q_reconstructed = _point_add(q_reconstructed, _scalar_mul(lambdas[idx], q_expected_pt))
+                proof_digest_hasher.update(r_bytes)
+                proof_digest_hasher.update(z_bytes)
+                proof_digest_hasher.update(silo_pk)
+                proof_digest_hasher.update(silo_sig)
+
+            if q_reconstructed is None or q_reconstructed != p0_point:
+                return False
+            if not secrets.compare_digest(sig_obj.aggregated_signature, proof_digest_hasher.digest()):
+                return False
+        else:
+            return False
+
+        # In FROST_P384_V2, also verify each silo's ML-DSA-87 wrapper signature
+        if sig_obj.protocol_mode == "FROST_P384_V2":
+            for idx, silo_name, proof in zip(sig_obj.signer_indices, sig_obj.signer_silos, sig_obj.silo_proofs):
+                if int(proof.get("share_index", -1)) != idx or str(proof.get("silo_id", "")) != silo_name:
+                    return False
+                try:
+                    ts_ms = int(proof["timestamp_ms"])
+                    z_bytes = bytes.fromhex(proof["z_scalar_hex"])
+                    r_bytes = bytes.fromhex(proof["r_point_hex"])
+                    silo_pk = bytes.fromhex(proof["silo_pk_hex"])
+                    silo_sig = bytes.fromhex(proof["silo_mldsa_sig_hex"])
+                except Exception:
+                    return False
+                if expected_silo_pks is not None:
+                    pinned_pk = expected_silo_pks.get(silo_name)
+                    if pinned_pk is None or not secrets.compare_digest(silo_pk, pinned_pk):
+                        return False
+                sig_transcript = _silo_partial_transcript(
+                    silo_name, idx, ts_ms, expected_digest, z_bytes, r_bytes
+                )
+                if not self.mldsa.verify(silo_pk, sig_transcript, silo_sig):
+                    return False
 
         return True
 
@@ -1208,10 +1755,11 @@ def verify_threshold_signature(
     payload: Dict[str, Any] | bytes,
     signature: ThresholdSignature | bytes,
     commitments: FeldmanCommitments,
+    expected_silo_pks: Optional[Dict[str, bytes]] = None,
 ) -> bool:
     """Convenience functional verifier for NC3 threshold signatures."""
     aggregator = NC3ThresholdAggregator(master_public_key, commitments)
-    return aggregator.verify(master_public_key, payload, signature)
+    return aggregator.verify(master_public_key, payload, signature, expected_silo_pks=expected_silo_pks)
 
 
 def verify_threshold_signature_wire(

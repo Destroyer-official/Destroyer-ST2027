@@ -301,51 +301,135 @@ impl ZeroCopyRxRing {
 }
 
 // =============================================================================
-// Constant-Rate Chaff PRNG (High-Entropy Synthetic Cover Traffic)
+// Constant-Rate Chaff PRNG (RFC 8439 ChaCha20 Stream, Fail-Closed Without Seed)
 // =============================================================================
 
+#[inline(always)]
+fn chacha_qr(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+    state[a] = state[a].wrapping_add(state[b]);
+    state[d] = (state[d] ^ state[a]).rotate_left(16);
+    state[c] = state[c].wrapping_add(state[d]);
+    state[b] = (state[b] ^ state[c]).rotate_left(12);
+    state[a] = state[a].wrapping_add(state[b]);
+    state[d] = (state[d] ^ state[a]).rotate_left(8);
+    state[c] = state[c].wrapping_add(state[d]);
+    state[b] = (state[b] ^ state[c]).rotate_left(7);
+}
+
 pub struct ChaffPrng {
-    state: [u64; 2],
+    key: [u32; 8],
+    counter: u64,
+    block: [u8; 64],
+    pos: usize,
+    seeded: bool,
 }
 
 impl ChaffPrng {
+    pub const fn unseeded() -> Self {
+        Self {
+            key: [0u32; 8],
+            counter: 0,
+            block: [0u8; 64],
+            pos: 64,
+            seeded: false,
+        }
+    }
+
+    pub fn from_seed(seed_key: &[u8; 32]) -> Result<Self, RingError> {
+        let mut non_zero = 0u8;
+        for &b in seed_key {
+            non_zero |= b;
+        }
+        if non_zero == 0 {
+            return Err(RingError::Zeroized);
+        }
+        let mut key = [0u32; 8];
+        for (i, word) in key.iter_mut().enumerate() {
+            let off = i * 4;
+            *word = u32::from_le_bytes([
+                seed_key[off],
+                seed_key[off + 1],
+                seed_key[off + 2],
+                seed_key[off + 3],
+            ]);
+        }
+        Ok(Self {
+            key,
+            counter: 0,
+            block: [0u8; 64],
+            pos: 64,
+            seeded: true,
+        })
+    }
+
     pub const fn new(seed: u64) -> Self {
         let mut z = seed.wrapping_add(0x9E3779B97F4A7C15);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
         let s0 = z ^ (z >> 31);
-
-        z = z.wrapping_add(0x9E3779B97F4A7C15);
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
-        let s1 = z ^ (z >> 31);
-
-        Self { state: [s0, s1] }
+        let mut key = [0u32; 8];
+        let mut i = 0usize;
+        while i < 8 {
+            z = z.wrapping_add(0x9E3779B97F4A7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            let w = z ^ (z >> 31);
+            key[i] = ((w ^ s0) & 0xFFFF_FFFF) as u32 ^ ((i as u32).wrapping_mul(0x9E37_79B9));
+            i += 1;
+        }
+        Self {
+            key,
+            counter: 0,
+            block: [0u8; 64],
+            pos: 64,
+            seeded: seed != 0,
+        }
     }
 
-    #[inline(always)]
-    pub fn next_u64(&mut self) -> u64 {
-        let mut s1 = self.state[0];
-        let s0 = self.state[1];
-        let result = s0.wrapping_add(s1);
-        self.state[0] = s0;
-        s1 ^= s1 << 23;
-        self.state[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
-        result
+    fn refill_block(&mut self) {
+        const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
+        let mut state = [0u32; 16];
+        state[0..4].copy_from_slice(&CONSTANTS);
+        state[4..12].copy_from_slice(&self.key);
+        state[12] = (self.counter & 0xFFFF_FFFF) as u32;
+        state[13] = ((self.counter >> 32) & 0xFFFF_FFFF) as u32;
+        state[14] = 0x5345_4C34; // domain: "sEL4"
+        state[15] = 0x424C_4B32; // domain: "BLK2"
+        let initial = state;
+        for _ in 0..10 {
+            chacha_qr(&mut state, 0, 4, 8, 12);
+            chacha_qr(&mut state, 1, 5, 9, 13);
+            chacha_qr(&mut state, 2, 6, 10, 14);
+            chacha_qr(&mut state, 3, 7, 11, 15);
+            chacha_qr(&mut state, 0, 5, 10, 15);
+            chacha_qr(&mut state, 1, 6, 11, 12);
+            chacha_qr(&mut state, 2, 7, 8, 13);
+            chacha_qr(&mut state, 3, 4, 9, 14);
+        }
+        for i in 0..16 {
+            let out_w = state[i].wrapping_add(initial[i]).to_le_bytes();
+            self.block[i * 4..i * 4 + 4].copy_from_slice(&out_w);
+        }
+        self.counter = self.counter.wrapping_add(1);
+        self.pos = 0;
+    }
+
+    pub fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RingError> {
+        if !self.seeded {
+            return Err(RingError::Zeroized);
+        }
+        for b in dest.iter_mut() {
+            if self.pos >= 64 {
+                self.refill_block();
+            }
+            *b = self.block[self.pos];
+            self.pos += 1;
+        }
+        Ok(())
     }
 
     pub fn fill_bytes(&mut self, dest: &mut [u8]) {
-        let mut chunks = dest.chunks_exact_mut(8);
-        for chunk in &mut chunks {
-            let val = self.next_u64();
-            chunk.copy_from_slice(&val.to_le_bytes());
-        }
-        let rem = chunks.into_remainder();
-        if !rem.is_empty() {
-            let val = self.next_u64();
-            let bytes = val.to_le_bytes();
-            rem.copy_from_slice(&bytes[..rem.len()]);
-        }
+        let _ = self.try_fill_bytes(dest);
     }
 }
 
@@ -360,60 +444,81 @@ pub struct BlackDomainAppliance {
 }
 
 impl BlackDomainAppliance {
+    /// Fail-closed default init: leaves PRNG unseeded until `provision_chaff_seed` supplies real entropy.
     pub unsafe fn init_rings() -> Self {
-        // CRYPTO writes at 0x0000, BLACK reads at 0x0000.
         let rx = ZeroCopyRxRing::new(CRYPTO_BLACK_RING_VADDR + CRYPTO_TO_BLACK_OFFSET);
-        // BLACK writes at 0x8000, CRYPTO reads at 0x8000.
         let tx = ZeroCopyTxRing::new(CRYPTO_BLACK_RING_VADDR + BLACK_TO_CRYPTO_OFFSET);
         Self {
             rx_from_crypto: rx,
             tx_to_crypto: tx,
-            chaff_prng: ChaffPrng::new(0x5E14_81AC_2026_DEAD),
+            chaff_prng: ChaffPrng::unseeded(),
         }
     }
 
-    /// Emit uniform 1232-byte wire frame:
-    /// - If ciphertext is available from CRYPTO domain, formats real packet.
-    /// - If empty, emits 0xFF synthetic chaff cell for constant-rate traffic pacing.
+    pub unsafe fn init_rings_with_seed(seed_key: &[u8; 32]) -> Result<Self, RingError> {
+        let prng = ChaffPrng::from_seed(seed_key)?;
+        let rx = ZeroCopyRxRing::new(CRYPTO_BLACK_RING_VADDR + CRYPTO_TO_BLACK_OFFSET);
+        let tx = ZeroCopyTxRing::new(CRYPTO_BLACK_RING_VADDR + BLACK_TO_CRYPTO_OFFSET);
+        Ok(Self {
+            rx_from_crypto: rx,
+            tx_to_crypto: tx,
+            chaff_prng: prng,
+        })
+    }
+
+    /// Emit uniform 1232-byte wire frame with ChaCha20-whitened padding (zero 0x00 size oracle).
     pub fn emit_next_wire_cell(
         &mut self,
         out_cell: &mut [u8; ST2027_CELL_SIZE],
     ) -> Result<bool, RingError> {
+        if !self.chaff_prng.seeded {
+            return Err(RingError::Zeroized);
+        }
         if let Some(frame) = self.rx_from_crypto.peek_rx_slot()? {
             let ct = frame.payload;
             let ct_len = ct.len();
 
-            // Wire packet format: [uint16 payload_len][uint8 cell_type][payload][padding]
-            let be_bytes = (ct_len as u16).to_be_bytes();
-            out_cell[0] = be_bytes[0];
-            out_cell[1] = be_bytes[1];
-            out_cell[2] = DATA_CELL_TYPE;
-
             let copy_len = if ct_len > ST2027_CELL_SIZE - 3 {
-                ST2027_CELL_SIZE - 3
+                return Err(RingError::SlotTooLarge);
             } else {
                 ct_len
             };
 
+            let be_bytes = (copy_len as u16).to_be_bytes();
+            out_cell[0] = be_bytes[0];
+            out_cell[1] = be_bytes[1];
+            out_cell[2] = DATA_CELL_TYPE;
+
             out_cell[3..3 + copy_len].copy_from_slice(&ct[..copy_len]);
 
-            // Pad remainder to maintain constant 1232-byte frame size
-            for byte in &mut out_cell[3 + copy_len..] {
-                *byte = 0x00;
-            }
+            // Randomize trailing cell padding with ChaCha20 keystream instead of 0x00
+            self.chaff_prng.try_fill_bytes(&mut out_cell[3 + copy_len..])?;
 
             self.rx_from_crypto.commit_rx_slot(frame.frame_len)?;
             Ok(true) // Authentic ciphertext emitted
         } else {
-            // Queue is empty: emit 1232-byte synthetic chaff (Type 0xFF)
-            out_cell[0] = 0x00; // Payload length 0 indicates chaff
+            out_cell[0] = 0x00;
             out_cell[1] = 0x00;
             out_cell[2] = CHAFF_CELL_TYPE;
 
-            // Fill chaff body with high-entropy cryptographic PRNG stream
-            self.chaff_prng.fill_bytes(&mut out_cell[3..]);
+            self.chaff_prng.try_fill_bytes(&mut out_cell[3..])?;
             Ok(false) // Chaff emitted
         }
+    }
+
+    /// Emit uniform 1232-byte wire cell with encrypted header mask (`header XOR mask3`),
+    /// preventing passive distinction of DATA_CELL_TYPE vs CHAFF_CELL_TYPE or length.
+    pub fn emit_masked_wire_cell(
+        &mut self,
+        out_cell: &mut [u8; ST2027_CELL_SIZE],
+    ) -> Result<bool, RingError> {
+        let mut mask = [0u8; 3];
+        self.chaff_prng.try_fill_bytes(&mut mask)?;
+        let is_real = self.emit_next_wire_cell(out_cell)?;
+        out_cell[0] ^= mask[0];
+        out_cell[1] ^= mask[1];
+        out_cell[2] ^= mask[2];
+        Ok(is_real)
     }
 
     /// Ingest an inbound 1232-byte wire frame from the physical network.
@@ -638,5 +743,40 @@ mod tests {
         prng_b.fill_bytes(&mut buf_b);
 
         assert_ne!(buf_a, buf_b);
+    }
+
+    #[test]
+    fn test_black_domain_unseeded_chaff_fails_closed() {
+        let mut shm = [0u8; RING_TOTAL_SIZE];
+        let base = shm.as_mut_ptr() as usize;
+        unsafe {
+            let mut appliance = BlackDomainAppliance {
+                rx_from_crypto: ZeroCopyRxRing::new(base + CRYPTO_TO_BLACK_OFFSET),
+                tx_to_crypto: ZeroCopyTxRing::new(base + BLACK_TO_CRYPTO_OFFSET),
+                chaff_prng: ChaffPrng::unseeded(),
+            };
+            let mut out_cell = [0u8; ST2027_CELL_SIZE];
+            assert_eq!(appliance.emit_next_wire_cell(&mut out_cell), Err(RingError::Zeroized));
+            assert!(ChaffPrng::from_seed(&[0u8; 32]).is_err());
+        }
+    }
+
+    #[test]
+    fn test_black_domain_masked_cell_and_randomized_padding() {
+        let mut shm = [0u8; RING_TOTAL_SIZE];
+        let base = shm.as_mut_ptr() as usize;
+        unsafe {
+            let mut crypto_tx = ZeroCopyTxRing::new(base + CRYPTO_TO_BLACK_OFFSET);
+            crypto_tx.push(b"SHORT_CT", DATA_CELL_TYPE).unwrap();
+            let mut appliance = BlackDomainAppliance {
+                rx_from_crypto: ZeroCopyRxRing::new(base + CRYPTO_TO_BLACK_OFFSET),
+                tx_to_crypto: ZeroCopyTxRing::new(base + BLACK_TO_CRYPTO_OFFSET),
+                chaff_prng: ChaffPrng::from_seed(&[0x3Cu8; 32]).unwrap(),
+            };
+            let mut cell = [0u8; ST2027_CELL_SIZE];
+            assert!(appliance.emit_masked_wire_cell(&mut cell).unwrap());
+            // Trailing pad bytes must NOT be all-zero leak
+            assert!(!cell[100..].iter().all(|&b| b == 0));
+        }
     }
 }

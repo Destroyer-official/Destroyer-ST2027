@@ -209,11 +209,9 @@ impl NvTransport for ToolsTransport {
         let (prog, argv) = self.read_argv();
         let out_bytes = run_tool_raw(&prog, &argv)?;
         if out_bytes.len() == 8 {
-            return Ok(u64::from_be_bytes(
-                out_bytes
-                    .try_into()
-                    .map_err(|_| NvError::Tools("8-byte slice conversion failed".into()))?,
-            ));
+            return Ok(u64::from_be_bytes(out_bytes.try_into().map_err(|_| {
+                NvError::Tools("8-byte slice conversion failed".into())
+            })?));
         }
         let stdout = String::from_utf8_lossy(&out_bytes);
         parse_nvread_hex(&stdout)
@@ -251,7 +249,10 @@ struct TbsContextParams2 {
 #[cfg(windows)]
 extern "system" {
     fn LoadLibraryA(lpLibFileName: *const std::ffi::c_char) -> *mut std::ffi::c_void;
-    fn GetProcAddress(hModule: *mut std::ffi::c_void, lpProcName: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+    fn GetProcAddress(
+        hModule: *mut std::ffi::c_void,
+        lpProcName: *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_void;
     fn FreeLibrary(hLibModule: *mut std::ffi::c_void) -> i32;
 }
 
@@ -302,13 +303,24 @@ impl WindowsTbsTransport {
 
             if create_fn.is_null() || submit_fn.is_null() || close_fn.is_null() {
                 let _ = FreeLibrary(tbs);
-                return Err(NvError::Tools("tbs.dll missing expected export symbols".into()));
+                return Err(NvError::Tools(
+                    "tbs.dll missing expected export symbols".into(),
+                ));
             }
 
-            let ctx_create: extern "system" fn(*const TbsContextParams2, *mut *mut std::ffi::c_void) -> u32 =
-                std::mem::transmute(create_fn);
-            let ctx_submit: extern "system" fn(*mut std::ffi::c_void, u32, u32, *const u8, u32, *mut u8, *mut u32) -> u32 =
-                std::mem::transmute(submit_fn);
+            let ctx_create: extern "system" fn(
+                *const TbsContextParams2,
+                *mut *mut std::ffi::c_void,
+            ) -> u32 = std::mem::transmute(create_fn);
+            let ctx_submit: extern "system" fn(
+                *mut std::ffi::c_void,
+                u32,
+                u32,
+                *const u8,
+                u32,
+                *mut u8,
+                *mut u32,
+            ) -> u32 = std::mem::transmute(submit_fn);
             let ctx_close: extern "system" fn(*mut std::ffi::c_void) -> u32 =
                 std::mem::transmute(close_fn);
 
@@ -320,7 +332,9 @@ impl WindowsTbsTransport {
             let cr_res = ctx_create(&params, &mut h_ctx);
             if cr_res != 0 {
                 let _ = FreeLibrary(tbs);
-                return Err(NvError::Tools(format!("Tbsi_Context_Create failed: 0x{cr_res:08X}")));
+                return Err(NvError::Tools(format!(
+                    "Tbsi_Context_Create failed: 0x{cr_res:08X}"
+                )));
             }
 
             let mut resp_buf = vec![0u8; 1024];
@@ -338,7 +352,9 @@ impl WindowsTbsTransport {
             let _ = FreeLibrary(tbs);
 
             if sub_res != 0 {
-                return Err(NvError::Tools(format!("Tbsip_Submit_Command failed: 0x{sub_res:08X}")));
+                return Err(NvError::Tools(format!(
+                    "Tbsip_Submit_Command failed: 0x{sub_res:08X}"
+                )));
             }
             resp_buf.truncate(resp_len as usize);
             Ok(resp_buf)
@@ -351,31 +367,32 @@ impl NvTransport for WindowsTbsTransport {
     fn read(&self) -> Result<u64, NvError> {
         let mut cmd = Vec::with_capacity(35);
         cmd.extend_from_slice(&0x8002u16.to_be_bytes()); // TPM_ST_SESSIONS
-        cmd.extend_from_slice(&35u32.to_be_bytes());     // commandSize
+        cmd.extend_from_slice(&35u32.to_be_bytes()); // commandSize
         cmd.extend_from_slice(&0x0000014Eu32.to_be_bytes()); // TPM_CC_NV_Read
         cmd.extend_from_slice(&0x40000001u32.to_be_bytes()); // TPM_RH_OWNER authHandle
-        cmd.extend_from_slice(&self.index.to_be_bytes());     // nvIndex
-        // Authorization session: Password session (empty auth, 9 bytes)
-        cmd.extend_from_slice(&9u32.to_be_bytes());           // authSize
-        cmd.extend_from_slice(&0x40000009u32.to_be_bytes());  // TPM_RS_PW
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // nonceCaller size 0
-        cmd.push(0u8);                                       // sessionAttributes 0
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // hmac size 0
-        // Parameters (4 bytes)
-        cmd.extend_from_slice(&8u16.to_be_bytes());           // size: 8 bytes
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // offset: 0
+        cmd.extend_from_slice(&self.index.to_be_bytes()); // nvIndex
+                                                          // Authorization session: Password session (empty auth, 9 bytes)
+        cmd.extend_from_slice(&9u32.to_be_bytes()); // authSize
+        cmd.extend_from_slice(&0x40000009u32.to_be_bytes()); // TPM_RS_PW
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // nonceCaller size 0
+        cmd.push(0u8); // sessionAttributes 0
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // hmac size 0
+                                                    // Parameters (4 bytes)
+        cmd.extend_from_slice(&8u16.to_be_bytes()); // size: 8 bytes
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // offset: 0
 
         let resp = self.submit_raw(&cmd)?;
-        if resp.len() < 10 {
-            return Err(NvError::Tools("TPM response too short".into()));
-        }
-        let rc = u32::from_be_bytes(resp[6..10].try_into().unwrap());
+        let rc = parse_tpm_rc(&resp)?;
         if rc == 0 {
-            if resp.len() >= 24 {
-                let val = u64::from_be_bytes(resp[16..24].try_into().unwrap());
-                Ok(val)
+            if let Some(val_bytes) = resp
+                .get(16..24)
+                .and_then(|s| <[u8; 8]>::try_from(s).ok())
+            {
+                Ok(u64::from_be_bytes(val_bytes))
             } else {
-                Err(NvError::Tools("TPM2_NV_Read response buffer truncated".into()))
+                Err(NvError::Tools(
+                    "TPM2_NV_Read response buffer truncated".into(),
+                ))
             }
         } else {
             classify_tpm_rc(rc)
@@ -385,22 +402,19 @@ impl NvTransport for WindowsTbsTransport {
     fn increment(&self) -> Result<u64, NvError> {
         let mut cmd = Vec::with_capacity(31);
         cmd.extend_from_slice(&0x8002u16.to_be_bytes()); // TPM_ST_SESSIONS
-        cmd.extend_from_slice(&31u32.to_be_bytes());     // commandSize
+        cmd.extend_from_slice(&31u32.to_be_bytes()); // commandSize
         cmd.extend_from_slice(&0x00000177u32.to_be_bytes()); // TPM_CC_NV_Increment
         cmd.extend_from_slice(&0x40000001u32.to_be_bytes()); // TPM_RH_OWNER authHandle
-        cmd.extend_from_slice(&self.index.to_be_bytes());     // nvIndex
-        // Authorization area (9 bytes)
-        cmd.extend_from_slice(&9u32.to_be_bytes());           // authSize
-        cmd.extend_from_slice(&0x40000009u32.to_be_bytes());  // TPM_RS_PW
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // nonce size 0
-        cmd.push(0u8);                                       // attributes 0
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // hmac size 0
+        cmd.extend_from_slice(&self.index.to_be_bytes()); // nvIndex
+                                                          // Authorization area (9 bytes)
+        cmd.extend_from_slice(&9u32.to_be_bytes()); // authSize
+        cmd.extend_from_slice(&0x40000009u32.to_be_bytes()); // TPM_RS_PW
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // nonce size 0
+        cmd.push(0u8); // attributes 0
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // hmac size 0
 
         let resp = self.submit_raw(&cmd)?;
-        if resp.len() < 10 {
-            return Err(NvError::Tools("TPM response too short".into()));
-        }
-        let rc = u32::from_be_bytes(resp[6..10].try_into().unwrap());
+        let rc = parse_tpm_rc(&resp)?;
         if rc == 0 {
             self.read()
         } else {
@@ -411,29 +425,26 @@ impl NvTransport for WindowsTbsTransport {
     fn define(&self) -> Result<(), NvError> {
         let mut cmd = Vec::with_capacity(57);
         cmd.extend_from_slice(&0x8002u16.to_be_bytes()); // TPM_ST_SESSIONS
-        cmd.extend_from_slice(&57u32.to_be_bytes());     // commandSize
+        cmd.extend_from_slice(&57u32.to_be_bytes()); // commandSize
         cmd.extend_from_slice(&0x0000012Au32.to_be_bytes()); // TPM_CC_NV_DefineSpace
         cmd.extend_from_slice(&0x40000001u32.to_be_bytes()); // TPM_RH_OWNER authHandle
-        cmd.extend_from_slice(&9u32.to_be_bytes());           // authSize
-        cmd.extend_from_slice(&0x40000009u32.to_be_bytes());  // TPM_RS_PW
+        cmd.extend_from_slice(&9u32.to_be_bytes()); // authSize
+        cmd.extend_from_slice(&0x40000009u32.to_be_bytes()); // TPM_RS_PW
         cmd.extend_from_slice(&0u16.to_be_bytes());
         cmd.push(0u8);
         cmd.extend_from_slice(&0u16.to_be_bytes());
         // Parameters:
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // auth.size = 0
-        cmd.extend_from_slice(&26u16.to_be_bytes());          // publicInfo.size = 26
-        cmd.extend_from_slice(&self.index.to_be_bytes());     // nvIndex
-        cmd.extend_from_slice(&0x000Bu16.to_be_bytes());      // nameAlg: SHA-256
-        let attrs: u32 = 0x000C0002 | 0x00080000;            // TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_COUNTER
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // auth.size = 0
+        cmd.extend_from_slice(&26u16.to_be_bytes()); // publicInfo.size = 26
+        cmd.extend_from_slice(&self.index.to_be_bytes()); // nvIndex
+        cmd.extend_from_slice(&0x000Bu16.to_be_bytes()); // nameAlg: SHA-256
+        let attrs: u32 = 0x000C0002 | 0x00080000; // TPMA_NV_OWNERREAD | TPMA_NV_OWNERWRITE | TPMA_NV_COUNTER
         cmd.extend_from_slice(&attrs.to_be_bytes());
-        cmd.extend_from_slice(&0u16.to_be_bytes());           // authPolicy size 0
-        cmd.extend_from_slice(&8u16.to_be_bytes());           // dataSize: 8
+        cmd.extend_from_slice(&0u16.to_be_bytes()); // authPolicy size 0
+        cmd.extend_from_slice(&8u16.to_be_bytes()); // dataSize: 8
 
         let resp = self.submit_raw(&cmd)?;
-        if resp.len() < 10 {
-            return Err(NvError::Tools("TPM response too short".into()));
-        }
-        let rc = u32::from_be_bytes(resp[6..10].try_into().unwrap());
+        let rc = parse_tpm_rc(&resp)?;
         if rc == 0 || rc == 0x014C || (rc & 0xFF) == 0x4C {
             // 0x14C = TPM_RC_NV_DEFINED (already defined, idempotent success)
             Ok(())
@@ -441,6 +452,14 @@ impl NvTransport for WindowsTbsTransport {
             classify_tpm_rc::<()>(rc)
         }
     }
+}
+
+fn parse_tpm_rc(resp: &[u8]) -> Result<u32, NvError> {
+    let rc_bytes: [u8; 4] = resp
+        .get(6..10)
+        .and_then(|s| s.try_into().ok())
+        .ok_or_else(|| NvError::Tools("TPM response too short".into()))?;
+    Ok(u32::from_be_bytes(rc_bytes))
 }
 
 /// Dynamic NV transport selecting between Windows TBS, Linux tools, or in-memory emulation.
@@ -459,7 +478,9 @@ impl NvTransport for AnyNvTransport {
             #[cfg(windows)]
             Self::Windows(t) => t.read(),
             Self::Memory(m) => {
-                let lock = m.lock().unwrap();
+                let lock = m
+                    .lock()
+                    .map_err(|_| NvError::Tools("NV memory counter lock poisoned".into()))?;
                 lock.ok_or(NvError::Uninitialized)
             }
         }
@@ -471,10 +492,14 @@ impl NvTransport for AnyNvTransport {
             #[cfg(windows)]
             Self::Windows(t) => t.increment(),
             Self::Memory(m) => {
-                let mut lock = m.lock().unwrap();
+                let mut lock = m
+                    .lock()
+                    .map_err(|_| NvError::Tools("NV memory counter lock poisoned".into()))?;
                 let next = match *lock {
                     None => 1,
-                    Some(v) => v.checked_add(1).ok_or_else(|| NvError::Tools("counter exhausted".into()))?,
+                    Some(v) => v
+                        .checked_add(1)
+                        .ok_or_else(|| NvError::Tools("counter exhausted".into()))?,
                 };
                 *lock = Some(next);
                 Ok(next)
@@ -488,7 +513,9 @@ impl NvTransport for AnyNvTransport {
             #[cfg(windows)]
             Self::Windows(t) => t.define(),
             Self::Memory(m) => {
-                let mut lock = m.lock().unwrap();
+                let mut lock = m
+                    .lock()
+                    .map_err(|_| NvError::Tools("NV memory counter lock poisoned".into()))?;
                 if lock.is_none() {
                     *lock = Some(0);
                 }
@@ -505,9 +532,13 @@ pub fn classify_tpm_rc<T>(rc: u32) -> Result<T, NvError> {
     } else if rc == 0x18b || lower_rc == 0x8b {
         Err(NvError::NotDefined)
     } else if rc == 0x99d || rc == 0x17d || rc == 0x9a2 || lower_rc == 0x9d || lower_rc == 0x7d {
-        Err(NvError::PolicyFailure(format!("TPM authorization policy failure: 0x{rc:08X}")))
+        Err(NvError::PolicyFailure(format!(
+            "TPM authorization policy failure: 0x{rc:08X}"
+        )))
     } else {
-        Err(NvError::Tools(format!("TPM error response code: 0x{rc:08X}")))
+        Err(NvError::Tools(format!(
+            "TPM error response code: 0x{rc:08X}"
+        )))
     }
 }
 
@@ -616,11 +647,16 @@ pub fn transport_from_index_str(index: Option<&str>) -> Result<Option<AnyNvTrans
     }
     let idx = parse_index(raw)?;
     let is_prod = crate::policy::is_production_env();
-    if std::env::var("P2P_TPM_EMULATION").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false) {
+    if std::env::var("P2P_TPM_EMULATION")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+    {
         if is_prod {
             return Err("MILITARY FATAL: P2P_TPM_EMULATION is strictly prohibited in production mode. Physical TPM 2.0 hardware counter required fail-closed.".to_string());
         }
-        return Ok(Some(AnyNvTransport::Memory(std::sync::Arc::new(std::sync::Mutex::new(None)))));
+        return Ok(Some(AnyNvTransport::Memory(std::sync::Arc::new(
+            std::sync::Mutex::new(None),
+        ))));
     }
     #[cfg(windows)]
     {
@@ -1480,9 +1516,22 @@ pub fn guard_crl_sequence(state_path: Option<&str>, crl_seq: u64) -> Result<(), 
             };
             let owner = std::env::var("P2P_TPM_NV_OWNER").unwrap_or_else(|_| "o".to_string());
             let transport = transport_from_index_str(Some(&format!("0x{crl_idx:x}")))?
-                .unwrap_or_else(|| AnyNvTransport::Tools(Box::new(ToolsTransport::new(crl_idx, &owner, ToolPaths::from_env()))));
+                .unwrap_or_else(|| {
+                    AnyNvTransport::Tools(Box::new(ToolsTransport::new(
+                        crl_idx,
+                        &owner,
+                        ToolPaths::from_env(),
+                    )))
+                });
             return guard_crl_sequence_with(&transport, crl_seq);
         }
+    }
+
+    if crate::policy::is_production_env() {
+        return Err(
+            "CRL sequence anti-rollback requires hardware TPM 2.0 NV index (P2P_TPM_CRL_INDEX or P2P_TPM_NV_INDEX) in production mode; file sidecar fallback refused"
+                .to_string(),
+        );
     }
 
     let sidecar_opt = state_path
@@ -1499,7 +1548,8 @@ pub fn guard_crl_sequence(state_path: Option<&str>, crl_seq: u64) -> Result<(), 
                 }
             }
         }
-        let _ = std::fs::write(&sidecar, crl_seq.to_string());
+        std::fs::write(&sidecar, crl_seq.to_string())
+            .map_err(|e| format!("failed to persist CRL sidecar sequence: {e}"))?;
     }
 
     Ok(())
@@ -1791,7 +1841,10 @@ mod tests {
         let t = FakeNv::new();
         checkpoint_with_recv(&t, &KEY, &path, 100, 200).unwrap();
         let e = guard_with_recv(&t, &KEY, &path, 100, 150, false, false).unwrap_err();
-        assert!(e.contains("recv_hwm 150 is behind NV checkpoint 200"), "{e}");
+        assert!(
+            e.contains("recv_hwm 150 is behind NV checkpoint 200"),
+            "{e}"
+        );
         assert!(e.contains("REPROVISION"), "{e}");
         guard_with_recv(&t, &KEY, &path, 100, 250, false, false).unwrap();
         cleanup(&path);
@@ -1966,8 +2019,14 @@ mod tests {
         assert_eq!(classify_tpm_rc::<u64>(0x14a), Err(NvError::Uninitialized));
         assert_eq!(classify_tpm_rc::<u64>(0x18b), Err(NvError::NotDefined));
         assert_eq!(classify_tpm_rc::<u64>(0x8b), Err(NvError::NotDefined));
-        assert!(matches!(classify_tpm_rc::<u64>(0x99d), Err(NvError::PolicyFailure(_))));
-        assert!(matches!(classify_tpm_rc::<u64>(0x999), Err(NvError::Tools(_))));
+        assert!(matches!(
+            classify_tpm_rc::<u64>(0x99d),
+            Err(NvError::PolicyFailure(_))
+        ));
+        assert!(matches!(
+            classify_tpm_rc::<u64>(0x999),
+            Err(NvError::Tools(_))
+        ));
     }
 
     #[test]
@@ -1989,8 +2048,11 @@ mod tests {
         println!("Windows TBS available on host: {avail}");
     }
 
+    static PROD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_production_mode_strictly_rejects_tpm_emulation() {
+        let _guard = PROD_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // F-04: Test contradictory configuration: production mode + emulation
         std::env::set_var("P2P_PRODUCTION", "1");
         std::env::set_var("P2P_TPM_EMULATION", "1");
@@ -2000,7 +2062,42 @@ mod tests {
 
         assert!(res.is_err(), "Contradictory config must fail closed");
         let err = res.err().unwrap();
-        assert!(err.contains("MILITARY FATAL"), "Expected fatal error, got: {}", err);
-        assert!(err.contains("P2P_TPM_EMULATION is strictly prohibited in production mode"), "Got: {}", err);
+        assert!(
+            err.contains("MILITARY FATAL"),
+            "Expected fatal error, got: {}",
+            err
+        );
+        assert!(
+            err.contains("P2P_TPM_EMULATION is strictly prohibited in production mode"),
+            "Got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn crl_sequence_refuses_sidecar_fallback_in_production() {
+        let _guard = PROD_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_prod = std::env::var("P2P_PRODUCTION").ok();
+        let saved_idx = std::env::var("P2P_TPM_NV_INDEX").ok();
+        let saved_crl_idx = std::env::var("P2P_TPM_CRL_INDEX").ok();
+
+        std::env::set_var("P2P_PRODUCTION", "1");
+        std::env::remove_var("P2P_TPM_NV_INDEX");
+        std::env::remove_var("P2P_TPM_CRL_INDEX");
+
+        let path = tmp_path("crl_prod");
+        let err = guard_crl_sequence(Some(&path), 7).unwrap_err();
+        assert!(err.contains("hardware TPM 2.0 NV index"), "{err}");
+
+        std::env::remove_var("P2P_PRODUCTION");
+        if let Some(v) = saved_prod {
+            std::env::set_var("P2P_PRODUCTION", v);
+        }
+        if let Some(v) = saved_idx {
+            std::env::set_var("P2P_TPM_NV_INDEX", v);
+        }
+        if let Some(v) = saved_crl_idx {
+            std::env::set_var("P2P_TPM_CRL_INDEX", v);
+        }
     }
 }

@@ -131,28 +131,36 @@ def main():
 
     card = AuditScorecard(EXPECTED_GATES)
 
-    # Gate 1: Rust Data-Plane (Clippy with -D warnings + 75 tests)
+    # Gate 1: Rust Data-Plane (Clippy with -D warnings + offline tests + no-default-features build)
     print("\n[*] Gate 1: Auditing Rust Data Plane (destroyer_core)...")
-    code, out, dur = run_cmd(["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+    code, out, dur = run_cmd(["cargo", "clippy", "--all-targets", "--offline", "--", "-D", "warnings"],
                              cwd=REPO_ROOT / "rust_data_plane")
     if code != 0:
-        card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, "Compiler warnings present")
+        card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, f"Clippy failure: {out[-150:]}")
     else:
-        code2, out2, dur2 = run_cmd(["cargo", "test"], cwd=REPO_ROOT / "rust_data_plane")
+        code2, out2, dur2 = run_cmd(["cargo", "test", "--offline", "--no-default-features"], cwd=REPO_ROOT / "rust_data_plane")
         import re
         passed_matches = [int(m) for m in re.findall(r"(\d+) passed; 0 failed", out2) if int(m) > 0]
         total_passed = sum(passed_matches) if passed_matches else 0
         passed = (code2 == 0 and "0 failed" in out2 and len(passed_matches) >= 2 and passed_matches[0] >= 110 and total_passed >= 200)
         card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         f"{total_passed} tests passed ({passed_matches[0] if passed_matches else 0} lib, {passed_matches[1] if len(passed_matches) > 1 else 0} dudect, {passed_matches[2] if len(passed_matches) > 2 else 0} kani); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
+                         f"{total_passed} tests passed (--no-default-features --offline); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
 
-    # Gate 2: Native Top-Secret Runtime (ts_rt)
-    print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt)...")
-    code, out, dur = run_cmd(["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
-                             cwd=REPO_ROOT / "ts_rt")
-    passed = (code == 0)
-    card.record_gate("2.1", "ts_rt Clippy & Memory Discipline Verification", passed, dur,
-                     "0 FFI warnings; VirtualLock/mlock verified")
+    # Gate 2: Native Top-Secret Runtime (ts_rt) & seL4 MILS Appliance
+    print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt) & seL4 MILS...")
+    code_clip, out_clip, dur_clip = run_cmd(["cargo", "clippy", "--all-targets", "--offline", "--", "-D", "warnings"],
+                                            cwd=REPO_ROOT / "ts_rt")
+    code_test, out_test, dur_test = run_cmd(["cargo", "test", "--offline"], cwd=REPO_ROOT / "ts_rt")
+    code_mils_test, out_mils_t, dur_mt = run_cmd(["cargo", "test", "--offline"], cwd=REPO_ROOT / "sel4_mils_appliance")
+    code_mils_val, out_mils_v, dur_mv = run_cmd([sys.executable, "sel4_mils_appliance/validate_mils.py", "--strict"], cwd=REPO_ROOT)
+    passed = (code_clip == 0 and code_test == 0 and code_mils_test == 0 and code_mils_val == 0)
+    card.record_gate(
+        "2.1",
+        "ts_rt & seL4 MILS Clippy, Test & Invariant Verification",
+        passed,
+        dur_clip + dur_test + dur_mt + dur_mv,
+        "0 warnings; ts_rt & sel4_mils tests + validate_mils --strict PASSED" if passed else f"Failure: {out_clip[-60:]} {out_test[-60:]} {out_mils_t[-60:]} {out_mils_v[-60:]}",
+    )
 
     # Gate 3: Power-up KATs & CNSA Suite 2.0 Purity
     print("\n[*] Gate 3: Auditing CNSA Suite 2.0 KATs & Policy Purity...")

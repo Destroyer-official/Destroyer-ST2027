@@ -859,14 +859,16 @@ class DeploymentVerifier:
         )
         if sb is True:
             self._add_result("Host Posture: SecureBoot", VerificationStatus.PASS, "UEFI SecureBoot enabled")
-        elif sb_waived or not prod:
-            self._add_result("Host Posture: SecureBoot", VerificationStatus.PASS,
-                             "UEFI SecureBoot verified (lab/evaluation posture: hardware TPM active, bus DMA protected)")
-        elif sb is False:
-            level = VerificationStatus.FAIL
-            self._add_result("Host Posture: SecureBoot", level,
-                             "SecureBoot DISABLED (prod fail-closed)")
+        elif prod:
+            self._add_result("Host Posture: SecureBoot", VerificationStatus.FAIL,
+                             "SecureBoot DISABLED or unverified (prod fail-closed)")
             ok = False
+        elif sb_waived:
+            self._add_result("Host Posture: SecureBoot", VerificationStatus.WARN,
+                             "UEFI SecureBoot waived via lab env flag (not verified for production)")
+        elif sb is False:
+            self._add_result("Host Posture: SecureBoot", VerificationStatus.WARN,
+                             "SecureBoot DISABLED (lab advisory; prod fail-closed)")
         else:
             self._add_result("Host Posture: SecureBoot", VerificationStatus.WARN,
                              "SecureBoot state unknown (VM/BIOS boot?)")
@@ -914,11 +916,19 @@ class DeploymentVerifier:
 
             verifier = HardwareTokenVerifier(strict=prod, allow_simulation=(not prod))
             res = verifier.verify_two_person_integrity()
-            if res.get("compliant"):
+            if res.get("compliant") and res.get("mode") == "PHYSICAL_HARDWARE":
                 self._add_result("Hardware Tokens: Two-Person Integrity", VerificationStatus.PASS,
                                  f"Two physical tokens detected with distinct serials ({res.get('readers_found')} readers)",
                                  res)
                 return True
+            elif res.get("compliant"):
+                level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
+                msg = (
+                    f"{res.get('details', 'Simulated tokens active')} "
+                    "(lab simulation fallback; production mandates physical YubiKey 5 FIPS / Nitrokey HSM)"
+                )
+                self._add_result("Hardware Tokens: Two-Person Integrity", level, msg, res)
+                return not prod
             else:
                 level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
                 msg = res.get("details", "Hardware tokens missing")
@@ -955,12 +965,15 @@ class DeploymentVerifier:
             warned = summary.get("warned", 0)
             score = res.get("readiness_score", 0.0)
 
+            multi_homed = bool(
+                res.get("checks", {}).get("red_black_separation", {}).get("multi_homed")
+            )
             if failed == 0:
-                status = VerificationStatus.PASS if warned == 0 else VerificationStatus.WARN
+                status = VerificationStatus.PASS if (warned == 0 and multi_homed) else VerificationStatus.WARN
                 self._add_result("Physical Isolation: NATO SDIP / Simplex Diode", status,
-                                 f"Isolation readiness score: {score:.1f}% (warned: {warned}, failed: 0)",
+                                 f"Isolation readiness score: {score:.1f}% (multi_homed: {multi_homed}, warned: {warned}, failed: 0)",
                                  summary)
-                return True
+                return True if (not prod or status == VerificationStatus.PASS) else False
             else:
                 level = VerificationStatus.FAIL if prod else VerificationStatus.WARN
                 self._add_result("Physical Isolation: NATO SDIP / Simplex Diode", level,
@@ -1010,9 +1023,15 @@ class DeploymentVerifier:
             else:
                 assurance = provisioner.verify_monotonic_assurance()
                 if assurance.get("strictly_monotonic"):
-                    tpm_active = bool(prereqs.get("tpm_tools_installed") or (os.name == "nt" and prereqs.get("tpm_device_present")))
-                    status = VerificationStatus.PASS if tpm_active else VerificationStatus.WARN
-                    note = " (physical hardware TPM 2.0)" if tpm_active else " (lab simulation fallback; prod mandates physical TPM NV 0x01800001)"
+                    hw_verified = bool(
+                        prereqs.get("tpm_tools_installed") and not assurance.get("simulated", False)
+                    )
+                    status = VerificationStatus.PASS if hw_verified else VerificationStatus.WARN
+                    note = (
+                        " (physical hardware TPM 2.0)"
+                        if hw_verified
+                        else " (lab software NV counter simulation; prod mandates hardware tpm2-tools + TPM NV 0x01800001)"
+                    )
                     self._add_result("TPM Monotonic Counter: 0x01800001", status,
                                      f"{assurance.get('message')}{note}", assurance)
                     return True
@@ -1085,6 +1104,13 @@ class DeploymentVerifier:
         if summary["WARN"] > 0:
             recommendations.append("Review all WARN items for potential issues")
             
+        if not all_passed:
+            overall_text = "NOT READY - FIX FAILURES"
+        elif summary["WARN"] > 0:
+            overall_text = "LAB / EVALUATION ADVISORY ONLY (WARNINGS PRESENT - NOT PRODUCTION READY)"
+        else:
+            overall_text = "READY FOR DEPLOYMENT"
+
         # Print summary
         print("\n" + "=" * 60)
         print("VERIFICATION SUMMARY")
@@ -1093,7 +1119,7 @@ class DeploymentVerifier:
         print(f"  FAIL: {summary['FAIL']}")
         print(f"  WARN: {summary['WARN']}")
         print(f"  SKIP: {summary['SKIP']}")
-        print(f"\n  Overall Status: {'READY FOR DEPLOYMENT' if all_passed else 'NOT READY - FIX FAILURES'}")
+        print(f"\n  Overall Status: {overall_text}")
         
         # Print baseline info
         print("\n" + "=" * 60)

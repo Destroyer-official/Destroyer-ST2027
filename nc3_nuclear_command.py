@@ -1074,11 +1074,8 @@ class NC3CommandController:
             eam_id = secrets.token_hex(16)
             now_utc = datetime.now(timezone.utc).timestamp()
             salt = secrets.token_bytes(32)
-            try:
-                from p2p_core import generate_deterministic_gcm_iv
-                nonce = generate_deterministic_gcm_iv()
-            except Exception:
-                nonce = secrets.token_bytes(12)
+            from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
 
             # 3. Encrypt PAL payload using AES-256-GCM (CNSA strict).
             import base64
@@ -1188,11 +1185,8 @@ class NC3CommandController:
 
         try:
             salt = secrets.token_bytes(32)
-            try:
-                from p2p_core import generate_deterministic_gcm_iv
-                nonce = generate_deterministic_gcm_iv()
-            except Exception:
-                nonce = secrets.token_bytes(12)
+            from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+            nonce = generate_deterministic_gcm_iv()
 
             encrypted_pal_raw = _pal_encrypt(
                 bytes(key_buf), nonce, bytes(pal_buf), eam_id.encode("utf-8")
@@ -1398,15 +1392,23 @@ class NC3CommandController:
             ):
                 raise NC3SecurityError("Master public key does not match the EAM threshold MPC record.")
 
-            # If commitments passed, verify against Feldman commitments and public point
-            if mpc_commitments is not None:
-                if not verify_threshold_signature(
-                    master_public_key=sig_obj.master_public_key,
-                    payload=sig_obj.payload_digest,
-                    signature=sig_obj,
-                    commitments=mpc_commitments,
-                ):
-                    raise NC3SecurityError("Threshold MPC signature verification failed against Feldman commitments.")
+            # Fail closed unless trusted FeldmanCommitments are supplied and match
+            if mpc_commitments is None:
+                raise NC3SecurityError(
+                    "Threshold MPC signature verification requires trusted FeldmanCommitments "
+                    "(mpc_commitments must not be None)."
+                )
+            if not secrets.compare_digest(mpc_commitments.master_public_key, sig_obj.master_public_key):
+                raise NC3SecurityError(
+                    "FeldmanCommitments master_public_key does not match EAM threshold signature."
+                )
+            if not verify_threshold_signature(
+                master_public_key=sig_obj.master_public_key,
+                payload=sig_obj.payload_digest,
+                signature=sig_obj,
+                commitments=mpc_commitments,
+            ):
+                raise NC3SecurityError("Threshold MPC signature verification failed against Feldman commitments.")
         else:
             custodians = eam_data.get("custodians", [])
             if len(custodians) != 2:
@@ -1745,11 +1747,8 @@ def get_or_create_tactical_officer(
         seal_key = _officer_file_seal_key()
         raw = json.dumps(officer.to_dict(include_secret=True)).encode("utf-8")
         salt = secrets.token_bytes(32)
-        try:
-            from p2p_core import generate_deterministic_gcm_iv
-            nonce = generate_deterministic_gcm_iv()
-        except Exception:
-            nonce = secrets.token_bytes(12)
+        from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+        nonce = generate_deterministic_gcm_iv()
         iters = 220_000
         file_key = hashlib.pbkdf2_hmac("sha512", seal_key, salt, iters, dklen=32)
         ct = AESGCM(file_key).encrypt(
@@ -1970,11 +1969,8 @@ def serialize_eam_wire(eam_data: Dict[str, Any], aead_key: Optional[bytes] = Non
     if aead_key is not None:
         if len(aead_key) != 32:
             raise ValueError("AEAD key must be 32 bytes for AES-256-GCM")
-        try:
-            from p2p_core import generate_deterministic_gcm_iv
-            nonce = generate_deterministic_gcm_iv()
-        except Exception:
-            nonce = secrets.token_bytes(12)
+        from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+        nonce = generate_deterministic_gcm_iv()
         ct = AESGCM(aead_key).encrypt(nonce, padded_payload, b"NC3-EAM-WIRE-V1")
         return nonce + ct
     return padded_payload

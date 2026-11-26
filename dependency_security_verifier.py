@@ -506,7 +506,45 @@ class DependencySecurityVerifier:
                     if not v_ok:
                         logger.error(f"Native liboqs version check failed for {path}")
                         return False
-                    logger.info(f"File integrity verified for {name} (POSIX native liboqs >= 0.16.0)")
+
+                    pinned_posix = (
+                        os.environ.get("P2P_OQS_POSIX_SHA384", "").strip()
+                        or str(self.critical_dependencies.get(name, {}).get("sha384", "")).strip()
+                    )
+                    if pinned_posix:
+                        with open(path, "rb") as f:
+                            actual_posix = hashlib.sha384(f.read()).hexdigest()
+                        if not hmac.compare_digest(actual_posix, pinned_posix.lower()):
+                            logger.error(f"Hash mismatch for {name} (POSIX sha384 pin)")
+                            return False
+                        logger.info(f"File integrity verified for {name} (POSIX pinned sha384 + version {v_raw})")
+                        return True
+
+                    sig_candidate = f"{path}.sig"
+                    pub_candidate = f"{path}.pub"
+                    if os.path.isfile(sig_candidate) and os.path.isfile(pub_candidate):
+                        if self._verify_signature(name, path, sig_candidate, pub_candidate):
+                            logger.info(f"File integrity verified for {name} (POSIX Ed25519 signature + version {v_raw})")
+                            return True
+                        logger.error(f"Ed25519 signature verification failed for {name} at {path}")
+                        return False
+
+                    try:
+                        from production_gate import is_production
+                        in_prod = is_production()
+                    except Exception:
+                        in_prod = True
+                    if in_prod:
+                        logger.critical(
+                            f"FAIL-CLOSED: POSIX {name} at {path} has neither pinned SHA-384 digest "
+                            f"(P2P_OQS_POSIX_SHA384) nor valid Ed25519 signature; refusing unverified "
+                            f"native crypto binary in production."
+                        )
+                        return False
+
+                    logger.warning(
+                        f"LAB-ONLY: {name} verified by native version check ({v_raw}) without POSIX digest/signature pin."
+                    )
                     return True
                 with open(path, 'rb') as f:
                     file_content = f.read()

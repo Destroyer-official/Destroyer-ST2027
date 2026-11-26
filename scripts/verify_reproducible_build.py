@@ -13,6 +13,7 @@ import json
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # Set project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -58,12 +59,13 @@ def verify_ed25519_signature(binary_path: Path, sig_path: Path, pub_path: Path) 
         return False
 
 
-def run_reproducible_build_verification():
+def run_reproducible_build_verification(output_dir: Optional[Path] = None):
     print("=" * 78)
     print("REPRODUCIBLE BUILD & SUPPLY CHAIN INTEGRITY VERIFICATION (SLSA-ALIGNED)")
     print("=" * 78)
 
-    reports_dir = PROJECT_ROOT / "compliance_reports"
+    sbom_dir = PROJECT_ROOT / "compliance_reports"
+    reports_dir = Path(output_dir) if output_dir is not None else sbom_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     results = {
@@ -164,7 +166,7 @@ def run_reproducible_build_verification():
     results["full_source_merkle_root"] = full_source_merkle_root
     results["full_source_file_count"] = len(all_source_files)
     results["full_source_scope_description"] = (
-        "Authoritative Sovereign Data Plane (46 pure Rust modules) + Python Core Security Engine + Production Configuration"
+        f"Authoritative Sovereign Data Plane ({len(rust_files)} pure Rust modules) + Python Core Security Engine + Production Configuration"
     )
     print(f"  [+] Audited {len(all_source_files)} source modules across Rust data plane and Python runtime.")
     print(f"  [=] Comprehensive Merkle Root (SHA3-512): {full_source_merkle_root[:24]}...")
@@ -230,8 +232,8 @@ def run_reproducible_build_verification():
 
     # 3. Verify SBOM Artifacts and Signatures
     print("\n[*] Verifying Software Bill of Materials (SBOM) Artifacts & Signatures...")
-    cdx_path = reports_dir / "cyclonedx_sbom.json"
-    spdx_path = reports_dir / "spdx_sbom.json"
+    cdx_path = sbom_dir / "cyclonedx_sbom.json"
+    spdx_path = sbom_dir / "spdx_sbom.json"
     anchor_pub_path = PROJECT_ROOT / "certs" / "sbom_mldsa87_signer.pub"
 
     cdx_valid = cdx_path.exists() and cdx_path.stat().st_size > 0

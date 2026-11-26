@@ -406,7 +406,7 @@ class ACVPValidationHarness:
     # -------------------------------------------------------------------------
     # Comprehensive Execution & Reporting
     # -------------------------------------------------------------------------
-    def run_all(self) -> Dict[str, Any]:
+    def run_all(self, output_dir: Optional[Path] = None) -> Dict[str, Any]:
         self.start_time = time.perf_counter()
         print("\n" + "=" * 80)
         print("  FIPS 140-3 ACVP / CAVP ALGORITHM VALIDATION HARNESS (CNSA 2.0)")
@@ -461,8 +461,8 @@ class ACVPValidationHarness:
             "results": self.results
         }
 
-        # Export report to compliance directory
-        out_dir = REPO_ROOT / "compliance_reports"
+        # Export report to compliance directory (or caller-supplied tmp directory)
+        out_dir = Path(output_dir) if output_dir is not None else (REPO_ROOT / "compliance_reports")
         out_dir.mkdir(parents=True, exist_ok=True)
         report_file = out_dir / "acvp_cavp_validation_report.json"
         report_bytes = json.dumps(report, indent=2).encode("utf-8")
@@ -514,10 +514,12 @@ def verify_acvp_report_signature(
         return False
 
 
-def run_acvp_validation_suite(verbose: bool = False) -> Dict[str, Any]:
+def run_acvp_validation_suite(
+    verbose: bool = False, output_dir: Optional[Path] = None
+) -> Dict[str, Any]:
     """Library entry point for test suites and security audits."""
     harness = ACVPValidationHarness(verbose=verbose)
-    return harness.run_all()
+    return harness.run_all(output_dir=output_dir)
 
 
 if __name__ == "__main__":

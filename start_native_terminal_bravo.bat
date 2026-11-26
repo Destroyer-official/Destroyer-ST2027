@@ -14,7 +14,7 @@ set BIN=rust_data_plane\target\release\secure-transmit.exe
 if not exist "%BIN%" set BIN=rust_data_plane\target\debug\secure-transmit.exe
 if not exist "%BIN%" (
     echo [ERROR] Native binary not found. Compiling release binary...
-    cargo build --release --manifest-path rust_data_plane\Cargo.toml --bin secure-transmit
+    cargo build --release --offline --no-default-features --manifest-path rust_data_plane\Cargo.toml --bin secure-transmit
     set BIN=rust_data_plane\target\release\secure-transmit.exe
 )
 
@@ -23,9 +23,11 @@ if not exist "keys\tactical_shared.psk" (
     echo [INIT] Generating fresh 256-bit post-quantum pre-shared key (PSK)...
     "%BIN%" keygen --out keys\tactical_shared.psk
 )
+if not exist "keys\alpha.sk" "%BIN%" auth-keygen --out-sk keys\alpha.sk --out-pk keys\alpha.pk
+if not exist "keys\bravo.sk" "%BIN%" auth-keygen --out-sk keys\bravo.sk --out-pk keys\bravo.pk
 
 echo Starting Base Bravo (Initiator) on 127.0.0.1:9061 ^<--^> Peer 127.0.0.1:9060...
-echo Negotiating dynamic Post-Quantum Hybrid KEX with peer...
+echo Negotiating dynamic Post-Quantum Hybrid KEX with mutual ML-DSA-87 authentication...
 echo.
-"%BIN%" node --role initiator --bind 127.0.0.1:9061 --to 127.0.0.1:9060 --psk-file keys\tactical_shared.psk --state keys\bravo_term.state --interval-ms 50 --quantum 1232 --callsign PENTAGON-BRAVO %*
+"%BIN%" node --role initiator --bind 127.0.0.1:9061 --to 127.0.0.1:9060 --psk-file keys\tactical_shared.psk --auth-sk-file keys\bravo.sk --peer-auth-pk-file keys\alpha.pk --require-mutual-auth --state keys\bravo_term.state --interval-ms 50 --quantum 1232 --callsign PENTAGON-BRAVO %*
 pause

@@ -264,9 +264,10 @@ impl FountainDecoder {
 
         let mut ripple = VecDeque::new();
         if eq_neighbors.len() == 1 {
-            let symbol_idx = *eq_neighbors.iter().next().unwrap();
-            self.solved_symbols.insert(symbol_idx, eq_data.clone());
-            ripple.push_back((symbol_idx, eq_data));
+            if let Some(&symbol_idx) = eq_neighbors.iter().next() {
+                self.solved_symbols.insert(symbol_idx, eq_data.clone());
+                ripple.push_back((symbol_idx, eq_data));
+            }
         } else {
             self.equations.push((eq_neighbors, eq_data));
         }
@@ -281,11 +282,12 @@ impl FountainDecoder {
                     }
 
                     if self.equations[i].0.len() == 1 {
-                        let new_idx = *self.equations[i].0.iter().next().unwrap();
-                        let new_data = self.equations.swap_remove(i).1;
-                        self.solved_symbols.insert(new_idx, new_data.clone());
-                        ripple.push_back((new_idx, new_data));
-                        continue;
+                        if let Some(&new_idx) = self.equations[i].0.iter().next() {
+                            let new_data = self.equations.swap_remove(i).1;
+                            self.solved_symbols.insert(new_idx, new_data.clone());
+                            ripple.push_back((new_idx, new_data));
+                            continue;
+                        }
                     }
                 }
                 i += 1;

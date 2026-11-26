@@ -179,27 +179,27 @@ class UnifiedSecurePipeline:
     def rotate_epoch(self, extra_entropy: Optional[bytes] = None) -> int:
         """Continuous Epoch Ratchet (CER): advances to a new epoch key.
 
-        Derives NextEpochRoot = HKDF-SHA384(CurrentEpochRoot || fresh_entropy,
+        Derives NextEpochRoot = HKDF-SHA384(CurrentEpochRoot || extra_entropy,
         salt=CER_HKDF_SALT, info=epoch_bytes). The previous epoch secret is
         wiped from memory immediately.
 
-        HONEST PCS NOTE: this rotation provides forward secrecy and *best-effort*
-        post-compromise healing by mixing in fresh OS entropy (secrets.token_bytes)
-        and any caller-supplied entropy. It is NOT a substitute for a fresh
-        authenticated key exchange (which is the only construction that heals
-        against a fully compromised previous epoch key); use
-        TacticalP2PNode.rekey_with_fresh_kex() for true PCS on the production
-        path. The symmetric CER epoch rotation is retained for low-latency
-        in-band rekeying between full KEX rekeys.
-
-        Returns:
-            The new epoch number.
+        HONEST PCS NOTE: Calling `rotate_epoch()` with `extra_entropy=None` performs
+        forward-only symmetric KDF ratcheting (synchronized between endpoints without
+        additional key exchange, so it does NOT heal from a compromised `epoch_root`).
+        For true Post-Compromise Security (PCS), supply shared fresh KEM/KEX entropy (>=16B)
+        via `extra_entropy` or run `establish_from_triple_hybrid` / `TacticalP2PNode.rekey_with_fresh_kex()`.
         """
         if self._epoch_root_key is None:
             raise PipelineSecurityError("Cannot rotate epoch: root key not established")
+        if extra_entropy is not None and len(extra_entropy) < 16:
+            raise PipelineSecurityError("extra_entropy must be at least 16 bytes")
 
         self._current_epoch += 1
         epoch_info = struct.pack(">I", self._current_epoch)
+
+        ikm = bytearray(self._epoch_root_key)
+        if extra_entropy is not None:
+            ikm.extend(extra_entropy)
 
         try:
             from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -211,19 +211,22 @@ class UnifiedSecurePipeline:
                 salt=CER_HKDF_SALT,
                 info=epoch_info,
             )
-            next_root = bytearray(hkdf.derive(bytes(self._epoch_root_key)))
+            next_root = bytearray(hkdf.derive(bytes(ikm)))
 
-            # Securely wipe previous root key from memory
+            # Securely wipe previous root key and intermediate IKM from memory
             for i in range(len(self._epoch_root_key)):
                 self._epoch_root_key[i] = 0
 
             self._epoch_root_key = next_root
             self._rust_node_fp = None  # Force re-establishment with fresh key
             self.establish_rust_layer(self._epoch_root_key, is_initiator=self._is_initiator)
-            log.info(f"[PIPELINE {self._pipeline_id}] CER Epoch rotated to #{self._current_epoch} (fresh post-compromise key chain)")
+            log.info(f"[PIPELINE {self._pipeline_id}] CER Epoch rotated to #{self._current_epoch}")
             return self._current_epoch
         except Exception as e:
             raise PipelineSecurityError(f"CER epoch rotation failed: {e}") from e
+        finally:
+            for i in range(len(ikm)):
+                ikm[i] = 0
 
     @property
     def is_fully_armed(self) -> bool:
@@ -682,16 +685,17 @@ class AutonomousDefenseRatchet:
         from cryptography.hazmat.primitives import hashes as crypto_hashes
 
         with self._lock:
-            # Advance sending chain key and derive 32-byte message key via HKDF-SHA384
+            # Advance sending chain key and derive domain-separated enc_key and mac_key via HKDF-SHA384
             hkdf = HKDF(
                 algorithm=crypto_hashes.SHA384(),
-                length=64,
+                length=96,
                 salt=self.STEP_SALT,
-                info=struct.pack(">Q", self._send_seq) + b"-step",
+                info=struct.pack(">Q", self._send_seq) + b"-step-v2",
             )
-            derived = hkdf.derive(bytes(self._send_chain_key))
+            derived = bytearray(hkdf.derive(bytes(self._send_chain_key)))
             new_chain = derived[:32]
-            msg_key = derived[32:64]
+            enc_key = bytearray(derived[32:64])
+            mac_key = bytearray(derived[64:96])
 
             for i in range(32):
                 self._send_chain_key[i] = new_chain[i]
@@ -699,20 +703,20 @@ class AutonomousDefenseRatchet:
             seq = self._send_seq
             self._send_seq += 1
 
-        nonce = struct.pack(">Q", seq) + b"\x5A\x47\x44\x50"  # 8 bytes seq + 4 bytes "ZGDP"
-        aad = struct.pack(">Q", seq) + PIPELINE_VERSION
+        try:
+            nonce = struct.pack(">Q", seq) + b"\x5A\x47\x44\x50"  # 8 bytes seq + 4 bytes "ZGDP"
+            aad = struct.pack(">Q", seq) + PIPELINE_VERSION
 
-        aead = AESGCM(msg_key)
-        ciphertext = aead.encrypt(nonce, plaintext, aad)
+            aead = AESGCM(bytes(enc_key))
+            ciphertext = aead.encrypt(nonce, plaintext, aad)
 
-        # Dual MAC verification layer
-        mac = hmac.new(msg_key, aad + nonce + ciphertext, hashlib.sha384).digest()[:32]
-
-        del msg_key
-        del derived
-
-        # Wire format: SEQ(8) + NONCE(12) + MAC(32) + CIPHERTEXT
-        return struct.pack(">Q", seq) + nonce + mac + ciphertext
+            # Separated HMAC verification key (never reused with AESGCM key)
+            mac = hmac.new(bytes(mac_key), aad + nonce + ciphertext, hashlib.sha384).digest()[:32]
+            return struct.pack(">Q", seq) + nonce + mac + ciphertext
+        finally:
+            for buf in (derived, enc_key, mac_key):
+                for i in range(len(buf)):
+                    buf[i] = 0
 
     def decrypt(self, wire_data: bytes) -> bytes:
         """Verify sequence, advance receiving chain, and decrypt."""
@@ -729,7 +733,7 @@ class AutonomousDefenseRatchet:
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
         from cryptography.hazmat.primitives import hashes as crypto_hashes
 
-        # Derive the candidate chain/msg key without mutating receiver state.
+        # Derive the candidate chain/enc/mac keys without mutating receiver state.
         with self._lock:
             if seq < self._recv_seq:
                 raise PipelineSecurityError(
@@ -745,47 +749,51 @@ class AutonomousDefenseRatchet:
             while cur_seq < seq:
                 hkdf_skip = HKDF(
                     algorithm=crypto_hashes.SHA384(),
-                    length=64,
+                    length=96,
                     salt=self.STEP_SALT,
-                    info=struct.pack(">Q", cur_seq) + b"-step",
+                    info=struct.pack(">Q", cur_seq) + b"-step-v2",
                 )
-                skip_derived = hkdf_skip.derive(bytes(chain))
+                skip_derived = bytearray(hkdf_skip.derive(bytes(chain)))
                 chain[:32] = skip_derived[:32]
+                for i in range(len(skip_derived)):
+                    skip_derived[i] = 0
                 cur_seq += 1
 
             hkdf = HKDF(
                 algorithm=crypto_hashes.SHA384(),
-                length=64,
+                length=96,
                 salt=self.STEP_SALT,
-                info=struct.pack(">Q", cur_seq) + b"-step",
+                info=struct.pack(">Q", cur_seq) + b"-step-v2",
             )
-            derived = hkdf.derive(bytes(chain))
+            derived = bytearray(hkdf.derive(bytes(chain)))
             candidate_chain = derived[:32]
-            msg_key = derived[32:64]
+            enc_key = bytearray(derived[32:64])
+            mac_key = bytearray(derived[64:96])
             candidate_seq = cur_seq + 1
 
-        # Authenticate BEFORE committing chain/seq state.
-        aad = struct.pack(">Q", seq) + PIPELINE_VERSION
-        computed_mac = hmac.new(
-            msg_key, aad + nonce + ciphertext, hashlib.sha384).digest()[:32]
-        if not secrets.compare_digest(computed_mac, expected_mac):
-            del msg_key
-            raise PipelineSecurityError("Ratchet message authentication failed")
-
         try:
-            aead = AESGCM(msg_key)
-            plaintext = aead.decrypt(nonce, ciphertext, aad)
-        except Exception as e:
-            del msg_key
-            raise PipelineSecurityError(f"AEAD decryption failed: {e}") from e
+            # Authenticate BEFORE committing chain/seq state.
+            aad = struct.pack(">Q", seq) + PIPELINE_VERSION
+            computed_mac = hmac.new(
+                bytes(mac_key), aad + nonce + ciphertext, hashlib.sha384).digest()[:32]
+            if not secrets.compare_digest(computed_mac, expected_mac):
+                raise PipelineSecurityError("Ratchet message authentication failed")
 
-        # Commit only after both MAC and AEAD succeed.
-        with self._lock:
-            self._recv_chain_key[:] = candidate_chain
-            self._recv_seq = candidate_seq
-        del msg_key
-        del derived
-        return plaintext
+            try:
+                aead = AESGCM(bytes(enc_key))
+                plaintext = aead.decrypt(nonce, ciphertext, aad)
+            except Exception as e:
+                raise PipelineSecurityError(f"AEAD decryption failed: {e}") from e
+
+            # Commit only after both MAC and AEAD succeed.
+            with self._lock:
+                self._recv_chain_key[:] = candidate_chain
+                self._recv_seq = candidate_seq
+            return plaintext
+        finally:
+            for buf in (derived, enc_key, mac_key, chain):
+                for i in range(len(buf)):
+                    buf[i] = 0
 
     def teardown(self):
         """Zeroize all ratchet chain state."""

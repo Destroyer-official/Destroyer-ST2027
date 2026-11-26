@@ -45,7 +45,7 @@ logger = logging.getLogger("witnessed_key_ceremony")
 class WitnessedKeyCeremony:
     """Orchestrates formal FIPS 140-3 Level 4 key ceremony with multi-custodian quorum."""
 
-    def __init__(self, ceremony_id: str = None, quorum_m: int = 2, total_n: int = 3):
+    def __init__(self, ceremony_id: str = None, quorum_m: int = 2, total_n: int = 3, output_dir: Path = None):
         self.ceremony_id = ceremony_id or f"CEREMONY-CNSA2-{int(time.time())}-{secrets.token_hex(4).upper()}"
         self.quorum_m = quorum_m
         self.total_n = total_n
@@ -55,7 +55,7 @@ class WitnessedKeyCeremony:
         self.current_hash = hashlib.sha512(f"GENESIS:{self.ceremony_id}:{self.timestamp}".encode('utf-8')).digest()
         self.generated_keys = {}
         self.receipt = {}
-        self.output_dir = PROJECT_ROOT / "compliance_reports"
+        self.output_dir = Path(output_dir) if output_dir is not None else (PROJECT_ROOT / "compliance_reports")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         # Custodian approval keys (Ed25519). Private halves are held by the
         # harness ONLY for lab auto-approval; production custodians sign

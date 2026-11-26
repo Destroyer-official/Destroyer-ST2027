@@ -69,11 +69,11 @@ PCR_DESCRIPTIONS = {
     7: "Secure Boot Policy, PK, KEK, db, dbx Certificates",
 }
 
-# Check production mode
+# Check production mode via canonical fail-closed gate
 def is_production_mode() -> bool:
     """Return True if strict production gate is armed."""
-    return os.environ.get("P2P_PRODUCTION", "").strip() in ("1", "true", "TRUE") or \
-           os.environ.get("PRODUCTION_GATE_ARMED", "").strip() in ("1", "true", "TRUE")
+    from production_gate import is_production
+    return bool(is_production())
 
 
 def read_live_tpm_pcrs_via_tbs(indices: Optional[List[int]] = None) -> Optional[Dict[int, bytes]]:
@@ -332,6 +332,10 @@ class HardwareEnclaveManager:
         self._tripwire_callbacks: List[Callable[[str, str], None]] = []
         self._is_compromised = False
         self._cng_provider: Optional[int] = None
+        # Ephemeral non-serialized PCR seal root and lab-only in-memory ECDSA keys
+        # (private keys never serialized; rejected in production mode unless backed by silicon).
+        self._seal_root_secret = bytearray(secrets.token_bytes(32))
+        self._lab_sim_keys: Dict[str, Any] = {}
 
         # Initialize default baseline measurements for PCRs 0..7
         self._init_pcr_baseline()
@@ -424,20 +428,35 @@ class HardwareEnclaveManager:
                         cng_k_handle = k_handle
                         logger.info(f"Live Windows CNG Platform Crypto Key created in TPM silicon: {label}")
                 except Exception as e:
-                    logger.warning(f"Live CNG key creation fallback to simulated silicon: {e}")
+                    if is_production_mode() or not self._allow_mock:
+                        raise SiliconDeviceError(
+                            f"Live Windows CNG TPM key creation failed in strict/production mode: {e}"
+                        ) from e
+                    logger.warning(f"Live CNG key creation unavailable; using ephemeral lab keypair: {e}")
 
+            used_real_hardware = bool(cng_k_handle)
             if public_key is None:
-                pub_seed = f"HARDWARE_SILICON_PUBKEY_{backend.value}_{key_id}_{algorithm}".encode("utf-8")
-                public_key = hashlib.sha256(pub_seed).digest()
+                if is_production_mode() or not self._allow_mock:
+                    raise SiliconDeviceError(
+                        f"Physical hardware silicon required for backend '{backend.value}' "
+                        f"in strict/production mode (no software fallback permitted)."
+                    )
+                from cryptography.hazmat.primitives.asymmetric import ec
+                from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+                priv = ec.generate_private_key(ec.SECP256R1())
+                self._lab_sim_keys[key_id] = priv
+                public_key = priv.public_key().public_bytes(
+                    Encoding.X962, PublicFormat.UncompressedPoint
+                )
 
             handle = HardwareKeyHandle(
                 key_id=key_id,
                 backend=backend,
                 algorithm=algorithm,
                 public_key=public_key,
-                hardware_backed=(backend != EnclaveBackendType.MOCK_SILICON),
+                hardware_backed=used_real_hardware,
                 non_exportable=True,
-                in_silicon=True,
+                in_silicon=used_real_hardware,
                 raw_handle=f"SILICON_HANDLE_0x{secrets.token_hex(8)}",
                 cng_key_handle=cng_k_handle,
                 cng_provider_handle=cng_p_handle,
@@ -451,7 +470,9 @@ class HardwareEnclaveManager:
                         digest: bytes) -> bytes:
         """
         Generate a digital signature inside hardware silicon.
-        Private key material NEVER leaves hardware containment and NEVER exists in host CPU RAM.
+        In production mode, refuses to sign without genuine live hardware custody.
+        In lab mode with `allow_mock_in_lab=True`, uses a per-key ephemeral ECDSA SECP256R1
+        keypair (never deterministic public-input hashing).
         """
         if self._is_compromised:
             raise TamperBreachError("Enclave compromised: in-silicon signing refused fail-closed")
@@ -469,24 +490,38 @@ class HardwareEnclaveManager:
                 sig = cng_platform.sign_digest(handle.cng_key_handle, digest)
                 if len(sig) == 64:
                     return sig
+                raise SiliconDeviceError(f"Unexpected CNG signature length: {len(sig)}")
             except Exception as e:
-                logger.warning(f"Live CNG signing failed, using simulated silicon: {e}")
+                if is_production_mode() or not self._allow_mock:
+                    raise SiliconDeviceError(
+                        f"Live CNG TPM signing failed in strict/production mode: {e}"
+                    ) from e
+                logger.warning(f"Live CNG signing failed, falling back to ephemeral lab ECDSA: {e}")
 
-        backend = handle.backend if handle else self.backend_type
-        # In-silicon signature computation (deterministic 64-byte R || S signature)
-        hasher = hashlib.sha256()
-        hasher.update(b"IN_SILICON_SIGNATURE:")
-        hasher.update(backend.value.encode("utf-8"))
-        hasher.update(key_id.encode("utf-8"))
-        hasher.update(digest)
-        sig_half = hasher.digest()
-        return sig_half + sig_half  # 64 bytes
+        if is_production_mode() or not self._allow_mock:
+            raise SiliconDeviceError(
+                "Hardware silicon signing unavailable in strict/production mode; software fallback forbidden."
+            )
+
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+        priv = self._lab_sim_keys.get(key_id)
+        if priv is None:
+            priv = ec.generate_private_key(ec.SECP256R1())
+            self._lab_sim_keys[key_id] = priv
+        der_sig = priv.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+        r, s = utils.decode_dss_signature(der_sig)
+        return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
     def verify_in_silicon(self,
                           key_identifier: Union[HardwareKeyHandle, str],
                           digest: bytes,
                           signature: bytes) -> bool:
-        """Verify an in-silicon signature."""
+        """Verify an in-silicon signature mathematically (fail-closed)."""
+        if len(digest) != 32 or len(signature) != 64:
+            return False
+
         key_id = key_identifier.key_id if isinstance(key_identifier, HardwareKeyHandle) else key_identifier
         handle = self._active_keys.get(key_id)
 
@@ -496,10 +531,25 @@ class HardwareEnclaveManager:
                 cng_platform.verify_with_key(handle.cng_key_handle, digest, signature)
                 return True
             except Exception:
-                pass
+                return False
 
-        expected = self.sign_in_silicon(key_identifier, digest)
-        return hmac.compare_digest(expected, signature)
+        priv = self._lab_sim_keys.get(key_id)
+        if priv is None or is_production_mode() or not self._allow_mock:
+            return False
+
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+
+        try:
+            r = int.from_bytes(signature[:32], "big")
+            s = int.from_bytes(signature[32:], "big")
+            if r <= 0 or s <= 0:
+                return False
+            der_sig = utils.encode_dss_signature(r, s)
+            priv.public_key().verify(der_sig, digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+            return True
+        except Exception:
+            return False
 
     def export_public_key(self, key_identifier: Union[HardwareKeyHandle, str]) -> bytes:
         """
@@ -510,8 +560,11 @@ class HardwareEnclaveManager:
         handle = self._active_keys.get(key_id)
         if handle:
             return handle.public_key
-        pub_seed = f"HARDWARE_SILICON_PUBKEY_{self.backend_type.value}_{key_id}_ECDSA_P256".encode("utf-8")
-        return hashlib.sha256(pub_seed).digest()
+        priv = self._lab_sim_keys.get(key_id)
+        if priv is not None:
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            return priv.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        raise SiliconDeviceError(f"Identity key '{key_id}' not initialized in enclave")
 
     # -------------------------------------------------------------------------
     # Measured Boot PCR Sealing [0..7]
@@ -676,8 +729,24 @@ class HardwareEnclaveManager:
             return plaintext
 
     def _derive_kek(self, policy_digest: bytes, salt: bytes) -> bytes:
-        """Derive KEK from composite PCR policy digest."""
-        return hashlib.sha256(salt + policy_digest + b"DESTROYER-TPM2-PCR-0-7-SEAL-KEK-v1").digest()
+        """Derive PCR KEK mixing non-serialized enclave root secret + composite PCR policy digest."""
+        if not self._seal_root_secret or not any(self._seal_root_secret):
+            raise SiliconDeviceError("Enclave seal root secret has been zeroized; KEK unavailable")
+        if is_production_mode():
+            prov = self._get_cng_provider() if sys.platform == "win32" else 0
+            if not prov and not (Path("/dev/tpmrm0").exists() or Path("/dev/tpm0").exists()):
+                raise SiliconDeviceError(
+                    "Production mode PCR KEK derivation requires hardware TPM silicon; refusing software-only seal"
+                )
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        from cryptography.hazmat.primitives import hashes
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            info=b"DESTROYER-TPM2-PCR-0-7-SEAL-KEK-v2",
+        )
+        return hkdf.derive(bytes(self._seal_root_secret) + policy_digest)
 
     # -------------------------------------------------------------------------
     # Micro-Tamper Tripwire Response & Resource Cleanup
@@ -716,6 +785,9 @@ class HardwareEnclaveManager:
                     except Exception:
                         pass
             self._active_keys.clear()
+            self._lab_sim_keys.clear()
+            for i in range(len(self._seal_root_secret)):
+                self._seal_root_secret[i] = 0
             if self._cng_provider:
                 try:
                     import cng_platform

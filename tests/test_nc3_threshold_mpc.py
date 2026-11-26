@@ -762,6 +762,84 @@ class TestNC3ThresholdMPC(unittest.TestCase):
             verify_threshold_signature_wire(wire_bytes, payload_bytes, self.master_pk_2of3)
         )
 
+    def test_31_blinded_partial_signatures_never_leak_share_or_master_secret(self):
+        """Observing repeated partial signatures must never allow scalar division to recover s_i."""
+        from nc3_threshold_mpc import _P384_N, _point_to_bytes, _schnorr_challenge
+        silo1 = OperatorSiloNode("SILO-ALPHA-01", self.shares_2of3[0], self.commitments_2of3)
+        p1 = create_eam_payload("NONCE-BLIND-1", "USSTRATCOM-OFFUTT")
+        p2 = create_eam_payload("NONCE-BLIND-2", "USSTRATCOM-OFFUTT")
+        sig1 = silo1.compute_partial_signature(p1)
+        sig2 = silo1.compute_partial_signature(p2)
+        self.assertNotEqual(sig1.nonce_commitment, sig2.nonce_commitment)
+        self.assertEqual(len(sig1.nonce_commitment), 49)
+
+        # Naively dividing z_1 * c_1^{-1} mod N must NOT equal s_1
+        q_bytes = _point_to_bytes(self.commitments_2of3.share_points[1])
+        ts_ms = int(round(sig1.timestamp_utc * 1000))
+        c1 = _schnorr_challenge(
+            sig1.nonce_commitment, q_bytes, self.commitments_2of3.salt, 1, ts_ms, sig1.payload_digest, _P384_N
+        )
+        naive_s = (int.from_bytes(sig1.partial_signature_bytes, "big") * pow(c1, _P384_N - 2, _P384_N)) % _P384_N
+        self.assertNotEqual(naive_s, self.shares_2of3[0].share_value)
+
+    def test_32_forged_ceremony_cert_and_missing_commitments_rejected(self):
+        """Missing commitments in verify_and_decrypt_nuclear_eam and forged ceremony_cert must fail closed."""
+        from nc3_nuclear_command import NC3CommandController, NC3SecurityError
+        silo1 = OperatorSiloNode("SILO-NORAD-01", self.shares_2of3[0], self.commitments_2of3)
+        silo2 = OperatorSiloNode("SILO-STRATCOM-02", self.shares_2of3[1], self.commitments_2of3)
+        controller = NC3CommandController()
+        war_key = secrets.token_bytes(32)
+        now_ts = time.time()
+        eam_id = f"EAM-MPC-NOCOMM-{secrets.token_hex(6)}"
+        payload = create_eam_payload("EXEC-TEST-NOCOMM", "STRATCOM", eam_id=eam_id)
+        sig1 = silo1.compute_partial_signature(payload, simulated_timestamp=now_ts)
+        sig2 = silo2.compute_partial_signature(payload, simulated_timestamp=now_ts + 0.05)
+        eam = controller.create_threshold_mpc_eam(
+            directive_code="EXEC-TEST-NOCOMM",
+            target_command="STRATCOM",
+            pal_code="SECRET-PAL",
+            war_key=war_key,
+            partial_signatures=[sig1, sig2],
+            commitments=self.commitments_2of3,
+            master_public_key=self.master_pk_2of3,
+            eam_id=eam_id,
+        )
+        rec1 = controller.generate_officer_credentials("REC-GEN-11", "General", "NORAD")
+        rec2 = controller.generate_officer_credentials("REC-ADM-12", "Admiral", "STRATCOM")
+
+        with self.assertRaises(NC3SecurityError):
+            controller.verify_and_decrypt_nuclear_eam(
+                eam_data=eam.to_dict(),
+                recipient_officer_1=rec1,
+                recipient_officer_2=rec2,
+                sender_officer_1_pub=self.master_pk_2of3,
+                sender_officer_2_pub=self.master_pk_2of3,
+                pal_key=war_key,
+                mpc_commitments=None,
+            )
+
+    def test_33_frost_two_round_ceremony_and_single_use_nonce(self):
+        """Verify 2-round blinded FROST-P384 signing, aggregate verify, and single-use nonce refusal."""
+        from nc3_threshold_mpc import _canonical_payload_digest
+        silo1 = OperatorSiloNode("SILO-ALPHA-01", self.shares_2of3[0], self.commitments_2of3)
+        silo2 = OperatorSiloNode("SILO-BRAVO-02", self.shares_2of3[1], self.commitments_2of3)
+        payload = create_eam_payload("FROST-CEREMONY-1", "USSTRATCOM-OFFUTT")
+        digest = _canonical_payload_digest(payload)
+
+        c1 = silo1.frost_round1_commit(payload)
+        c2 = silo2.frost_round1_commit(payload)
+        p1 = silo1.frost_round2_sign(c1.commitment_id, digest, [c1, c2])
+        p2 = silo2.frost_round2_sign(c2.commitment_id, digest, [c1, c2])
+
+        aggregator = NC3ThresholdAggregator(self.master_pk_2of3, self.commitments_2of3)
+        full_sig = aggregator.aggregate_frost(payload, [p1, p2])
+        self.assertEqual(full_sig.protocol_mode, "FROST_P384_V2")
+        self.assertTrue(aggregator.verify(self.master_pk_2of3, payload, full_sig.to_bytes()))
+
+        # Reuse of Round-1 nonce commitment ID must fail closed
+        with self.assertRaises(NC3SecurityError):
+            silo1.frost_round2_sign(c1.commitment_id, digest, [c1, c2])
+
 
 if __name__ == "__main__":
     unittest.main()

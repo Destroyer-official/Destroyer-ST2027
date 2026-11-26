@@ -334,7 +334,7 @@ class TestWebAuthnL3Presence(unittest.TestCase):
         assertion = self.mgr.create_mock_assertion(c, user_presence=True, user_verification=True)
         ok, reason, meta = self.mgr.verify_assertion(assertion)
         self.assertTrue(ok, f"Verification failed: {reason}")
-        self.assertEqual(meta["tier"], "FIDO2_LEVEL_3_HARDWARE_FIPS")
+        self.assertEqual(meta["tier"], "FIDO2_LEVEL_3_LAB_SIMULATED")
 
         # Second attempt with same challenge must be rejected (replay suppression)
         ok2, reason2, _ = self.mgr.verify_assertion(assertion)
@@ -522,23 +522,33 @@ class TestWebConsoleSecurityHeadersAndEndpoints(unittest.TestCase):
             psk_path = os.path.join(td, "shared.key")
             with open(psk_path, "wb") as f:
                 f.write(b"42" * 32 + b"\n")
+            resp_sk = os.path.join(td, "resp.sk")
+            resp_pk = os.path.join(td, "resp.pk")
+            init_sk = os.path.join(td, "init.sk")
+            init_pk = os.path.join(td, "init.pk")
+            subprocess.run([str(exe_path), "auth-keygen", "--out-sk", resp_sk, "--out-pk", resp_pk], check=True, capture_output=True)
+            subprocess.run([str(exe_path), "auth-keygen", "--out-sk", init_sk, "--out-pk", init_pk], check=True, capture_output=True)
 
-            # Responder: listen on 127.0.0.1:19878, peer 127.0.0.1:19879
+            # Responder: listen on 127.0.0.1:19878, peer 127.0.0.1:19879 (mutual ML-DSA-87 auth)
             cmd_resp = [
                 str(exe_path), "node", "--role", "responder",
                 "--bind", "127.0.0.1:19878", "--to", "127.0.0.1:19879",
-                "--psk-file", psk_path, "--lab",
+                "--psk-file", psk_path,
+                "--auth-sk-file", resp_sk, "--peer-auth-pk-file", init_pk,
+                "--require-mutual-auth",
                 "--state", os.path.join(td, "resp.state"),
-                "--headless", "--recv-count", "1", "--interval-ms", "10", "--timeout-ms", "4000"
+                "--headless", "--recv-count", "1", "--interval-ms", "10", "--timeout-ms", "6000"
             ]
 
-            # Initiator: listen on 127.0.0.1:19879, peer 127.0.0.1:19878
+            # Initiator: listen on 127.0.0.1:19879, peer 127.0.0.1:19878 (mutual ML-DSA-87 auth)
             cmd_init = [
                 str(exe_path), "node", "--role", "initiator",
                 "--bind", "127.0.0.1:19879", "--to", "127.0.0.1:19878",
-                "--psk-file", psk_path, "--lab",
+                "--psk-file", psk_path,
+                "--auth-sk-file", init_sk, "--peer-auth-pk-file", resp_pk,
+                "--require-mutual-auth",
                 "--state", os.path.join(td, "init.state"),
-                "--headless", "--msg", "ALPHA-BRAVO-VERIFIED", "--interval-ms", "10", "--count", "15"
+                "--headless", "--msg", "ALPHA-BRAVO-VERIFIED", "--interval-ms", "10", "--count", "20"
             ]
 
             p_resp = subprocess.Popen(cmd_resp, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

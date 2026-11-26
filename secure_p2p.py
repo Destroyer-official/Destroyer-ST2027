@@ -14694,6 +14694,9 @@ class TacticalP2PNode:
             cmd.append("--stdin")
         if auto_reply:
             if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+                if _production():
+                    from production_gate import enforce_control_plane_boundary
+                    enforce_control_plane_boundary("TacticalP2PNode.start_enclave_channel(auto_reply)")
                 raise SecurityError("Cannot send auto_reply: Zero-Gap multi-layer defense pipeline not armed.")
             try:
                 sealed = self.zero_gap_pipeline.seal(auto_reply.encode("utf-8"), self.zero_gap_ratchet)
@@ -14706,6 +14709,9 @@ class TacticalP2PNode:
         if initial_msgs:
             for m in initial_msgs:
                 if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+                    if _production():
+                        from production_gate import enforce_control_plane_boundary
+                        enforce_control_plane_boundary("TacticalP2PNode.start_enclave_channel(initial_msgs)")
                     raise SecurityError("Cannot send initial_msgs: Zero-Gap multi-layer defense pipeline not armed.")
                 try:
                     sealed = self.zero_gap_pipeline.seal(m.encode("utf-8"), self.zero_gap_ratchet)
@@ -14917,9 +14923,24 @@ class TacticalP2PNode:
                                         else:
                                             dbytes = None
                                 if dfname and dbytes is not None:
-                                    rx_doc_dir = os.path.join(self.work_dir, "received_docs")
+                                    import re as _doc_re
+                                    clean_name = os.path.basename(str(dfname).replace("\\", "/"))
+                                    if (
+                                        not clean_name
+                                        or clean_name in (".", "..")
+                                        or clean_name != dfname
+                                        or not _doc_re.fullmatch(r"[A-Za-z0-9._-]{1,128}", clean_name)
+                                    ):
+                                        print(f"\n{BOLD}{RED}[{self.name} DOC SECURITY REJECT] Unsafe document filename rejected: {dfname!r}{RESET}\n[{self.name}] > ", end="", flush=True)
+                                        if self.acd_engine:
+                                            self.acd_engine.ingest_event("security_violation", peer_id=self.peer_addr, source_ip=self.peer_addr, details={"reason": "doc_path_traversal"})
+                                        continue
+                                    rx_doc_dir = os.path.realpath(os.path.join(self.work_dir, "received_docs"))
                                     os.makedirs(rx_doc_dir, exist_ok=True)
-                                    rx_path = os.path.join(rx_doc_dir, dfname)
+                                    rx_path = os.path.realpath(os.path.join(rx_doc_dir, clean_name))
+                                    if os.path.commonpath([rx_doc_dir, rx_path]) != rx_doc_dir:
+                                        print(f"\n{BOLD}{RED}[{self.name} DOC SECURITY REJECT] Resolved path escapes sandbox.{RESET}\n[{self.name}] > ", end="", flush=True)
+                                        continue
                                     with open(rx_path, "wb") as df:
                                         df.write(dbytes)
                                     print(f"\n{BOLD}{GREEN}[{self.name} IN-BAND DOCUMENT VERIFIED]{RESET} Saved '{dfname}' ({len(dbytes)} bytes, SHA-384: {dsha[:16]}...)\n[{self.name}] > ", end="", flush=True)
@@ -15128,6 +15149,9 @@ class TacticalP2PNode:
             print(f"{RED}[{self.name} ERROR] Paced channel not active. Cannot send payload.{RESET}")
             return False
         if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+            if _production():
+                from production_gate import enforce_control_plane_boundary
+                enforce_control_plane_boundary("TacticalP2PNode.send_large_payload")
             print(f"{RED}[{self.name} ZERO-GAP VIOLATION] Refusing unsealed transmission.{RESET}")
             return False
 
@@ -15196,6 +15220,9 @@ class TacticalP2PNode:
             return False
 
         if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+            if _production():
+                from production_gate import enforce_control_plane_boundary
+                enforce_control_plane_boundary("TacticalP2PNode.send_chat_message")
             print(f"{RED}[{self.name} ZERO-GAP VIOLATION] Refusing to send unsealed message under zero-gap military doctrine.{RESET}")
             if self.acd_engine:
                 self.acd_engine.ingest_event("security_violation", peer_id=self.peer_addr, source_ip=self.peer_addr, details={"reason": "unsealed_attempt"})
@@ -15240,6 +15267,9 @@ class TacticalP2PNode:
             print(f"{RED}[{self.name} ERROR] Channel offline. Cannot transmit EAM.{RESET}")
             return False
         if not (self.zero_gap_pipeline and self.zero_gap_ratchet):
+            if _production():
+                from production_gate import enforce_control_plane_boundary
+                enforce_control_plane_boundary("TacticalP2PNode.send_eam")
             print(f"{RED}[{self.name} ZERO-GAP VIOLATION] EAM requires active multi-layer Zero-Gap pipeline.{RESET}")
             return False
 
@@ -16713,11 +16743,8 @@ def run_production_selftest() -> bool:
         from cryptography.exceptions import InvalidTag
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         key = secrets.token_bytes(32)
-        try:
-            from p2p_core import generate_deterministic_gcm_iv
-            nonce = generate_deterministic_gcm_iv()
-        except Exception:
-            nonce = secrets.token_bytes(12)
+        from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+        nonce = generate_deterministic_gcm_iv()
         aad = b"ST2027-SELFTEST-AAD"
         msg = b"TOP SECRET // NC3 SELFTEST"
         box = AESGCM(key)
@@ -16895,13 +16922,8 @@ def _auto_provision_tactical_credentials() -> None:
 def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer: str = None, ipv6: bool = False) -> int:
     """Launch Base Alpha or Base Bravo with zero manual flags in full DEFCON-1 mode."""
     if not lab:
-        os.environ["P2P_PRODUCTION"] = "1"
-        os.environ["SECURE_P2P_PRODUCTION"] = "1"
-        try:
-            import production_gate
-            production_gate.arm_production_gate()
-        except Exception:
-            pass
+        import production_gate
+        production_gate.arm_production_gate("run_tactical_station")
     _auto_provision_tactical_credentials()
     key_dir = get_tactical_key_dir()
     psk_file = str(key_dir / "tactical_station.psk")
@@ -17268,6 +17290,34 @@ def main(argv=None) -> int:
 
         if not lab_mode:
             # High-Assurance Production Canonical Path (F-02, F-03, F-08 Remediation)
+            if _production():
+                violations = _production_crypto_violations()
+                if violations:
+                    print(f"{RED}[FATAL] Production crypto-policy self-check failed. "
+                          f"Weakening overrides are active:{RESET}")
+                    for item in violations:
+                        print(f"  {RED}- {item}{RESET}")
+                    print(f"{RED}Refusing to start the production message path.{RESET}")
+                    return 2
+
+            require_hw = (
+                os.environ.get("P2P_REQUIRE_HARDWARE") == "1"
+                or os.environ.get("P2P_HARDWARE_STRICT") == "1"
+            )
+            if require_hw:
+                if _production():
+                    os.environ["P2P_FAIL_ON_SOFTWARE_FALLBACK"] = "1"
+                try:
+                    import hw_readiness
+                    _verdicts = hw_readiness.collect()
+                    hw_readiness.render(_verdicts)
+                    if not hw_readiness.strict_ok(_verdicts):
+                        print(f"{RED}[FATAL] Hardware readiness not compliant. Refusing under strict hardware policy.{RESET}")
+                        return 1
+                except Exception as e:
+                    print(f"{YELLOW}[HW READINESS] Unable to evaluate hardware posture: {e}{RESET}")
+                    return 1
+
             local_chan = args.channel_port or (9060 if args.role == "responder" else 9061)
             peer_chan = args.peer_channel_port or (9061 if args.role == "responder" else 9060)
             native_cmd = [

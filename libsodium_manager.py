@@ -28,8 +28,9 @@ def secure_hash(data: bytes) -> bytes:
     return hashlib.sha3_512(data).digest()
 
 def secure_encrypt_aes_256_gcm(plaintext: bytes, key: bytes) -> tuple:
-    """Encrypt with AES-256-GCM (NIST Level 5+)"""
-    iv = secrets.token_bytes(12)  # 96-bit IV for GCM
+    """Encrypt with AES-256-GCM using NIST SP 800-38D Section 8.2.1 deterministic 96-bit IV."""
+    from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+    iv = generate_deterministic_gcm_iv()
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(plaintext) + encryptor.finalize()
@@ -658,11 +659,12 @@ def get_latest_release_info() -> Tuple[Optional[str], Optional[str]]:
     except Exception:
         _has_local = False
     if _air_gapped or _legacy_offline_default or _has_local:
-        LIBSODIUM_VERSION = "1.0.22"
-        LIBSODIUM_TAG = "1.0.22-RELEASE"
+        default_ver = LIBSODIUM_DEFAULT_TAG.split("-")[0]
+        LIBSODIUM_VERSION = default_ver
+        LIBSODIUM_TAG = LIBSODIUM_DEFAULT_TAG
         log.warning(
-            f"Air-gapped/offline mode: skipping libsodium version-check network call; "
-            f"using local libsodium binary ({LIBSODIUM_VERSION}) without external network calls."
+            f"Air-gapped/offline mode: skipping libsodium network release check; "
+            f"retaining local pinned floor ({LIBSODIUM_TAG}) without external network calls."
         )
         return LIBSODIUM_VERSION, LIBSODIUM_TAG
 

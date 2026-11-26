@@ -40,30 +40,10 @@ class DestroyerNode:
             try:
                 from destroyer_core import SecureEngine
             except ImportError as e:
-                import shutil
-                import subprocess
                 import traceback
-
-                built = False
-                if shutil.which("cargo"):
-                    cargo_toml = os.path.join(os.path.dirname(__file__), "rust_data_plane", "Cargo.toml")
-                    if os.path.exists(cargo_toml):
-                        try:
-                            res = subprocess.run(
-                                [sys.executable, "-m", "pip", "install", os.path.dirname(cargo_toml)],
-                                check=False,
-                                capture_output=True,
-                                timeout=180,
-                            )
-                            if res.returncode == 0:
-                                from destroyer_core import SecureEngine
-                                built = True
-                        except Exception:
-                            pass
-            if not built:
                 raise DataPlaneUnavailable(
                     "destroyer_core native module not built. "
-                    "Run `maturin develop -r` in rust_data_plane/ first. "
+                    "Run `maturin develop -r --no-default-features` in rust_data_plane/ first. "
                     f"cause={e!r} exe={sys.executable} "
                     f"path0={sys.path[0] if sys.path else None} "
                     f"trace={traceback.format_exc(limit=3)}"

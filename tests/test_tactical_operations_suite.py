@@ -20,14 +20,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATE = ROOT / "rust_data_plane"
-BIN = CRATE / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
-if not BIN.exists():
-    BIN = CRATE / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+BIN = CRATE / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+RELEASE_BIN = CRATE / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
 
 
 class TestTacticalOperationsSuite(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not BIN.exists():
+            built = subprocess.run(
+                ["cargo", "build", "--offline", "--features", "lab-surfaces", "--bin", "secure-transmit"],
+                capture_output=True, text=True, cwd=str(CRATE), timeout=600
+            )
+            assert built.returncode == 0, f"Failed to build lab-surfaces binary: {built.stderr}"
         assert BIN.exists(), f"Binary {BIN} must be built before running tactical tests."
 
     def test_01_rust_cot_beacon_generation(self):

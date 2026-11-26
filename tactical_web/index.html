@@ -58,15 +58,15 @@
   <!-- MAIN NAVIGATION TABS -->
   <nav id="nav-toolbar" class="nav-toolbar" aria-label="Main Navigation">
     <div class="nav-tabs" role="tablist">
-      <button class="nav-tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="view-overview" onclick="switchTab('overview')">TACTICAL LINK & RADAR</button>
-      <button class="nav-tab" id="tab-comms" role="tab" aria-selected="false" aria-controls="view-comms" onclick="switchTab('comms')">IN-BAND CLASSIFIED COMMS</button>
-      <button class="nav-tab" id="tab-entropy" role="tab" aria-selected="false" aria-controls="view-entropy" onclick="switchTab('entropy')">WIRE CAMOUFLAGE & ENTROPY</button>
-      <button class="nav-tab" id="tab-diode" role="tab" aria-selected="false" aria-controls="view-diode" onclick="switchTab('diode')">SIMPLEX OPTICAL DIODE</button>
-      <button class="nav-tab" id="tab-sovereignty" role="tab" aria-selected="false" aria-controls="view-sovereignty" onclick="switchTab('sovereignty')">DEFENSE SPEC MATRIX</button>
-      <button class="nav-tab red-tab" id="tab-zeroize" role="tab" aria-selected="false" aria-controls="view-zeroize" onclick="switchTab('zeroize')">TPI EMERGENCY PURGE</button>
+      <button class="nav-tab active" id="tab-overview" data-tab="overview" role="tab" aria-selected="true" aria-controls="view-overview">TACTICAL LINK & RADAR</button>
+      <button class="nav-tab" id="tab-comms" data-tab="comms" role="tab" aria-selected="false" aria-controls="view-comms">IN-BAND CLASSIFIED COMMS</button>
+      <button class="nav-tab" id="tab-entropy" data-tab="entropy" role="tab" aria-selected="false" aria-controls="view-entropy">WIRE CAMOUFLAGE & ENTROPY</button>
+      <button class="nav-tab" id="tab-diode" data-tab="diode" role="tab" aria-selected="false" aria-controls="view-diode">SIMPLEX OPTICAL DIODE</button>
+      <button class="nav-tab" id="tab-sovereignty" data-tab="sovereignty" role="tab" aria-selected="false" aria-controls="view-sovereignty">DEFENSE SPEC MATRIX</button>
+      <button class="nav-tab red-tab" id="tab-zeroize" data-tab="zeroize" role="tab" aria-selected="false" aria-controls="view-zeroize">TPI EMERGENCY PURGE</button>
     </div>
     <div class="drill-cta">
-      <button id="btn-run-drill" class="btn btn-primary" onclick="runAutomatedDrill()">
+      <button id="btn-run-drill" class="btn btn-primary">
         <span class="btn-icon">&#9658;</span> RUN AUTOMATED DEFENSE DRILL
       </button>
     </div>
@@ -78,7 +78,7 @@
       <div class="spinner"></div>
       <span id="drill-status-text">INITIATING TACTICAL P2P DRILL...</span>
     </div>
-    <button class="btn btn-sm btn-outline" id="btn-close-drill" onclick="closeDrillStatus()">DISMISS</button>
+    <button class="btn btn-sm btn-outline" id="btn-close-drill">DISMISS</button>
   </aside>
 
   <!-- MAIN CONTENT CONTAINER -->
@@ -116,7 +116,7 @@
                 </div>
                 <div class="bridge-tag">POST-QUANTUM HYBRID LINK</div>
                 <div class="bridge-specs">
-                  <div>ML-KEM-1024 + X25519</div>
+                  <div>ML-KEM-1024 + P-384 (RFC 10024)</div>
                   <div>AES-256-GCM (Directional)</div>
                   <div>20ms Constant Hardware Pacing</div>
                 </div>
@@ -146,7 +146,7 @@
                 <code class="sas-code" id="display-sas">B6CA-0976-AAAD-CA98</code>
               </div>
               <div class="sas-right">
-                <button class="btn btn-success" id="btn-confirm-sas" onclick="confirmSAS()">
+                <button class="btn btn-success" id="btn-confirm-sas">
                   &#10004; SAS MATCH CONFIRMED
                 </button>
               </div>
@@ -186,7 +186,7 @@
             <div class="spec-list">
               <div class="spec-item">
                 <div class="spec-name">POST-QUANTUM KEM</div>
-                <div class="spec-val">ML-KEM-1024 (FIPS 203) + X25519 Hybrid</div>
+                <div class="spec-val">ML-KEM-1024 (FIPS 203) + P-384 (RFC 10024) Hybrid</div>
                 <div class="spec-badge">Category 5 Post-Quantum Security</div>
               </div>
               <div class="spec-item">
@@ -273,15 +273,15 @@
             <!-- CHAT PRESETS -->
             <div class="preset-bar">
               <span class="preset-label">QUICK PRESETS:</span>
-              <button class="preset-btn" onclick="sendPreset('DEFCON-1 ALERT: STRATEGIC SATELLITE LINK ESTABLISHED')">DEFCON-1 ALERT</button>
-              <button class="preset-btn" onclick="sendPreset('RADAR LOCK VERIFIED: CHEYENNE COMPLEX READY')">RADAR LOCK</button>
-              <button class="preset-btn" onclick="sendPreset('TACTICAL ORDER: COMMENCE ALLIED AIR PATROL PATTERN-B')">TACTICAL ORDER</button>
-              <button class="preset-btn" style="border-color: #ff0055; color: #ff0055;" onclick="triggerEAMDirective()">NC3 NUCLEAR EAM</button>
-              <button class="preset-btn" style="border-color: #00f3ff; color: #00f3ff;" onclick="runZGDPTelemetry()">ZERO-GAP TELEMETRY</button>
+              <button class="preset-btn" data-preset="DEFCON-1 ALERT: STRATEGIC SATELLITE LINK ESTABLISHED">DEFCON-1 ALERT</button>
+              <button class="preset-btn" data-preset="RADAR LOCK VERIFIED: CHEYENNE COMPLEX READY">RADAR LOCK</button>
+              <button class="preset-btn" data-preset="TACTICAL ORDER: COMMENCE ALLIED AIR PATROL PATTERN-B">TACTICAL ORDER</button>
+              <button class="preset-btn" id="btn-trigger-eam" style="border-color: #ff0055; color: #ff0055;">NC3 NUCLEAR EAM</button>
+              <button class="preset-btn" id="btn-run-zgdp" style="border-color: #00f3ff; color: #00f3ff;">ZERO-GAP TELEMETRY</button>
             </div>
 
             <!-- MESSAGE INPUT FORM -->
-            <form id="chat-form" class="chat-form" onsubmit="handleSendMsg(event)">
+            <form id="chat-form" class="chat-form">
               <label for="msg-input" class="sr-only">Encrypted Tactical Message</label>
               <input type="text" id="msg-input" class="chat-input" placeholder="Type classified tactical message (embedded in 20ms paced frame)..." autocomplete="off" required>
               <button type="submit" id="btn-send-msg" class="btn btn-primary">
@@ -302,7 +302,7 @@
               Broadcast authenticated situational awareness tracks. Each event is signed with ML-DSA-87 and encoded for tactical links.
             </p>
 
-            <form id="cot-form" class="cot-form" onsubmit="handleSendCoT(event)">
+            <form id="cot-form" class="cot-form">
               <div class="form-row">
                 <div class="form-group">
                   <label for="cot-callsign">UNIT CALLSIGN</label>
@@ -456,7 +456,7 @@
             </div>
 
             <!-- FILE TRANSFER DISPATCHER -->
-            <form id="diode-form" class="diode-form" onsubmit="handleSendDiode(event)">
+            <form id="diode-form" class="diode-form">
               <div class="form-row">
                 <div class="form-group flex-2">
                   <label for="diode-file-name">TACTICAL PAYLOAD / FILE NAME</label>
@@ -629,7 +629,7 @@
             <div class="switch-box" id="switch-box-1">
               <div class="switch-title">OFFICER 1: NORAD ALPHA</div>
               <label class="toggle-switch">
-                <input type="checkbox" id="tpi-switch-1" onchange="checkTPIStatus()">
+                <input type="checkbox" id="tpi-switch-1">
                 <span class="slider"></span>
               </label>
               <span class="switch-status" id="tpi-status-1">LOCKED (UNARMED)</span>
@@ -645,7 +645,7 @@
             <div class="switch-box" id="switch-box-2">
               <div class="switch-title">OFFICER 2: PENTAGON BRAVO</div>
               <label class="toggle-switch">
-                <input type="checkbox" id="tpi-switch-2" onchange="checkTPIStatus()">
+                <input type="checkbox" id="tpi-switch-2">
                 <span class="slider"></span>
               </label>
               <span class="switch-status" id="tpi-status-2">LOCKED (UNARMED)</span>
@@ -654,7 +654,7 @@
 
           <!-- ZEROIZE TRIGGER BUTTON -->
           <div class="zeroize-cta">
-            <button id="btn-zeroize" class="btn btn-danger-large" disabled onclick="executeEmergencyZeroize()">
+            <button id="btn-zeroize" class="btn btn-danger-large" disabled>
               &#9760; EXECUTE NIST SP 800-88 3-PASS PURGE
             </button>
           </div>

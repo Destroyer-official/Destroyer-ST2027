@@ -51,8 +51,26 @@ class CounterExhaustionError(OverflowError):
 # NIST SP 800-38D Section 8.2.1 Deterministic IV Generation
 # ---------------------------------------------------------------------------
 _iv_lock = threading.Lock()
+_iv_pid = os.getpid()
 _iv_fixed_prefix = secrets.token_bytes(4)  # 32-bit device/session context
 _iv_counter = 0
+
+
+def _reseed_iv_state_locked() -> None:
+    """Re-initialize IV prefix and counter after process fork to prevent nonce reuse."""
+    global _iv_pid, _iv_fixed_prefix, _iv_counter
+    _iv_pid = os.getpid()
+    _iv_fixed_prefix = secrets.token_bytes(4)
+    _iv_counter = 0
+
+
+def _on_fork_child() -> None:
+    with _iv_lock:
+        _reseed_iv_state_locked()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_on_fork_child)
 
 
 def generate_deterministic_gcm_iv() -> bytes:
@@ -61,11 +79,13 @@ def generate_deterministic_gcm_iv() -> bytes:
     Format:
         Fixed Context (4 bytes) || Atomic Monotonic Counter (8 bytes, big-endian)
 
-    Guarantees that no two invocations under the same key instantiate the same IV,
-    permanently eliminating birthday-bound collision risk for AES-GCM.
+    Guarantees that no two invocations in this process (or forked children)
+    reuse an IV under the same key.
     """
     global _iv_counter
     with _iv_lock:
+        if os.getpid() != _iv_pid:
+            _reseed_iv_state_locked()
         _iv_counter += 1
         if _iv_counter >= (1 << 64) - 1:
             raise CounterExhaustionError("NIST SP 800-38D 64-bit counter exhaustion: rekey required")

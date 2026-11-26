@@ -1,8 +1,8 @@
 {
   "cmt_laboratory_submittal_manifest": {
-    "manifest_id": "CMT-SUBMITTAL-1a9f5f46-38a1-40dd-9d89-58781cfd1f15",
+    "manifest_id": "CMT-SUBMITTAL-47c11052-f4ff-4663-af97-6f07dba2b14a",
     "schema_version": "2027.1.0-CNSA2-MIL",
-    "published_utc": "2026-11-20T12:39:58.487217+00:00",
+    "published_utc": "2026-11-25T07:48:59.318214+00:00",
     "submittal_type": "Cryptographic Module Testing (CMT) Laboratory Evaluation Dossier & Authorizing Official (AO) Authorization Package",
     "module_identification": {
       "module_name": "Secure P2P Sovereign Cryptographic Module",
@@ -84,9 +84,9 @@
         "category": "NIST ACVP / CAVP Algorithm Validation Evidence",
         "standard": "NIST SP 800-140C / FIPS 203, 204, 205, 197, 180-4, 202",
         "description": "Cryptographic Algorithm Validation Program test evidence: 13/13 passing vectors for ML-KEM-1024, ML-DSA-87, SLH-DSA-256f, AES-256-GCM, and SHA-384/512.",
-        "file_size_bytes": 5063,
-        "sha384": "e830740fe59c034f69ccad36def72605d0bb2bea4248aeaf280eee3f47d474c97357d1741e468c4d0bee9591b295ca8f",
-        "sha512": "6ccf6a24f58a9236f6dfa68e36dc8a38a128a6362ebf8834787c0a4b7900dd5d4996393d1079bd29a64349fe5add30c61944a57378033dd9cd77760caa78e956",
+        "file_size_bytes": 5062,
+        "sha384": "45d07a25c7c17879d0a1e4a19e401c1b3bb8169a67408149132052a354117e0ac0a5d75df2feab5537952dec29bac746",
+        "sha512": "41f838f0ae04bf71363f26477534ad951cb6e589dbb021016dbf3ce552da1d7517b1b800f1bbdeba2cda0219cd75e03e49105bbc4fc638b398b455f6bfbb1b79",
         "cryptographic_signature": {
           "algorithm": "ML-DSA-87 (FIPS 204)",
           "status": "PASS",
@@ -101,8 +101,8 @@
         "standard": "NIST SP 800-53 Rev 5 / CNSSI 1253 / DoD RMF High-High-High",
         "description": "Machine-readable System Security Plan mapped to 12 implemented boundary security controls, signed with ML-DSA-87.",
         "file_size_bytes": 11229,
-        "sha384": "a44c239e3175c66723fffb2314450fe2c9381db6394e737163e28de045646be5e2a9a6a7942cd7d9b4d98668d50ba98d",
-        "sha512": "a47359d92c4bff5cb40b4f1ccb91c238da9753c0f68d3e4814f8e794b83ef74cf8f1291435f1018299d55e1e4ddd6f624453f22031a6b708588e18a866314661",
+        "sha384": "c756cfbab8ff68f4826a9b4f70360e03a032109bde40c92e40df6b87eeb98186dc286808c08e0d0bde37c3dcbb6cd742",
+        "sha512": "8e9cedd836081ff2afb15e8cc09caa7dc955305efb20d62d50b99cb9114ba81b765f9ea8b0ea96f65d19dc0589b9fb08ec85ac588b9768375f046bb49858defc",
         "cryptographic_signature": {
           "algorithm": "ML-DSA-87 (FIPS 204)",
           "status": "PASS",

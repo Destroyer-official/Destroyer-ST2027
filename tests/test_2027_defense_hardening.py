@@ -291,9 +291,16 @@ class Test2027DefenseHardening(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_witnessed_key_ceremony_execution(self):
         """Test that the formal key ceremony executes and produces verifiable receipts."""
+        import tempfile
+        from pathlib import Path
         from scripts.witnessed_key_ceremony import WitnessedKeyCeremony
 
-        ceremony = WitnessedKeyCeremony(ceremony_id=f"TEST-CEREMONY-{int(time.time())}")
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        ceremony = WitnessedKeyCeremony(
+            ceremony_id=f"TEST-CEREMONY-{int(time.time())}",
+            output_dir=Path(temp_dir.name),
+        )
         self.assertTrue(ceremony.register_custodians())
         hsm_status = ceremony.check_hardware_root_of_trust()
         self.assertIn("tpm_available", hsm_status)

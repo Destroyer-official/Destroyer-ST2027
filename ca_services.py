@@ -2057,7 +2057,17 @@ class CAExchange:
             ValueError: If certificates are invalid or missing
             ssl.SSLError: If TLS context creation fails
         """
-        ctx = self.create_client_ctx()
+        if not server_hostname or not str(server_hostname).strip():
+            try:
+                from production_gate import is_production
+                in_prod = is_production()
+            except Exception:
+                in_prod = True
+            if in_prod:
+                raise SecurityError(
+                    "Production TLS client connection requires explicit server_hostname for SAN/CN verification."
+                )
+        ctx = self.create_client_ctx(target_hostname=server_hostname)
         ssl_sock = ctx.wrap_socket(sock, server_hostname=server_hostname, do_handshake_on_connect=False)
         ca_logger.info("Client socket wrapped with strict TLS 1.3 context")
         return ssl_sock

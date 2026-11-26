@@ -18,10 +18,15 @@
 #![no_std]
 #![cfg_attr(not(test), no_main)]
 
+use aes_gcm::{
+    aead::{inout::InOutBuf, AeadInOut, KeyInit, Tag},
+    Aes256Gcm, Nonce,
+};
 #[cfg(not(test))]
 use core::panic::PanicInfo;
 use core::ptr;
 use core::sync::atomic::{compiler_fence, fence, AtomicU32, Ordering};
+use zeroize::Zeroize;
 
 // =============================================================================
 // Memory Mapping Constants (from sel4_mils_appliance/system.xml)
@@ -437,6 +442,10 @@ pub fn emergency_wipe_all() {
 // CRYPTO Domain Controller
 // =============================================================================
 
+pub const DIR_RED_TO_BLACK: u8 = 0x01;
+pub const DIR_BLACK_TO_RED: u8 = 0x02;
+const AAD_DOMAIN: &[u8] = b"sEL4-MILS-CRYPTO-V2:";
+
 pub struct CryptoDomainAppliance {
     pub red_rx: ZeroCopyRxRing,
     pub red_tx: ZeroCopyTxRing,
@@ -444,18 +453,79 @@ pub struct CryptoDomainAppliance {
     pub black_tx: ZeroCopyTxRing,
     pub anti_replay: AntiReplayWindow,
     pub tx_seq: u64,
+    tx_key: [u8; 32],
+    rx_key: [u8; 32],
+    keys_armed: bool,
+}
+
+impl Drop for CryptoDomainAppliance {
+    fn drop(&mut self) {
+        self.zeroize_domain_keys();
+    }
+}
+
+fn is_all_zeros_32(buf: &[u8; 32]) -> bool {
+    let mut acc = 0u8;
+    for &b in buf {
+        acc |= b;
+    }
+    subtle::ConstantTimeEq::ct_eq(&acc, &0u8).into()
+}
+
+fn build_aead_nonce(dir: u8, seq: u64) -> [u8; 12] {
+    let mut n = [0u8; 12];
+    n[0] = dir;
+    n[4..12].copy_from_slice(&seq.to_be_bytes());
+    n
+}
+
+fn build_aead_aad(dir: u8, seq: u64, pt_len: usize) -> [u8; 35] {
+    let mut aad = [0u8; 35];
+    aad[..20].copy_from_slice(AAD_DOMAIN);
+    aad[20..24].copy_from_slice(&RING_VERSION.to_be_bytes());
+    aad[24] = dir;
+    aad[25..33].copy_from_slice(&seq.to_be_bytes());
+    aad[33..35].copy_from_slice(&(pt_len as u16).to_be_bytes());
+    aad
 }
 
 impl CryptoDomainAppliance {
+    /// Attach rings and read provisioned `[tx_key(32) || rx_key(32)]` from `CRYPTO_LOCKED_KEYS_VADDR`.
+    /// Fail-closed: if keys are all-zero (unprovisioned or wiped), `keys_armed = false` and
+    /// all encryption/decryption calls refuse with `RingError::Zeroized`.
     pub unsafe fn init_rings() -> Self {
-        // RED side: RED writes at 0x0000, CRYPTO reads at 0x0000. CRYPTO writes at 0x8000.
-        let red_rx = ZeroCopyRxRing::new(RED_CRYPTO_RING_VADDR + TX_OFFSET);
-        let red_tx = ZeroCopyTxRing::new(RED_CRYPTO_RING_VADDR + RX_OFFSET);
+        let mut tx_key = [0u8; 32];
+        let mut rx_key = [0u8; 32];
+        let key_ptr = CRYPTO_LOCKED_KEYS_VADDR as *const u8;
+        for (i, byte) in tx_key.iter_mut().enumerate() {
+            *byte = ptr::read_volatile(key_ptr.add(i));
+        }
+        for (i, byte) in rx_key.iter_mut().enumerate() {
+            *byte = ptr::read_volatile(key_ptr.add(32 + i));
+        }
+        Self::init_rings_with_keys(tx_key, rx_key)
+    }
 
-        // BLACK side: CRYPTO writes at 0x0000, BLACK reads at 0x0000. BLACK writes at 0x8000.
-        let black_tx = ZeroCopyTxRing::new(CRYPTO_BLACK_RING_VADDR + TX_OFFSET);
-        let black_rx = ZeroCopyRxRing::new(CRYPTO_BLACK_RING_VADDR + RX_OFFSET);
+    pub unsafe fn init_rings_with_keys(tx_key: [u8; 32], rx_key: [u8; 32]) -> Self {
+        Self::from_rings_with_keys(
+            ZeroCopyRxRing::new(RED_CRYPTO_RING_VADDR + TX_OFFSET),
+            ZeroCopyTxRing::new(RED_CRYPTO_RING_VADDR + RX_OFFSET),
+            ZeroCopyRxRing::new(CRYPTO_BLACK_RING_VADDR + RX_OFFSET),
+            ZeroCopyTxRing::new(CRYPTO_BLACK_RING_VADDR + TX_OFFSET),
+            tx_key,
+            rx_key,
+        )
+    }
 
+    pub fn from_rings_with_keys(
+        red_rx: ZeroCopyRxRing,
+        red_tx: ZeroCopyTxRing,
+        black_rx: ZeroCopyRxRing,
+        black_tx: ZeroCopyTxRing,
+        tx_key: [u8; 32],
+        rx_key: [u8; 32],
+    ) -> Self {
+        let keys_armed = !is_all_zeros_32(&tx_key) && !is_all_zeros_32(&rx_key);
         Self {
             red_rx,
             red_tx,
@@ -463,37 +533,58 @@ impl CryptoDomainAppliance {
             black_tx,
             anti_replay: AntiReplayWindow::new(),
             tx_seq: 0,
+            tx_key,
+            rx_key,
+            keys_armed,
         }
     }
 
-    /// Process outbound plaintext from RED domain, encrypt, and forward to BLACK domain.
-    /// Wire frame layout: [uint64 seq (8B)][ciphertext (pt_len B)][16-byte MAC tag]
+    pub fn zeroize_domain_keys(&mut self) {
+        self.tx_key.zeroize();
+        self.rx_key.zeroize();
+        self.keys_armed = false;
+        compiler_fence(Ordering::SeqCst);
+    }
+
+    /// Process outbound plaintext from RED domain, encrypt with AES-256-GCM in-place, and forward to BLACK domain.
+    /// Wire frame layout: `[uint64 seq (8B)][ciphertext (pt_len B)][16-byte GCM tag]`
     pub fn process_red_to_black(&mut self) -> Result<bool, RingError> {
+        if !self.keys_armed || is_all_zeros_32(&self.tx_key) {
+            return Err(RingError::Zeroized);
+        }
         if let Some(rx_frame) = self.red_rx.peek_rx_slot()? {
             let plaintext = rx_frame.payload;
-            let ct_len = 8 + plaintext.len() + 16;
+            let pt_len = plaintext.len();
+            if pt_len > u16::MAX as usize {
+                return Err(RingError::SlotTooLarge);
+            }
+            let seq = self.tx_seq;
+            let next_seq = self.tx_seq.checked_add(1).ok_or(RingError::Zeroized)?;
+            let ct_len = 8 + pt_len + 16;
             let tx_slot = self.black_tx.acquire_tx_slot(ct_len, MSG_TYPE_CIPHERTEXT)?;
 
-            // 1. Pack monotonic sequence number (8 bytes, big-endian)
-            tx_slot[0..8].copy_from_slice(&self.tx_seq.to_be_bytes());
-            self.tx_seq = self.tx_seq.wrapping_add(1);
+            tx_slot[0..8].copy_from_slice(&seq.to_be_bytes());
+            tx_slot[8..8 + pt_len].copy_from_slice(plaintext);
 
-            // 2. Encrypt plaintext into slot
-            for (i, &b) in plaintext.iter().enumerate() {
-                tx_slot[8 + i] = b ^ 0xA5;
-            }
+            let nonce_bytes = build_aead_nonce(DIR_RED_TO_BLACK, seq);
+            let nonce = Nonce::from(nonce_bytes);
+            let aad = build_aead_aad(DIR_RED_TO_BLACK, seq, pt_len);
+            let cipher = Aes256Gcm::new((&self.tx_key).into());
+            let tag = cipher
+                .encrypt_inout_detached(
+                    &nonce,
+                    &aad,
+                    InOutBuf::from(&mut tx_slot[8..8 + pt_len]),
+                )
+                .map_err(|_| RingError::InvalidFrame)?;
+            tx_slot[8 + pt_len..8 + pt_len + 16].copy_from_slice(tag.as_slice());
 
-            // 3. Append 16-byte MAC tag
-            for i in 0..16 {
-                tx_slot[8 + plaintext.len() + i] = 0x5A;
-            }
-
+            self.tx_seq = next_seq;
             self.black_tx.commit_tx_slot(ct_len)?;
             let flen = rx_frame.frame_len;
             drop(rx_frame);
             self.red_rx.commit_rx_slot(flen)?;
 
-            // Notify BLACK domain
             microkit_notify(CHANNEL_BLACK);
             Ok(true)
         } else {
@@ -501,24 +592,24 @@ impl CryptoDomainAppliance {
         }
     }
 
-    /// Process inbound ciphertext from BLACK domain, authenticate, decrypt, and forward to RED.
+    /// Process inbound ciphertext from BLACK domain, authenticate via AES-256-GCM before exposing plaintext, and forward to RED.
     pub fn process_black_to_red(&mut self) -> Result<bool, RingError> {
+        if !self.keys_armed || is_all_zeros_32(&self.rx_key) {
+            return Err(RingError::Zeroized);
+        }
         if let Some(rx_frame) = self.black_rx.peek_rx_slot()? {
             let ciphertext = rx_frame.payload;
             if ciphertext.len() < 24 {
-                // Malformed / truncated frame (< 8B seq + 16B tag)
                 let flen = rx_frame.frame_len;
                 drop(rx_frame);
                 self.black_rx.commit_rx_slot(flen)?;
                 return Ok(false);
             }
 
-            // 1. Extract sequence number
             let mut seq_bytes = [0u8; 8];
             seq_bytes.copy_from_slice(&ciphertext[0..8]);
             let seq = u64::from_be_bytes(seq_bytes);
 
-            // 2. Decoupled Anti-Replay check before authentication
             if !self.anti_replay.check(seq) {
                 let flen = rx_frame.frame_len;
                 drop(rx_frame);
@@ -527,36 +618,44 @@ impl CryptoDomainAppliance {
             }
 
             let pt_len = ciphertext.len() - 24;
-            let tag = &ciphertext[8 + pt_len..];
-
-            // 3. Constant-time MAC tag verification
-            let mut diff = 0u8;
-            for i in 0..16 {
-                diff |= tag[i] ^ 0x5A;
+            if pt_len > u16::MAX as usize {
+                let flen = rx_frame.frame_len;
+                drop(rx_frame);
+                self.black_rx.commit_rx_slot(flen)?;
+                return Ok(false);
             }
-            if diff != 0 {
-                // Authentication failed
+            let mut tag_arr = [0u8; 16];
+            tag_arr.copy_from_slice(&ciphertext[8 + pt_len..8 + pt_len + 16]);
+            let tag = Tag::<Aes256Gcm>::from(tag_arr);
+
+            let tx_slot = self.red_tx.acquire_tx_slot(pt_len, MSG_TYPE_PLAINTEXT)?;
+            tx_slot[..pt_len].copy_from_slice(&ciphertext[8..8 + pt_len]);
+
+            let nonce_bytes = build_aead_nonce(DIR_BLACK_TO_RED, seq);
+            let nonce = Nonce::from(nonce_bytes);
+            let aad = build_aead_aad(DIR_BLACK_TO_RED, seq, pt_len);
+            let cipher = Aes256Gcm::new((&self.rx_key).into());
+            if cipher
+                .decrypt_inout_detached(&nonce, &aad, InOutBuf::from(&mut tx_slot[..pt_len]), &tag)
+                .is_err()
+            {
+                // Scrub unauthenticated buffer bytes immediately before dropping RX frame
+                for byte in tx_slot[..pt_len].iter_mut() {
+                    unsafe { ptr::write_volatile(byte as *mut u8, 0) };
+                }
+                compiler_fence(Ordering::SeqCst);
                 let flen = rx_frame.frame_len;
                 drop(rx_frame);
                 self.black_rx.commit_rx_slot(flen)?;
                 return Ok(false);
             }
 
-            // 4. Mark sequence number in sliding window
             self.anti_replay.mark(seq);
-
-            // 5. Decrypt into RED TX slot
-            let tx_slot = self.red_tx.acquire_tx_slot(pt_len, MSG_TYPE_PLAINTEXT)?;
-            for i in 0..pt_len {
-                tx_slot[i] = ciphertext[8 + i] ^ 0xA5;
-            }
-
             self.red_tx.commit_tx_slot(pt_len)?;
             let flen = rx_frame.frame_len;
             drop(rx_frame);
             self.black_rx.commit_rx_slot(flen)?;
 
-            // Notify RED domain
             microkit_notify(CHANNEL_RED);
             Ok(true)
         } else {
@@ -623,6 +722,9 @@ pub extern "C" fn notified(channel: usize) {
 mod tests {
     use super::*;
 
+    const TEST_KEY_TX: [u8; 32] = [0x17u8; 32];
+    const TEST_KEY_RX: [u8; 32] = [0x93u8; 32];
+
     #[test]
     fn test_crypto_domain_mediation_roundtrip() {
         let mut red_ring = [0u8; RING_TOTAL_SIZE];
@@ -635,44 +737,49 @@ mod tests {
             let mut red_tx = ZeroCopyTxRing::new(red_base + TX_OFFSET);
             let black_rx = ZeroCopyRxRing::new(black_base + TX_OFFSET);
 
-            let mut appliance = CryptoDomainAppliance {
-                red_rx: ZeroCopyRxRing::new(red_base + TX_OFFSET),
-                red_tx: ZeroCopyTxRing::new(red_base + RX_OFFSET),
-                black_rx: ZeroCopyRxRing::new(black_base + RX_OFFSET),
-                black_tx: ZeroCopyTxRing::new(black_base + TX_OFFSET),
-                anti_replay: AntiReplayWindow::new(),
-                tx_seq: 0,
-            };
+            let mut appliance = CryptoDomainAppliance::from_rings_with_keys(
+                ZeroCopyRxRing::new(red_base + TX_OFFSET),
+                ZeroCopyTxRing::new(red_base + RX_OFFSET),
+                ZeroCopyRxRing::new(black_base + RX_OFFSET),
+                ZeroCopyTxRing::new(black_base + TX_OFFSET),
+                TEST_KEY_TX,
+                TEST_KEY_RX,
+            );
 
             // 1. RED sends plaintext
             let msg = b"MISSION CRITICAL TACTICAL DISPATCH";
             red_tx.push(msg, MSG_TYPE_PLAINTEXT).unwrap();
 
-            // 2. CRYPTO mediates RED -> BLACK
+            // 2. CRYPTO mediates RED -> BLACK using real AES-256-GCM
             assert!(appliance.process_red_to_black().unwrap());
 
-            // 3. BLACK receives ciphertext
+            // 3. BLACK receives ciphertext (NOT 0xA5 XOR and NOT trailing 0x5A!)
             let ct_frame = black_rx.peek_rx_slot().unwrap().unwrap();
             assert_eq!(ct_frame.msg_type, MSG_TYPE_CIPHERTEXT);
             assert_ne!(ct_frame.payload, msg);
             assert_eq!(ct_frame.payload.len(), 8 + msg.len() + 16);
+            assert_ne!(ct_frame.payload[8], msg[0] ^ 0xA5);
+            assert_ne!(&ct_frame.payload[ct_frame.payload.len() - 16..], &[0x5Au8; 16]);
             let flen = ct_frame.frame_len;
             drop(ct_frame);
 
             let mut black_rx_mut = ZeroCopyRxRing::new(black_base + TX_OFFSET);
             black_rx_mut.commit_rx_slot(flen).unwrap();
 
-            // 4. BLACK responds with ciphertext: [8B seq][16B ct][16B tag] = 40B
-            let mut black_tx = ZeroCopyTxRing::new(black_base + RX_OFFSET);
+            // 4. Seal authentic inbound ciphertext for BLACK -> RED
+            let pt_inbound = [b'X'; 16];
+            let seq = 1u64;
             let mut resp_buf = [0u8; 8 + 16 + 16];
-            // seq = 1
-            resp_buf[7] = 1;
-            for i in 0..16 {
-                resp_buf[8 + i] = b'X' ^ 0xA5;
-            }
-            for i in 24..40 {
-                resp_buf[i] = 0x5A;
-            }
+            resp_buf[..8].copy_from_slice(&seq.to_be_bytes());
+            resp_buf[8..24].copy_from_slice(&pt_inbound);
+            let nonce = Nonce::from(build_aead_nonce(DIR_BLACK_TO_RED, seq));
+            let aad = build_aead_aad(DIR_BLACK_TO_RED, seq, 16);
+            let tag = Aes256Gcm::new((&TEST_KEY_RX).into())
+                .encrypt_inout_detached(&nonce, &aad, InOutBuf::from(&mut resp_buf[8..24]))
+                .unwrap();
+            resp_buf[24..40].copy_from_slice(tag.as_slice());
+
+            let mut black_tx = ZeroCopyTxRing::new(black_base + RX_OFFSET);
             black_tx.push(&resp_buf, MSG_TYPE_CIPHERTEXT).unwrap();
 
             // 5. CRYPTO mediates BLACK -> RED
@@ -682,7 +789,7 @@ mod tests {
             let red_rx = ZeroCopyRxRing::new(red_base + RX_OFFSET);
             let pt_frame = red_rx.peek_rx_slot().unwrap().unwrap();
             assert_eq!(pt_frame.msg_type, MSG_TYPE_PLAINTEXT);
-            assert_eq!(pt_frame.payload, &[b'X'; 16]);
+            assert_eq!(pt_frame.payload, &pt_inbound);
 
             // 7. Verify replay of identical packet fails closed
             let flen2 = pt_frame.frame_len;
@@ -691,8 +798,31 @@ mod tests {
             red_rx_mut.commit_rx_slot(flen2).unwrap();
 
             black_tx.push(&resp_buf, MSG_TYPE_CIPHERTEXT).unwrap();
-            // Inbound replay with same seq=1 must be rejected by AntiReplayWindow
             assert!(!appliance.process_black_to_red().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_crypto_domain_rejects_unprovisioned_all_zero_keys() {
+        let mut red_ring = [0u8; RING_TOTAL_SIZE];
+        let mut black_ring = [0u8; RING_TOTAL_SIZE];
+        let red_base = red_ring.as_mut_ptr() as usize;
+        let black_base = black_ring.as_mut_ptr() as usize;
+
+        unsafe {
+            let mut red_tx = ZeroCopyTxRing::new(red_base + TX_OFFSET);
+            red_tx.push(b"SECRET", MSG_TYPE_PLAINTEXT).unwrap();
+
+            let mut appliance = CryptoDomainAppliance::from_rings_with_keys(
+                ZeroCopyRxRing::new(red_base + TX_OFFSET),
+                ZeroCopyTxRing::new(red_base + RX_OFFSET),
+                ZeroCopyRxRing::new(black_base + RX_OFFSET),
+                ZeroCopyTxRing::new(black_base + TX_OFFSET),
+                [0u8; 32],
+                [0u8; 32],
+            );
+            assert_eq!(appliance.process_red_to_black(), Err(RingError::Zeroized));
+            assert_eq!(appliance.process_black_to_red(), Err(RingError::Zeroized));
         }
     }
 
@@ -757,28 +887,28 @@ mod tests {
         let black_base = black_ring.as_mut_ptr() as usize;
 
         unsafe {
-            let mut appliance = CryptoDomainAppliance {
-                red_rx: ZeroCopyRxRing::new(red_base + TX_OFFSET),
-                red_tx: ZeroCopyTxRing::new(red_base + RX_OFFSET),
-                black_rx: ZeroCopyRxRing::new(black_base + RX_OFFSET),
-                black_tx: ZeroCopyTxRing::new(black_base + TX_OFFSET),
-                anti_replay: AntiReplayWindow::new(),
-                tx_seq: 0,
-            };
+            let mut appliance = CryptoDomainAppliance::from_rings_with_keys(
+                ZeroCopyRxRing::new(red_base + TX_OFFSET),
+                ZeroCopyTxRing::new(red_base + RX_OFFSET),
+                ZeroCopyRxRing::new(black_base + RX_OFFSET),
+                ZeroCopyTxRing::new(black_base + TX_OFFSET),
+                TEST_KEY_TX,
+                TEST_KEY_RX,
+            );
 
             let mut black_tx = ZeroCopyTxRing::new(black_base + RX_OFFSET);
+            // Forge legacy XOR-0xA5 + 0x5A frame AND verify AES-256-GCM rejects it fail-closed
             let mut resp_buf = [0u8; 8 + 16 + 16];
             resp_buf[7] = 5; // seq = 5
             for i in 0..16 {
                 resp_buf[8 + i] = b'Y' ^ 0xA5;
             }
-            // Corrupted MAC: 0x5B instead of 0x5A
             for i in 24..40 {
-                resp_buf[i] = 0x5B;
+                resp_buf[i] = 0x5A;
             }
             black_tx.push(&resp_buf, MSG_TYPE_CIPHERTEXT).unwrap();
 
-            // Processing tampered packet must fail closed (returns Ok(false))
+            // Forged legacy stub packet must fail closed (returns Ok(false))
             assert!(!appliance.process_black_to_red().unwrap());
 
             // Plaintext ring to RED must remain empty
@@ -796,14 +926,14 @@ mod tests {
         let black_base = black_ring.as_mut_ptr() as usize;
 
         unsafe {
-            let mut appliance = CryptoDomainAppliance {
-                red_rx: ZeroCopyRxRing::new(red_base + TX_OFFSET),
-                red_tx: ZeroCopyTxRing::new(red_base + RX_OFFSET),
-                black_rx: ZeroCopyRxRing::new(black_base + RX_OFFSET),
-                black_tx: ZeroCopyTxRing::new(black_base + TX_OFFSET),
-                anti_replay: AntiReplayWindow::new(),
-                tx_seq: 0,
-            };
+            let mut appliance = CryptoDomainAppliance::from_rings_with_keys(
+                ZeroCopyRxRing::new(red_base + TX_OFFSET),
+                ZeroCopyTxRing::new(red_base + RX_OFFSET),
+                ZeroCopyRxRing::new(black_base + RX_OFFSET),
+                ZeroCopyTxRing::new(black_base + TX_OFFSET),
+                TEST_KEY_TX,
+                TEST_KEY_RX,
+            );
 
             let mut black_tx = ZeroCopyTxRing::new(black_base + RX_OFFSET);
             let truncated_payload = [0xAAu8; 12]; // Less than 24-byte minimum (8B seq + 16B tag)

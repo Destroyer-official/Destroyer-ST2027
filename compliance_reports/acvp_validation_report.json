@@ -1,7 +1,7 @@
 {
   "acvp_version": "1.1.0",
   "standard_alignment": "NIST FIPS 203, FIPS 204, SP 800-38D, CNSA 2.0 Pure",
-  "evaluation_timestamp": "2026-11-20T13:28:57.294467+00:00",
+  "evaluation_timestamp": "2026-11-25T07:49:01.669685+00:00",
   "module_under_test": {
     "name": "Destroyer-ST2027 Sovereign Cryptographic Core",
     "version": "2027.2.0-SOVEREIGN",
@@ -154,5 +154,6 @@
     "failed": 0,
     "pass_rate_pct": 100.0
   },
-  "overall_verdict": "ACVP-VERIFIED-PASSED"
+  "overall_verdict": "ACVP-VERIFIED-PASSED",
+  "signature_status": "UNSIGNED_NO_EPHEMERAL_SELF_SIGNING"
 }

@@ -84,11 +84,15 @@ class TestProductionTier7CSPRNGCompleteAudit(unittest.TestCase):
         self.assertEqual(len(wire_data), 12 + 1024 + 16)
 
     def test_05_cjadc2_guard_compartment(self):
-        """Verify CJADC2 CrossDomainGuard uses secrets for compartment payloads."""
+        """Verify CJADC2 CrossDomainGuard uses deterministic SP 800-38D / CSPRNG nonces without os.urandom."""
+        import cnsa_crypto_gateway
         import cjadc2_cross_domain_guard as cdg
         src = inspect.getsource(cdg.CrossDomainGuard.encrypt_compartment_payload)
         self.assertNotIn("os.urandom", src, "encrypt_compartment_payload must not use os.urandom")
-        self.assertIn("secrets.token_bytes", src, "encrypt_compartment_payload must use secrets.token_bytes")
+        self.assertIn("generate_deterministic_gcm_iv", src, "encrypt_compartment_payload must use canonical deterministic IV")
+        gw_src = inspect.getsource(cnsa_crypto_gateway)
+        self.assertNotIn("os.urandom", gw_src, "cnsa_crypto_gateway must not use os.urandom")
+        self.assertIn("secrets.token_bytes", gw_src, "cnsa_crypto_gateway must seed IV prefix with secrets.token_bytes")
 
         guard = cdg.CrossDomainGuard()
         master_secret = secrets.token_bytes(64)
@@ -99,9 +103,16 @@ class TestProductionTier7CSPRNGCompleteAudit(unittest.TestCase):
             caveat="NOFORN",
             plaintext_bytes=plaintext
         )
+        envelope2 = guard.encrypt_compartment_payload(
+            master_secret=master_secret,
+            classification=cdg.SecurityClassification.TOP_SECRET,
+            caveat="NOFORN",
+            plaintext_bytes=plaintext
+        )
         self.assertIn("ciphertext_hex", envelope)
         self.assertIn("nonce_hex", envelope)
         self.assertEqual(len(bytes.fromhex(envelope["nonce_hex"])), 12)
+        self.assertNotEqual(envelope["nonce_hex"], envelope2["nonce_hex"])
 
     def test_06_emergency_anti_tamper_wiping(self):
         """Verify EmergencyZeroizationEngine DoD 5220.22-M Pass 3 memory scrubbing uses secrets."""

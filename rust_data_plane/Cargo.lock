@@ -231,6 +231,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "cryptoki",
+ "curve25519-dalek",
  "fs2",
  "getrandom",
  "hkdf",

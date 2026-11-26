@@ -173,6 +173,21 @@ class TestFullPipelineSealOpen(unittest.TestCase):
         self.assertEqual(msg_type, PIPELINE_TYPE_NC3)
         self.assertEqual(plaintext, recovered)
 
+    def test_cer_rotate_epoch_actually_mixes_extra_entropy_and_rejects_short(self):
+        """Verify rotate_epoch incorporates extra_entropy instead of silently discarding it."""
+        root_key = secrets.token_bytes(32)
+        p1 = UnifiedSecurePipeline()
+        p2 = UnifiedSecurePipeline()
+        p1.establish_rust_layer(root_key, is_initiator=True)
+        p2.establish_rust_layer(root_key, is_initiator=True)
+
+        p1.rotate_epoch()
+        p2.rotate_epoch(extra_entropy=b"\x99" * 32)
+        self.assertNotEqual(bytes(p1._epoch_root_key), bytes(p2._epoch_root_key))
+
+        with self.assertRaises(PipelineSecurityError):
+            p1.rotate_epoch(extra_entropy=b"too-short")
+
     def test_rust_layer_independence(self):
         """Breaking the Rust outer layer must NOT expose plaintext.
 
@@ -458,6 +473,21 @@ class TestFullPipelineSealOpen(unittest.TestCase):
         msg_type, recovered = pipeline_b.open(sealed, ratchet_b)
         self.assertEqual(msg_type, PIPELINE_TYPE_NC3)
         self.assertEqual(plaintext, recovered)
+
+    def test_cer_rotate_epoch_actually_mixes_extra_entropy_and_rejects_short(self):
+        """Verify rotate_epoch incorporates extra_entropy instead of silently discarding it."""
+        root_key = secrets.token_bytes(32)
+        p1 = UnifiedSecurePipeline()
+        p2 = UnifiedSecurePipeline()
+        p1.establish_rust_layer(root_key, is_initiator=True)
+        p2.establish_rust_layer(root_key, is_initiator=True)
+
+        p1.rotate_epoch()
+        p2.rotate_epoch(extra_entropy=b"\x99" * 32)
+        self.assertNotEqual(bytes(p1._epoch_root_key), bytes(p2._epoch_root_key))
+
+        with self.assertRaises(PipelineSecurityError):
+            p1.rotate_epoch(extra_entropy=b"too-short")
 
 
 if __name__ == "__main__":

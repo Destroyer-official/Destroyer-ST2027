@@ -256,26 +256,27 @@ def run_acvp_pqc_validation() -> Dict[str, Any]:
     report["summary"]["pass_rate_pct"] = pass_rate
     report["overall_verdict"] = "ACVP-VERIFIED-PASSED" if failed_tests == 0 else "ACVP-FAILED"
 
-    # Export report and sign with Post-Quantum ML-DSA-87
+    # Export report (only sign when an external authority signing key is provided)
     out_dir = REPO_ROOT / "compliance_reports"
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / "acvp_validation_report.json"
-    sig_path = out_dir / "acvp_validation_report.json.mldsa87.sig"
-    pub_path = out_dir / "acvp_validation_report.json.mldsa87.pub"
+
+    signing_key_file = os.environ.get("ST2027_REPORT_SIGN_SK_FILE", "").strip()
+    if signing_key_file and Path(signing_key_file).is_file():
+        sk_sig = bytes.fromhex(Path(signing_key_file).read_text(encoding="utf-8").strip())
+        sig_path = out_dir / "acvp_validation_report.json.mldsa87.sig"
+        signature = mldsa.sign(sk_sig, json.dumps(report, indent=2).encode("utf-8"))
+        sig_path.write_bytes(signature)
+        report["signature_status"] = f"SIGNED_AUTHORITY_KEY ({sig_path.name}, {len(signature)}B)"
+    else:
+        report["signature_status"] = "UNSIGNED_NO_EPHEMERAL_SELF_SIGNING"
 
     report_bytes = json.dumps(report, indent=2).encode("utf-8")
     report_path.write_bytes(report_bytes)
 
-    # Sign artifact
-    pk_sig, sk_sig = mldsa.keygen()
-    signature = mldsa.sign(sk_sig, report_bytes)
-    sig_path.write_bytes(signature)
-    pub_path.write_bytes(pk_sig)
-
     print("\n" + "=" * 76)
-    print(f"[ACVP SUCCESS] Test Groups: {total_groups} | Tests: {total_tests} | Passed: {passed_tests} ({pass_rate:.1f}%)")
-    print(f"[ARTIFACT] Report: {report_path.name}")
-    print(f"[SIGNATURE] ML-DSA-87 Signature Generated: {sig_path.name} ({len(signature)} bytes)")
+    print(f"[ACVP SUMMARY] Test Groups: {total_groups} | Tests: {total_tests} | Passed: {passed_tests} ({pass_rate:.1f}%)")
+    print(f"[ARTIFACT] Report: {report_path.name} ({report['signature_status']})")
     print("=" * 76)
 
     return report

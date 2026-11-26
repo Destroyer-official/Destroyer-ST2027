@@ -1,35 +1,75 @@
 /* ==========================================================================
-   DESTROYER TACTICAL P2P DEFCON-1 COMMAND CENTER (JAVASCRIPT LOGIC)
+   DESTROYER TACTICAL P2P LOCAL LAB & TELEMETRY COMMAND CENTER (JS)
+   CSP Level 3 compliant (zero inline handlers, zero eval, zero innerHTML XSS)
    ========================================================================== */
 
-// STATE MANAGEMENT
 const state = {
   currentTab: 'overview',
   cadenceMs: 20,
   quantumBytes: 1232,
-  entropy: 7.998,
-  sentCells: 1482,
-  chaffCells: 1458,
-  dataCells: 24,
+  entropy: null,
+  sentCells: 0,
+  chaffCells: 0,
+  dataCells: 0,
   drops: 0,
-  sas: 'B6CA-0976-AAAD-CA98',
+  sas: 'UNVERIFIED',
   drillRunning: false,
   tpiOfficer1: false,
   tpiOfficer2: false,
-  recentTracks: [
-    { call: 'VIPER_RECON_77', coords: '38.8719° N, -77.0563° W', type: 'a-f-G-U-C', sig: 'ML-DSA-87 VERIFIED' }
-  ]
 };
 
-// INITIALIZATION
 document.addEventListener('DOMContentLoaded', () => {
+  bindUIEvents();
   initZuluClock();
   initOscilloscope();
   initDiodeMatrix();
-  initEntropyGauge();
+  updateEntropyGauge(state.entropy);
   fetchServerStatus();
   setInterval(fetchServerStatus, 2500);
 });
+
+function bindUIEvents() {
+  document.querySelectorAll('.nav-tab[data-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+
+  document.querySelectorAll('.preset-btn[data-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => sendPreset(btn.dataset.preset));
+  });
+
+  const eamBtn = document.getElementById('btn-trigger-eam');
+  if (eamBtn) eamBtn.addEventListener('click', triggerEAMDirective);
+
+  const zgdpBtn = document.getElementById('btn-run-zgdp');
+  if (zgdpBtn) zgdpBtn.addEventListener('click', runZGDPTelemetry);
+
+  const chatForm = document.getElementById('chat-form');
+  if (chatForm) chatForm.addEventListener('submit', handleSendMsg);
+
+  const cotForm = document.getElementById('cot-form');
+  if (cotForm) cotForm.addEventListener('submit', handleSendCoT);
+
+  const diodeForm = document.getElementById('diode-form');
+  if (diodeForm) diodeForm.addEventListener('submit', handleSendDiode);
+
+  const sasBtn = document.getElementById('btn-confirm-sas');
+  if (sasBtn) sasBtn.addEventListener('click', confirmSAS);
+
+  const drillBtn = document.getElementById('btn-run-drill');
+  if (drillBtn) drillBtn.addEventListener('click', runAutomatedDrill);
+
+  const closeDrillBtn = document.getElementById('btn-close-drill');
+  if (closeDrillBtn) closeDrillBtn.addEventListener('click', closeDrillStatus);
+
+  const sw1 = document.getElementById('tpi-switch-1');
+  if (sw1) sw1.addEventListener('change', checkTPIStatus);
+
+  const sw2 = document.getElementById('tpi-switch-2');
+  if (sw2) sw2.addEventListener('change', checkTPIStatus);
+
+  const zeroBtn = document.getElementById('btn-zeroize');
+  if (zeroBtn) zeroBtn.addEventListener('click', executeEmergencyZeroize);
+}
 
 // ZULU CLOCK
 function initZuluClock() {
@@ -51,8 +91,7 @@ function initZuluClock() {
 function switchTab(tabId) {
   state.currentTab = tabId;
 
-  // Update tabs
-  document.querySelectorAll('.nav-tab').forEach(tab => {
+  document.querySelectorAll('.nav-tab').forEach((tab) => {
     tab.classList.remove('active');
     tab.setAttribute('aria-selected', 'false');
   });
@@ -62,8 +101,7 @@ function switchTab(tabId) {
     activeTab.setAttribute('aria-selected', 'true');
   }
 
-  // Update views
-  document.querySelectorAll('.view-panel').forEach(view => {
+  document.querySelectorAll('.view-panel').forEach((view) => {
     view.classList.remove('active');
   });
   const targetView = document.getElementById(`view-${tabId}`);
@@ -72,8 +110,9 @@ function switchTab(tabId) {
   }
 }
 
-// REAL-TIME HARDWARE OSCILLOSCOPE (50 FPS)
-let scopeCanvas, scopeCtx;
+// REAL-TIME HARDWARE OSCILLOSCOPE RENDERER (DISPLAYS LIVE CADENCE STATE)
+let scopeCanvas;
+let scopeCtx;
 const scopeBuffer = new Array(70).fill(1232);
 
 function initOscilloscope() {
@@ -89,7 +128,6 @@ function initOscilloscope() {
     scopeCtx.fillStyle = '#020408';
     scopeCtx.fillRect(0, 0, w, h);
 
-    // Grid lines
     scopeCtx.strokeStyle = 'rgba(0, 243, 255, 0.08)';
     scopeCtx.lineWidth = 1;
 
@@ -106,7 +144,6 @@ function initOscilloscope() {
       scopeCtx.stroke();
     }
 
-    // Baseline invariance level (1232 Bytes)
     const baseLineY = h * 0.45;
     scopeCtx.strokeStyle = 'rgba(0, 255, 136, 0.3)';
     scopeCtx.setLineDash([4, 4]);
@@ -116,7 +153,6 @@ function initOscilloscope() {
     scopeCtx.stroke();
     scopeCtx.setLineDash([]);
 
-    // Draw pulse wave
     scopeCtx.strokeStyle = '#00f3ff';
     scopeCtx.lineWidth = 2;
     scopeCtx.shadowColor = '#00f3ff';
@@ -125,12 +161,9 @@ function initOscilloscope() {
 
     const step = w / scopeBuffer.length;
     for (let i = 0; i < scopeBuffer.length; i++) {
-      const val = scopeBuffer[i];
-      // Square pulse representation
-      const isHigh = (i % 2 === 0);
+      const isHigh = i % 2 === 0;
       const pulseY = isHigh ? baseLineY : h * 0.85;
       const x = i * step;
-
       if (i === 0) {
         scopeCtx.moveTo(x, pulseY);
       } else {
@@ -140,63 +173,52 @@ function initOscilloscope() {
     scopeCtx.stroke();
     scopeCtx.shadowBlur = 0;
 
-    // Active pulse indicator
     scopeCtx.fillStyle = '#00f3ff';
     scopeCtx.font = '10px monospace';
-    scopeCtx.fillText(`FRAME SIZE: 1232B (CONSTANT INVARIANCE) // CADENCE: 20ms`, 15, 20);
+    scopeCtx.fillText(
+      `FRAME SIZE: ${state.quantumBytes}B // CADENCE: ${state.cadenceMs}ms`,
+      15,
+      20
+    );
 
     requestAnimationFrame(renderScope);
   }
 
-  // Update buffer periodically
-  setInterval(() => {
-    scopeBuffer.shift();
-    // Simulate constant 1232 byte frame
-    scopeBuffer.push(1232);
-    state.sentCells += 1;
-    state.chaffCells += 1;
-    const sentEl = document.getElementById('metric-sent-cells');
-    const chaffEl = document.getElementById('metric-chaff-cells');
-    if (sentEl) sentEl.textContent = state.sentCells.toLocaleString();
-    if (chaffEl) chaffEl.textContent = state.chaffCells.toLocaleString();
-  }, 100);
-
   requestAnimationFrame(renderScope);
 }
 
-// SHANNON ENTROPY GAUGE
-function initEntropyGauge() {
+// SHANNON ENTROPY GAUGE (REFLECTS MEASURED BACKEND ENTROPY)
+function updateEntropyGauge(measuredVal) {
   const meterBar = document.getElementById('gauge-meter-bar');
   const readOut = document.getElementById('gauge-entropy-val');
   const measured = document.getElementById('measured-entropy');
+  const headerEntropy = document.getElementById('header-entropy');
 
-  function updateGauge() {
-    // Keep entropy firmly in >7.95 range (7.996 - 7.999)
-    const currentH = (7.996 + Math.random() * 0.003).toFixed(3);
-    if (readOut) readOut.textContent = currentH;
-    if (measured) measured.textContent = `${currentH} bits / byte`;
-
-    if (meterBar) {
-      // Circumference = 2 * pi * 80 ~= 502
-      // 8.000 max -> 0 offset
-      const maxH = 8.000;
-      const pct = parseFloat(currentH) / maxH;
-      const offset = 502 * (1 - pct);
-      meterBar.style.strokeDashoffset = offset;
-    }
+  if (typeof measuredVal !== 'number' || Number.isNaN(measuredVal)) {
+    if (readOut) readOut.textContent = '--';
+    if (measured) measured.textContent = 'AWAITING LIVE TELEMETRY';
+    if (headerEntropy) headerEntropy.textContent = 'H = --';
+    return;
   }
 
-  updateGauge();
-  setInterval(updateGauge, 2000);
+  const formatted = measuredVal.toFixed(3);
+  if (readOut) readOut.textContent = formatted;
+  if (measured) measured.textContent = `${formatted} bits / byte`;
+  if (headerEntropy) headerEntropy.textContent = `H = ${formatted} bits/B`;
+
+  if (meterBar) {
+    const maxH = 8.0;
+    const pct = Math.max(0, Math.min(1, measuredVal / maxH));
+    meterBar.style.strokeDashoffset = String(502 * (1 - pct));
+  }
 }
 
 // SIMPLEX OPTICAL DIODE CHUNK MATRIX
 function initDiodeMatrix() {
   const grid = document.getElementById('chunk-grid');
   if (!grid) return;
-  grid.innerHTML = '';
+  grid.textContent = '';
 
-  // 10 Data Chunks (D00-D09) + 3 Parity Chunks (P00-P02)
   for (let i = 0; i < 10; i++) {
     const d = document.createElement('div');
     d.className = 'chunk-cell';
@@ -213,52 +235,70 @@ function initDiodeMatrix() {
   }
 }
 
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 // WEBAUTHN / FIDO2 LEVEL 3 HARDWARE PRESENCE
 async function acquireWebAuthnL3Assertion() {
   try {
     const cRes = await fetch('/api/auth/webauthn/challenge');
     if (!cRes.ok) return null;
     const challengeData = await cRes.json();
-    const challengeHex = challengeData.challenge;
-    if (!challengeHex) return null;
+    const challengeStr = challengeData.challenge;
+    if (!challengeStr) return null;
 
-    if (window.PublicKeyCredential && navigator.credentials && navigator.credentials.get) {
-      const match = challengeHex.match(/.{1,2}/g);
-      const rawChallenge = new Uint8Array(match ? match.map(b => parseInt(b, 16)) : []);
-      try {
-        const credential = await navigator.credentials.get({
-          publicKey: {
-            challenge: rawChallenge,
-            rpId: window.location.hostname || "127.0.0.1",
-            userVerification: "required",
-            timeout: 10000
-          }
-        });
-        if (credential && credential.response) {
-          const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
-          return {
-            credential_id: credential.id,
-            authenticator_data_b64: b64(credential.response.authenticatorData),
-            client_data_json_b64: b64(credential.response.clientDataJSON),
-            signature_b64: b64(credential.response.signature),
-          };
-        }
-      } catch (e) {
-        console.warn("Hardware WebAuthn prompt canceled or unavailable, falling back to simulated assertion for lab mode", e);
-      }
+    if (!window.PublicKeyCredential || !navigator.credentials || !navigator.credentials.get) {
+      return null;
     }
-    return {
-      credential_id: "fido2-l3-token-primary-001",
-      client_data_json_b64: btoa(JSON.stringify({
-        type: "webauthn.get",
-        challenge: challengeHex,
-        origin: window.location.origin
-      }))
-    };
+
+    const challengeBytes = new TextEncoder().encode(challengeStr);
+    const credential = await navigator.credentials.get({
+      publicKey: {
+        challenge: challengeBytes,
+        rpId: window.location.hostname || '127.0.0.1',
+        userVerification: 'required',
+        timeout: 15000,
+      },
+    });
+    if (credential && credential.response) {
+      return {
+        credential_id: credential.id,
+        authenticator_data_b64: arrayBufferToBase64(credential.response.authenticatorData),
+        client_data_json_b64: arrayBufferToBase64(credential.response.clientDataJSON),
+        signature_b64: arrayBufferToBase64(credential.response.signature),
+      };
+    }
+    return null;
   } catch (err) {
-    console.warn("acquireWebAuthnL3Assertion failed", err);
+    console.warn('Hardware WebAuthn L3 assertion unavailable or canceled', err);
     return null;
   }
+}
+
+async function postApiJson(url, bodyObj) {
+  const assertion = await acquireWebAuthnL3Assertion();
+  const payload = Object.assign({}, bodyObj || {});
+  if (assertion) {
+    payload.webauthn_assertion = assertion;
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+  return { ok: res.ok, status: res.status, data };
 }
 
 // IN-BAND CHAT SENDING
@@ -274,45 +314,33 @@ async function handleSendMsg(event) {
   appendChatMessage(sender, text);
   if (input) input.value = '';
 
-  state.dataCells += 1;
-  const dataEl = document.getElementById('metric-data-cells');
-  if (dataEl) dataEl.textContent = state.dataCells;
-
-  // Flash pulse wave
-  scopeBuffer[scopeBuffer.length - 1] = 1232;
-
-  // Post to backend API
   try {
-    const assertion = await acquireWebAuthnL3Assertion();
-    const payload = { sender, message: text };
-    if (assertion) payload.webauthn_assertion = assertion;
-
-    const res = await fetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+    const { ok, status, data } = await postApiJson('/api/send', {
+      sender,
+      message: text,
     });
-      body: JSON.stringify({ sender, message: text })
-    });
-    const data = await res.json();
-    if (data.reply) {
-      setTimeout(() => {
-        const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
-        appendChatMessage(peer, data.reply);
-      }, 350);
+    if (!ok) {
+      appendChatMessage('SYSTEM', `[REJECTED HTTP ${status}] ${data.error || data.status || 'Authorization denied'}`);
+      return;
     }
-  } catch {
-    // Offline simulation fallback
-    setTimeout(() => {
+    state.dataCells += 1;
+    const dataEl = document.getElementById('metric-data-cells');
+    if (dataEl) dataEl.textContent = String(state.dataCells);
+    scopeBuffer[scopeBuffer.length - 1] = state.quantumBytes;
+
+    if (data.reply) {
       const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
-      appendChatMessage(peer, `ACK // RADAR LOCK ON CELL SEQ #${Math.floor(Math.random()*9000000 + 1000000)} // VERIFIED`);
-    }, 400);
+      const simTag = data.simulated ? ' [SIMULATED]' : '';
+      appendChatMessage(peer, `${data.reply}${simTag}`);
+    }
+  } catch (err) {
+    appendChatMessage('SYSTEM', `[DISPATCH ERROR] Backend unreachable: ${err}`);
   }
 }
 
 function sendPreset(presetText) {
   const input = document.getElementById('msg-input');
-  if (input) {
+  if (input && presetText) {
     input.value = presetText;
     const form = document.getElementById('chat-form');
     if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
@@ -324,24 +352,27 @@ async function triggerEAMDirective() {
   const sender = senderSelect ? senderSelect.value : 'NORAD_ALPHA';
   const directive = 'DEFCON-1 AUTHORIZE STRATCOM STRIKE PACKAGE ALPHA';
 
-  appendChatMessage(sender, `[NC3/EAM-AUTH-DEFCON-1] ${directive} // DUAL-CUSTODIAN 2-OF-2 VERIFIED`);
+  appendChatMessage(sender, `[NC3 EAM REQUEST SUBMITTED] ${directive}`);
 
   try {
-    const res = await fetch('/api/eam', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ originator: sender, directive })
+    const { ok, status, data } = await postApiJson('/api/eam', {
+      originator: sender,
+      directive,
     });
-    const data = await res.json();
-    setTimeout(() => {
-      const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
-      appendChatMessage(peer, `[NC3 EAM RECEIPT CONFIRMED] SHA3: ${data.authenticator_sha3_512 ? data.authenticator_sha3_512.substring(0, 24) : 'VALID'}... // TEMPORAL WINDOW: 120s // EXECUTION ARMED`);
-    }, 400);
-  } catch {
-    setTimeout(() => {
-      const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
-      appendChatMessage(peer, `[NC3 EAM RECEIPT CONFIRMED] DUAL-CUSTODY AUTHENTICATED // TEMPORAL EXPIRY: 120s`);
-    }, 400);
+    if (!ok) {
+      appendChatMessage('SYSTEM', `[NC3 EAM REJECTED HTTP ${status}] ${data.error || data.status || 'Denied'}`);
+      return;
+    }
+    const peer = sender === 'NORAD_ALPHA' ? 'PENTAGON_BRAVO' : 'NORAD_ALPHA';
+    const digestPreview = data.authenticator_sha3_512
+      ? data.authenticator_sha3_512.substring(0, 24)
+      : 'UNAVAILABLE';
+    const modeLabel = data.simulated
+      ? `SIMULATED LAB FIXTURE (${data.dual_custody || 'UNVERIFIED'})`
+      : `VERIFIED RELEASE (${data.dual_custody || '2-OF-2'})`;
+    appendChatMessage(peer, `[NC3 EAM STATUS: ${data.status}] ${modeLabel} // SHA3: ${digestPreview}`);
+  } catch (err) {
+    appendChatMessage('SYSTEM', `[NC3 EAM ERROR] Backend unreachable: ${err}`);
   }
 }
 
@@ -349,22 +380,25 @@ async function runZGDPTelemetry() {
   const senderSelect = document.getElementById('chat-sender-select');
   const sender = senderSelect ? senderSelect.value : 'NORAD_ALPHA';
 
-  appendChatMessage(sender, `[ZGDP QUERY] Requesting multi-language Zero-Gap Defense Pipeline diagnostic sweep...`);
+  appendChatMessage(sender, '[ZGDP QUERY] Requesting Zero-Gap Defense Pipeline diagnostic sweep...');
 
   try {
-    const res = await fetch('/api/zgdp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'ZGDP_DIAGNOSTIC_FRAME' })
+    const { ok, status, data } = await postApiJson('/api/zgdp', {
+      message: 'ZGDP_DIAGNOSTIC_FRAME',
     });
-    const data = await res.json();
-    setTimeout(() => {
-      appendChatMessage('SYSTEM', `[ZGDP TELEMETRY] Rust Bare-Metal Envelope: ${data.rust_bare_metal_envelope ? 'OPERATIONAL' : 'ACTIVE'} // Frame Cell: ${data.sealed_byte_length}B // Entropy H=${data.shannon_entropy} // Pacing: ${data.cadence_ms}ms isochronous`);
-    }, 300);
-  } catch {
-    setTimeout(() => {
-      appendChatMessage('SYSTEM', `[ZGDP TELEMETRY] Multi-Language Dual-Lock: ENFORCED // 15ms Isochronous Hardware Pacing // Quantized Cells: 1232B`);
-    }, 300);
+    if (!ok) {
+      appendChatMessage('SYSTEM', `[ZGDP REJECTED HTTP ${status}] ${data.error || data.status || 'Denied'}`);
+      return;
+    }
+    if (typeof data.shannon_entropy === 'number') {
+      updateEntropyGauge(data.shannon_entropy);
+    }
+    appendChatMessage(
+      'SYSTEM',
+      `[ZGDP TELEMETRY: ${data.status}] Native Envelope: ${Boolean(data.rust_bare_metal_envelope)} // Cell: ${data.sealed_byte_length}B // H=${data.shannon_entropy} // Cadence: ${data.cadence_ms}ms`
+    );
+  } catch (err) {
+    appendChatMessage('SYSTEM', `[ZGDP ERROR] Backend unreachable: ${err}`);
   }
 }
 
@@ -382,19 +416,19 @@ function appendChatMessage(sender, text, isCoT = false) {
   header.className = 'msg-header';
 
   const senderSpan = document.createElement('span');
-  senderSpan.className = `msg-sender ${sender.toLowerCase().includes('norad') ? 'norad' : 'pentagon'}`;
+  senderSpan.className = `msg-sender ${String(sender).toLowerCase().includes('norad') ? 'norad' : 'pentagon'}`;
   senderSpan.textContent = `[${sender}]`;
 
   const tsSpan = document.createElement('span');
   tsSpan.className = 'msg-ts';
-  tsSpan.textContent = `${timeStr} • SHA-384 OK`;
+  tsSpan.textContent = `${timeStr} • SHA-384`;
 
   header.appendChild(senderSpan);
   header.appendChild(tsSpan);
 
   const textSpan = document.createElement('div');
   textSpan.className = 'msg-text';
-  textSpan.textContent = text;
+  textSpan.textContent = String(text);
 
   msgDiv.appendChild(header);
   msgDiv.appendChild(textSpan);
@@ -403,89 +437,124 @@ function appendChatMessage(sender, text, isCoT = false) {
   screen.scrollTop = screen.scrollHeight;
 }
 
-// CURSOR-ON-TARGET (COT) DISPATCHER
+// CURSOR-ON-TARGET (COT) DISPATCHER (SAFE DOM, NO innerHTML)
 async function handleSendCoT(event) {
   event.preventDefault();
-  const callsign = document.getElementById('cot-callsign').value.trim();
-  const type = document.getElementById('cot-type').value;
-  const lat = parseFloat(document.getElementById('cot-lat').value);
-  const lon = parseFloat(document.getElementById('cot-lon').value);
-  const alt = parseFloat(document.getElementById('cot-alt').value) || 0;
+  const callsignEl = document.getElementById('cot-callsign');
+  const typeEl = document.getElementById('cot-type');
+  const latEl = document.getElementById('cot-lat');
+  const lonEl = document.getElementById('cot-lon');
+  const altEl = document.getElementById('cot-alt');
 
-  const cotText = `COT BEACON: Callsign=${callsign} | Type=${type} | Pos=(${lat}, ${lon}, ${alt}m) | ML-DSA-87 Signed`;
-  appendChatMessage('TACTICAL_RADAR', cotText, true);
-
-  // Add to track list
-  const trackList = document.getElementById('cot-tracks-list');
-  if (trackList) {
-    const item = document.createElement('div');
-    item.className = 'cot-track-item';
-    item.innerHTML = `
-      <span class="track-call">${callsign}</span>
-      <span class="track-coords">${lat}° N, ${lon}° W</span>
-      <span class="badge badge-green">ML-DSA-87 VERIFIED</span>
-    `;
-    trackList.prepend(item);
-  }
+  const callsign = callsignEl ? callsignEl.value.trim() : '';
+  const type = typeEl ? typeEl.value : 'a-f-G-U-C';
+  const lat = parseFloat(latEl ? latEl.value : '0');
+  const lon = parseFloat(lonEl ? lonEl.value : '0');
+  const alt = parseFloat(altEl ? altEl.value : '0') || 0;
 
   try {
-    await fetch('/api/cot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callsign, type, lat, lon, alt })
+    const { ok, status, data } = await postApiJson('/api/cot', {
+      callsign,
+      type,
+      lat,
+      lon,
+      alt,
     });
-  } catch {}
+    if (!ok) {
+      appendChatMessage('TACTICAL_RADAR', `[COT REJECTED HTTP ${status}] ${data.error || data.status || 'Denied'}`, true);
+      return;
+    }
+
+    const sigBadge = data.signature_verified ? 'ML-DSA-87 VERIFIED' : 'LOCAL DEMO (UNSIGNED)';
+    appendChatMessage(
+      'TACTICAL_RADAR',
+      `COT BEACON: Callsign=${data.callsign || callsign} | Type=${type} | Pos=(${lat}, ${lon}, ${alt}m) | ${sigBadge}`,
+      true
+    );
+
+    const trackList = document.getElementById('cot-tracks-list');
+    if (trackList) {
+      const item = document.createElement('div');
+      item.className = 'cot-track-item';
+
+      const callSpan = document.createElement('span');
+      callSpan.className = 'track-call';
+      callSpan.textContent = String(data.callsign || callsign);
+
+      const coordsSpan = document.createElement('span');
+      coordsSpan.className = 'track-coords';
+      coordsSpan.textContent = `${lat}° N, ${lon}° W`;
+
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = data.signature_verified ? 'badge badge-green' : 'badge badge-yellow';
+      badgeSpan.textContent = sigBadge;
+
+      item.appendChild(callSpan);
+      item.appendChild(coordsSpan);
+      item.appendChild(badgeSpan);
+      trackList.prepend(item);
+    }
+  } catch (err) {
+    appendChatMessage('TACTICAL_RADAR', `[COT ERROR] Backend unreachable: ${err}`, true);
+  }
 }
 
 // SIMPLEX OPTICAL DIODE BEAMING
 async function handleSendDiode(event) {
   event.preventDefault();
-  const fileName = document.getElementById('diode-file-name').value.trim();
-  const redundancy = document.getElementById('diode-redundancy').value;
+  const fileEl = document.getElementById('diode-file-name');
+  const redEl = document.getElementById('diode-redundancy');
   const statusEl = document.getElementById('diode-fec-status');
   const btn = document.getElementById('btn-send-diode');
 
+  const fileName = fileEl ? fileEl.value.trim() : '';
+  const redundancy = redEl ? redEl.value : '0.30';
+
   if (btn) btn.disabled = true;
   if (statusEl) {
-    statusEl.textContent = 'GENERATING CAUCHY-RS GF(2^8) PARITY...';
+    statusEl.textContent = 'DISPATCHING CAUCHY-RS FEC TRANSFER...';
     statusEl.className = 'badge badge-yellow';
   }
 
-  // Animate chunk cells sequentially
-  const cells = document.querySelectorAll('.chunk-cell');
-  for (let i = 0; i < cells.length; i++) {
-    await new Promise(r => setTimeout(r, 60));
-    cells[i].classList.add('active-beam');
+  try {
+    const { ok, status, data } = await postApiJson('/api/diode/send', {
+      fileName,
+      redundancy,
+    });
+    if (!ok) {
+      if (statusEl) {
+        statusEl.textContent = `REJECTED (HTTP ${status})`;
+        statusEl.className = 'badge badge-red';
+      }
+      appendChatMessage('SIMPLEX_DIODE', `[DIODE REJECTED HTTP ${status}] ${data.error || data.status || 'Denied'}`);
+      return;
+    }
+
+    const total = data.chunks_total || 13;
+    const label = data.simulated
+      ? `SIMULATED EMULATION (${total}/${total} CHUNKS)`
+      : `TRANSFER VERIFIED (${total}/${total} CHUNKS)`;
+    if (statusEl) {
+      statusEl.textContent = label;
+      statusEl.className = data.simulated ? 'badge badge-yellow' : 'badge badge-green';
+    }
+    appendChatMessage('SIMPLEX_DIODE', `[${data.status}] File=${data.file || fileName}: ${data.notice || 'Complete'}`);
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = 'BACKEND UNREACHABLE';
+      statusEl.className = 'badge badge-red';
+    }
+    appendChatMessage('SIMPLEX_DIODE', `[DIODE ERROR] ${err}`);
+  } finally {
+    if (btn) btn.disabled = false;
   }
-
-  if (statusEl) {
-    statusEl.textContent = 'BEAMING UNIDIRECTIONAL PHOTONS...';
-    statusEl.className = 'badge badge-cyan';
-  }
-
-  await new Promise(r => setTimeout(r, 600));
-
-  // Reset cells
-  cells.forEach(c => c.classList.remove('active-beam'));
-
-  if (statusEl) {
-    statusEl.textContent = 'TRANSFER VERIFIED (SHA-384 MATCH)';
-    statusEl.className = 'badge badge-green';
-  }
-  if (btn) btn.disabled = false;
-
-  const hexId = Array.from({length: 4}, () => Math.floor(Math.random()*65536).toString(16).toUpperCase().padStart(4, '0')).join('-');
-  const idEl = document.getElementById('diode-tx-id');
-  if (idEl) idEl.textContent = hexId;
-
-  appendChatMessage('SIMPLEX_DIODE', `DIODE TRANSFER SUCCESS: ${fileName} (13/13 Chunks recovered via Cauchy-RS GF(2^8), SHA-384 root hash attested).`);
 }
 
 // SAS CONFIRMATION
 function confirmSAS() {
   const btn = document.getElementById('btn-confirm-sas');
   if (btn) {
-    btn.innerHTML = '&#10004; VERIFIED MUTUAL MATCH';
+    btn.textContent = 'VERIFIED MUTUAL MATCH (LOCAL OPERATOR CONFIRMATION)';
     btn.className = 'btn btn-success';
     btn.disabled = true;
   }
@@ -517,7 +586,7 @@ function checkTPIStatus() {
 }
 
 async function executeEmergencyZeroize() {
-  if (!confirm('TOP SECRET ALERT: Are you certain you want to trigger NIST SP 800-88 3-Pass Emergency Media Sanitization? All session state and enclave keys will be wiped immediately.')) {
+  if (!confirm('Initiate NIST SP 800-88 3-Pass Emergency Sanitization on local volatile state files?')) {
     return;
   }
 
@@ -531,29 +600,25 @@ async function executeEmergencyZeroize() {
     if (outPre) outPre.textContent = logs;
   }
 
-  appendLog('CRITICAL: EMERGENCY ZEROIZATION INITIATED (TPI DUAL AUTHORIZED)');
-  appendLog('Enclave Channel Disconnected cleanly: Monotonic Counter Flushed');
-  await new Promise(r => setTimeout(r, 300));
+  appendLog('Submitting TPI dual-custody purge command to /api/zeroize...');
+  try {
+    const { ok, status, data } = await postApiJson('/api/zeroize', {
+      confirm: 'ZEROIZE-ALL',
+    });
+    if (!ok) {
+      appendLog(`PURGE REJECTED (HTTP ${status}): ${data.error || data.status || 'Authorization denied'}`);
+      return;
+    }
+    appendLog(`STATUS: ${data.status} | VERDICT: ${data.verdict || ''}`);
+    appendLog(`PURGED TARGETS: ${JSON.stringify(data.purged_targets || [])}`);
 
-  appendLog('PASS 1/3: Writing 0x00 overwrite pattern across all physical blocks...');
-  await new Promise(r => setTimeout(r, 400));
-
-  appendLog('PASS 2/3: Writing 0xFF inversion pattern across all physical blocks...');
-  await new Promise(r => setTimeout(r, 400));
-
-  appendLog('PASS 3/3: Writing CSPRNG random cryptographic noise & flushing physical disk caches...');
-  await new Promise(r => setTimeout(r, 400));
-
-  appendLog('Executing kernel secure unlink and Zero-Fill buffer wipe...');
-  await new Promise(r => setTimeout(r, 200));
-
-  appendLog('SANITIZATION COMPLETED: NIST SP 800-88 Rev 1 Forensic Wipe Attested (2 files purged, 0 bytes retrievable).');
-  appendLog('SYSTEM HALTED: ENCLAVE KEY SANITIZED.');
-
-  const airgapBadge = document.getElementById('airgap-badge');
-  if (airgapBadge) {
-    airgapBadge.textContent = 'SYSTEM SANITIZED (ZEROIZED)';
-    airgapBadge.className = 'status-pill badge-red';
+    const airgapBadge = document.getElementById('airgap-badge');
+    if (airgapBadge && data.status === 'PURGE_COMPLETE') {
+      airgapBadge.textContent = 'SYSTEM SANITIZED (ZEROIZED)';
+      airgapBadge.className = 'status-pill badge-red';
+    }
+  } catch (err) {
+    appendLog(`PURGE ERROR: Backend unreachable: ${err}`);
   }
 }
 
@@ -574,24 +639,15 @@ async function runAutomatedDrill() {
   }
 
   try {
-    setStep('[STEP 1/4] EXECUTING POST-QUANTUM ML-KEM-1024 HYBRID KEY EXCHANGE...');
-    await new Promise(r => setTimeout(r, 700));
-
-    setStep('[STEP 2/4] DERIVING AUTHENTICATED KEY & VERIFYING OUT-OF-BAND SAS CODE...');
-    confirmSAS();
-    await new Promise(r => setTimeout(r, 600));
-
-    setStep('[STEP 3/4] ACTIVATING FULL-DUPLEX 20ms PACED ENCLAVE WITH CSPRNG CHAFF STREAMING...');
-    appendChatMessage('NORAD_ALPHA', 'PENTAGON_CMD_TACTICAL_ORDER_ALPHA_77 // VERIFIED IN-BAND');
-    appendChatMessage('PENTAGON_BRAVO', 'NORAD_DEFCON1_ACK_RADAR_LOCK_CONFIRMED // VERIFIED IN-BAND');
-    await new Promise(r => setTimeout(r, 700));
-
-    setStep('[STEP 4/4] VALIDATING NIST SP 800-88 3-PASS ZEROIZATION HARNESS...');
-    await new Promise(r => setTimeout(r, 600));
-
-    setStep('DRILL COMPLETE: ALL DEFENSE SPECIFICATION CONTROLS SATISFIED (10/10 GATES VERIFIED)');
-  } catch (e) {
-    setStep(`DRILL ERROR: ${e}`);
+    setStep('EXECUTING BACKEND TWO-TERMINAL DEFENSE DRILL (/api/drill)...');
+    const { ok, status, data } = await postApiJson('/api/drill', {});
+    if (!ok) {
+      setStep(`DRILL DENIED/FAILED (HTTP ${status}): ${data.error || data.status || 'Error'}`);
+      return;
+    }
+    setStep(`DRILL RESULT: ${data.status}${data.details ? ' — ' + data.details : ''}`);
+  } catch (err) {
+    setStep(`DRILL ERROR: ${err}`);
   } finally {
     state.drillRunning = false;
     if (btn) btn.disabled = false;
@@ -603,6 +659,16 @@ function closeDrillStatus() {
   if (bar) bar.classList.add('hidden');
 }
 
+function setStatusPillText(pillEl, text, className) {
+  if (!pillEl) return;
+  pillEl.textContent = '';
+  const dot = document.createElement('span');
+  dot.className = 'pill-dot';
+  pillEl.appendChild(dot);
+  pillEl.appendChild(document.createTextNode(` ${text}`));
+  pillEl.className = className;
+}
+
 // FETCH SERVER STATUS
 async function fetchServerStatus() {
   try {
@@ -611,57 +677,61 @@ async function fetchServerStatus() {
     const data = await res.json();
 
     if (data.sas) {
-      state.sas = data.sas;
+      state.sas = String(data.sas);
       const sasEl = document.getElementById('display-sas');
-      if (sasEl) sasEl.textContent = data.sas;
+      if (sasEl) sasEl.textContent = state.sas;
     }
-    if (data.sent_cells) {
+    if (typeof data.entropy_shannon === 'number') {
+      state.entropy = data.entropy_shannon;
+      updateEntropyGauge(state.entropy);
+    }
+    if (typeof data.sent_cells === 'number') {
       state.sentCells = data.sent_cells;
       const sentEl = document.getElementById('metric-sent-cells');
-      if (sentEl) sentEl.textContent = data.sent_cells.toLocaleString();
+      if (sentEl) sentEl.textContent = state.sentCells.toLocaleString();
     }
-    if (data.chaff_cells) {
+    if (typeof data.chaff_cells === 'number') {
       state.chaffCells = data.chaff_cells;
       const chaffEl = document.getElementById('metric-chaff-cells');
-      if (chaffEl) chaffEl.textContent = data.chaff_cells.toLocaleString();
+      if (chaffEl) chaffEl.textContent = state.chaffCells.toLocaleString();
     }
-    if (data.drops !== undefined) {
+    if (typeof data.drops === 'number') {
       state.drops = data.drops;
       const dropsEl = document.getElementById('metric-drops');
-      if (dropsEl) dropsEl.textContent = data.drops;
+      if (dropsEl) dropsEl.textContent = String(state.drops);
     }
     if (data.pcr_0) {
       const p0 = document.getElementById('pcr-0');
-      if (p0) p0.textContent = data.pcr_0.substring(0, 19).toUpperCase();
+      if (p0) p0.textContent = String(data.pcr_0).substring(0, 19).toUpperCase();
     }
     if (data.pcr_7) {
       const p7 = document.getElementById('pcr-7');
-      if (p7) p7.textContent = data.pcr_7.substring(0, 19).toUpperCase();
+      if (p7) p7.textContent = String(data.pcr_7).substring(0, 19).toUpperCase();
     }
     if (data.pcr_11) {
       const p11 = document.getElementById('pcr-11');
-      if (p11) p11.textContent = data.pcr_11.substring(0, 19).toUpperCase();
+      if (p11) p11.textContent = String(data.pcr_11).substring(0, 19).toUpperCase();
     }
     if (data.mtls_profile) {
       const pivEl = document.getElementById('mtls-piv-badge');
-      if (pivEl) {
-        const details = data.mtls_profile.client_cert_details || {};
-        if (data.mtls_profile.client_cert_present || details.valid) {
-          const edipi = details.edipi || 'VERIFIED';
-          pivEl.innerHTML = `<span class="pill-dot"></span> CAC/PIV: ${edipi} (mTLS 1.3)`;
-          pivEl.className = 'status-pill green-pill';
-        } else {
-          pivEl.innerHTML = '<span class="pill-dot"></span> CAC/PIV: UNATTACHED';
-          pivEl.className = 'status-pill yellow-pill';
-        }
+      const details = data.mtls_profile.client_cert_details || {};
+      if (data.mtls_profile.client_cert_present || details.valid) {
+        const edipi = String(details.edipi || 'VERIFIED');
+        setStatusPillText(pivEl, `CAC/PIV: ${edipi} (mTLS 1.3)`, 'status-pill green-pill');
+      } else {
+        setStatusPillText(pivEl, 'CAC/PIV: UNATTACHED', 'status-pill yellow-pill');
       }
     }
     if (data.webauthn_profile) {
       const wEl = document.getElementById('webauthn-badge');
-      if (wEl) {
-        wEl.innerHTML = '<span class="pill-dot"></span> FIDO2 L3: HARDWARE ARMED';
-        wEl.className = 'status-pill green-pill';
-      }
+      const count = Number(data.webauthn_profile.registered_credentials_count || 0);
+      setStatusPillText(
+        wEl,
+        count > 0 ? `FIDO2 L3: ${count} KEY(S) REGISTERED` : 'FIDO2 L3: NO KEY REGISTERED',
+        count > 0 ? 'status-pill green-pill' : 'status-pill yellow-pill'
+      );
     }
-  } catch {}
+  } catch (err) {
+    console.debug('fetchServerStatus error', err);
+  }
 }

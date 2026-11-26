@@ -295,7 +295,7 @@ class TestPqZkpIdentity(unittest.TestCase):
             self.verifier.verify_attestation(proof, nonce, ClearanceLevel.SECRET)
 
     def test_12_rust_core_pq_zkp_fast_path_direct(self):
-        """Verify native Rust CorePqZkp methods directly."""
+        """Verify native Rust CorePqZkp methods directly and negative ZKP soundness guards."""
         self.assertTrue(IS_NATIVE)
 
         fp = secrets.token_bytes(32)
@@ -307,6 +307,37 @@ class TestPqZkpIdentity(unittest.TestCase):
         root, leaves = CorePqZkp.build_merkle_accumulator([leaf_hash])
         self.assertEqual(len(root), 32)
         self.assertEqual(len(leaves), 256)
+
+    def test_13_corrupted_response_forged_nullifier_legacy_pqzkp1_and_strict_pq_fail_closed(self):
+        """Ensure PQZKP2 verifies response scalars & key-image nullifier, rejects PQZKP1, and discloses non-PQ."""
+        self.assertFalse(CorePqZkp.is_post_quantum())
+        prover = PqZkpIdentityProver(self.ssbn_sub, self.accumulator, leaf_index=0)
+        epoch = secrets.token_bytes(16)
+        nonce = secrets.token_bytes(32)
+        wire = bytearray(prover.generate_attestation_proof(ClearanceLevel.SECRET, epoch, nonce))
+
+        # 1. Corrupt trailing ring response scalar byte -> must fail closed
+        bad_resp = bytearray(wire)
+        bad_resp[-5] ^= 0xFF
+        with self.assertRaises(ForgedProofError):
+            self.verifier.verify_attestation(bytes(bad_resp), nonce, ClearanceLevel.SECRET, epoch_id=epoch)
+
+        # 2. Replace nullifier byte -> must fail closed (nullifier bound to ring equations)
+        bad_null = bytearray(wire)
+        bad_null[60] ^= 0x01
+        with self.assertRaises(ForgedProofError):
+            self.verifier.verify_attestation(bytes(bad_null), nonce, ClearanceLevel.SECRET, epoch_id=epoch)
+
+        # 3. Legacy PQZKP1 wire must fail closed
+        legacy = bytearray(wire)
+        legacy[:6] = b"PQZKP1"
+        with self.assertRaises(ForgedProofError):
+            self.verifier.verify_attestation(bytes(legacy), nonce, ClearanceLevel.SECRET, epoch_id=epoch)
+
+        # 4. strict_pq=True must refuse classical bLSAG honestly
+        strict_verifier = PqZkpIdentityVerifier(self.accumulator.root, strict_pq=True)
+        with self.assertRaises(ForgedProofError):
+            strict_verifier.verify_attestation(bytes(wire), nonce, ClearanceLevel.SECRET, epoch_id=epoch)
 
 
 if __name__ == "__main__":

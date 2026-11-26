@@ -45,9 +45,16 @@ def test_f01_f07_requirements_test_pinned_safely():
     assert "scipy" in content, "scipy must be declared in test requirements"
 
 
-def test_f02_tactical_node_kex_command_arguments():
+def test_f02_tactical_node_kex_command_arguments(tmp_path):
     """F-02: Verify negotiate_hybrid_kex forwards --psk-file, --auth-sk-file, --peer-auth-pk-file, etc."""
     from secure_p2p import TacticalP2PNode
+
+    psk_file = str(tmp_path / "test.psk")
+    auth_sk_file = str(tmp_path / "test.auth.sk")
+    peer_auth_pk_file = str(tmp_path / "test.auth.pk")
+    node_cert_file = str(tmp_path / "test.der")
+    peer_cert_file = str(tmp_path / "peer.crt")
+    root_ca_file = str(tmp_path / "ca.der")
 
     node = TacticalP2PNode(
         name="TEST_NODE",
@@ -56,12 +63,12 @@ def test_f02_tactical_node_kex_command_arguments():
         peer_addr="127.0.0.1",
         kex_port=9051,
         channel_port=9061,
-        psk_file="/tmp/test.psk",
-        auth_sk_file="/tmp/test.auth.sk",
-        peer_auth_pk_file="/tmp/test.auth.pk",
-        node_cert_file="/tmp/test.der",
-        peer_cert_file="/tmp/peer.crt",
-        root_ca_file="/tmp/ca.der",
+        psk_file=psk_file,
+        auth_sk_file=auth_sk_file,
+        peer_auth_pk_file=peer_auth_pk_file,
+        node_cert_file=node_cert_file,
+        peer_cert_file=peer_cert_file,
+        root_ca_file=root_ca_file,
         require_root_ca=False,
         lab_mode=False
     )
@@ -78,19 +85,19 @@ def test_f02_tactical_node_kex_command_arguments():
 
             call_args = mock_popen.call_args[0][0]
             assert "--psk-file" in call_args
-            assert "/tmp/test.psk" in call_args
+            assert psk_file in call_args
             assert "--auth-sk-file" in call_args
-            assert "/tmp/test.auth.sk" in call_args
+            assert auth_sk_file in call_args
             assert "--peer-auth-pk-file" in call_args
-            assert "/tmp/test.auth.pk" in call_args
+            assert peer_auth_pk_file in call_args
             assert "--cert-file" in call_args
-            assert "/tmp/test.der" in call_args
+            assert node_cert_file in call_args
             assert "--ca-file" in call_args
-            assert "/tmp/ca.der" in call_args
+            assert root_ca_file in call_args
             assert "--lab" not in call_args
 
 
-def test_f03_production_secret_boundary_no_python_key_read():
+def test_f03_production_secret_boundary_no_python_key_read(tmp_path):
     """F-03: Verify in production mode negotiate_hybrid_kex does not read key files into Python bytes."""
     from secure_p2p import TacticalP2PNode
 
@@ -101,9 +108,9 @@ def test_f03_production_secret_boundary_no_python_key_read():
         peer_addr="127.0.0.1",
         kex_port=9050,
         channel_port=9060,
-        psk_file="/tmp/test.psk",
-        auth_sk_file="/tmp/test.auth.sk",
-        peer_auth_pk_file="/tmp/test.auth.pk",
+        psk_file=str(tmp_path / "test.psk"),
+        auth_sk_file=str(tmp_path / "test.auth.sk"),
+        peer_auth_pk_file=str(tmp_path / "test.auth.pk"),
         require_root_ca=False,
         lab_mode=False
     )
@@ -186,11 +193,11 @@ def test_f05_memlock_custody_strict_mode():
 
 
 def test_f06_formal_checker_strict_requires_proverif():
-    """F-06: Verify docs/formal/check.sh exits with failure when --strict is requested without proverif."""
+    """F-06: Verify docs/formal/check.sh fails closed without proverif unless structural-only opted in."""
     check_script = Path("docs/formal/check.sh")
     assert check_script.exists()
     content = check_script.read_text(encoding="utf-8")
-    assert 'if [ "$STRICT" = "1" ] || [ "${CI:-}" = "true" ]; then' in content
+    assert 'if [ "$STRICT" = "1" ] || [ "$ALLOW_STRUCTURAL_ONLY" != "1" ] || [ "${CI:-}" = "true" ]; then' in content
     assert "FAIL: proverif not installed" in content
 
 

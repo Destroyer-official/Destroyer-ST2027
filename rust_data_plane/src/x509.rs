@@ -534,12 +534,22 @@ impl PqX509Certificate {
         serial[16 - serial_raw.len()..].copy_from_slice(&serial_raw);
         idx += 1;
 
-        // TBS Signature Alg
-        let _tbs_sig_alg = &tbs_items[idx];
+        // TBS Signature Alg (must match outer Certificate.signatureAlgorithm)
+        let tbs_sig_alg_seq = parse_sequence_from_el(&tbs_items[idx])?;
+        if tbs_sig_alg_seq.is_empty() {
+            return Err(CoreError::Malformed);
+        }
+        let tbs_sig_alg_oid = parse_oid(&tbs_sig_alg_seq[0])?;
+        if tbs_sig_alg_oid != sig_alg_oid {
+            return Err(CoreError::Malformed);
+        }
         idx += 1;
 
         // Issuer Name
         let issuer = parse_common_name(&tbs_items[idx])?;
+        if issuer.is_empty() {
+            return Err(CoreError::Malformed);
+        }
         idx += 1;
 
         // Validity: SEQUENCE { notBefore, notAfter }
@@ -553,6 +563,9 @@ impl PqX509Certificate {
 
         // Subject Name
         let subject = parse_common_name(&tbs_items[idx])?;
+        if subject.is_empty() {
+            return Err(CoreError::Malformed);
+        }
         idx += 1;
 
         // SubjectPublicKeyInfo: SEQUENCE { AlgorithmIdentifier, BIT STRING }
@@ -579,38 +592,46 @@ impl PqX509Certificate {
         // Parse optional extensions: [3] EXPLICIT Extensions
         let mut custodian_sigs = Vec::new();
         while idx < tbs_items.len() {
-            if tbs_items[idx].tag == TAG_CONTEXT_3 {
-                let ext_items = parse_sequence(tbs_items[idx].value)?;
-                for ext in ext_items {
-                    let ext_seq = parse_sequence_from_el(&ext)?;
-                    if ext_seq.len() >= 2 {
-                        let ext_oid = parse_oid(&ext_seq[0])?;
-                        if ext_oid == OID_THRESHOLD_SIGS {
-                            // Value is OCTET STRING wrapping SEQUENCE OF CustodianSignature
-                            let ext_val_bytes = if ext_seq[1].tag == TAG_OCTET_STRING {
-                                ext_seq[1].value
-                            } else {
-                                ext_seq.last().unwrap().value
-                            };
-                            if let Ok(sig_items) = parse_sequence(ext_val_bytes) {
-                                for s_el in sig_items {
-                                    if let Ok(s_seq) = parse_sequence_from_el(&s_el) {
-                                        if s_seq.len() >= 2 {
-                                            if let (Ok(label), Ok(sig)) = (
-                                                std::str::from_utf8(s_seq[0].value),
-                                                parse_bit_string(&s_seq[1]),
-                                            ) {
-                                                custodian_sigs.push(CustodianSig {
-                                                    custodian: label.to_string(),
-                                                    sig: sig.to_vec(),
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            if tbs_items[idx].tag != TAG_CONTEXT_3 {
+                return Err(CoreError::Malformed);
+            }
+            let ext_items = parse_sequence(tbs_items[idx].value)?;
+            for ext in ext_items {
+                let ext_seq = parse_sequence_from_el(&ext)?;
+                if ext_seq.len() < 2 || ext_seq.len() > 3 {
+                    return Err(CoreError::Malformed);
+                }
+                let ext_oid = parse_oid(&ext_seq[0])?;
+                let (is_critical, val_el) = if ext_seq.len() == 3 {
+                    if ext_seq[1].tag != 0x01 || ext_seq[1].value.len() != 1 {
+                        return Err(CoreError::Malformed);
                     }
+                    (ext_seq[1].value[0] != 0, &ext_seq[2])
+                } else {
+                    (false, &ext_seq[1])
+                };
+
+                if ext_oid == OID_THRESHOLD_SIGS {
+                    if val_el.tag != TAG_OCTET_STRING {
+                        return Err(CoreError::Malformed);
+                    }
+                    let sig_items = parse_sequence(val_el.value)?;
+                    for s_el in sig_items {
+                        let s_seq = parse_sequence_from_el(&s_el)?;
+                        if s_seq.len() != 2 {
+                            return Err(CoreError::Malformed);
+                        }
+                        let label = std::str::from_utf8(s_seq[0].value)
+                            .map_err(|_| CoreError::Malformed)?;
+                        let sig = parse_bit_string(&s_seq[1])?;
+                        custodian_sigs.push(CustodianSig {
+                            custodian: label.to_string(),
+                            sig: sig.to_vec(),
+                        });
+                    }
+                } else if is_critical {
+                    // RFC 5280 Section 4.2: unrecognized critical extensions MUST be rejected.
+                    return Err(CoreError::Malformed);
                 }
             }
             idx += 1;
@@ -741,6 +762,11 @@ impl PqX509Certificate {
 
         let mut seen = HashSet::new();
         let mut valid = 0usize;
+        let mut primary_matched = false;
+
+        if self.primary_sig.is_empty() {
+            return Err(CoreError::AuthRequired);
+        }
 
         for entry in &self.custodian_sigs {
             if !seen.insert(entry.custodian.as_str()) {
@@ -757,12 +783,15 @@ impl PqX509Certificate {
 
             if ok_raw || ok_canon {
                 valid += 1;
+                if entry.sig == self.primary_sig {
+                    primary_matched = true;
+                }
             } else {
                 return Err(CoreError::AuthRequired);
             }
         }
 
-        if valid < QUORUM {
+        if valid < QUORUM || !primary_matched {
             return Err(CoreError::AuthRequired);
         }
         Ok(())
@@ -844,12 +873,22 @@ impl PqX509Crl {
             idx += 1;
         }
 
-        // Signature AlgorithmIdentifier
-        let _tbs_sig_alg = &tbs_items[idx];
+        // Signature AlgorithmIdentifier (must match outer CRL signatureAlgorithm)
+        let tbs_sig_alg_seq = parse_sequence_from_el(&tbs_items[idx])?;
+        if tbs_sig_alg_seq.is_empty() {
+            return Err(CoreError::Malformed);
+        }
+        let tbs_sig_alg_oid = parse_oid(&tbs_sig_alg_seq[0])?;
+        if tbs_sig_alg_oid != sig_alg_oid {
+            return Err(CoreError::Malformed);
+        }
         idx += 1;
 
         // Issuer Name
         let issuer = parse_common_name(&tbs_items[idx])?;
+        if issuer.is_empty() {
+            return Err(CoreError::Malformed);
+        }
         idx += 1;
 
         // thisUpdate
@@ -889,39 +928,54 @@ impl PqX509Crl {
         let mut custodian_sigs = Vec::new();
 
         while idx < tbs_items.len() {
-            if tbs_items[idx].tag == TAG_CONTEXT_0 {
-                let ext_items = parse_sequence(tbs_items[idx].value)?;
-                for ext in ext_items {
-                    if let Ok(ext_seq) = parse_sequence_from_el(&ext) {
-                        if ext_seq.len() >= 2 {
-                            let ext_oid = parse_oid(&ext_seq[0])?;
-                            if ext_oid == OID_CRL_NUMBER {
-                                let octet_bytes = ext_seq.last().unwrap().value;
-                                if let Ok((int_el, _)) = parse_tlv(octet_bytes) {
-                                    crl_number = parse_integer_u64(&int_el).unwrap_or(0);
-                                }
-                            } else if ext_oid == OID_THRESHOLD_SIGS {
-                                let octet_bytes = ext_seq.last().unwrap().value;
-                                if let Ok(sig_items) = parse_sequence(octet_bytes) {
-                                    for s_el in sig_items {
-                                        if let Ok(s_seq) = parse_sequence_from_el(&s_el) {
-                                            if s_seq.len() >= 2 {
-                                                if let (Ok(label), Ok(sig)) = (
-                                                    std::str::from_utf8(s_seq[0].value),
-                                                    parse_bit_string(&s_seq[1]),
-                                                ) {
-                                                    custodian_sigs.push(CustodianSig {
-                                                        custodian: label.to_string(),
-                                                        sig: sig.to_vec(),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            if tbs_items[idx].tag != TAG_CONTEXT_0 {
+                return Err(CoreError::Malformed);
+            }
+            let ext_items = parse_sequence(tbs_items[idx].value)?;
+            for ext in ext_items {
+                let ext_seq = parse_sequence_from_el(&ext)?;
+                if ext_seq.len() < 2 || ext_seq.len() > 3 {
+                    return Err(CoreError::Malformed);
+                }
+                let ext_oid = parse_oid(&ext_seq[0])?;
+                let (is_critical, val_el) = if ext_seq.len() == 3 {
+                    if ext_seq[1].tag != 0x01 || ext_seq[1].value.len() != 1 {
+                        return Err(CoreError::Malformed);
                     }
+                    (ext_seq[1].value[0] != 0, &ext_seq[2])
+                } else {
+                    (false, &ext_seq[1])
+                };
+
+                if ext_oid == OID_CRL_NUMBER {
+                    if val_el.tag != TAG_OCTET_STRING {
+                        return Err(CoreError::Malformed);
+                    }
+                    let (int_el, rem) = parse_tlv(val_el.value)?;
+                    if !rem.is_empty() {
+                        return Err(CoreError::Malformed);
+                    }
+                    crl_number = parse_integer_u64(&int_el)?;
+                } else if ext_oid == OID_THRESHOLD_SIGS {
+                    if val_el.tag != TAG_OCTET_STRING {
+                        return Err(CoreError::Malformed);
+                    }
+                    let sig_items = parse_sequence(val_el.value)?;
+                    for s_el in sig_items {
+                        let s_seq = parse_sequence_from_el(&s_el)?;
+                        if s_seq.len() != 2 {
+                            return Err(CoreError::Malformed);
+                        }
+                        let label = std::str::from_utf8(s_seq[0].value)
+                            .map_err(|_| CoreError::Malformed)?;
+                        let sig = parse_bit_string(&s_seq[1])?;
+                        custodian_sigs.push(CustodianSig {
+                            custodian: label.to_string(),
+                            sig: sig.to_vec(),
+                        });
+                    }
+                } else if is_critical {
+                    return Err(CoreError::Malformed);
                 }
             }
             idx += 1;
@@ -1035,6 +1089,11 @@ impl PqX509Crl {
 
         let mut seen = HashSet::new();
         let mut valid = 0usize;
+        let mut primary_matched = false;
+
+        if self.primary_sig.is_empty() {
+            return Err(CoreError::AuthRequired);
+        }
 
         let canonical_crl = crl_tbs_bytes(
             self.crl_number,
@@ -1057,12 +1116,15 @@ impl PqX509Crl {
 
             if ok_canon || ok_raw {
                 valid += 1;
+                if entry.sig == self.primary_sig {
+                    primary_matched = true;
+                }
             } else {
                 return Err(CoreError::AuthRequired);
             }
         }
 
-        if valid < QUORUM {
+        if valid < QUORUM || !primary_matched {
             return Err(CoreError::AuthRequired);
         }
         Ok(())
@@ -1270,7 +1332,9 @@ mod tests {
         assert_eq!(parsed.custodian_sigs.len(), 3);
 
         // Valid timestamp within thisUpdate..nextUpdate window
-        parsed.verify_threshold(&ca.custodians, (now + 100) as f64).unwrap();
+        parsed
+            .verify_threshold(&ca.custodians, (now + 100) as f64)
+            .unwrap();
 
         // Expired CRL fails closed with CoreError::Stale
         let expired_ts = (now + 86400 + 400) as f64;
@@ -1284,6 +1348,87 @@ mod tests {
         assert_eq!(
             parsed.verify_threshold(&ca.custodians, premature_ts),
             Err(CoreError::Stale)
+        );
+    }
+
+    #[test]
+    fn test_x509_forged_primary_sig_and_mismatched_tbs_alg_rejected() {
+        let ca = init_test_ca();
+        let (_subj_sk, subj_vk) = Mldsa87SigningKey::generate().unwrap();
+        let mut subj_pk = [0u8; MLDSA87_PK];
+        subj_pk.copy_from_slice(&subj_vk.to_bytes());
+
+        let signers_refs: Vec<(&str, &Mldsa87SigningKey)> = vec![
+            (&ca.labels[0], &ca.signers[0]),
+            (&ca.labels[1], &ca.signers[1]),
+            (&ca.labels[2], &ca.signers[2]),
+        ];
+        let now = 1_700_000_000u64;
+        let mut cert = issue_x509_certificate(
+            [0x7Cu8; 16],
+            "tactical-node-bravo",
+            &subj_pk,
+            now,
+            now + 3600,
+            &signers_refs,
+            Some(OID_ML_DSA_87_NIST),
+        )
+        .unwrap();
+
+        // 1. Primary signature replaced with junk bytes must fail verify_threshold
+        cert.primary_sig = vec![0xAAu8; 32];
+        assert_eq!(
+            cert.verify_threshold(&ca.custodians, (now + 50) as f64),
+            Err(CoreError::AuthRequired)
+        );
+
+        // 2. Construct certificate whose TBS AlgorithmIdentifier disagrees with outer sigAlg
+        let ver_ctx = encode_tlv(TAG_CONTEXT_0, &encode_tlv(TAG_INTEGER, &[0x02]));
+        let serial_int = encode_integer_bytes(&cert.serial);
+        let outer_alg = encode_algorithm_identifier(OID_ML_DSA_87_NIST);
+        let inner_alg = encode_algorithm_identifier(OID_ML_DSA_87_IBM);
+        let issuer_name = encode_common_name("OFFLINE-ROOT-3OF5");
+        let nb = encode_generalized_time(now);
+        let na = encode_generalized_time(now + 3600);
+        let validity = encode_sequence(&[&nb, &na]);
+        let subj_name = encode_common_name("tactical-node-bravo");
+        let spki = encode_subject_public_key_info(OID_ML_DSA_87_NIST, &subj_pk).unwrap();
+        let mismatched_tbs = encode_sequence(&[
+            &ver_ctx,
+            &serial_int,
+            &inner_alg,
+            &issuer_name,
+            &validity,
+            &subj_name,
+            &spki,
+        ]);
+        let sig_val = encode_bit_string(&cert.custodian_sigs[0].sig);
+        let bad_der = encode_sequence(&[&mismatched_tbs, &outer_alg, &sig_val]);
+        assert_eq!(
+            PqX509Certificate::from_der(&bad_der).err(),
+            Some(CoreError::Malformed)
+        );
+
+        // 3. Unknown CRITICAL extension must fail closed per RFC 5280
+        let crit_oid = encode_oid("1.2.3.4.5.6.7.8");
+        let crit_bool = encode_tlv(0x01, &[0xFF]);
+        let crit_val = encode_octet_string(b"critical-policy");
+        let crit_ext = encode_sequence(&[&crit_oid, &crit_bool, &crit_val]);
+        let exts_ctx = encode_tlv(TAG_CONTEXT_3, &encode_sequence(&[&crit_ext]));
+        let tbs_with_crit = encode_sequence(&[
+            &ver_ctx,
+            &serial_int,
+            &outer_alg,
+            &issuer_name,
+            &validity,
+            &subj_name,
+            &spki,
+            &exts_ctx,
+        ]);
+        let crit_der = encode_sequence(&[&tbs_with_crit, &outer_alg, &sig_val]);
+        assert_eq!(
+            PqX509Certificate::from_der(&crit_der).err(),
+            Some(CoreError::Malformed)
         );
     }
 }

@@ -112,7 +112,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
         if os.name != "nt" and not BIN.exists():
             pass  # build step below (re)builds it regardless
         built = subprocess.run(
-            ["cargo", "build", "--offline", "--bin", "secure-transmit"],
+            ["cargo", "build", "--offline", "--features", "lab-surfaces", "--bin", "secure-transmit"],
             capture_output=True, text=True, timeout=600, cwd=str(CRATE))
         assert built.returncode == 0, f"cargo build failed:\n{built.stderr[-2000:]}"
         assert BIN.exists(), "binary missing after successful build"
