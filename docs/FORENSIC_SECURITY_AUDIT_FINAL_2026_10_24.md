@@ -74,7 +74,7 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 +----------------------------------+       +------------------------------------+
 |   CROSS-DOMAIN GUARD (CJADC2)    |       |   HIGH-ASSURANCE RUST DATA PLANE   |
 |   Bell-LaPadula Security Policy  |       |   destroyer_core (ZeroizeOnDrop)   |
-|   Compartment Keys via HKDF-512  |       |   RFC 6479 2048-Packet Bitmap      |
+|   Compartment Keys via HKDF-512  |       |   RFC 6479 1024-Packet Bitmap      |
 |   Optical Data Diode Unicast     |       |   TPM 2.0 NV Monotonic Anti-Rollback|
 +----------------------------------+       +------------------------------------+
                                       |
