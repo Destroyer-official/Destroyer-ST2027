@@ -6,6 +6,7 @@ Provides message encryption and decryption with double ratchet.
 
 import asyncio
 import time
+from typing import Any
 from ..base import BaseModule, CryptoError
 
 

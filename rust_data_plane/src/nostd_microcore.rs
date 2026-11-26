@@ -315,9 +315,7 @@ pub fn encode_stack_frame<const N: usize>(
 
     // 3. Padding (deterministic zero padding)
     let pad_end = p_end + pad_l;
-    for i in p_end..pad_end {
-        out.data[i] = 0x00;
-    }
+    out.data[p_end..pad_end].fill(0x00);
 
     // 4. Tag
     out.data[pad_end..pad_end + NOSTD_TAG_LEN].copy_from_slice(tag);

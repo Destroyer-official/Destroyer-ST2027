@@ -387,19 +387,23 @@ def load_hardware_psk(source: Any) -> HardwarePsk:
             raise PermissionError(
                 f"Hardware PSK file {p} has insecure permissions {oct(mode)} (must be 0600)"
             )
-    data = p.read_bytes().strip()
-    if len(data) == 64:
-        try:
-            data = bytes.fromhex(data.decode("ascii"))
-        except Exception:
-            pass
-    elif len(data) in (43, 44):
-        try:
-            decoded = base64.b64decode(data)
-            if len(decoded) == 32:
-                data = decoded
-        except Exception:
-            pass
+    raw_bytes = p.read_bytes()
+    if len(raw_bytes) == HPSK_LEN:
+        data = raw_bytes
+    else:
+        data = raw_bytes.strip()
+        if len(data) == 64:
+            try:
+                data = bytes.fromhex(data.decode("ascii"))
+            except Exception:
+                pass
+        elif len(data) in (43, 44):
+            try:
+                decoded = base64.b64decode(data)
+                if len(decoded) == 32:
+                    data = decoded
+            except Exception:
+                pass
 
     if len(data) != HPSK_LEN:
         raise ValueError(

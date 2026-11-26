@@ -454,6 +454,7 @@ impl NvTransport for WindowsTbsTransport {
     }
 }
 
+#[cfg(windows)]
 fn parse_tpm_rc(resp: &[u8]) -> Result<u32, NvError> {
     let rc_bytes: [u8; 4] = resp
         .get(6..10)

@@ -21,7 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 _this_dir = Path(__file__).resolve().parent
 REPO_ROOT = _this_dir.parent if _this_dir.name == "scripts" else _this_dir

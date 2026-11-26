@@ -570,9 +570,12 @@ def test_hypothesis_chaff_entropy_high_across_seeds(seed):
     s0 = splitmix64(seed)
     s1 = splitmix64(s0)
 
-    out = bytearray(1229)
+    # Evaluate 4 consecutive 1229-byte chaff cells (4916 bytes) so finite-sample Miller-Madow bias
+    # does not false-fail ideal uniform distributions at > 7.8 bits/byte.
+    sample_len = 1229 * 4
+    out = bytearray(sample_len)
     idx = 0
-    while idx < 1229:
+    while idx < sample_len:
         s1_tmp = s0
         s0_tmp = s1
         res = (s0_tmp + s1_tmp) & 0xFFFFFFFFFFFFFFFF
@@ -582,7 +585,7 @@ def test_hypothesis_chaff_entropy_high_across_seeds(seed):
 
         b = res.to_bytes(8, "little")
         for byte in b:
-            if idx < 1229:
+            if idx < sample_len:
                 out[idx] = byte
                 idx += 1
             else:
@@ -594,7 +597,7 @@ def test_hypothesis_chaff_entropy_high_across_seeds(seed):
 
     entropy = 0.0
     for cnt in counts.values():
-        p = cnt / 1229
+        p = cnt / sample_len
         entropy -= p * math.log2(p)
 
     assert entropy > 7.8, f"Seed {seed} generated insufficient entropy: {entropy:.2f}"

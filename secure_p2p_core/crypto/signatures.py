@@ -5,7 +5,7 @@ Provides quantum-resistant signature generation and verification using
 NIST-standardized post-quantum algorithms.
 """
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 import hmac
 import hashlib
 from ..base import BaseModule, CryptoError

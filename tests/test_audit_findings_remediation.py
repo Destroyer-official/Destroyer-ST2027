@@ -180,7 +180,10 @@ def test_f04_defense_ci_builds_without_default_features():
     assert ci_file.exists()
     content = ci_file.read_text(encoding="utf-8")
     assert "cargo build --release --no-default-features" in content
-    assert "maturin develop -r --no-default-features" in content
+    assert (
+        "'maturin', 'build', '-r', '--no-default-features'" in content
+        or "maturin develop -r --no-default-features" in content
+    )
 
 
 def test_f05_memlock_custody_strict_mode():

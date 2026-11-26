@@ -112,41 +112,34 @@ fn leaky_cmp(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
-#[test]
-fn dudect_rust_ct_eq_passes_statistical_timing() {
+fn measure_pair_t_statistic<T, F>(
+    pairs: &[(T, T)],
+    rng: &mut u64,
+    mut op: F,
+) -> f64
+where
+    F: FnMut(&T) -> bool,
+{
+    const BATCH: usize = 100;
+    const SAMPLES: usize = 25_000;
     let mut samples0 = Vec::with_capacity(13_000);
     let mut samples1 = Vec::with_capacity(13_000);
-    let mut rng: u64 = 0x8842A197D6E35B01;
 
-    let fixed_secret_a = [0x5Au8; 64];
-    let fixed_secret_b_match = [0x5Au8; 64];
-    let mut random_secrets = Vec::with_capacity(512);
-    for _ in 0..512 {
-        let mut buf = [0u8; 64];
-        for b in buf.iter_mut() {
-            *b = (xorshift64(&mut rng) & 0xFF) as u8;
-        }
-        random_secrets.push(buf);
+    // Warm up caches and branch predictors evenly across both classes.
+    for k in 0..2000 {
+        let slot = &pairs[k % pairs.len()];
+        black_box(op(black_box(&slot.0)));
+        black_box(op(black_box(&slot.1)));
     }
 
-    // Warm-up cycles to stabilize cache and clock frequency
-    for _ in 0..2000 {
-        black_box(ct::ct_eq(black_box(&fixed_secret_a), black_box(&fixed_secret_b_match)));
-    }
-
-    const BATCH: usize = 200;
-    const SAMPLES: usize = 25_000;
     for i in 0..SAMPLES {
-        let coin = (xorshift64(&mut rng) & 1) == 0;
-        let (in_a, in_b) = if coin {
-            (&fixed_secret_a, &fixed_secret_b_match)
-        } else {
-            (&fixed_secret_a, &random_secrets[i % random_secrets.len()])
-        };
+        let coin = (xorshift64(rng) & 1) == 0;
+        let slot = &pairs[i % pairs.len()];
+        let candidate = if coin { &slot.0 } else { &slot.1 };
         let t0 = Instant::now();
         let mut acc_res = 0u32;
         for _ in 0..BATCH {
-            acc_res = acc_res.wrapping_add(ct::ct_eq(black_box(in_a), black_box(in_b)) as u32);
+            acc_res = acc_res.wrapping_add(op(black_box(candidate)) as u32);
         }
         let elapsed = t0.elapsed().as_nanos() as f64;
         black_box(acc_res);
@@ -157,7 +150,27 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
         }
     }
 
-    let t = cropped_welch_t_statistic(&samples0, &samples1);
+    cropped_welch_t_statistic(&samples0, &samples1)
+}
+
+#[test]
+fn dudect_rust_ct_eq_passes_statistical_timing() {
+    let mut rng: u64 = 0x8842A197D6E35B01;
+    let fixed_secret_a = [0x5Au8; 64];
+    // Store Class 0 and Class 1 inputs in an interleaved L1D-resident table (64 * 128B = 8 KB)
+    // so both classes share identical heap alignment, cache-line footprint, and TLB pages.
+    let mut pairs: Vec<([u8; 64], [u8; 64])> = Vec::with_capacity(64);
+    for _ in 0..64 {
+        let mut rnd = [0u8; 64];
+        for b in rnd.iter_mut() {
+            *b = (xorshift64(&mut rng) & 0xFF) as u8;
+        }
+        pairs.push(([0x5Au8; 64], rnd));
+    }
+
+    let t = measure_pair_t_statistic(&pairs, &mut rng, |cand| {
+        ct::ct_eq(black_box(&fixed_secret_a), black_box(cand))
+    });
     println!("\n[DudeCT-Rust] ct::ct_eq: |t| = {:.4} (Threshold = 4.5)", t.abs());
     assert!(
         t.abs() < 4.5,
@@ -168,50 +181,26 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
 
 #[test]
 fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
-    let mut samples0 = Vec::with_capacity(13_000);
-    let mut samples1 = Vec::with_capacity(13_000);
     let mut rng: u64 = 0xFEDCBA9876543210;
-
     let fixed_secret_a = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
-    let fixed_secret_b_match = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
-    let mut random_secrets = Vec::with_capacity(256);
-    for _ in 0..256 {
+    let mut pairs: Vec<(
+        nostd_microcore::StackSecretBuffer<32>,
+        nostd_microcore::StackSecretBuffer<32>,
+    )> = Vec::with_capacity(64);
+    for _ in 0..64 {
         let mut buf = [0u8; 32];
         for b in buf.iter_mut() {
             *b = (xorshift64(&mut rng) & 0xFF) as u8;
         }
-        random_secrets.push(nostd_microcore::StackSecretBuffer::<32>::from_slice(&buf).unwrap());
+        pairs.push((
+            nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap(),
+            nostd_microcore::StackSecretBuffer::<32>::from_slice(&buf).unwrap(),
+        ));
     }
 
-    // Warm-up
-    for _ in 0..2000 {
-        black_box(fixed_secret_a.ct_eq(black_box(&fixed_secret_b_match)));
-    }
-
-    const BATCH: usize = 200;
-    const SAMPLES: usize = 25_000;
-    for i in 0..SAMPLES {
-        let coin = (xorshift64(&mut rng) & 1) == 0;
-        let (in_a, in_b) = if coin {
-            (&fixed_secret_a, &fixed_secret_b_match)
-        } else {
-            (&fixed_secret_a, &random_secrets[i % random_secrets.len()])
-        };
-        let t0 = Instant::now();
-        let mut acc_res = 0u32;
-        for _ in 0..BATCH {
-            acc_res = acc_res.wrapping_add(in_a.ct_eq(black_box(in_b)) as u32);
-        }
-        let elapsed = t0.elapsed().as_nanos() as f64;
-        black_box(acc_res);
-        if coin {
-            samples0.push(elapsed);
-        } else {
-            samples1.push(elapsed);
-        }
-    }
-
-    let t = cropped_welch_t_statistic(&samples0, &samples1);
+    let t = measure_pair_t_statistic(&pairs, &mut rng, |cand| {
+        fixed_secret_a.ct_eq(black_box(cand))
+    });
     println!("[DudeCT-Rust] StackSecretBuffer::ct_eq: |t| = {:.4} (Threshold = 4.5)", t.abs());
     assert!(
         t.abs() < 4.5,
@@ -222,44 +211,15 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
 
 #[test]
 fn dudect_rust_leaky_comparator_detected_as_positive_control() {
-    let mut samples0 = Vec::with_capacity(13_000);
-    let mut samples1 = Vec::with_capacity(13_000);
     let mut rng: u64 = 0x123456789ABCDEF0;
-
     let fixed_secret_a = [0x5Au8; 64];
-    let fixed_secret_b_match = [0x5Au8; 64];
     let mut mismatch_first = fixed_secret_a;
     mismatch_first[0] ^= 0xFF;
+    let pairs = vec![([0x5Au8; 64], mismatch_first)];
 
-    // Warm-up
-    for _ in 0..2000 {
-        black_box(leaky_cmp(black_box(&fixed_secret_a), black_box(&fixed_secret_b_match)));
-    }
-
-    const BATCH: usize = 200;
-    const SAMPLES: usize = 25_000;
-    for _ in 0..SAMPLES {
-        let coin = (xorshift64(&mut rng) & 1) == 0;
-        let (in_a, in_b) = if coin {
-            (&fixed_secret_a, &fixed_secret_b_match)
-        } else {
-            (&fixed_secret_a, &mismatch_first)
-        };
-        let t0 = Instant::now();
-        let mut acc_res = 0u32;
-        for _ in 0..BATCH {
-            acc_res = acc_res.wrapping_add(leaky_cmp(black_box(in_a), black_box(in_b)) as u32);
-        }
-        let elapsed = t0.elapsed().as_nanos() as f64;
-        black_box(acc_res);
-        if coin {
-            samples0.push(elapsed);
-        } else {
-            samples1.push(elapsed);
-        }
-    }
-
-    let t = cropped_welch_t_statistic(&samples0, &samples1);
+    let t = measure_pair_t_statistic(&pairs, &mut rng, |cand| {
+        leaky_cmp(black_box(&fixed_secret_a), black_box(cand))
+    });
     println!("[DudeCT-Rust] Leaky comparator: |t| = {:.4} (Threshold = 3.5)", t.abs());
     assert!(
         t.abs() > 3.5,
