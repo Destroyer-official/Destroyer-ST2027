@@ -2,7 +2,7 @@
   "pki_version": "2027.1.0",
   "ceremony_type": "SOFTWARE_DEV_FIXTURE_NOT_EXTERNALLY_ANCHORED",
   "externally_anchored": false,
-  "generation_timestamp": "2026-11-26T09:35:01.019758+00:00",
+  "generation_timestamp": "2026-11-26T13:54:04.981746+00:00",
   "standard_compliance": [
     "FIPS 204",
     "FIPS 205",
@@ -10,27 +10,27 @@
     "NIST SP 800-57"
   ],
   "root_authority": "CN=Sovereign-Defense-Root-CA",
-  "merkle_root": "d6855f8ddcabb7c83373972261c9eb6a6704f3ea3fa7c00faef18b07c1c499625588c82886c20221e45d3bcdd85212ee3d6cb238bcafe448109fa1b8f1d01db5",
+  "merkle_root": "4ad211160174a19a5f45e59c5a3bcd3c2a3068f74e114d6e24f5d3f407cf51eb945086112887c1d1210811be49ec86d939c88d1c2b3b2e67950023b9ae499454",
   "artifacts": {
     "sovereign_root_ca.json": {
-      "size_bytes": 15357,
-      "sha3_512": "cdb0c0baa47542cc75852edd879dc9e44345dc35e1516e44d4cf79fd3d9535fcb44623481325a61131fb45e643fcd7f9b938fcde87df4de92c0c9f485596cbb0"
+      "size_bytes": 15335,
+      "sha3_512": "e3cf7f65bd7946a005982ce6e69236809d1dcbcd60c36fa2e24bfaba187a8176704f44d4aae310c0c6982e01adf09d0409f505479c1d90c286f6d652dc88d12c"
     },
     "sovereign_sub_ca.json": {
-      "size_bytes": 15045,
-      "sha3_512": "e6787dee59d499e0e29cc37b37827912d14d89d1c81b16ecd0d84b51bde98cf7ec8a9a44580662b3fef019609d3273a9cb071e3633a7113dce4bb9d7420b02ae"
+      "size_bytes": 15025,
+      "sha3_512": "a23014568d77970d9cd0639537299e40aaea7abf321e7be5b3ba0308b864d77039c6149189b6a888f76526940a4702a3ac0fb57c072813f3737734f988c0d1ae"
     },
     "node_alpha.json": {
-      "size_bytes": 15206,
-      "sha3_512": "e6e53611d3a5b8d2ec99b4d39606affa77257e61ae20fc9c4daf5634b3f004d0228c17438b747a49def07acf8b270e456670d21ff9f1304a73f7ba8c0066fc6b"
+      "size_bytes": 15182,
+      "sha3_512": "d5fa4e7f303f7525eaaaa49960d9f7f4ec7abf1465674faddb2b0e85d5785cb0008cc127c6ff98473d92a2ed625b78cad3fa0907bcd75b487ba6c7e6ded93cd9"
     },
     "node_bravo.json": {
-      "size_bytes": 15206,
-      "sha3_512": "df2004f5cb1643f6bce21910077947d00026cad25fe0f8d77040c58b627d9e82aceefe405168add42a22ab55530f130029fd96c053178374608518e54934d930"
+      "size_bytes": 15182,
+      "sha3_512": "3359363c9c9facae681c6f5e0e88efeef4c672fa522744c895eed4b689516d9a2d0b6bdccf1518766d97b9d01625594b63246bbdff87f1a8e491cd9ae5394c0c"
     },
     "crl.json": {
-      "size_bytes": 9808,
-      "sha3_512": "f7fdf2c533b6f0cb96574000b0edf2a75185c3abf9f451d2806b607464fc7b4776a780bddb77716cdb322c24887b363497ad3ffe717f203d0cda7480f39a088d"
+      "size_bytes": 9796,
+      "sha3_512": "b2e307c4de160cf76252387226afc2e4aa134b0623061ee3909708a166e1e2a7fdd7fca51d07c5dd560e3dae3367990cac233037b19631a9000c1ac65e0b6104"
     }
   }
 }

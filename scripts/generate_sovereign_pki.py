@@ -35,6 +35,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization, hashes
 
 
+def _write_json_lf(path: Path, data: dict) -> None:
+    """Write JSON with deterministic LF line endings across Windows/Linux."""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, indent=2)
+
+
 def main():
     certs_dir = PROJECT_ROOT / "certs"
     certs_dir.mkdir(parents=True, exist_ok=True)
@@ -74,8 +80,7 @@ def main():
         "key_usage": ["digitalSignature", "keyCertSign", "cRLSign"]
     }
 
-    with open(certs_dir / "sovereign_root_ca.json", "w", encoding="utf-8") as f:
-        json.dump(root_cert_data, f, indent=2)
+    _write_json_lf(certs_dir / "sovereign_root_ca.json", root_cert_data)
 
     # 2. Generate Subordinate Issuing CA
     print("  -> Creating Subordinate Issuing CA...")
@@ -102,8 +107,7 @@ def main():
         "key_usage": ["digitalSignature", "keyCertSign", "cRLSign"]
     }
 
-    with open(certs_dir / "sovereign_sub_ca.json", "w", encoding="utf-8") as f:
-        json.dump(sub_cert_data, f, indent=2)
+    _write_json_lf(certs_dir / "sovereign_sub_ca.json", sub_cert_data)
 
     # 3. Issue Node Alpha Identity Certificate
     print("  -> Issuing Node Alpha Certificate...")
@@ -127,8 +131,7 @@ def main():
         "signature_algorithm": "ML-DSA-87",
         "signature_hex": alpha_sig.hex()
     }
-    with open(certs_dir / "node_alpha.json", "w", encoding="utf-8") as f:
-        json.dump(alpha_cert_data, f, indent=2)
+    _write_json_lf(certs_dir / "node_alpha.json", alpha_cert_data)
 
     # 4. Issue Node Bravo Identity Certificate
     print("  -> Issuing Node Bravo Certificate...")
@@ -152,8 +155,7 @@ def main():
         "signature_algorithm": "ML-DSA-87",
         "signature_hex": bravo_sig.hex()
     }
-    with open(certs_dir / "node_bravo.json", "w", encoding="utf-8") as f:
-        json.dump(bravo_cert_data, f, indent=2)
+    _write_json_lf(certs_dir / "node_bravo.json", bravo_cert_data)
 
     # 5. Generate Hash-Chained CRL
     print("  -> Generating Hash-Chained CRL...")
@@ -172,8 +174,7 @@ def main():
         "signature_algorithm": "ML-DSA-87",
         "signature_hex": crl_sig.hex()
     }
-    with open(certs_dir / "crl.json", "w", encoding="utf-8") as f:
-        json.dump(crl_manifest, f, indent=2)
+    _write_json_lf(certs_dir / "crl.json", crl_manifest)
 
     # 6. Build PKI Manifest with SHA3-512 hashes
     print("  -> Creating PKI Manifest...")
@@ -202,8 +203,7 @@ def main():
         "merkle_root": pki_merkle_root,
         "artifacts": manifest_entries
     }
-    with open(certs_dir / "pki_manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest_data, f, indent=2)
+    _write_json_lf(certs_dir / "pki_manifest.json", manifest_data)
 
     # 7. Write synchronized, non-fabricated development ceremony affidavit
     affidavit_data = {
@@ -244,8 +244,7 @@ def main():
         },
         "verdict": "DEV_FIXTURE_UNANCHORED",
     }
-    with open(certs_dir / "key_ceremony_affidavit.json", "w", encoding="utf-8") as f:
-        json.dump(affidavit_data, f, indent=2)
+    _write_json_lf(certs_dir / "key_ceremony_affidavit.json", affidavit_data)
 
     print(f"[SUCCESS] Post-Quantum PKI dev fixture generated cleanly in {certs_dir}!")
     print(f"          PKI Merkle Root: {pki_merkle_root[:32]}...")

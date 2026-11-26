@@ -4,8 +4,8 @@
     "ceremony_type": "SOFTWARE_DEV_FIXTURE_NOT_EXTERNALLY_ANCHORED",
     "ceremony_standard": "NIST SP 800-57 Part 1 Rev. 5 / CNSA 2.0 (Software Fixture Only)",
     "ceremony_id": "DEV-FIXTURE-CNSA2-LOCAL-PKI",
-    "execution_timestamp_utc": "2026-11-26T09:35:01Z",
-    "pki_manifest_merkle_root": "d6855f8ddcabb7c83373972261c9eb6a6704f3ea3fa7c00faef18b07c1c499625588c82886c20221e45d3bcdd85212ee3d6cb238bcafe448109fa1b8f1d01db5"
+    "execution_timestamp_utc": "2026-11-26T13:54:04Z",
+    "pki_manifest_merkle_root": "4ad211160174a19a5f45e59c5a3bcd3c2a3068f74e114d6e24f5d3f407cf51eb945086112887c1d1210811be49ec86d939c88d1c2b3b2e67950023b9ae499454"
   },
   "ceremony_custodian_quorum": [],
   "enrolled_root_credentials": {
@@ -13,18 +13,18 @@
       "file": "certs/sovereign_root_ca.json",
       "subject": "Sovereign-Defense-Root-CA",
       "algorithm": "ML-DSA-87 (FIPS 204) + NIST P-521 (FIPS 186-5)",
-      "sha3_512": "cdb0c0baa47542cc75852edd879dc9e44345dc35e1516e44d4cf79fd3d9535fcb44623481325a61131fb45e643fcd7f9b938fcde87df4de92c0c9f485596cbb0"
+      "sha3_512": "e3cf7f65bd7946a005982ce6e69236809d1dcbcd60c36fa2e24bfaba187a8176704f44d4aae310c0c6982e01adf09d0409f505479c1d90c286f6d652dc88d12c"
     },
     "sub_ca": {
       "file": "certs/sovereign_sub_ca.json",
       "subject": "CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
       "algorithm": "ML-DSA-87 (FIPS 204)",
-      "sha3_512": "e6787dee59d499e0e29cc37b37827912d14d89d1c81b16ecd0d84b51bde98cf7ec8a9a44580662b3fef019609d3273a9cb071e3633a7113dce4bb9d7420b02ae"
+      "sha3_512": "a23014568d77970d9cd0639537299e40aaea7abf321e7be5b3ba0308b864d77039c6149189b6a888f76526940a4702a3ac0fb57c072813f3737734f988c0d1ae"
     },
     "crl": {
       "file": "certs/crl.json",
       "issuer": "CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
-      "sha3_512": "f7fdf2c533b6f0cb96574000b0edf2a75185c3abf9f451d2806b607464fc7b4776a780bddb77716cdb322c24887b363497ad3ffe717f203d0cda7480f39a088d"
+      "sha3_512": "b2e307c4de160cf76252387226afc2e4aa134b0623061ee3909708a166e1e2a7fdd7fca51d07c5dd560e3dae3367990cac233037b19631a9000c1ac65e0b6104"
     }
   },
   "hardware_root_of_trust": {

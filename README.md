@@ -57,13 +57,13 @@ The ST2027 Trusted Computing Base (TCB) maintains strict physical and logical is
 +---------------------------------------------------------------------------------------------------------+
 |                                                                                                         |
 |  [PLANE 1: HIGH-ASSURANCE STANDALONE RUST DATA PLANE] (High-Assurance Production Core Target)           |
-|  * Directory: rust_data_plane/ (Standalone compiled binary: secure-transmit)                            |
-|  * Toolchain: Pure native Rust, zero Python runtime dependency, zero ChaCha20/Poly1305                  |
-|  * Cryptography: Pure-Rust ML-DSA-87 + ML-KEM-1024, AES-256-GCM (NIST SP 800-38D)                       |
+|  * Crate: rust_data_plane/ (Binaries: secure-transmit, verify-binaries; PyO3 extension: destroyer_core) |
+|  * Toolchain: Pure native Rust (--no-default-features release build strips lab-surfaces; zero ChaCha20) |
+|  * Cryptography: Pure-Rust ML-DSA-87 + ML-KEM-1024 + P-384 (SecP384r1MLKEM1024), AES-256-GCM           |
 |  * Hardware Interface: PKCS#11 v2.40 HSM silicon (cryptoki) + TPM 2.0 NVRAM Monotonic Counters          |
-|  * Anti-Replay: 1024/2048-packet sliding bitmask window (RFC 6479) checked in constant time              |
-|  * Anti-SIGINT: 50ms constant-rate transmission clock, 1232B cell quantization, Poisson chaff stream     |
-|  * Memory Hygiene: Explicit memory-locked key buffers, ZeroizeOnDrop, atomic compiler barriers           |
+|  * Anti-Replay: 1024-packet circular sliding bitmask window (RFC 6479, 32 x u64 words, constant-time)  |
+|  * Anti-SIGINT: 50ms constant-rate transmission clock, 256/512/1232B quantization, Poisson chaff stream  |
+|  * Memory Hygiene: Explicit VirtualLock/mlock key buffers (LockedKey32), ZeroizeOnDrop, compiler fences  |
 |                                                                                                         |
 |  [PLANE 2: NATIVE SYSTEM SECURITY CORE CDYLIB] (Native Memory Protection Layer)                         |
 |  * Directory: ts_rt/ (C-ABI shared dynamic library: ts_rt.dll / libts_rt.so)                            |
@@ -129,7 +129,7 @@ To satisfy strict defense requirements across contested electromagnetic environm
 
 | Phase | Tactical Domain | Strategic Capabilities | Implementation Modules | Verification |
 | :---: | :--- | :--- | :--- | :--- |
-| **A** | **seL4 Microkit MILS Appliance** | Formally verified microkernel hardware appliance; Red/Black/Crypto capability-isolated domains with zero cross-talk channels. | [`sel4_mils_appliance/`](sel4_mils_appliance/)<br>[`sovereign_sel4_appliance.py`](sovereign_sel4_appliance.py) | `pytest tests/test_sel4_mils_spec.py` |
+| **A** | **seL4 Microkit MILS Appliance** | Model-checked/spec-validated microkernel appliance topology; Red/Black/Crypto capability-isolated domains with zero cross-talk channels. | [`sel4_mils_appliance/`](sel4_mils_appliance/)<br>[`sovereign_sel4_appliance.py`](sovereign_sel4_appliance.py) | `cargo test --manifest-path sel4_mils_appliance/Cargo.toml`<br>`python sel4_mils_appliance/validate_mils.py --strict`<br>`pytest tests/test_sel4_mils_spec.py` |
 | **B** | **Hardware Silicon Enclave** | TPM 2.0 PCR sealing [0..7], PKCS#11 v2.40 HSM, Windows CNG Platform Crypto Provider; anti-rollback monotonic counters. | [`rust_data_plane/src/hardware_enclave.rs`](rust_data_plane/src/hardware_enclave.rs)<br>[`hardware_enclave_manager.py`](hardware_enclave_manager.py) | `pytest tests/test_hardware_enclave_custody.py` |
 | **C** | **Multi-Assumption PQ Combiner** | 3-way hybrid key exchange combining ML-KEM-1024, Classic McEliece 8192128, and NIST P-384 under RFC 10024 dual-PRF. | [`rust_data_plane/src/kex_combiner.rs`](rust_data_plane/src/kex_combiner.rs)<br>[`pqc_multi_assumption.py`](pqc_multi_assumption.py) | `pytest tests/test_pqc_multi_assumption_combiner.py` |
 | **D** | **Decentralized Threshold MPC NC3** | $t$-of-$n$ Shamir/Feldman VSS threshold signatures for ML-DSA-87; decentralized strategic co-signing within 2.0s without master key reconstruction. | [`rust_data_plane/src/nc3_mpc.rs`](rust_data_plane/src/nc3_mpc.rs)<br>[`nc3_threshold_mpc.py`](nc3_threshold_mpc.py) | `pytest tests/test_nc3_threshold_mpc.py` |
@@ -160,8 +160,8 @@ The ST2027 cryptographic architecture adheres strictly to the **NSA Commercial N
 |  Record Layer AEAD     : NIST SP 800-38D AES-256-GCM (Deterministic Composite 96-bit Nonces)           |
 |  Key Derivation & PRF  : RFC 5869 HKDF-SHA384 / FIPS 202 HKDF-SHA3-512                                  |
 |  Erasure Coding        : Cauchy Reed-Solomon Maximum Distance Separable (MDS) over GF(2^8) (K=8, M=4)    |
-|  Anti-Replay Window    : RFC 6479 Decoupled Sliding Bitmask (2048-packet window) + TPM 2.0 NV Counter   |
-|  Secret Sharing (NC3)  : Information-Theoretic (2, 2) Additive Secret Sharing (Shannon Perfect Secrecy)|
+|  Anti-Replay Window    : RFC 6479 Decoupled Sliding Bitmask (1024-packet window, 32 x u64) + TPM 2.0 NV |
+|  Secret Sharing (NC3)  : (2, 2) Split Knowledge (spo_dpo.py/nc3.rs) & (t,n) Shamir/Feldman (nc3_mpc.rs)|
 +---------------------------------------------------------------------------------------------------------+
 ```
 
@@ -353,28 +353,27 @@ $$
 
 AES-256-GCM fails catastrophically if a nonce is repeated under the same key: two distinct ciphertexts sharing a nonce allow an adversary to solve for the GHASH authenticator key $H = \mathrm{AES}_K(0^{128})$ via polynomial root-finding over $\mathrm{GF}(2^{128})$, enabling universal tag forgery.
 
-- **Deterministic 96-Bit Composite Nonce Layout:**
+- **Native Rust Data-Plane 96-Bit Nonce Layout ([`rust_data_plane/src/aead.rs`](rust_data_plane/src/aead.rs)):**
 $$
-IV_{96} = \text{FixedSessionContext}_{32} \mathbin{\Vert} \mathrm{Uint64BE}(N_{\text{counter}})
+IV_{96} = \mathrm{Uint64BE}(\mathrm{seq}) \mathbin{\Vert} \text{DirectionByte}_8 \mathbin{\Vert} 0x000000_{24}
 $$
-  where $\text{FixedSessionContext}_{32} = \text{DirectionByte}_8 \mathbin{\Vert} \text{Salt}_{24}$.
-  - Initiator Transmission: $\text{DirectionByte} = 0x01$.
-  - Responder Transmission: $\text{DirectionByte} = 0x02$.
+  where `DIR_SEND = 0x00` and `DIR_RECV = 0x01`, and `seq` is reserved strictly monotonically before encryption via HMAC-SHA384-authenticated state (`STSTATE3`, 328 bytes), append-only `.seqlog` journaling, and optional hardware TPM 2.0 NV counters (`P2P_TPM_NV_INDEX`).
+- **Python Orchestration Durable Nonce Layout ([`cnsa_crypto_gateway.py`](cnsa_crypto_gateway.py)):**
+$$
+IV_{96} = \text{FixedKeyBoundContext}_{32} \mathbin{\Vert} \mathrm{Uint32BE}(\text{durable\_epoch}) \mathbin{\Vert} \mathrm{Uint32BE}(\text{seq})
+$$
+  backed by an `fsync`-persisted SQLite monotonic epoch ledger (`gcm_nonce_ledger.db`) across process restarts and forks (plus XAES-256-GCM domain separation).
 
 - **Mathematical Nonce Collision Proof:**
-  Let $N_{\max} = 2^{64} - 1$. For any session key $K$ and direction $d \in \{0x01, 0x02\}$:
+  Let $N_{\max} = 2^{64} - 1$ (native) or $2^{32}$ invocations per persistent epoch (gateway). For any session key $K$ and direction $d \in \{0x00, 0x01\}$:
 $$
 \forall i, j \in \{0, 1, \dots, N_{\max}\}, \; i \ne j \implies \mathrm{Uint64BE}(i) \ne \mathrm{Uint64BE}(j) \implies IV_i \ne IV_j
 $$
   Furthermore, across full-duplex communication channels:
 $$
-\text{DirectionByte}_{\text{Alice}} = 0x01 \ne 0x02 = \text{DirectionByte}_{\text{Bob}} \implies IV_{\text{Alice}} \cap IV_{\text{Bob}} = \emptyset
+\text{DIR\_SEND} = 0x00 \ne 0x01 = \text{DIR\_RECV} \implies IV_{\text{send}} \cap IV_{\text{recv}} = \emptyset
 $$
-  Therefore, the collision probability is rigorously zero:
-$$
-P(\text{Nonce Collision}) = 0 \quad (\forall N_{\text{counter}} < 2^{64})
-$$
-  This completely eliminates the birthday-bound vulnerability of random nonces ($P(\text{Collision}) \approx m^2 / 2^{97}$, which exhibits non-negligible collision probability after $2^{32}$ messages). When $N_{\text{counter}} = 2^{64} - 1$, the ratchet latches permanently shut.
+  Therefore, the collision probability under single-direction counter invariants is zero ($P(\text{Nonce Collision}) = 0$). This eliminates the birthday-bound vulnerability of purely random 96-bit nonces ($P(\text{Collision}) \approx m^2 / 2^{97}$). When sequence space exhausts or the monotonic ledger detects rollback, the gate latches closed fail-closed.
 
 ---
 
@@ -476,34 +475,32 @@ $$
 
 ### 3.11 Decoupled Sliding Anti-Replay Bitmask State Machine (RFC 6479)
 
-To prevent replay Denial-of-Service and packet reinjection over untrusted networks, the data plane implements an RFC 6479 decoupled circular bitmap:
+To prevent replay Denial-of-Service and packet reinjection over untrusted networks, the native data plane ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)) implements an RFC 6479 decoupled circular bitmap (`WINDOW_WORDS = 32`, `WINDOW_SIZE = 1024` packets):
 
 ```text
-               RFC 6479 Decoupled Sliding Window (2048-Packet Bitmap Ring)
+               RFC 6479 Decoupled Sliding Window (1024-Packet Circular Bitmap Ring)
    =================================================================================
-     [ Expired Frame Zone ]  │        [ Active Sliding Window: 2048 Bits ]         │ [ Future Zone ]
-     Seq <= H - 2048         │        H - 2047 <= Seq <= H                         │ Seq > H
+     [ Expired Frame Zone ]  │        [ Active Sliding Window: 1024 Bits ]         │ [ Future Zone ]
+     Seq <= H - 1024         │        H - 1023 <= Seq <= H                         │ Seq > H
    ──────────────────────────┼─────────────────────────────────────────────────────┼────────────────
-     DROP IMMEDIATELY        │        Check Bit at offset (H - Seq):               │ Slide Window:
-     No state modification   │          Bit == 1 -> DROP (Duplicate Replay)        │   Shift bitmap left
-                             │          Bit == 0 -> ACCEPT, Set Bit=1              │   H <- Seq
-                             │                      Decrypt Payload                │   Set Bit 0 = 1
+     DROP IMMEDIATELY        │   Read-only check((seq/64)%32, seq%64):             │ Wait for AEAD:
+     No state modification   │     Bit == 1 -> DROP (Duplicate Replay)             │   Verify AEAD tag
+                             │     Bit == 0 -> Decrypt AEAD; if valid -> mark()    │   Advance H <- Seq
    =================================================================================
 ```
 
 - **Algorithmic State Invariants:**
-  1. Let $H$ be the highest valid sequence number decrypted so far.
-  2. Let bitmap $\mathbf{W} \in \{0, 1\}^{2048}$ represent the sliding acceptance window.
-  3. For incoming packet with sequence number $S$:
+  1. Let $H$ (`last_seq`) be the highest valid sequence number decrypted so far (and `seq == 0` is unconditionally rejected).
+  2. Let circular bitmap $\mathbf{W}$ consist of $32 \times 64$-bit words (`2048` physical bit slots covering a `1024`-packet window without trailing-edge aliasing).
+  3. **Read-only pre-authentication check** (`check(S)`) before AEAD decryption, followed by **post-authentication state update** (`mark(S)`) only after the AES-256-GCM GHASH tag succeeds:
 $$
 \mathrm{Action}(S) = \begin{cases}
-\text{Drop}, & \text{if } S \le H - 2048 \quad \text{(Expired)} \\
-\text{Drop}, & \text{if } H - 2048 < S \le H \land \mathbf{W}[H - S] = 1 \quad \text{(Duplicate)} \\
-\text{Accept} \land \mathbf{W}[H - S] \leftarrow 1, & \text{if } H - 2048 < S \le H \land \mathbf{W}[H - S] = 0 \quad \text{(In-Order/Out-of-Order Valid)} \\
-\text{Accept} \land \mathbf{W} \leftarrow \mathbf{W} \ll (S - H) \land H \leftarrow S, & \text{if } S > H \quad \text{(Ahead of Window)}
+\text{Drop}, & \text{if } S = 0 \lor H - S \ge 1024 \quad \text{(Zero / Expired)} \\
+\text{Drop}, & \text{if } S \le H \land \mathbf{W}[(S / 64) \bmod 32]_{S \bmod 64} = 1 \quad \text{(Duplicate)} \\
+\text{Accept (post-AEAD) } \land \mathrm{mark}(S), & \text{otherwise (In-Window Valid or } S > H\text{)}
 \end{cases}
 $$
-- **Sliding-Window Anti-Replay (RFC 6479):** Native Rust circular bitmap window tracking 1024/2048 packets ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)). Out-of-order packets inside the window are checked and marked in constant time (`O(1)` bitwise operations); duplicate packets or packets older than the trailing edge are dropped before decryption.
+- **Persistent State Across Restarts:** All 32 bitmap words (`256` bytes) plus `last_seq` are serialized into the HMAC-SHA384-authenticated `STSTATE3` state file (`328` bytes total) so replay history is preserved across process restarts.
 
 ### 3.12 Keystroke Timing Decoupling, Isochronous Wire Pacing & Memoryless Poisson Camouflage
 In 2001, Song, Wagner, and Tian demonstrated that interactive encrypted connections (such as SSH) leak sensitive typed contents through packet inter-arrival times analyzed via Hidden Markov Models (HMMs). Furthermore, fixed-rate isochronous traffic streams can exhibit statistical correlation signatures when tracked across multiple autonomous network fabrics by a Global Passive Adversary (GPA). To defeat this threat class:
@@ -565,7 +562,7 @@ $$
 $$
 \text{RecordHash}_{i} = \text{SHA3-256}(\text{RecordHash}_{i-1} \parallel \text{Timestamp} \parallel \text{EventType} \parallel \text{Payload})
 $$
-- **HMAC-Authenticated Head Anchors:** The ledger head is authenticated using an HMAC anchor signed with an isolated key (`logs/secure_p2p_audit.db.anchor`). Modification, deletion, or truncation of historical records breaks the hash chain and causes immediate detection during pre-flight checks.
+- **HMAC-Authenticated Head Anchors:** The ledger head is authenticated using a keyed `.anchor` sidecar file (`<audit_name>.anchor`, persisted by [`audit_logging_system.py`](audit_logging_system.py)). Modification, deletion, or truncation of historical records breaks the hash chain and causes immediate detection during pre-flight checks.
 
 ### 3.19 Fail-Closed Policy Enforcement & Gatekeeper Table
 Production operation (`P2P_PRODUCTION=1`, sticky at import) strictly enforces fail-closed gates. Weaker paths are rejected unless an explicit opt-in is configured:
@@ -602,140 +599,102 @@ Production operation (`P2P_PRODUCTION=1`, sticky at import) strictly enforces fa
 +---------------------------------------------------------------------------------------------------------+
 ```
 
-#### Algorithm 1: Standards-Track Hybrid Key Exchange (`SecP384r1MLKEM1024`)
+#### Algorithm 1: Standards-Track Hybrid Key Exchange (`SecP384r1MLKEM1024`, [`rust_data_plane/src/kex_auth.rs`](rust_data_plane/src/kex_auth.rs))
 ```text
 Input:
-  Initiator Identity: sk_auth_A (ML-DSA-87 Secret Key), pk_auth_A (ML-DSA-87 Public Key)
-  Responder Identity: pk_auth_B (Pinned ML-DSA-87 Public Key)
-  Pre-Shared Key    : PSK in {0, 1}^256 (32 bytes)
+  Responder Identity: sk_auth_R (ML-DSA-87 Secret Key), pk_auth_I (Pinned Initiator ML-DSA-87 PK)
+  Initiator Identity: sk_auth_I (ML-DSA-87 Secret Key), pk_auth_R (Pinned Responder ML-DSA-87 PK)
+  Pre-Shared Key    : PSK in {0, 1}^256 (32 bytes, mandatory outside non-production --lab)
 Output:
-  Session Keys      : K_send, K_recv in {0, 1}^256
+  Session Key (32B), Key Confirmation Tags (32B each), 128-bit SAS (XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX)
 
-Stage 1: Ephemeral Generation (Initiator A)
-  1. (sk_ec_A, pk_ec_A)   <- SecP384r1_KeyGen()                   // 48B scalar, 49B compressed point
-  2. (sk_kem_A, pk_kem_A) <- MLKEM1024_KeyGen()                   // 3168B secret key, 1568B public key
-  3. M1_payload           <- pk_ec_A || pk_kem_A                  // 1617 bytes
-  4. sigma_A              <- MLDSA87_Sign(sk_auth_A, "ST2027-SIG-INIT-v1" || M1_payload)
-  5. Transmit to Responder: (M1_payload, sigma_A, pk_auth_A)
+Stage 1: Ephemeral Bundle Generation (Responder B / Initiator A)
+  1. Responder generates: (sk_ec_R, pk_ec_R) <- P-384, (dk_kem, ek_kem) <- ML-KEM-1024
+       resp_bundle <- pk_ec_R (97B uncompressed SEC1) || ek_kem (1568B)   // 1665 bytes
+  2. Initiator parses resp_bundle, generates ephemeral P-384 (sk_ec_I, pk_ec_I) and encapsulates:
+       (ct_kem, ss_kem) <- MLKEM1024_Encaps(ek_kem)                        // 1568B ct, 32B ss
+       init_bundle <- pk_ec_I (97B uncompressed SEC1) || ct_kem (1568B)    // 1665 bytes
+  3. transcript <- SHA-384(resp_bundle || init_bundle)                     // 48 bytes
 
-Stage 2: Response & Encapsulation (Responder B)
-  1. Verify MLDSA87_Verify(pk_auth_A, "ST2027-SIG-INIT-v1" || M1_payload, sigma_A) == VALID
-  2. Parse M1_payload -> (pk_ec_A, pk_kem_A)
-  3. (sk_ec_B, pk_ec_B)   <- SecP384r1_KeyGen()
-  4. ss_ecdh              <- SecP384r1_ECDH(sk_ec_B, pk_ec_A)     // 48 bytes scalar
-  5. (ct_kem, ss_kem)     <- MLKEM1024_Encaps(pk_kem_A)           // 1568B ct, 32B shared secret
-  6. M2_payload           <- pk_ec_B || ct_kem                    // 1617 bytes
-  7. transcript           <- M1_payload || M2_payload
-  8. sigma_B              <- MLDSA87_Sign(sk_auth_B, "ST2027-SIG-RESP-v1" || transcript)
-  9. Transmit to Initiator: (M2_payload, sigma_B)
+Stage 2: Mutual Verify-Before-Derive ML-DSA-87 Authentication
+  1. Responder signs: sigma_R <- MLDSA87_Sign(sk_auth_R, "ST2027-KEX-v2::sig-responder" || transcript)
+  2. Initiator verifies MLDSA87_Verify(pk_auth_R, "ST2027-KEX-v2::sig-responder" || transcript, sigma_R) BEFORE signing
+  3. Initiator signs: sigma_I <- MLDSA87_Sign(sk_auth_I, "ST2027-KEX-v2::sig-initiator" || transcript)
+  4. Responder verifies MLDSA87_Verify(pk_auth_I, "ST2027-KEX-v2::sig-initiator" || transcript, sigma_I) BEFORE key derivation
 
-Stage 3: Session Key Extraction & Confirmation
-  1. Initiator verifies MLDSA87_Verify(pk_auth_B, "ST2027-SIG-RESP-v1" || transcript, sigma_B) == VALID
-  2. Initiator computes:
-       ss_ecdh            <- SecP384r1_ECDH(sk_ec_A, pk_ec_B)
-       ss_kem             <- MLKEM1024_Decaps(sk_kem_A, ct_kem)
-  3. Both parties compute identically:
-       ss_hybrid          <- ss_ecdh || ss_kem                    // 80 bytes
-       TranscriptHash     <- SHA384(transcript || sigma_A || sigma_B)
-       PRK                <- HKDF-Extract(salt=TranscriptHash, IKM=ss_hybrid || PSK)
-       K_send_A           <- HKDF-Expand(PRK, info="ST2027-DIR-A-TO-B-v1", L=32)
-       K_recv_A           <- HKDF-Expand(PRK, info="ST2027-DIR-B-TO-A-v1", L=32)
-       SAS                <- Truncate_6_Digits(HMAC-SHA384(PRK, "ST2027-SAS-v1"))
-  4. Secure Zeroization:
-       Zeroize(sk_ec_A, sk_kem_A, ss_ecdh, ss_kem, ss_hybrid, PRK)
+Stage 3: Dual-PRF Binding, Key Extraction & Mutual Confirmation
+  1. ss_ecdh        <- P384_ECDH(sk_ec, pk_ec_peer)                        // 48 bytes
+  2. hybrid_ss      <- ml_ss (32B) || ss_ecdh (48B)                        // 80 bytes
+  3. auth_binding   <- SHA-384("ST2027-KEX-v2::auth-binding" || transcript || len(sigma_R) || sigma_R || len(sigma_I) || sigma_I)
+  4. session_key    <- HKDF-SHA384(salt=PSK?, IKM=hybrid_ss, info="ST2027-KEX-v2::session" || auth_binding, L=32)
+  5. Confirm tags   <- HMAC-SHA384(session_key, "ST2027-RESPONDER-CONFIRM" / "ST2027-INITIATOR-CONFIRM" || auth_binding)[..32]
+  6. SAS            <- HexGroups_8x4(SHA-384(transcript_bound)[..16])
+  7. Zeroize ephemeral P-384/ML-KEM secrets and intermediate hybrid_ss immediately on scope exit
 ```
 
-#### Algorithm 2: Continuous Epoch Ratchet (CER / SPQR-Style PCS)
+#### Algorithm 2: Continuous Epoch Ratchet (CER, [`rust_data_plane/src/ratchet.rs`](rust_data_plane/src/ratchet.rs))
 ```text
 State:
-  RootKey RK_e, CurrentEpoch e, MessageCounter j, SendChainKey CK_s, RecvChainKey CK_r
+  RootKey RK_e, CurrentEpoch e, SendChainKey CK_s, RecvChainKey CK_r, BoundedSkippedKeys (MAX_SKIPPED_KEYS=1000)
 Trigger:
-  PacketCount >= 10,000 OR BytesTransmitted >= 10 MB OR Operator /rekey command
+  PacketCount >= 10,000 OR BytesTransmitted >= 10 MiB OR Operator /rekey command
 
-Rekey Step (Transmitter):
-  1. (sk_fresh, pk_fresh) <- MLKEM1024_KeyGen()
-  2. (ct_fresh, ss_fresh) <- MLKEM1024_Encaps(pk_peer)
-  3. Construct Rekey Cell:
-       RekeyPayload       <- Uint32BE(e + 1) || ct_fresh          // 4B + 1568B = 1572B
-       Tag                <- HMAC-SHA384(RK_e, "ST2027-CER-TAG-v1" || RekeyPayload)[0..16]
-       WireCell           <- FTYPE_CER (0x07) || RekeyPayload || Tag
-  4. Transmit WireCell on isochronous tick
-  5. Advance Internal State:
-       PRK_new            <- HKDF-Extract(salt=RK_e, IKM=ss_fresh)
-       RK_{e+1}           <- HKDF-Expand(PRK_new, info="ST2027-ROOT-ADVANCE-v1", L=32)
-       CK_s               <- HKDF-Expand(PRK_new, info="ST2027-TX-CHAIN-v1", L=32)
-       e                  <- e + 1
-       j                  <- 0
-  6. Memory Scrubbing:
-       Zeroize(PRK_new, ss_fresh, sk_fresh, RK_e)
-
-Rekey Step (Receiver):
-  1. Inspect Rekey Cell Tag in constant time:
-       ExpectedTag        <- HMAC-SHA384(RK_e, "ST2027-CER-TAG-v1" || RekeyPayload)[0..16]
-       Require ct_eq(Tag, ExpectedTag) == 1
-  2. ss_fresh             <- MLKEM1024_Decaps(sk_peer, ct_fresh)
-  3. Derive Identical State:
-       PRK_new            <- HKDF-Extract(salt=RK_e, IKM=ss_fresh)
-       RK_{e+1}           <- HKDF-Expand(PRK_new, info="ST2027-ROOT-ADVANCE-v1", L=32)
-       CK_r               <- HKDF-Expand(PRK_new, info="ST2027-TX-CHAIN-v1", L=32)
-       e                  <- e + 1
-       j                  <- 0
-  4. Memory Scrubbing:
-       Zeroize(PRK_new, ss_fresh, RK_e)
+Rekey Step (Sender -> Receiver via FTYPE_IN_BAND_EPOCH_REKEY = 0x07):
+  1. Generate fresh P-384 keypair + fresh ML-KEM-1024 encapsulation against peer's advertised (next_p_pub, next_ek)
+  2. Advertise fresh next-epoch bundle (next_p_pub 97B, next_ek 1568B) for following ratchet step
+  3. Assemble InBandEpochRekeyPayload (3366B base, or 7993B with 4627B ML-DSA-87 signature):
+       body <- Uint32BE(e+1) || eph_p_pub(97B) || ml_ct(1568B) || next_p_pub(97B) || next_ek(1568B)
+       tag  <- HMAC-SHA384(K_auth, "ST2027-EPOCH-REKEY-AUTH::key" || body)[..32]
+       (optional mldsa_sig 4627B binding long-term sender identity; verified BEFORE decapsulating)
+  4. Fragment across fixed wire quanta and emit on paced ticks
+  5. Both sides verify MAC tag (and ML-DSA-87 signature in identity mode), then mix fresh hybrid secret:
+       RK_{e+1} <- HKDF-SHA384(RK_e || hybrid_ss, info="ST2027-EPOCH-RATCHET::root" || epoch)
+       CK_{e+1} <- HKDF-SHA384(CK_e || hybrid_ss, info="ST2027-RATCHET-v2::chain" || epoch)
+  6. Old secrets zeroized via ZeroizeOnDrop
 ```
 
-#### Algorithm 3: NIST SP 800-38D AES-256-GCM Framing & Tag Whitening
+#### Algorithm 3: NIST SP 800-38D AEAD Record Layer & Tag-Derived Whitening ([`rust_data_plane/src/aead.rs`](rust_data_plane/src/aead.rs))
 ```text
 Input:
-  Key K (32 bytes), Sequence S (u64), Direction d in {0x01, 0x02}, Salt (3 bytes)
-  Payload P (0 <= len(P) <= 1205 bytes), FrameType T (u8)
+  FrameKey K (32B) with hp_key <- HKDF-SHA384(None, K, "destroyer/header-protection/v2", L=32)
+  Sequence S (u64 >= 1, reserved monotonically before seal), Direction d in {0x00 (DIR_SEND), 0x01 (DIR_RECV)}
+  Payload P (0 <= len(P) <= 1205 bytes), FrameType T in {0x01, 0x02, 0x05, 0x06, 0x07, 0xFF}
 Output:
-  WireCell C_wire (exactly 1232 bytes)
+  WireCell C_wire quantized to {256, 512, 1232} bytes (FRAME_OVERHEAD = 27 bytes)
 
 Processing:
-  1. Check Sequence Monotonicity:
-       Require S < u64::MAX; if S == u64::MAX latch shut and fail
-  2. Nonce Construction (Deterministic NIST SP 800-38D §8.2.1):
-       IV                 <- d (1B) || Salt (3B) || Uint64BE(S) (8B)  // exactly 96 bits
-  3. Plaintext Cell Assembly:
-       PlainHeader        <- Uint64BE(S) (8B) || Uint16BE(len(P)) (2B) || T (1B)
-       PaddedPayload      <- P || ZeroPadding(1205 - len(P))          // exactly 1205 bytes
-       AAD                <- PlainHeader
+  1. Check Sequence Bounds: Require S >= 1 and S < u64::MAX (strictly monotonic reservation pre-seal)
+  2. Nonce Construction (NIST SP 800-38D):
+       IV_96        <- Uint64BE(S) (8B) || d (1B) || 0x000000 (3B)
+  3. Header & Quantum Padding:
+       PlainHeader  <- Uint64BE(S) (8B) || Uint16BE(len(P)) (2B) || T (1B)   // 11 bytes (AAD)
+       PaddedBody   <- P || PadToQuantum(len(P), [256, 512, 1232])
   4. AEAD Encryption:
-       (Ciphertext, Tag)  <- AES256_GCM_Encrypt(K, IV, PaddedPayload, AAD) // Tag is 16B GHASH
-  5. Header Whitening (PRF Masking):
-       K_header           <- HKDF-Expand(K, "ST2027-HEADER-KEY-v1", L=32)
-       Mask               <- SHA256("ST2027-HEADER-MASK-v1" || K_header || Tag)[0..11]
-       MaskedHeader       <- PlainHeader XOR Mask
-  6. Emit Exact Cell:
-       WireCell           <- MaskedHeader (11B) || Ciphertext (1205B) || Tag (16B) = 1232B
+       (Ciphertext, Tag) <- AES256_GCM_Encrypt(K, IV_96, PaddedBody, AAD=PlainHeader) // Tag is 16B GHASH
+  5. Header Whitening:
+       Mask         <- SHA384("ST2027-HEADER-MASK-v2" || hp_key || Tag)[..11]
+       MaskedHeader <- PlainHeader XOR Mask
+  6. Emit Quantized Cell:
+       WireCell     <- MaskedHeader (11B) || Ciphertext || Tag (16B) in {256B, 512B, 1232B}
 ```
 
-#### Algorithm 4: Decoupled Sliding Anti-Replay Bitmask State Machine (RFC 6479)
+#### Algorithm 4: Decoupled Sliding Anti-Replay Bitmask State Machine ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs))
 ```text
 State:
-  HighestSequence H (u64), Bitmap W of 2048 bits (32 x u64 words)
-Initialization:
-  H = 0, W[0..31] = 0
+  HighestSequence last_seq (u64), Circular Bitmap W of 32 x u64 words (WINDOW_SIZE = 1024 packets)
 
-Process Inbound Packet with Sequence S:
-  1. Let Delta = S - H (signed 64-bit comparison)
-  2. Case 1: S > H (Packet advances the window)
-       If Delta >= 2048:
-         W.clear()                                                 // complete jump ahead
-       Else:
-         W.shift_left(Delta)                                       // shift bitmap words
-       H <- S
-       W.set_bit(0)                                                // mark current packet received
-       Return ACCEPT
-  3. Case 2: S <= H (Packet is within or behind window)
-       Offset <- H - S
-       If Offset >= 2048:
-         Return DROP_EXPIRED                                       // older than window depth
-       If W.test_bit(Offset) == 1:
-         Return DROP_DUPLICATE_REPLAY                              // already seen
-       W.set_bit(Offset)                                           // mark out-of-order packet
-       Return ACCEPT
+Pre-Authentication Read-Only Check check(S):
+  1. If S == 0 -> Return DROP (invalid zero sequence)
+  2. If S > last_seq -> Return TENTATIVE_ACCEPT (await AEAD verification)
+  3. If (last_seq - S) >= 1024 -> Return DROP_EXPIRED
+  4. If (W[(S / 64) % 32] & (1 << (S % 64))) != 0 -> Return DROP_DUPLICATE_REPLAY
+  5. Return TENTATIVE_ACCEPT (await AEAD verification)
+
+Post-Authentication Commit mark(S) (called ONLY after AES-256-GCM GHASH tag succeeds):
+  1. If S > last_seq:
+       Clear crossed circular word slots in ((last_seq / 64) + 1)..=(S / 64) (or clear W if diff >= 1024)
+       last_seq <- S
+  2. Set W[(S / 64) % 32] |= (1 << (S % 64))
 ```
 
 #### Algorithm 5: Systematic Cauchy-Reed-Solomon MDS Erasure Codec over $\mathrm{GF}(2^8)$
@@ -807,21 +766,6 @@ Authorization Ceremony:
   7. Return TRUE; trigger emergency action or zeroization pipeline
 ```
 
-| Security Gate | Default Setting | Production Behavior | Explicit Opt-In (Use = Downgrade) |
-|---|---|---|---|
-| Classical-only ratchet (`enable_pq=False`) | Refused in prod | `SecurityError` | `P2P_ALLOW_CLASSICAL=1` |
-| Deniable sessions (no per-message signature) | Refused in strict mode | `SecurityError` | `P2P_ALLOW_DENIABLE=1` (non-strict only) |
-| PQXDH v1 combiner | Refused in prod | `SecurityError`, min v2 required | none (lab interop only) |
-| Unpinned peers (TOFU) | Refused in prod | `SecurityError`, pin required | none (lab only) |
-| Missing `unified_secure_pipeline` | Refused in prod | `RuntimeError`, no legacy path | none (lab only) |
-| Rust KEX without PSK | Refused in prod | Handshake fails, `--psk` required | none (lab: verify SAS out-of-band) |
-| Rust KEX without mutual ML-DSA-87 | Refused outside `--lab` | Handshake fails, identity files required | `--lab` only (PSK-only, lower assurance) |
-| Simulated dual-authorization EAM/PTT | Disabled in prod | Command refused | `--lab` only |
-| TLS `verify_certs=False` / TLS < 1.3 | Refused in prod | `ValueError` / TLS 1.3 floor enforced | none (lab only) |
-| Configuration without CNSA signature | Refused in prod | `ConfigurationError` | none (lab only) |
-| Vulnerable HQC-256 algorithm | Refused everywhere | `RuntimeError` | `P2P_ENABLE_VULN_HQC=1` (reserve only) |
-| Dual-person authorization for strict commands | Always required | `AuthorizationError` otherwise | none |
-
 ---
 
 ## 4. End-to-End Architectural Security Flow: From Silicon to Wire
@@ -844,26 +788,26 @@ The following diagram illustrates the complete chronological security pipeline a
 |  * Ephemeral Hybrid KEX: Dual exchange (SecP384r1 ECDH + NIST FIPS 203 ML-KEM-1024).                   |
 |  * Identity Non-Repudiation: Ephemeral transcript signed with NIST FIPS 204 ML-DSA-87 identity keys.   |
 |  * Transcript Binding: HKDF-SHA384 binds (ECDH_ss || MLKEM_ss || PSK || TranscriptHash).               |
-|  * Anti-Man-in-the-Middle Gate: 6-digit Short Authentication String (SAS) computed for operator verify. |
+|  * Anti-Man-in-the-Middle Gate: 128-bit Short Authentication String (SAS, 8x4 hex) for out-of-band check.|
 |                                       │                                                                 |
 |                                       ▼                                                                 |
 |  [STAGE 3: SYMMETRIC EXPANSION & MLS COMPARTMENT DERIVATION]                                            |
-|  * Master Derivation: HKDF-SHA3-512 expands session secret into unidirectional Tx/Rx key pairs.         |
+|  * Master Derivation: HKDF-SHA384 derives session frame key; HKDF-SHA3-512 expands MLS compartment keys.|
 |  * Compartment Gating: Bell-LaPadula MLS keys generated per classification domain (NO READ UP/DOWN).   |
-|  * Nonce Derivation: Directional 96-bit nonces (DirectionByte || 64-bit Monotonic Counter || Salt).     |
+|  * Nonce Derivation: Native 96-bit nonces (Uint64BE(seq) || DirectionByte || 0x000000); SQLite epoch IVs.|
 |                                       │                                                                 |
 |                                       ▼                                                                 |
 |  [STAGE 4: CELL FRAMING, HEADER MASKING & TRAFFIC PACING]                                               |
-|  * Data Quantization: Cleartext payload chunked to 1205 bytes max; zero-padded to uniform 1216B.        |
+|  * Data Quantization: Cleartext payload chunked to 1205 bytes max; padded to {256, 512, 1232}B quanta.  |
 |  * AEAD Encryption: NIST SP 800-38D AES-256-GCM authenticated encryption; 16B GHASH tag appended.      |
-|  * Header Masking: Wire header (seq, len, ftype) whitened via SHA-256 OTP derived from Tag + K_header.  |
-|  * CBR Pacing Loop: High-resolution monotonic clock emits exactly one 1232B cell every 50ms (20.0 Hz).  |
-|  * Chaff Stream: Constant Poisson chaff cells (FTYPE_CHAFF 0xFF) transmitted during conversational gaps.|
+|  * Header Masking: Wire header (seq, len, ftype) whitened via SHA-384 mask derived from Tag + hp_key.  |
+|  * CBR Pacing Loop: Monotonic clock emits fixed-size cells every 50ms (20.0 Hz) or configured interval.  |
+|  * Chaff Stream: Constant Poisson or CBR chaff cells (FTYPE_CHAFF 0xFF) sent during conversational gaps.|
 |                                       │                                                                 |
 |                                       ▼                                                                 |
 |  [STAGE 5: WIRE INGESTION, ANTI-AMPLIFICATION & ANTI-REPLAY]                                            |
 |  * Stateless Cookie Gate: Responder verifies micro-PoW puzzle before state allocation (Anti-DoS).      |
-|  * Anti-Replay Ring: RFC 6479 decoupled 2048-packet sliding bitmask verified prior to decryption.       |
+|  * Anti-Replay Ring: RFC 6479 decoupled 1024-packet sliding bitmask check() prior to AEAD decryption.   |
 |  * Constant-Time AEAD: AES-NI constant-time hardware decrypt; invalid tags dropped silently.            |
 |  * Stealth Net Discipline: Malformed datagrams dropped without emitting ICMP error or TCP RST response. |
 |                                       │                                                                 |
@@ -985,7 +929,7 @@ To establish exact defense engineering positioning, ST2027 is compared with exis
 | **Cryptographic Posture** | NSA Type 1 Classical<br>(Suite A / Suite B ASIC) | Protocol-Agnostic Physical Optical Isolation | Hybrid PQXDH (Kyber-1024 + X25519) | Classical Curve25519 + ChaCha20-Poly1305 | **Strict NSA CNSA Suite 2.0**<br>(ML-KEM-1024 + ML-DSA-87 + AES-256 + P-384) |
 | **Physical Tamper Boundary** | Dedicated ASIC/FPGA Hardware Enclosure | Dedicated Galvanic / Optical Diode Chassis | Zero (Commercial User-Space Mobile App) | Zero (Kernel Module on Host OS) | **Fail-Closed Software Gatekeeper**<br>+ TPM 2.0 Silicon + PKCS#11 HSM |
 | **Traffic Flow Masking** | Constant-Rate Cell Pacing (Fixed IPsec Tunnels) | Push-Only Unidirectional (No Return Flow) | Variable-Rate Packet Emitted on Send (Leaks Timing) | Variable-Rate Wire Bursts (Silent when Idle) | **50ms Constant-Rate Cell Shaping**<br>+ 1232B Quantization + Poisson Chaff |
-| **Anti-Replay Mechanism** | IPsec 64-Bit Monotonic Sequence Window | Not Applicable (Unidirectional Stream) | Asymmetric Ephemeral Ratchet Step Caches | Decoupled 2048-Packet Sliding Bitmask Window | **RFC 6479 Decoupled 1024/2048 Bitmask**<br>+ TPM NVRAM Monotonic State Anchor |
+| **Anti-Replay Mechanism** | IPsec 64-Bit Monotonic Sequence Window | Not Applicable (Unidirectional Stream) | Asymmetric Ephemeral Ratchet Step Caches | Decoupled 2048-Packet Sliding Bitmask Window | **RFC 6479 Decoupled 1024-Packet Bitmask**<br>+ TPM NVRAM Monotonic State Anchor |
 | **Multi-Level Security (MLS)** | Single Security Enclave (Red-in-Black Tunnel) | One-Way Boundary Transfer (Fixed Compartment) | Zero (Single-Domain Conversational Context) | Zero (Single Encrypted Network Overlay) | **Bell-LaPadula MLS Compartments**<br>derived via HKDF-SHA3-512 |
 | **Two-Person Integrity (TPI)** | Physical Two-Key Locks on Hardware Chassis | Administrative Separation on Diode Controllers | Zero (Single Device Operator) | Zero (Single Endpoint Private Key) | **Cryptographic Dual-Person Authorization**<br>(Dual ML-DSA-87 Signed Tokens) |
 | **Forward Error Correction** | Network Retransmissions (TCP or IPsec ARQ) | Cauchy / Reed-Solomon Erasure Coding | Retransmission via Untrusted Server Store | Network Retransmissions via Endpoint Apps | **Cauchy-Reed-Solomon MDS FEC**<br>over `GF(2^8)` (`K=8, M=4`) |
@@ -1001,7 +945,7 @@ The following matrix defines the combined security posture achieved by pairing S
 |---|---|---|---|---|
 | **Quantum Cryptanalysis**<br>(Shor's algorithm on DH/RSA, Harvest-Now-Decrypt-Later) | NIST FIPS 203 ML-KEM-1024 + RFC 10024 `SecP384r1MLKEM1024` hybrid KEX; FIPS 204 ML-DSA-87 signatures. | CPU AVX2/AVX-512 SIMD vector acceleration for high-rate NTT polynomial operations. | **NIST Security Category 5**: 128-bit quantum security against CRQC; retrospective decryption rendered computationally infeasible. | Handshake aborts with `SecurityError` if classical-only downgrade is attempted. |
 | **Active Network Adversary**<br>(Dolev-Yao: MitM, packet injection, bit manipulation) | NIST SP 800-38D AES-256-GCM AEAD on every cell; 16-byte GHASH tag authenticating unmasked AAD. | CPU AES-NI constant-time round instructions; zero S-box cache variation. | **Cryptographic Integrity & Authentication**: Any packet modification or injection detected; invalid GHASH tags dropped. | Corrupt packet dropped silently; receiver logs anomaly; zero plaintext released. |
-| **Replay & Out-of-Order Injection**<br>(Network packet capture and delayed re-injection) | Strictly monotonic 64-bit sequence counters; RFC 6479 decoupled 1024/2048-packet sliding window bitmap ring. | CPU 64-bit branchless bitwise operations ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)). | **Anti-Replay Protection**: Duplicate packets rejected instantly; out-of-order packets accepted only within active window. | Duplicate sequence numbers dropped immediately prior to decryption; window state intact. |
+| **Replay & Out-of-Order Injection**<br>(Network packet capture and delayed re-injection) | Strictly monotonic 64-bit sequence counters; RFC 6479 decoupled 1024-packet sliding window bitmap ring (32 x u64). | CPU 64-bit branchless bitwise operations ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)). | **Anti-Replay Protection**: Duplicate packets rejected instantly; out-of-order packets accepted only within active window. | Duplicate sequence numbers dropped immediately prior to decryption; window state intact. |
 | **Cold Reboot & State Rollback**<br>(Reverting disk images to replay stale sessions or revoked keys) | State sequence tracking and ephemeral session expiration timers. | **TPM 2.0 NVRAM Monotonic Counter** (Index `0x01800001`) advanced on state transitions. | **Hardware Anti-Rollback**: State progression anchored to physical silicon; restoring old disk images detected and rejected. | System detects counter discrepancy on startup; halts with `SecurityError`; requires re-enrollment. |
 | **Traffic Analysis & SIGINT**<br>(Packet arrival timing, flow correlation, byte-count sniffing) | Constant-rate transmission clock (50ms interval); 1232B uniform cell quantization; Poisson chaff stream. | High-resolution hardware clock (`QueryPerformanceCounter` / POSIX `clock_gettime(CLOCK_MONOTONIC)`). | **Statistical Flow Masking**: Eliminates packet size and transmission rate signatures for localized observers. | Does not provide mathematical security against a global passive adversary with full network vantage points. |
 | **Volatile Memory Scraping**<br>(Cold-boot DRAM remanence, crash dump extraction) | Multi-pass DoD 5220.22-M memory zeroization; Rust `ZeroizeOnDrop` on cryptographic structs. | OS page locking via Win32 `VirtualLock` / POSIX `mlock`; Windows DPAPI `CryptProtectMemory`. | **Zero Non-Volatile Secret Persistence**: Secrets never swapped to disk; memory sanitized immediately upon deallocation. | Subject to runtime limitation: Python immutable `bytes` cannot be wiped; native Rust binary required for full assurance. |
@@ -1016,80 +960,81 @@ The following matrix defines the combined security posture achieved by pairing S
 
 ## 8. Formal Protocol Specification & Wire Format Layout
 
-The ST2027 protocol operates on fixed 1232-byte cells. This length ensures the datagram, when wrapped with UDP (8 bytes) and IPv6 (40 bytes), totals exactly 1280 bytes, matching the minimum IPv6 MTU and preventing network fragmentation.
+The ST2027 native wire engine quantizes frames to fixed packet classes `FRAME_QUANTA = [256, 512, 1232]` bytes ([`rust_data_plane/src/frame.rs`](rust_data_plane/src/frame.rs)). The maximum quantum (`1232` bytes) fits inside the IPv6 minimum MTU (`1280` bytes) with UDP (`8` bytes) and IPv6 (`40` bytes) headers without path fragmentation (`1232 + 40 + 8 = 1280`). Every cell carries `FRAME_OVERHEAD = 27` bytes (`seq(8) + len(2) + type(1) + tag(16)`), yielding `MAX_PAYLOAD = 1205` user payload bytes per cell.
 
-### Cell Structure (1232 Bytes)
+### Cell Structure (Maximum 1232-Byte Quantum)
 ```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                      Sequence Number (u64)                    |
+|                   Masked Sequence Number (u64 BE)             |
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          Length (u16)         |   Type (u8)   |               |
+|      Masked Length (u16 BE)   | Masked Type   |               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+               |
 |                                                               |
-|                  Encrypted Payload (Variable)                 |
-|                   Maximum Size: 1205 Bytes                    |
+|          Encrypted Payload + Quantum Padding                  |
+|            (Unpadded Payload: 0..1205 Bytes)                  |
 |                                                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                        Padding to 1216 Bytes                  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                     AES-256-GCM Tag (16 Bytes)                |
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-### Wire Field Definitions
-- **Sequence Number (8 bytes, Big-Endian):** Strictly monotonic 64-bit integer initialized to a random starting offset with persistent monotonic counter synchronization. Validated read-only against the 1024-packet sliding window bitmap in native Rust ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)) prior to authentication, advancing strictly upon successful decryption (RFC 6479).
-- **Length (2 bytes, Big-Endian):** Length of the unpadded cleartext payload ($0 \le \text{Length} \le 1205$).
-- **Type (1 byte):** Protocol message discriminator:
-  - `0x01`: Handshake Initiation / Key Exchange
-  - `0x02`: Handshake Response
-  - `0x03`: Encrypted Application Data
-  - `0x04`: File Transfer Chunk
-  - `0x05`: Attestation Evidence Envelope
-  - `0x06`: Revocation Broadcast (RFC 9881 CRL Distribution)
-  - `0x07`: In-Band Continuous Epoch Ratchet (CER / Post-Compromise Security)
-  - `0x08`: Hardware Two-Person Integrity (TPI) Dual-Smartcard Authorization
-  - `0xFF`: Chaff / Cover Traffic (Discarded silently by recipient)
-- **Encrypted Payload + Padding (1207 bytes):** Ciphertext produced strictly by AES-256-GCM (NIST SP 800-38D). Nonce is derived from `Sequence` || `Direction` with monotonic counter safeguards. Unused bytes are filled with deterministic PKCS#7 or pseudo-random padding up to the 1216-byte boundary.
-- **Authentication Tag (16 bytes):** Authenticates the ciphertext alongside the Additional Authenticated Data (AAD):
+### Wire Field Definitions ([`rust_data_plane/src/frame.rs`](rust_data_plane/src/frame.rs) & [`rust_data_plane/src/aead.rs`](rust_data_plane/src/aead.rs))
+- **Sequence Number (8 bytes, Big-Endian, masked on wire):** Strictly monotonic 64-bit integer reserved prior to encryption from the HMAC-SHA384-authenticated `STSTATE3` state file (`328` bytes) and validated read-only against the 1024-packet sliding window bitmap ([`rust_data_plane/src/replay.rs`](rust_data_plane/src/replay.rs)) before advancing on valid AEAD tag verification.
+- **Length (2 bytes, Big-Endian, masked on wire):** Length of the unpadded cleartext payload ($0 \le \text{Length} \le 1205$).
+- **Type (1 byte, masked on wire):** Protocol frame type discriminators defined in [`rust_data_plane/src/frame.rs`](rust_data_plane/src/frame.rs):
+  - `0x01`: `FTYPE_MSG` — Authenticated application / fragmented payload data
+  - `0x02`: `FTYPE_REKEY` — In-band Continuous Epoch Ratchet (CER) rekey envelope
+  - `0x05`: `FTYPE_ATTESTATION_EVIDENCE` — Attestation evidence & RFC 9881 X.509 certificate chain envelope
+  - `0x06`: `FTYPE_REVOCATION` — In-band threshold Certificate Revocation List (CRL) broadcast
+  - `0x07`: `FTYPE_IN_BAND_EPOCH_REKEY` — Hybrid P-384 + ML-KEM-1024 CER payload (`3366B` base or `7993B` with `4627B` ML-DSA-87 signature)
+  - `0xFF`: `FTYPE_CHAFF` — Constant-rate cover traffic (discarded silently by recipient before surfacing)
+- **Header Whitening:** The 11-byte plaintext header (`seq || len || ftype`) is XORed with `SHA384("ST2027-HEADER-MASK-v2" || hp_key || tag)[..11]` where `hp_key = HKDF-SHA384(None, frame_key, "destroyer/header-protection/v2")`.
+- **Encrypted Payload + Padding:** Ciphertext produced strictly by AES-256-GCM (NIST SP 800-38D) with `IV = seq_BE(8) || dir(1) || 0x00(3)` (`DIR_SEND = 0x00`, `DIR_RECV = 0x01`), padded up to the selected `{256, 512, 1232}` quantum size.
+- **Authentication Tag (16 bytes):** AES-256-GCM GHASH tag authenticating the **unmasked** 11-byte header as AAD alongside the ciphertext:
 $$
-\text{AAD} = \text{Sequence} \parallel \text{Length} \parallel \text{Type}
+\text{AAD} = \text{Sequence}_{\text{unmasked}} \parallel \text{Length}_{\text{unmasked}} \parallel \text{Type}_{\text{unmasked}}
 $$
 
 ---
 
 ## 9. Machine-Checked Formal Analysis & Bounded Model Checking
 
-Symbolic models check the MODEL, not the running system. `handshake_model.pv` is a skeleton (intended properties NOT yet proven, NOT CI-enforced). The deployed `st2027_handshake.pv` / `st2027_pcs.pv` results below hold inside the symbolic model with documented abstractions (crypto assumed perfect, AES-GCM nonce discipline outside the symbolic proof) — they are not a proof of the implementation. Kani harnesses are DEFINED, none EXECUTED here/CI (no Kani/CBMC toolchain); only deterministic property doubles run under `cargo test`.
+Symbolic models check the MODEL, not the running system. `handshake_model.pv` is a structural skeleton (intended properties NOT CI-enforced via ProVerif). The ProVerif models executed by `docs/formal/check.sh` hold inside their symbolic Dolev-Yao abstractions (perfect cryptography assumed; AES-GCM nonce uniqueness and constant-time memory hygiene sit outside the symbolic proof) — they are not a proof of the compiled Rust/Python implementation. In local environments without the Kani/CBMC toolchain installed (e.g., Windows workstations), the 6 `#[kani::proof]` harnesses in `rust_data_plane/tests/kani_harness.rs` are DEFINED (requiring `cargo kani` + CBMC on Linux) while the 8 deterministic property doubles execute under `cargo test`; on Linux CI ([`.github/workflows/kani-proofs.yml`](.github/workflows/kani-proofs.yml)), `cargo kani` runs the Kani harnesses under CBMC.
 
 ```text
 +---------------------------------------------------------------------------------------------------------+
 |                              FORMAL ANALYSIS EVIDENCE SUMMARY (MODEL-SCOPED)                            |
 +---------------------------------------------------------------------------------------------------------+
-| ProVerif 2.05 Applied Pi-Calculus Analyses (XXhfs handshake + PCS epochs, model scope only):              |
-|   ├── docs/formal/st2027_handshake.pv                                                                   |
+| ProVerif 2.05 Applied Pi-Calculus Analyses (model scope only; executed by docs/formal/check.sh --strict):|
+|   ├── docs/formal/st2027_handshake.pv (Noise_XXhfs Python reference protocol)                           |
 |   │   ├── Query not attacker(secret_payload)                      ==> HOLDS IN MODEL (Secrecy)           |
 |   │   ├── Query inj-event(S_Accepts) ==> inj-event(C_Accepts)       ==> HOLDS IN MODEL (Mutual Auth)      |
 |   │   ├── Query event(C_VerifiedM2) ==> event(S_SentM2)             ==> HOLDS IN MODEL (M2 authenticity)  |
 |   │   ├── Query inj-event(R_Receives) ==> inj-event(C_Sends)        ==> HOLDS IN MODEL (No forgery/replay)|
 |   │   └── Query not attacker(initiator static key)                 ==> HOLDS IN MODEL (M1 identity privacy)|
-|   └── docs/formal/st2027_pcs.pv                                                                         |
-|       └── Query not attacker(epoch-2 payload) under Epoch-1 total compromise ==> HOLDS IN MODEL (PCS heal) |
+|   ├── docs/formal/st2027_kex_auth.pv (Wire-exact rust_data_plane/src/kex_auth.rs mutual ML-DSA-87 model)|
+|   │   ├── Verifies P-384 + ML-KEM-1024 + PSK + auth_binding KDF, key confirmation & forward secrecy     |
+|   │   └── Explicit Scope: plaintext identity signatures in kex_auth.rs do not hide peer ID vs passive tap|
+|   ├── docs/formal/st2027_pcs.pv (Rehandshake / CER PCS healing)                                         |
+|   │   └── Query not attacker(epoch-2 payload) under Epoch-1 total compromise ==> HOLDS IN MODEL (PCS heal) |
+|   ├── docs/formal/st2027_ratchet_pcs.pv (rust_data_plane/src/ratchet.rs Epoch-0 -> Epoch-1 PCS model)    |
+|   │   └── Verifies ML-DSA-87 + MAC verification before decaps/mutation under upfront Epoch-0 RAM reveal |
+|   └── docs/formal/nc3_dual_custody.pv (NC3 / PAL Two-Person Rule & dual hardware-token authorization)    |
+|       └── Structurally audited by tests/test_formal_proverif_models.py                                   |
 +---------------------------------------------------------------------------------------------------------+
-| Kani Rust Bounded Model Checking: DEFINED harnesses + EXECUTED doubles (audited 2026-09-29):                         |
-|   ├── #[kani::proof] kani_cookie_gate_stateless_verification ......... DEFINED (needs `cargo kani` + CBMC)      |
-|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (needs `cargo kani` + CBMC)      |
-|   ├── #[kani::proof] kani_nonce_domain_separation .................... DEFINED (needs `cargo kani` + CBMC)      |
-|   ├── #[kani::proof] kani_replay_window_monotonic .................... DEFINED (needs `cargo kani` + CBMC)      |
-|   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... DEFINED (needs `cargo kani` + CBMC)      |
-|   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. DEFINED (needs `cargo kani` + CBMC)      |
-|   ├── 8 property doubles green under `cargo test` (same properties, deterministic sweeps) .. EXECUTED GREEN    |
-|   └── NOTE: no Kani proof has been EXECUTED in this environment or CI (no Kani/CBMC toolchain installed).      |
-|       "HOLDS IN MODEL" applies to the ProVerif symbolic models above, not to the implementation                 |
-|       and not to these harnesses. A model proof is not a system proof.                                          |
+| Kani Rust Bounded Model Checking: DEFINED harnesses (Linux CI `cargo kani`) + EXECUTED property doubles:|
+|   ├── #[kani::proof] kani_cookie_gate_stateless_verification ......... DEFINED (runs in Linux Kani CI)  |
+|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (runs in Linux Kani CI)  |
+|   ├── #[kani::proof] kani_nonce_domain_separation .................... DEFINED (runs in Linux Kani CI)  |
+|   ├── #[kani::proof] kani_replay_window_monotonic .................... DEFINED (runs in Linux Kani CI)  |
+|   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... DEFINED (runs in Linux Kani CI)  |
+|   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. DEFINED (runs in Linux Kani CI)  |
+|   ├── 8 deterministic property doubles + 44 harness-target tests green under `cargo test`               |
+|   └── NOTE: "HOLDS IN MODEL" applies strictly to the symbolic model; `cargo kani` requires Linux CBMC.  |
 +---------------------------------------------------------------------------------------------------------+
 ```
 
@@ -1098,19 +1043,19 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 To bridge the gap between symbolic protocol logic (Dolev-Yao model in ProVerif 2.05) and physical machine execution, ST2027 establishes a three-tiered verification hierarchy:
 
 1. **Tier 1 — Symbolic Protocol Logic (ProVerif 2.05 Applied Pi-Calculus)**:
-   Proves secrecy, mutual authentication (`S_Accepts ==> C_Accepts`), M2 authenticity (`C_VerifiedM2 ==> S_SentM2`), record layer integrity (`R_Receives ==> C_Sends`), and initiator identity privacy against unbounded active adversaries (`docs/formal/st2027_handshake.pv`). Proves Post-Compromise Security (PCS) healing after an upfront session key disclosure (`docs/formal/st2027_pcs.pv`).
+   Verifies secrecy, mutual authentication (`S_Accepts ==> C_Accepts`), M2 authenticity (`C_VerifiedM2 ==> S_SentM2`), record layer integrity (`R_Receives ==> C_Sends`), and initiator identity privacy in [`docs/formal/st2027_handshake.pv`](docs/formal/st2027_handshake.pv); verifies the wire-level `kex_auth.rs` protocol in [`docs/formal/st2027_kex_auth.pv`](docs/formal/st2027_kex_auth.pv); and verifies Post-Compromise Security (PCS) healing under upfront epoch compromise in [`docs/formal/st2027_pcs.pv`](docs/formal/st2027_pcs.pv) and [`docs/formal/st2027_ratchet_pcs.pv`](docs/formal/st2027_ratchet_pcs.pv). Executed fail-closed in CI via [`docs/formal/check.sh`](docs/formal/check.sh) (`--strict`).
 2. **Tier 2 — Bit-Precise Software Verification (Kani Rust Bounded Model Checker)**:
-   The 6 `#[kani::proof]` harnesses in `rust_data_plane/tests/kani_harness.rs` prove memory safety, buffer bounds, panic freedom on arbitrary wire frames, and anti-replay sliding window monotonicity. In local development environments, 8 deterministic property sweeps execute under `cargo test`. In CI (`.github/workflows/kani-proofs.yml`), the official `model-checking/kani-github-action@v1` executes Kani with CBMC, uploading SARIF reports to GitHub Code Scanning.
+   The 6 `#[kani::proof]` harnesses in [`rust_data_plane/tests/kani_harness.rs`](rust_data_plane/tests/kani_harness.rs) check buffer bounds, panic freedom on arbitrary wire frames, stateless cookie gates, and anti-replay sliding window monotonicity. Locally on hosts without Kani/CBMC, `cargo test --manifest-path rust_data_plane/Cargo.toml` executes the 8 deterministic property sweeps and re-exported unit checks (44 tests in `kani_harness`). In Linux CI ([`.github/workflows/kani-proofs.yml`](.github/workflows/kani-proofs.yml)), `cargo kani` executes the 6 harnesses via CBMC.
 3. **Tier 3 — Side-Channel & Timing Attack Freedom (DudeCT Welch's t-test Statistical Leakage)**:
-   Evaluates constant-time execution distributions under Welch's two-sample $t$-test (Reparaz et al. IEEE S&P / ePrint 2016/1123). Verified via `cargo test --test dudect_ct` (Rust native) and `pytest tests/test_dudect_timing_analysis.py` (Python runtime). Requires $|t| < 4.5$ ($p > 99.999\%$ confidence) on production primitives (`ct::ct_eq`, `StackSecretBuffer::ct_eq`, and `hmac.compare_digest`), with positive-control leaky comparators triggering $|t| > 4.5$ to guarantee detector sensitivity.
+   Evaluates constant-time execution timing distributions under Welch's two-sample $t$-test (Reparaz et al. IEEE S&P / ePrint 2016/1123). Executed via `cargo test --manifest-path rust_data_plane/Cargo.toml --test dudect_ct` (12 tests) and `pytest tests/test_dudect_timing_analysis.py`. Requires $|t| < 4.5$ ($p > 99.999\%$ confidence) on production primitives (`ct::ct_eq`, `StackSecretBuffer::ct_eq`, and `hmac.compare_digest`), with positive-control leaky comparators triggering $|t| > 4.5$ to confirm detector sensitivity.
 
 ### 9.2 Machine-Checked Formal Verification Certificate
 
-The verification pipeline generates signed, machine-checked mathematical certificates via:
+The verification pipeline generates signed, machine-checked verification manifests via [`tools/formal_verification_orchestrator.py`](tools/formal_verification_orchestrator.py):
 ```sh
 python tools/formal_verification_orchestrator.py --strict
 ```
-Outputs cryptographic SHA-512 sealed verification manifest at `docs/formal/formal_verification_certificate.json` and `docs/formal/formal_verification_certificate.json.sha512`. Cross-platform gate execution is verified via `python docs/formal/check.py --strict`.
+Outputs cryptographic SHA-512 sealed verification manifest at [`docs/formal/formal_verification_certificate.json`](docs/formal/formal_verification_certificate.json) and [`docs/formal/formal_verification_certificate.json.sha512`](docs/formal/formal_verification_certificate.json.sha512). Cross-platform gate execution is checked via [`docs/formal/check.py`](docs/formal/check.py).
 
 ---
 
@@ -1123,37 +1068,37 @@ The complete engineering, cryptographic, and operational documentation suite is 
                                                        │
           ┌──────────────────────────────┬─────────────┴─────────────┬──────────────────────────────┐
           ▼                              ▼                           ▼                              ▼
-    [RESEARCH TRACK 1]            [RESEARCH TRACK 2]          [RESEARCH TRACK 3]             [RESEARCH TRACK 4]
-  Architecture & Strategy       Formal Verification & PQC     Dual-Authorization & CONOPS         Security Policies & CC
-  - ARCHITECTURE.md             - formal/README.md            - MILITARY_NC3_GUIDE.md        - FIPS_140_3_POLICY.md
-  - SOVEREIGN_SPEC_PLAN.md      - st2027_handshake.pv         - CONOPS_TACTICAL.md           - NIAP_CC_TARGET.md
-  - COMPETITOR_ANALYSIS.md      - st2027_pcs.pv               - KEY_CEREMONY.md              - EVALUATION_DOSSIER.md
-  - ST2027_SPEC.md              - handshake_model.pv          - KEY_MANAGEMENT_KMP.md        - OSCAL SSP & SAR (JSON)
-  - RESEARCH_SOURCES.md         - kani_harness.rs             - SOP.md                       - Signed CBOM & SBOMs
-  - DEFENSE_HARDENING_PLAN.md
-  - OPEN_INTERNET_PLAN.md
-  - IMPLEMENTATION_PLAN.md
+    [RESEARCH TRACK 1]                        [RESEARCH TRACK 2]                       [RESEARCH TRACK 3]                        [RESEARCH TRACK 4]
+  Architecture & Strategy                   Formal Verification & PQC                Dual-Authorization & CONOPS               Security Policies & CC
+  - ARCHITECTURE.md                         - formal/README.md                       - MILITARY_NC3_DEPLOYMENT_GUIDE.md        - FIPS_140_3_SECURITY_POLICY.md
+  - SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md - formal/st2027_handshake.pv       - CONOPS_TACTICAL_DEPLOYMENT.md           - NIAP_COMMON_CRITERIA_SECURITY_TARGET.md
+  - COMPETITOR_ANALYSIS_AND_SOVEREIGN_SUPERIORITY.md - formal/st2027_kex_auth.pv   - KEY_CEREMONY.md                         - EVALUATION_DOSSIER.md
+  - ST2027_SPEC.md                          - formal/st2027_pcs.pv                 - KEY_MANAGEMENT_PLAN_KMP.md              - OSCAL SSP & SAR (compliance_reports/)
+  - ST2027_RESEARCH_SOURCES_2026-09-30.md   - formal/st2027_ratchet_pcs.pv         - SOP.md                                  - Signed CBOM & SBOMs (compliance_reports/)
+  - DEFENSE_HARDENING_MASTER_PLAN.md        - formal/nc3_dual_custody.pv
+  - OPEN_INTERNET_HARDENING_PLAN.md         - formal/handshake_model.pv (skeleton)
+  - ST2027_IMPLEMENTATION_PLAN.md           - rust_data_plane/tests/kani_harness.rs
   - RESTRUCTURE_PLAN.md
-          │                              │                           │                              │
-          └──────────────────────────────┼───────────────────────────┴──────────────────────────────┘
-                                         │
-          ┌──────────────────────────────┴───────────────────────────┐
-          ▼                                                          ▼
-    [RESEARCH TRACK 5]                                         [RESEARCH TRACK 6]
-  Hardware Security & Runbooks                               27 Subsystem Deep-Dive Charters
-  - hw_tpm_hsm_setup.md                                      - 5 Strategic Defense Pillars (ts_hw, ts_rt, ...)
-  - airgap_runbook.md                                        - Native Transport & Framing (rust_dp, p2p_core, ...)
-  - deployment_hardening_guide.md                            - Cryptography & Key Ratchets (pqc, kex, ratchet, ...)
-  - FIREWALL_IPV6.md                                         - Security Gating & HSM (memory, hsm, release, ...)
-  - incident_response.md                                     - Node Orchestration & Policies (destroyer, policy, ...)
+          │                                          │                                        │                                         │
+          └──────────────────────────────────────────┴────────────────────────────────────────┴─────────────────────────────────────────┘
+                                                     │
+          ┌──────────────────────────────────────────┴───────────────────────────────────────┐
+          ▼                                                                                  ▼
+    [RESEARCH TRACK 5]                                                         [RESEARCH TRACK 6]
+  Hardware Security & Runbooks                                               27 Subsystem Deep-Dive Charters (docs/modules/)
+  - hw_tpm_hsm_setup.md                                                      - 5 Strategic Defense Pillars (ts_hw, ts_rt, ...)
+  - airgap_runbook.md                                                        - Native Transport & Framing (rust_dp, p2p_core, ...)
+  - deployment_hardening_guide.md                                            - Cryptography & Key Ratchets (pqc, kex, ratchet, ...)
+  - FIREWALL_IPV6.md                                                         - Security Gating & HSM (memory, hsm, release, ...)
+  - incident_response.md                                                     - Node Orchestration & Policies (destroyer, policy, ...)
   - liboqs_pin.md
           │
           ▼
     [RESEARCH TRACK 7]
-  Master Engineering Compendiums & Independent Audits
-  - SYSTEM_SECURITY_DOCUMENTATION.md (Volume A — 64,000+ lines: Tier 0-7 Architecture & Formal Wire Formats)
-  - SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md (Volume C — 64,000+ lines: Mechanical AST Logic Flows & Function Catalog)
-  - security_audit_report.md (Defensive Security Audit: 63 Confirmed Findings & Remediations)
+  Master Engineering Compendiums & Forensic Audits
+  - docs/SYSTEM_SECURITY_DOCUMENTATION.md (Volume A — 44,577 lines: Tier 0-7 Architecture & Formal Wire Formats)
+  - docs/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md (Volume C — 10,780 lines: AST Logic Flows & Function Catalog)
+  - docs/security_audit_report.md, AUDIT_REPORT_ST2027.md & ST2027_FORENSIC_AUDIT_2026-11-26.md
   - docs/README.md (Master Documentation Portal & Architectural Cross-Reference Index)
 ```
 
@@ -1172,54 +1117,64 @@ The complete engineering, cryptographic, and operational documentation suite is 
 ## 11. Implementation Engines, Toolchain Prerequisites & Operational Quick Start
 
 ### 11.1 Build & Toolchain Prerequisites
-- **Python:** 3.10 or higher with `cryptography`, `pycryptodome`, `psutil`.
-- **Rust:** 1.75 or higher (with `cargo`).
-- **OpenSSL:** 3.1 or higher with FIPS Provider enabled.
-- **LibOQS:** Pinned C library version 0.16.0 (`oqs.dll` / `liboqs.so`).
+- **Python:** 3.11 or higher (see `pytest.ini` & `defense_ci.yml`) with pinned dependencies in `requirements.txt` (`--require-hashes`).
+- **Rust:** Stable toolchain (`cargo`, `rust_data_plane/Cargo.toml`, `ts_rt/Cargo.toml`, `sel4_mils_appliance/Cargo.toml`) + `maturin` for the PyO3 `destroyer_core` extension.
+- **OpenSSL:** 3.1 or higher (TLS 1.3 transport outer wrapper in orchestration/lab harnesses).
+- **LibOQS:** Pinned C library version `0.16.0` (`oqs.dll` on Windows with embedded Ed25519 + SHA-384/SHA3-512 pin verified by `verify-binaries`; built from pinned commit `5a1a854b` on Linux CI).
 
 ```bash
 # 1. Build native security core cdylib (ts_rt)
-cd ts_rt
-cargo build --release
-cd ..
+cargo build --release --manifest-path ts_rt/Cargo.toml
 
-# 2. Build standalone native Rust data-plane binary (secure-transmit)
-cd rust_data_plane
-cargo build --release --bin secure-transmit
-cd ..
+# 2. Build production native binaries (--no-default-features strips simulated lab surfaces)
+cargo build --release --no-default-features --manifest-path rust_data_plane/Cargo.toml --bin secure-transmit --bin verify-binaries
+
+# 3. Build and install native Python data-plane extension (destroyer_core)
+maturin build -r --no-default-features --manifest-path rust_data_plane/Cargo.toml
+
+# 4. (Optional / non-production lab only) Build secure-transmit with --features lab-surfaces
+cargo build --manifest-path rust_data_plane/Cargo.toml --features lab-surfaces --bin secure-transmit
 ```
 
-### 11.2 Native Data-Plane Command Catalog (`secure-transmit`)
-The standalone native executable (`secure-transmit`) provides 25 specialized commands executing directly on bare metal without Python runtime overhead:
+### 11.2 Native Data-Plane Command Catalog (`secure-transmit` & `verify-binaries`)
+In [`rust_data_plane/src/main.rs`](rust_data_plane/src/main.rs), `secure-transmit` dispatches **33 subcommands** (`zeroize` also aliases `purge`), while standalone binary `verify-binaries` ([`rust_data_plane/src/bin/verify_binaries.rs`](rust_data_plane/src/bin/verify_binaries.rs)) performs out-of-process SHA-384 and SHA3-512 verification of `oqs.dll` and `libsodium.dll`. Commands marked `[lab-surfaces only]` are compiled out in release `--no-default-features` builds:
 
 | Command | Category | Purpose & Security Enforcement |
 |---|---|---|
 | `keygen` | Key Management | Generates fresh 32-byte symmetric frame key with OS entropy. |
-| `auth-keygen` | Identity | Generates NIST FIPS 204 ML-DSA-87 identity keypair (2592B PK, 4896B SK). |
+| `auth-keygen` | Identity | Generates NIST FIPS 204 ML-DSA-87 identity keypair (`2592B` PK, `4896B` SK). |
 | `auth-sign` | Signing | Signs arbitrary file or transcript with ML-DSA-87 and domain separation. |
 | `auth-verify` | Verification | Verifies ML-DSA-87 signature against pinned public key. |
-| `kex-listen` | Handshake | Listens for inbound `SecP384r1MLKEM1024` KEX; verifies peer ML-DSA-87. |
+| `auth-tpm-seal` | Hardware Custody | Seals ML-DSA-87 signing seed to TPM 2.0 PCR measurements via `tpm2-tools`. |
+| `auth-tpm-unseal` | Hardware Custody | Unseals TPM-bound signing seed in volatile locked memory (`LockedKey32`). |
+| `hsm-probe` | Hardware Custody | Probes configured PKCS#11 v2.40 library/slot availability via `cryptoki`. |
+| `kex-listen` | Handshake | Listens for inbound `SecP384r1MLKEM1024` KEX; enforces mutual ML-DSA-87 outside `--lab`. |
 | `kex-connect` | Handshake | Connects to remote peer; negotiates `SecP384r1MLKEM1024` hybrid session key. |
+| `node` | Production Loop | Integrated native KEX + paced/headless operational node (`--psk-file` + mutual auth / PKCS#11 / TPM). |
 | `send` | Transit | Transmits single authenticated datagram with monotonic sequence counter. |
-| `recv` | Transit | Listens for inbound datagrams; drops replays via RFC 6479 bitmask window. |
-| `send-file` | Bulk Data | Chunks file into 1205B cells; emits sequence stream with SHA-384 manifest. |
+| `recv` | Transit | Listens for inbound datagrams; drops replays via RFC 6479 1024-packet bitmask window. |
+| `send-file` | Bulk Data | Chunks file into 1205B cells; emits sequence stream with SHA-384 manifest (`MAX_STREAM_BYTES = 16 MiB`). |
 | `recv-file` | Bulk Data | Reassembles file from consecutive sequence cells; verifies SHA-384 digest. |
-| `diode-send` | Cross-Domain | Simplex optical diode transfer with systematic Cauchy-RS FEC ($K=8, M=4$). |
+| `diode-send` | Cross-Domain | Simplex optical diode transfer with systematic Cauchy-RS FEC over `GF(2^8)`. |
 | `diode-recv` | Cross-Domain | Reconstructs diode stream from any $K$ received packets without return ACKs. |
-| `stream-chaff` | Anti-SIGINT | Emits continuous CSPRNG chaff cells with isochronous, memoryless Poisson pacing, or tactical profiles (`--poisson`, `--tactical-profile`). |
-| `channel` | Enclave Link | Full-duplex paced link with directional nonces, in-band PCS ratchets, and tactical profiles (`--tactical-profile`, `--poisson`). |
-| `terminal` | Tactical C2 | Production interactive tactical operator terminal with keystroke decoupling and anti-forensic screen wipe. |
+| `doc-seal` | Storage Envelope | Encrypts static document artifact with authenticated AEAD envelope & metadata. |
+| `doc-open` | Storage Envelope | Authenticates and decrypts sealed document envelope (fail-closed on tamper). |
+| `stream-chaff` | Anti-SIGINT | Emits continuous CSPRNG chaff cells with CBR, Poisson pacing, or tactical profiles (`--poisson`, `--tactical-profile`). |
+| `channel` | Enclave Link | Full-duplex paced link with directional nonces, in-band CER ratchets, and tactical profiles. |
+| `terminal` | Tactical C2 | Interactive tactical operator terminal with FIFO keystroke decoupling and ANSI anti-forensic screen wipe. |
 | `cookie-challenge` | Anti-DoS | Generates stateless anti-amplification micro-PoW challenge. |
-| `cookie-solve` | Anti-DoS | Solves micro-PoW challenge to unlock server handshake allocation. |
+| `cookie-solve` | Anti-DoS | Solves micro-PoW challenge to unlock responder handshake allocation. |
 | `cookie-verify` | Anti-DoS | Validates micro-PoW puzzle response before allocating memory. |
-| `threat-eval` | Cyber Defense | Evaluates active cyber defense (ACD) triggers; executes mitigation playbooks. |
+| `threat-eval` | Cyber Defense | Evaluates Active Cyber Defense (ACD) triggers and mitigation playbooks. |
 | `zero-trust-eval` | Zero Trust | Computes continuous NIST SP 800-207 trust score ($0 \le S \le 100$). |
-| `cot-beacon` | Situational | Emits NATO MIL-STD-6090 Cursor-on-Target XML track with ML-DSA-87 signature. |
-| `tactical-msg` | MMHS | Formats classified military telegram (precedence Y/Z/O/P/R) with RTB filter. |
-| `eam-auth-hw` | NC3 / TPI | Authorizes Nuclear Command EAM directive via concurrent dual-smartcard PKCS#11 hardware tokens. |
+| `cot-beacon` | `[lab-surfaces only]` | Simulated NATO MIL-STD-6090 Cursor-on-Target formatter (compiled out in production builds). |
+| `tactical-msg` | `[lab-surfaces only]` | Simulated MMHS telegram / RTB filter demo formatter (compiled out in production builds). |
+| `eam-auth` | `[lab-surfaces only]` | File-based dual-officer EAM lab verification helper (compiled out in production builds). |
+| `eam-auth-hw` | NC3 / TPI | Authorizes NC3 EAM directive via concurrent dual-smartcard PKCS#11 hardware tokens. |
 | `eam-verify-hw` | NC3 / TPI | Verifies EAM package against temporal window ($\Delta t \le 2.0\text{s}$) and pinned officer roster (`--officer-roster`). |
-| `zeroize` | Sanitization | NIST SP 800-88 Rev 2 3-pass cryptographic wipe of keys, state, and NVRAM. |
-| `selftest` | Diagnostics | Executes deterministic in-memory cryptographic self-tests. |
+| `nc3-safety-gate` | NC3 / Safety | Evaluates outbound conversational text against the fail-closed NC3 single-officer safety gate. |
+| `zeroize` (`purge`) | Sanitization | NIST SP 800-88 3-pass wipe + unlink of key, state, `.seqlog`, and `.nvck` files. |
+| `selftest` | Diagnostics | Executes deterministic in-memory native cryptographic self-tests. |
 
 ### 11.3 Host Hardware Inspection & Pre-Flight Verification
 Interrogate host hardware posture (Secure Boot, VBS, HVCI, TPM 2.0 silicon, FIPS provider) before station initialization:
@@ -1231,7 +1186,7 @@ python secure_transmit_2027.py check-hw
 # Run host hardening audit script:
 python scripts/verify_host_hardening.py
 
-# Verify deployment readiness gate (103 checks):
+# Verify deployment readiness gate (99 PASS, 0 FAIL, 4 WARN on typical non-TPM/non-HSM lab workstation):
 python verify_deployment.py
 ```
 
@@ -1242,27 +1197,28 @@ Provision non-exportable hardware-bound ML-DSA-87 identity keypairs:
 # Provision hardware identity via Python master orchestrator:
 python secure_transmit_2027.py keygen --label station_command_alpha
 
-# Or generate standalone keys via native Rust binary:
+# Or generate standalone keys via native Rust binary (or seal via auth-tpm-seal / PKCS#11 HSM):
 ./rust_data_plane/target/release/secure-transmit auth-keygen \
   --out-sk alpha.auth.sk --out-pk alpha.auth.pk
 ```
 
 ### 11.5 Production Node Deployment (Mutual ML-DSA-87 & Hybrid KEX)
-Generate one ML-DSA-87 identity per node, exchange public keys over an authenticated out-of-band channel, and provision a 32-byte PSK on both endpoints:
+Provision hardware key custody (`--auth-tpm-sealed` or PKCS#11 HSM; plaintext `--auth-sk-file` is refused in `P2P_PRODUCTION=1`), exchange 2592-byte ML-DSA-87 public keys over an authenticated out-of-band channel, and provision a 32-byte PSK on both endpoints:
 
 ```bash
-# Transmitting Node B (Initiator):
-python secure_p2p.py node --role initiator --bind 0.0.0.0 --peer <RECEIVER_IP> \
-  --psk-file shared.psk --auth-sk-file bravo.auth.sk \
+# Native standalone Rust production node (Initiator, zero Python runtime):
+./rust_data_plane/target/release/secure-transmit node --role initiator \
+  --bind <LOCAL_IP>:9061 --to <RESPONDER_IP>:9060 \
+  --psk-file shared.psk --auth-tpm-sealed bravo.tpm.sealed \
   --peer-auth-pk-file alpha.auth.pk --require-mutual-auth
 
-# Receiving Node A (Responder):
-python secure_p2p.py node --role responder --bind 0.0.0.0 --peer <INITIATOR_IP> \
-  --psk-file shared.psk --auth-sk-file alpha.auth.sk \
+# Or Python orchestration dispatcher (validates posture and delegates to native `secure-transmit node`):
+python secure_p2p.py node --role responder --bind <LOCAL_IP> --peer <INITIATOR_IP> \
+  --psk-file shared.psk --auth-tpm-sealed alpha.tpm.sealed \
   --peer-auth-pk-file bravo.auth.pk --require-mutual-auth
 ```
 
-The session key is cryptographically bound to the hybrid KEM transcript, both ML-DSA-87 signatures, and the PSK. Compare the printed 6-digit Short Authentication String (SAS) out-of-band before transmitting sensitive payloads.
+The session key is cryptographically bound to the `SecP384r1MLKEM1024` hybrid KEM transcript, both ML-DSA-87 signatures, and the PSK. Compare the printed 128-bit Short Authentication String (SAS, rendered as eight 4-hex-character groups `XXXX-XXXX-...`) out-of-band before transmitting sensitive payloads.
 
 ### 11.6 Standalone Zero-Python File Transmission (`secure-transmit`)
 ```bash
@@ -1434,10 +1390,10 @@ Deploying Emergency Action Messages (`/eam`) in production requires physical spl
   --token2-slot 1 --token2-pin "654321" \
   --max-skew-ms 2000
 
-# Verify inbound EAM package against Delta-t <= 2.0s temporal window, DirectiveHash, and pinned officer roster:
+# Verify inbound EAM package against Delta-t <= 2.0s temporal window, DirectiveHash, and site-provisioned officer roster:
 ./rust_data_plane/target/release/secure-transmit eam-verify-hw \
   --wire-hex <ST-EAM-HW2_PACKAGE_HEX> \
-  --officer-roster config/officers_roster.json \
+  --officer-roster <OPERATOR_PROVISIONED_ROSTER_JSON> \
   --max-skew-ms 2000
 ```
 
@@ -1495,71 +1451,65 @@ In-repo audit reviews ([`AUDIT_REPORT_ST2027.md`](AUDIT_REPORT_ST2027.md) and [`
 
 ## 13. Automated Verification Test Suite & Quality Gates
 
-The platform includes automated verification tests across Python, native Rust (`--no-default-features` and `--features lab-surfaces`), DudeCT timing analysis, and symbolic ProVerif models:
+The platform includes automated verification suites across Python, native Rust (`--no-default-features` and `--features lab-surfaces`), `ts_rt`, `sel4_mils_appliance`, DudeCT statistical timing tests, ProVerif symbolic models, and Linux Kani CBMC CI gates. Verified local run metrics (November 26, 2026) vs. external host/lab gates:
 
 ```bash
-# 1. Master Defense Self-Test Suite (Internal Developer Verification):
-python scripts/run_defense_audit.py
+# 1. Full Non-Live Python Verification Suite (1979 passed, 30 platform/legacy skipped, 26 @live deselected):
+python -m pytest tests/ -q -m "not live"
 
-# 2. Strict Rust Compiler Clippy & Zero-Warning Gate:
+# 2. Native Rust Data-Plane Cryptographic Core & Harness Suite (327 tests under --no-default-features):
 cargo clippy --all-targets --manifest-path rust_data_plane/Cargo.toml -- -D warnings
+cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
 
-# 3. Native Rust Cryptographic Core Battery (263 tests, 0 failures):
-cargo test --manifest-path rust_data_plane/Cargo.toml
+# 3. Volatile-Memory Security Core & seL4 MILS Spec Verification (ts_rt: 3 tests; seL4: 21 tests + 5/5 strict checks):
+cargo test --manifest-path ts_rt/Cargo.toml
+cargo test --manifest-path sel4_mils_appliance/Cargo.toml
+python sel4_mils_appliance/validate_mils.py --strict
 
-# 4. Standalone Native Executable Integration Battery (27 tests, 0 failures):
-python -m unittest tests/test_rust_standalone_binary.py
+# 4. Standalone Native Executable Integration Battery:
+pytest tests/test_rust_standalone_binary.py -v
 
-# 5. DudeCT Constant-Time Side-Channel Timing Verification (|t| < 4.5):
+# 5. DudeCT Constant-Time Side-Channel Timing Verification (Rust: 12 tests; |t| < 4.5):
+cargo test --manifest-path rust_data_plane/Cargo.toml --test dudect_ct
 pytest tests/test_dudect_timing_analysis.py -v
 
-# 6. Transport Anonymity, Cell Framing & Poisson Pacing (23 tests, 0 failures):
-pytest tests/test_transport_anonymity.py -v
+# 6. Transport Anonymity, Dual-Smartcard TPI, Runtime Boundaries & Host Posture Suites:
+pytest tests/test_transport_anonymity.py \
+       tests/test_hardware_tpi_dual_smartcard.py \
+       tests/test_runtime_memory_and_web_console.py \
+       tests/test_hardware_dependencies_and_isolation.py \
+       tests/test_production_tier5_session_config_audit.py -v
 
-# 7. Hardware Two-Person Integrity & CCID Dual-Smartcard Suites (13 tests, 0 failures):
-pytest tests/test_hardware_tpi_dual_smartcard.py -v
-
-# 8. Master Hardware Security & 5-Pillar Host Isolation Assessment:
-python scripts/verify_hardware_security.py
-
-# 9. Runtime Memory Boundaries, CAC/PIV mTLS & Web Console (26 tests, 0 failures):
-pytest tests/test_runtime_memory_and_web_console.py -v
-
-# 10. Hardware Dependencies, Monotonic Counter & CCID Token Probing (16 tests, 0 failures):
-pytest tests/test_hardware_dependencies_and_isolation.py -v
-
-# 11. Tier 5 Session Context & Cryptographic Cleanup Audit (6 tests, 0 failures):
-pytest tests/test_production_tier5_session_config_audit.py -v
-
-# 12. Truth-in-Claims & Regulatory Honest Disclosures (4 tests, 0 failures):
+# 7. Truth-in-Claims & Regulatory Honest Disclosures Gate (6 checks):
 pytest tests/test_docs_truth_in_claims.py -v
 
-# 13. Reproducible Build Verification (SLSA L3-Aligned 47-Module Merkle Tree):
-python scripts/verify_reproducible_build.py
+# 8. Master Defense Self-Test Runner & Hardware Assessment (local developer gate; requires ProVerif >= 2.05):
+python scripts/run_defense_audit.py
+python scripts/verify_hardware_security.py
 
-# 14. Master Pre-Flight Deployment Gate (103 PASS, 0 FAIL, 0 WARN, 0 SKIP):
+# 9. Reproducible Build & Supply-Chain Audit (58 source modules, 29 OSV/signed-mirror packages, 0 HIGH/MEDIUM Bandit):
+python scripts/verify_reproducible_build.py
+python scripts/audit_pins.py --offline --require-signature
+
+# 10. Pre-Flight Deployment Advisory Gate (99 PASS, 0 FAIL, 4 WARN on lab host lacking HW TPM NV / Dual CCID / SecureBoot / Dual NIC):
 python verify_deployment.py
 
-# 15. FIPS 140-3 CMT Laboratory & AO Submittal Packet Verification (14/14 Artifacts):
+# 11. FIPS 140-3 CMT Laboratory & AO Submittal Packet Verification (14/14 Artifacts):
 python scripts/package_cmt_laboratory_submittal.py --verify
 
-# 16. Advanced Tactical Defense Battery (Phases A through F):
+# 12. Advanced Tactical Defense Batteries (Phases A through L) & SMT Contracts:
 pytest tests/test_sel4_mils_spec.py \
        tests/test_hardware_enclave_custody.py \
        tests/test_pqc_multi_assumption_combiner.py \
        tests/test_nc3_threshold_mpc.py \
        tests/test_optical_diode_fec.py \
-       tests/test_chameleon_traffic_morphing.py -v
-
-# 17. Sovereign Mesh, ZKP & Physical Layer Waveform Battery (Phases G through L):
-pytest tests/test_dtn_zero_rtt_mesh.py \
+       tests/test_chameleon_traffic_morphing.py \
+       tests/test_dtn_zero_rtt_mesh.py \
        tests/test_pq_zkp_identity.py \
        tests/test_sdr_dsss_waveforms.py \
        tests/test_blinded_cross_domain_guard.py \
        tests/test_formal_code_contracts.py \
        tests/test_visual_airgap_transceiver.py -v
-
-# 18. Machine-Checked SMT-LIB2 Mathematical Contract Verification:
 python scripts/verify_mathematical_contracts.py --export-smt
 ```
 
