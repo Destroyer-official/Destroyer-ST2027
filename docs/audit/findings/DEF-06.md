@@ -2,7 +2,7 @@
 
 - **Finding ID:** `DEF-06`
 - **Module:** `tests` / `system_hardening_integrity`
-- **Affected File & Line:** [`tests/test_audit_forensic_remediations.py:144-154`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/tests/test_audit_forensic_remediations.py#L144-L154)
+- **Affected File & Line:** [`tests/test_audit_forensic_remediations.py:144-154`](../../../tests/test_audit_forensic_remediations.py#L144-L154)
 - **Classification:** Confirmed Test Isolation Defect (Remediated)
 - **Severity:** Medium (Test Reliability & Flakiness)
 

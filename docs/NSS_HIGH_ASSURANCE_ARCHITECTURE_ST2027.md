@@ -34,8 +34,8 @@ The Trusted Computing Base (TCB) consists of three strictly isolated and bounded
 +----------------------------------------------------------------------------------------------------+
 | [PLANE 2] DETERMINISTIC HIGH-ASSURANCE RUST DATA PLANE (`destroyer_core`)                          |
 |   ├── Zero-heap-allocation per frame transmission (`rust_data_plane/src/aead.rs`)                 |
-|   ├── RFC 6479 decoupled 2048-packet sliding bitmask window (`rust_data_plane/src/replay.rs`)      |
-|   ├── Strict 64-bit sequence counter saturation with fail-closed latch (`rust_data_plane/ratchet.rs`)|
+|   ├── RFC 6479 decoupled 1024-packet sliding bitmask window (`rust_data_plane/src/replay.rs`)      |
+|   ├── Strict 64-bit sequence counter saturation with fail-closed latch (`rust_data_plane/src/ratchet.rs`)|
 |   ├── VirtualLock / mlock locked memory pages preventing swap leakage (`ts_rt/src/lib.rs`)         |
 |   └── Constant-time comparison & volatile zeroization on drop (`ZeroizeOnDrop`)                    |
 +----------------------------------------------------------------------------------------------------+
@@ -56,12 +56,12 @@ ST2027 enforces complete conformance with the **National Security Agency Commerc
 
 | Cryptographic Primitive | Mandated Algorithm | Standard / NIST Level | Code Implementation Reference |
 | :--- | :--- | :--- | :--- |
-| **Key Encapsulation (KEM)** | **ML-KEM-1024** (Kyber-1024) | FIPS 203 / NIST Level 5 | [`liboqs_wrapper.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py) / [`pqc_algorithms.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/pqc_algorithms.py) |
-| **Digital Signatures** | **ML-DSA-87** (Dilithium-5) | FIPS 204 / NIST Level 5 | [`crypto/signatures.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/signatures.py) |
-| **Stateful / Pure Hash Sig** | **SLH-DSA-256f** (SPHINCS+) | FIPS 205 / NIST Level 5 | [`crypto/signatures.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/signatures.py) |
-| **Hybrid KEM Combiner** | ML-KEM-1024 + X25519 | RFC 10024 / SP 800-56C | [`hybrid_kex.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/hybrid_kex.py) |
-| **Symmetric AEAD** | AES-256-GCM / 128-bit Tag | FIPS 197 / SP 800-38D | [`rust_data_plane/src/aead.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/aead.rs) |
-| **Cryptographic Hash / KDF** | SHA-384 / HKDF-SHA3-512 | FIPS 180-4 / RFC 5869 | [`cjadc2_cross_domain_guard.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py) |
+| **Key Encapsulation (KEM)** | **ML-KEM-1024** (Kyber-1024) | FIPS 203 / NIST Level 5 | [`liboqs_wrapper.py`](../liboqs_wrapper.py) / [`pqc_algorithms.py`](../pqc_algorithms.py) |
+| **Digital Signatures** | **ML-DSA-87** (Dilithium-5) | FIPS 204 / NIST Level 5 | [`crypto/signatures.py`](../crypto/signatures.py) |
+| **Stateful / Pure Hash Sig** | **SLH-DSA-256f** (SPHINCS+) | FIPS 205 / NIST Level 5 | [`crypto/signatures.py`](../crypto/signatures.py) |
+| **Hybrid KEM Combiner** | ML-KEM-1024 + X25519 | RFC 10024 / SP 800-56C | [`hybrid_kex.py`](../hybrid_kex.py) |
+| **Symmetric AEAD** | AES-256-GCM / 128-bit Tag | FIPS 197 / SP 800-38D | [`rust_data_plane/src/aead.rs`](../rust_data_plane/src/aead.rs) |
+| **Cryptographic Hash / KDF** | SHA-384 / HKDF-SHA3-512 | FIPS 180-4 / RFC 5869 | [`cjadc2_cross_domain_guard.py`](../cjadc2_cross_domain_guard.py) |
 
 ### 2.1 Verify-After-Sign (VAS) Fault Injection Defense
 
@@ -98,7 +98,7 @@ For deterministic latency-critical operations and rigorous resilience against me
 
 ### 3.1 Zero-Heap-Allocation AEAD Encryption
 
-The frame encryption path in [`rust_data_plane/src/aead.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/aead.rs) operates entirely on pre-allocated stack buffers:
+The frame encryption path in [`rust_data_plane/src/aead.rs`](../rust_data_plane/src/aead.rs) operates entirely on pre-allocated stack buffers:
 ```rust
 // rust_data_plane/src/aead.rs
 pub fn seal_in_place(
@@ -117,7 +117,7 @@ pub fn seal_in_place(
 
 Under AES-GCM, encrypting two different plaintexts with the same (key, nonce) pair catastrophically destroys the authenticity and confidentiality of the session (the Joux forbidden attack). 
 
-In [`rust_data_plane/src/ratchet.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/ratchet.rs#L102-L131), sequence counter rollover is physically impossible. When the 64-bit sequence counter reaches saturation, the ratchet permanently latches closed:
+In [`rust_data_plane/src/ratchet.rs`](../rust_data_plane/src/ratchet.rs#L102-L131), sequence counter rollover is physically impossible. When the 64-bit sequence counter reaches saturation, the ratchet permanently latches closed:
 ```rust
 if self.send_seq == u64::MAX {
     // Latch permanently shut to prevent nonce reuse
@@ -127,9 +127,9 @@ if self.send_seq == u64::MAX {
 self.send_seq += 1;
 ```
 
-### 3.3 RFC 6479 Decoupled 2048-Packet Sliding Bitmask Window
+### 3.3 RFC 6479 Decoupled 1024-Packet Sliding Bitmask Window
 
-Packet replay attacks are mitigated using the RFC 6479 decoupled sliding window algorithm in [`rust_data_plane/src/replay.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs). The replay state tracks a 2048-packet window using an array of `u64` bitmasks:
+Packet replay attacks are mitigated using the RFC 6479 decoupled sliding window algorithm in [`rust_data_plane/src/replay.rs`](../rust_data_plane/src/replay.rs). The replay state tracks a 1024-packet window using an array of 16 `u64` bitmasks ($16 \times 64 = 1024\text{ bits}$):
 - Packets ahead of the window update the maximum sequence number and advance the bitmap.
 - Packets within the window are checked and marked in constant time ($O(1)$ bitwise operations).
 - Duplicate or delayed packets falling behind the window boundary are immediately and silently dropped without triggering error acknowledgments that could aid adversary traffic analysis.
@@ -168,7 +168,7 @@ ST2027 implements strict **Bell-LaPadula Multi-Level Security (MLS)** rules:
 
 ### 5.1 SP 800-56C Cryptographic Compartment Isolation
 
-In [`cjadc2_cross_domain_guard.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py#L231-L255), compartment keys are derived using standard HKDF-SHA3-512:
+In [`cjadc2_cross_domain_guard.py`](../cjadc2_cross_domain_guard.py#L231-L255), compartment keys are derived using standard HKDF-SHA3-512:
 ```python
 def derive_compartment_key(master_key: bytes, classification: str, compartment: str) -> bytes:
     context_info = f"ST2027-MLS-COMPARTMENT-{classification.upper()}-{compartment.upper()}".encode("utf-8")
@@ -222,7 +222,7 @@ The integrity of ST2027 has been verified through a multi-tier defense assurance
 ## 8. Authoritative Master Audit Receipt
 
 The master defense audit receipt is maintained under offline cryptographic custody at:
-- **Receipt Manifest**: [`compliance_reports/defense_master_audit_receipt.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json)
-- **ML-DSA-87 Digital Signature**: [`compliance_reports/defense_master_audit_receipt.json.sig`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json.sig)
-- **Signer Public Key**: [`compliance_reports/defense_master_audit_receipt.json.pub`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json.pub)
+- **Receipt Manifest**: [`compliance_reports/defense_master_audit_receipt.json`](../compliance_reports/defense_master_audit_receipt.json)
+- **ML-DSA-87 Digital Signature**: [`compliance_reports/defense_master_audit_receipt.json.sig`](../compliance_reports/defense_master_audit_receipt.json.sig)
+- **Signer Public Key**: [`compliance_reports/defense_master_audit_receipt.json.pub`](../compliance_reports/defense_master_audit_receipt.json.pub)
 - **Signer Fingerprint**: `f3c0ae0d5b6c20299791d3ca6d9cfd5d8fa2f5f54e406a7cefd7bcd9e24268f4`

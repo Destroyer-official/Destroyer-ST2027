@@ -14757,6 +14757,7 @@ class TacticalP2PNode:
                     raise SecurityError(f"Zero-Gap seal failed on initial_msg: {e}")
                 cmd.extend(["--msg", m])
 
+        self._channel_active_event = threading.Event()
         self.channel_proc = subprocess.Popen(
             cmd,
             env=chan_env,
@@ -15173,6 +15174,7 @@ class TacticalP2PNode:
                         self.sent_msgs_count += 1
                     print(f"{DIM}[{self.name}] Paced cell emitted: {line_str}{RESET}")
                 elif "ACTIVE" in line_str:
+                    self._channel_active_event.set()
                     print(f"{GREEN}[{self.name}] Channel Active: {line_str}{RESET}")
                 elif "TERMINATED" in line_str:
                     print(f"{YELLOW}[{self.name}] Channel Terminated: {line_str}{RESET}")
@@ -15180,6 +15182,28 @@ class TacticalP2PNode:
         t = threading.Thread(target=reader, daemon=True)
         t.start()
         return self.channel_proc
+
+    def wait_channel_bound(self, timeout_sec: float = 10.0) -> bool:
+        """Wait deterministically until the native `channel` child process prints ACTIVE."""
+        evt = getattr(self, "_channel_active_event", None)
+        proc = getattr(self, "channel_proc", None)
+        if evt is None or proc is None:
+            return False
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if evt.wait(0.05):
+                return True
+            if proc.poll() is not None:
+                err = ""
+                try:
+                    err = proc.stderr.read() if proc.stderr else ""
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"[{self.name}] channel process exited before becoming ACTIVE "
+                    f"(rc={proc.returncode}): {err}"
+                )
+        raise RuntimeError(f"[{self.name}] channel process did not report ACTIVE within {timeout_sec}s")
 
     def send_large_payload(self, raw_bytes: bytes, msg_type: int = 0x01) -> bool:
         """Seal and transmit arbitrary size payload across the 1,232-byte paced quantum cells with zero cleartext leak."""
@@ -16365,16 +16389,27 @@ def run_automated_two_terminal_drill() -> bool:
         _sp.run([str(NATIVE_BIN), "auth-keygen", "--out-sk", sk, "--out-pk", pk],
                 check=True, capture_output=True)
 
+    def _alloc_free_port(sock_type: int) -> int:
+        with socket.socket(socket.AF_INET, sock_type) as _s:
+            _s.bind(("127.0.0.1", 0))
+            return int(_s.getsockname()[1])
+
+    kex_port = _alloc_free_port(socket.SOCK_STREAM)
+    norad_chan_port = _alloc_free_port(socket.SOCK_DGRAM)
+    pent_chan_port = _alloc_free_port(socket.SOCK_DGRAM)
+    while pent_chan_port == norad_chan_port:
+        pent_chan_port = _alloc_free_port(socket.SOCK_DGRAM)
+
     try:
         norad = TacticalP2PNode(
             name="NORAD_ALPHA",
             role="responder",
             bind_addr="127.0.0.1",
             peer_addr="127.0.0.1",
-            kex_port=9200,
-            peer_kex_port=9200,
-            channel_port=9210,
-            peer_channel_port=9211,
+            kex_port=kex_port,
+            peer_kex_port=kex_port,
+            channel_port=norad_chan_port,
+            peer_channel_port=pent_chan_port,
             work_dir=os.path.join(tmp_dir, "norad"),
             psk_file=drill_psk,
             lab_mode=True,
@@ -16386,10 +16421,10 @@ def run_automated_two_terminal_drill() -> bool:
             role="initiator",
             bind_addr="127.0.0.1",
             peer_addr="127.0.0.1",
-            kex_port=9200,
-            peer_kex_port=9200,
-            channel_port=9211,
-            peer_channel_port=9210,
+            kex_port=kex_port,
+            peer_kex_port=kex_port,
+            channel_port=pent_chan_port,
+            peer_channel_port=norad_chan_port,
             work_dir=os.path.join(tmp_dir, "pentagon"),
             psk_file=drill_psk,
             lab_mode=True,
@@ -16421,12 +16456,12 @@ def run_automated_two_terminal_drill() -> bool:
             interval_ms=15, quantum=1232,
             interactive=True
         )
-        time.sleep(0.15)
+        norad.wait_channel_bound(timeout_sec=10.0)
         pentagon.start_enclave_channel(
             interval_ms=15, quantum=1232,
             interactive=True
         )
-        time.sleep(0.2)
+        pentagon.wait_channel_bound(timeout_sec=10.0)
 
         pentagon.send_chat_message("PENTAGON_CMD_TACTICAL_ORDER_ALPHA_77")
         norad.send_chat_message("NORAD_DEFCON1_ACK_RADAR_LOCK_CONFIRMED")

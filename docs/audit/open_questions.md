@@ -24,7 +24,7 @@ Consolidated register of technical ambiguities, architectural crossroads, and un
 - **Audit Rule:**
   "Files that are signed or hashed (*.sig, *.hashes, *.pub, signed config, CBOM): do not edit them silently. If a change invalidates a signature or hash, record it in docs/audit/open_questions.md. Never generate or use a real signing key to re-sign."
 - **Status:**
-  Recorded here and in [`docs/audit/proposals.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/proposals.md) (Proposal 3). Re-signing requires repository owner authorization before running `scripts/sign_dependencies.py`.
+  Recorded here and in [`docs/audit/proposals.md`](proposals.md) (Proposal 3). Re-signing requires repository owner authorization before running `scripts/sign_dependencies.py`.
 
 ---
 

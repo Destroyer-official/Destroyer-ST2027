@@ -75,16 +75,29 @@ def run_test() -> bool:
     bravo_cert_file = os.path.join(tmp_dir, "bravo_pentagon.crt")
     bravo_cert.save_to_file(bravo_cert_file)
 
+    def _alloc_free_port(sock_type: int) -> int:
+        import socket as _sock
+        with _sock.socket(_sock.AF_INET, sock_type) as _s:
+            _s.bind(("127.0.0.1", 0))
+            return int(_s.getsockname()[1])
+
+    import socket as _sock
+    kex_port = _alloc_free_port(_sock.SOCK_STREAM)
+    norad_chan_port = _alloc_free_port(_sock.SOCK_DGRAM)
+    pent_chan_port = _alloc_free_port(_sock.SOCK_DGRAM)
+    while pent_chan_port == norad_chan_port:
+        pent_chan_port = _alloc_free_port(_sock.SOCK_DGRAM)
+
     try:
         norad = TacticalP2PNode(
             name="NORAD_ALPHA",
             role="responder",
             bind_addr="127.0.0.1",
             peer_addr="127.0.0.1",
-            kex_port=9200,
-            peer_kex_port=9200,
-            channel_port=9210,
-            peer_channel_port=9211,
+            kex_port=kex_port,
+            peer_kex_port=kex_port,
+            channel_port=norad_chan_port,
+            peer_channel_port=pent_chan_port,
             work_dir=os.path.join(tmp_dir, "norad"),
             psk_file=drill_psk,
             lab_mode=True,
@@ -101,10 +114,10 @@ def run_test() -> bool:
             role="initiator",
             bind_addr="127.0.0.1",
             peer_addr="127.0.0.1",
-            kex_port=9200,
-            peer_kex_port=9200,
-            channel_port=9211,
-            peer_channel_port=9210,
+            kex_port=kex_port,
+            peer_kex_port=kex_port,
+            channel_port=pent_chan_port,
+            peer_channel_port=norad_chan_port,
             work_dir=os.path.join(tmp_dir, "pentagon"),
             psk_file=drill_psk,
             lab_mode=True,
@@ -153,12 +166,13 @@ def run_test() -> bool:
             auto_reply=flash_ack,
             recv_count=1
         )
-        time.sleep(0.15)
+        norad.wait_channel_bound(timeout_sec=10.0)
         pentagon.start_enclave_channel(
             interval_ms=15, quantum=1232,
             initial_msgs=[flash_order],
             recv_count=1
         )
+        pentagon.wait_channel_bound(timeout_sec=10.0)
 
         # 3. Wait for bidirectional delivery
         for _ in range(120):

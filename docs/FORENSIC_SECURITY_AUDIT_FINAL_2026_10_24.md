@@ -34,14 +34,14 @@ The audit inspected the complete repository across 356 files spanning Python tac
 
 | Subsystem | Key Files Audited | Implementation Language | Primary Security Function |
 |---|---|---|---|
-| **Tactical Runtime Core** | [destroyer.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/destroyer.py), [secure_transmit_2027.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py), [core/orchestrator.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/core/orchestrator.py) | Python 3.14 | CLI orchestration, operator commands, session lifecycle |
-| **Post-Quantum Cryptography** | [pqc_algorithms.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/pqc_algorithms.py), [liboqs_wrapper.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py), [crypto/signatures.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/signatures.py) | Python / C-types / native DLL | FIPS 203/204/205 KEM & digital signatures |
-| **Double Ratchet & Group Ratchet** | [double_ratchet.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/double_ratchet.py), [sovereign_group_ratchet.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/sovereign_group_ratchet.py), [pq_treekem.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/pq_treekem.py) | Python / Rust | End-to-end messaging, PCS healing, TPI epoch rekeying |
-| **Rust High-Assurance Data Plane** | [rust_data_plane/src/lib.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/lib.rs), [handshake.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/handshake.rs), [tpm_nv.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/tpm_nv.rs), [replay.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs) | Rust 2021 Edition | Noise-XXhfs handshake, memory zeroization, TPM NV monotonic guard |
-| **Deterministic TS Runtime** | [ts_runtime.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_runtime.py), [ts_hw_layer.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py), [ts_attest.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_attest.py), `ts_rt/` | Python / Rust C-ABI | Anti-rollback monotonic enforcement, VirtualLock memory guard |
-| **Cross-Domain & Tactical Diode** | [cjadc2_cross_domain_guard.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py), [tactical_data_diode.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_data_diode.py) | Python | Bell-LaPadula multilevel isolation, unidirectional optical diode |
-| **Formal Symbolic Models** | [docs/formal/st2027_handshake.pv](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_handshake.pv), [docs/formal/st2027_pcs.pv](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/st2027_pcs.pv) | Applied Pi-Calculus | ProVerif 2.05 security proofs |
-| **Supply Chain & Reproducibility** | [critical_modules.hashes](file:///d:/code/Main_projects/p2p/p2p_6_1-26/critical_modules.hashes), [scripts/verify_reproducible_build.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_reproducible_build.py) | Python / SHA3-512 | SLSA Level 3+ signed Merkle tree integrity verification |
+| **Tactical Runtime Core** | [destroyer.py](../destroyer.py), [secure_transmit_2027.py](../secure_transmit_2027.py), [core/orchestrator.py](../core/orchestrator.py) | Python 3.14 | CLI orchestration, operator commands, session lifecycle |
+| **Post-Quantum Cryptography** | [pqc_algorithms.py](../pqc_algorithms.py), [liboqs_wrapper.py](../liboqs_wrapper.py), [crypto/signatures.py](../crypto/signatures.py) | Python / C-types / native DLL | FIPS 203/204/205 KEM & digital signatures |
+| **Double Ratchet & Group Ratchet** | [double_ratchet.py](../double_ratchet.py), [sovereign_group_ratchet.py](../sovereign_group_ratchet.py), [pq_treekem.py](../pq_treekem.py) | Python / Rust | End-to-end messaging, PCS healing, TPI epoch rekeying |
+| **Rust High-Assurance Data Plane** | [rust_data_plane/src/lib.rs](../rust_data_plane/src/lib.rs), [handshake.rs](../rust_data_plane/src/handshake.rs), [tpm_nv.rs](../rust_data_plane/src/tpm_nv.rs), [replay.rs](../rust_data_plane/src/replay.rs) | Rust 2021 Edition | Noise-XXhfs handshake, memory zeroization, TPM NV monotonic guard |
+| **Deterministic TS Runtime** | [ts_runtime.py](../ts_runtime.py), [ts_hw_layer.py](../ts_hw_layer.py), [ts_attest.py](../ts_attest.py), `ts_rt/` | Python / Rust C-ABI | Anti-rollback monotonic enforcement, VirtualLock memory guard |
+| **Cross-Domain & Tactical Diode** | [cjadc2_cross_domain_guard.py](../cjadc2_cross_domain_guard.py), [tactical_data_diode.py](../tactical_data_diode.py) | Python | Bell-LaPadula multilevel isolation, unidirectional optical diode |
+| **Formal Symbolic Models** | [docs/formal/st2027_handshake.pv](formal/st2027_handshake.pv), [docs/formal/st2027_pcs.pv](formal/st2027_pcs.pv) | Applied Pi-Calculus | ProVerif 2.05 security proofs |
+| **Supply Chain & Reproducibility** | [critical_modules.hashes](../critical_modules.hashes), [scripts/verify_reproducible_build.py](../scripts/verify_reproducible_build.py) | Python / SHA3-512 | SLSA Level 3+ signed Merkle tree integrity verification |
 
 ### Test Battery Execution
 - **Cargo Test Suite:** 149 tests executed (112 unit/integration tests + 37 Kani formal harnesses); 0 failed.
@@ -86,7 +86,7 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 ```
 
 ### Critical Security Boundaries
-1. **Red/Black Domain Separation:** Red domain contains plaintext tactical orders and decrypted C2 commands; Black domain processes ciphertext serialized over wire protocols. Handled by [cjadc2_cross_domain_guard.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py) and [tactical_data_diode.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_data_diode.py).
+1. **Red/Black Domain Separation:** Red domain contains plaintext tactical orders and decrypted C2 commands; Black domain processes ciphertext serialized over wire protocols. Handled by [cjadc2_cross_domain_guard.py](../cjadc2_cross_domain_guard.py) and [tactical_data_diode.py](../tactical_data_diode.py).
 2. **Cryptographic Identity Custody:** Long-term root private keys (ML-DSA-87 and Falcon-1024) never leave protected volatile memory. Monotonic state counters are bound to TPM 2.0 NVRAM indices to eliminate state-rewind and clone attacks.
 3. **Verify-After-Sign (VAS) Fault-Injection Boundary:** All post-quantum digital signature generation paths enforce VAS. Signature operations compute signature $S$, verify $V(PK, M, S) == \text{True}$ immediately in volatile memory, and abort fail-closed if verification fails, mitigating active physical laser/glitch fault-injection attacks.
 
@@ -95,46 +95,46 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 ## D. Critical Findings & Threat Vector Analysis
 
 ### F-01: Master Defense Harness Gate 1.1 Test Count Desynchronization (CRITICAL)
-- **Component:** [scripts/run_defense_audit.py:111-116](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/run_defense_audit.py#L111-L116)
+- **Component:** [scripts/run_defense_audit.py:111-116](../scripts/run_defense_audit.py#L111-L116)
 - **Root Cause:** In the defense harness verification script, `cargo test` stdout was parsed using regex matching without filtering zero-count test runners (`0 passed; 0 failed`). When doc-tests executed between lib tests and kani harnesses, `passed_matches[1]` evaluated to `0`, failing the `>= 30` condition despite 149/149 tests passing.
 - **Exploitation Impact:** CI/CD and deployment gating failed closed with "DEFENSE DEFICIENCY DETECTED", preventing automated tactical release validation.
 - **Remediation:** Updated regex parsing to filter `if int(m) > 0`, verifying `matches[0] >= 110` and `matches[1] >= 30`. Verified Gate 1.1 passes with 149 tests in 20.1s.
 
 ### F-02: Hash Manifest Drift in Critical Release Modules (HIGH)
-- **Component:** [critical_modules.hashes:7-11](file:///d:/code/Main_projects/p2p/p2p_6_1-26/critical_modules.hashes#L7-L11)
-- **Root Cause:** Modifications to [rust_data_plane/src/main.rs](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/main.rs) were committed without updating the cryptographically signed release hash manifest.
+- **Component:** [critical_modules.hashes:7-11](../critical_modules.hashes#L7-L11)
+- **Root Cause:** Modifications to [rust_data_plane/src/main.rs](../rust_data_plane/src/main.rs) were committed without updating the cryptographically signed release hash manifest.
 - **Exploitation Impact:** Gate 7.1 rejected release builds due to Merkle root mismatch, indicating potential supply-chain tampering.
 - **Remediation:** Re-hashed `rust_data_plane/src/main.rs` with exact SHA-512 and SHA3-512 values (SHA3-512: `08697280e08d9806...`, size: 112,275 bytes). Verified with `scripts/verify_reproducible_build.py`.
 
 ### F-03: Non-Standard Pseudo-HKDF in Cross-Domain Compartment Isolation (HIGH)
-- **Component:** [cjadc2_cross_domain_guard.py:231-255](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py#L231-L255)
+- **Component:** [cjadc2_cross_domain_guard.py:231-255](../cjadc2_cross_domain_guard.py#L231-L255)
 - **Root Cause:** In `derive_compartment_key`, compartment subkeys were derived via ad-hoc concatenation: `hashlib.sha3_512(salt + master_secret + compartment.encode()).digest()[:32]` rather than standards-compliant HKDF (RFC 5869 / SP 800-56C).
 - **Exploitation Impact:** Potential length-extension and entropy distribution weaknesses in compartment key separation across multinational coalition enclaves.
 - **Remediation:** Replaced ad-hoc hashing with standard `cryptography.hazmat.primitives.kdf.hkdf.HKDF` using `hashes.SHA3_512()`, info context binding `f"CJADC2-CompartmentKey-v1:{compartment}".encode("utf-8")`, and salt-based extraction. Verified via `tests/test_phase6_cjadc2_data_fabric.py`.
 
 ### F-04: CNSA 2.0 Algorithm Non-Compliance in Cross-Domain & Ratchet Paths (HIGH)
-- **Component:** [cjadc2_cross_domain_guard.py:255](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py#L255), [double_ratchet.py:85,3463](file:///d:/code/Main_projects/p2p/p2p_6_1-26/double_ratchet.py#L85)
+- **Component:** [cjadc2_cross_domain_guard.py:255](../cjadc2_cross_domain_guard.py#L255), [double_ratchet.py:85,3463](../double_ratchet.py#L85)
 - **Root Cause:** Claims of CNSA Suite 2.0 compliance while utilizing ChaCha20-Poly1305. NSA CNSA 2.0 strictly mandates AES-256 (FIPS 197 / SP 800-38D AES-GCM) for national security systems.
 - **Exploitation Impact:** Rejection during FIPS 140-3 and NSA accreditation submittal; algorithm non-compliance in classified enclaves.
 - **Remediation:** Standardized sovereign and high-assurance modes strictly on `AES-256-GCM` with 96-bit nonces, verified by CNSA 2.0 purity test harnesses.
 
 ### F-05: Algorithm Parameter Set Mismatch in Signature Operations (MEDIUM)
-- **Component:** [crypto/signatures.py:41-55](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/signatures.py#L41-L55)
+- **Component:** [crypto/signatures.py:41-55](../crypto/signatures.py#L41-L55)
 - **Root Cause:** Property `slh_dsa_256f` imported `EnhancedSPHINCS_256s` (NIST Level 5 small/slow variant with 29,792B signatures) instead of the fast variant (FIPS 205 `SLH_DSA_PURE_SHAKE_256F` with 49,856B signatures).
 - **Exploitation Impact:** Mismatched signature byte lengths and computational latency unexpected by callers configuring high-throughput signing operations.
-- **Remediation:** Updated `crypto/signatures.py` to import `LibOQS_SLH_DSA_256f` from [liboqs_wrapper.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py) with graceful fallback to `EnhancedSPHINCS_256s`.
+- **Remediation:** Updated `crypto/signatures.py` to import `LibOQS_SLH_DSA_256f` from [liboqs_wrapper.py](../liboqs_wrapper.py) with graceful fallback to `EnhancedSPHINCS_256s`.
 
 ### F-06: Plaintext-Hash Key Derivation & Dead Code Ambiguity in Authentication Tags (HIGH)
-- **Component:** [crypto/auth_tags.py:66](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/auth_tags.py#L66), [core/orchestrator.py:784-809](file:///d:/code/Main_projects/p2p/p2p_6_1-26/core/orchestrator.py#L784-L809)
+- **Component:** [crypto/auth_tags.py:66](../crypto/auth_tags.py#L66), [core/orchestrator.py:784-809](../core/orchestrator.py#L784-L809)
 - **Root Cause:** `crypto/auth_tags.py` accepts plaintext hash into HKDF; the module was uncalled in the primary Double Ratchet messaging path, creating cryptographic ambiguity regarding Encrypt-then-MAC vs AEAD integrity boundaries.
 - **Exploitation Impact:** Misuse risk if future developers invoked `auth_tags.py` believing it authenticated ciphertext rather than plaintext hashes.
 - **Remediation:** Gated and deprecated standalone auth tag generation; mandated AES-256-GCM native AEAD authentication tags across all wire framing.
 
 ### F-07: Sovereign Group Ratchet Multi-Party Synchronization Gap (MEDIUM)
-- **Component:** [sovereign_group_ratchet.py:238-245](file:///d:/code/Main_projects/p2p/p2p_6_1-26/sovereign_group_ratchet.py#L238-L245)
+- **Component:** [sovereign_group_ratchet.py:238-245](../sovereign_group_ratchet.py#L238-L245)
 - **Root Cause:** Calling `advance_epoch` advanced `self.epoch` and derived a fresh sender key for the local member only. Known peer members in `self.members` retained outdated epoch chain keys, causing incoming group messages in the new epoch to fail with `Epoch mismatch`.
 - **Exploitation Impact:** Group broadcast desynchronization following Two-Person Integrity (TPI) epoch re-keying.
-- **Remediation:** Added `derive_epoch_sender_key` and `sync_roster_epoch_keys` methods to [sovereign_group_ratchet.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/sovereign_group_ratchet.py). Integrated automatic roster synchronization on epoch advancement. Verified via new multi-party regression test `test_group_epoch_advancement_synchronization`.
+- **Remediation:** Added `derive_epoch_sender_key` and `sync_roster_epoch_keys` methods to [sovereign_group_ratchet.py](../sovereign_group_ratchet.py). Integrated automatic roster synchronization on epoch advancement. Verified via new multi-party regression test `test_group_epoch_advancement_synchronization`.
 
 ---
 
@@ -142,16 +142,16 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 
 | Finding ID | Title | Severity | Confidence | Component | Status | Verification |
 |---|---|---|---|---|---|---|
-| **F-01** | Master Defense Harness Gate 1.1 Test Desynchronization | **CRITICAL** | Certain | [scripts/run_defense_audit.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/run_defense_audit.py) | **FIXED** | Master audit 10/10 PASS |
-| **F-02** | Hash Manifest Drift in Release Artifacts | **HIGH** | Certain | [critical_modules.hashes](file:///d:/code/Main_projects/p2p/p2p_6_1-26/critical_modules.hashes) | **FIXED** | `verify_reproducible_build.py` PASS |
-| **F-03** | Non-Standard Pseudo-HKDF in Cross-Domain Guard | **HIGH** | Certain | [cjadc2_cross_domain_guard.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py) | **FIXED** | Pytest cross-domain suite PASS |
-| **F-04** | CNSA 2.0 Algorithm Non-Compliance (ChaCha20) | **HIGH** | Certain | [double_ratchet.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/double_ratchet.py) | **FIXED** | CNSA purity scan PASS |
-| **F-05** | SLH-DSA Parameter Set Mismatch | **MEDIUM** | Certain | [crypto/signatures.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/signatures.py) | **FIXED** | Signature test suite (48/48) PASS |
-| **F-06** | Plaintext-Hash Key Derivation & Dead Tag Code | **HIGH** | High | [crypto/auth_tags.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/auth_tags.py) | **FIXED** | Double Ratchet AEAD enforced |
-| **F-07** | Sovereign Group Ratchet Multi-Party Sync Gap | **MEDIUM** | Certain | [sovereign_group_ratchet.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/sovereign_group_ratchet.py) | **FIXED** | `test_group_epoch_advancement_synchronization` PASS |
+| **F-01** | Master Defense Harness Gate 1.1 Test Desynchronization | **CRITICAL** | Certain | [scripts/run_defense_audit.py](../scripts/run_defense_audit.py) | **FIXED** | Master audit 10/10 PASS |
+| **F-02** | Hash Manifest Drift in Release Artifacts | **HIGH** | Certain | [critical_modules.hashes](../critical_modules.hashes) | **FIXED** | `verify_reproducible_build.py` PASS |
+| **F-03** | Non-Standard Pseudo-HKDF in Cross-Domain Guard | **HIGH** | Certain | [cjadc2_cross_domain_guard.py](../cjadc2_cross_domain_guard.py) | **FIXED** | Pytest cross-domain suite PASS |
+| **F-04** | CNSA 2.0 Algorithm Non-Compliance (ChaCha20) | **HIGH** | Certain | [double_ratchet.py](../double_ratchet.py) | **FIXED** | CNSA purity scan PASS |
+| **F-05** | SLH-DSA Parameter Set Mismatch | **MEDIUM** | Certain | [crypto/signatures.py](../crypto/signatures.py) | **FIXED** | Signature test suite (48/48) PASS |
+| **F-06** | Plaintext-Hash Key Derivation & Dead Tag Code | **HIGH** | High | [crypto/auth_tags.py](../crypto/auth_tags.py) | **FIXED** | Double Ratchet AEAD enforced |
+| **F-07** | Sovereign Group Ratchet Multi-Party Sync Gap | **MEDIUM** | Certain | [sovereign_group_ratchet.py](../sovereign_group_ratchet.py) | **FIXED** | `test_group_epoch_advancement_synchronization` PASS |
 | **F-08** | Committed Key Ceremony Affidavit Pseudo-Signatures | **MEDIUM** | High | `certs/key_ceremony_affidavit.json` | **DOCUMENTED** | Lab ceremony required for production |
-| **F-09** | Unaudited Custom Finite Field Prime Math | **MEDIUM** | High | [zk_authenticator.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/zk_authenticator.py) | **CONTAINED** | Gated behind experimental flag |
-| **F-10** | Tactical Web Console Session Lifetime in Memory | **LOW** | High | [tactical_web_console.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_web_console.py) | **MITIGATED** | Loopback binding & token expiry |
+| **F-09** | Unaudited Custom Finite Field Prime Math | **MEDIUM** | High | [zk_authenticator.py](../zk_authenticator.py) | **CONTAINED** | Gated behind experimental flag |
+| **F-10** | Tactical Web Console Session Lifetime in Memory | **LOW** | High | [tactical_web_console.py](../tactical_web_console.py) | **MITIGATED** | Loopback binding & token expiry |
 
 ---
 
@@ -167,7 +167,7 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 - **Sovereign Group Ratchet (MLS Aligned):** Implements epoch-based sender key ratchets with Two-Person Integrity (TPI) dual-officer co-signing. Re-keys the root epoch secret using HKDF-SHA384 extract/expand.
 
 ### 3. Replay Protection & Monotonic State
-- **RFC 6479 Decoupled Bitmap:** Rust data plane implements a 2048-packet sliding window anti-replay filter with constant-time bitwise operations, fully decoupled from transport packet ordering.
+- **RFC 6479 Decoupled Bitmap:** Rust data plane implements a 1024-packet sliding window anti-replay filter with constant-time bitwise operations, fully decoupled from transport packet ordering.
 - **TPM 2.0 NV Monotonic Counters:** Defense-grade monotonic state prevents state-rollback or VM clone replay attacks.
 
 ---
@@ -266,4 +266,4 @@ The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communi
 | **Classified Strategic NC3 / SAP Handover** | **FULL GO (FOR ACCREDITATION HANDOVER)** | Genuine Ed25519 custodian signatures committed in `certs/key_ceremony_affidavit.json`; hardware TPM 2.0 PCR baseline measured; 10/10 cATO evidence gates satisfied; NIAP Common Criteria SFR matrix & FIPS 140-3 CMVP submittal packages 100% complete; seL4 microkit sovereign appliance verified. Ready for formal government accreditation handover. |
 
 ---
-**Audit Verification:** Signed master receipt available at [compliance_reports/defense_master_audit_receipt.json](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json) (ML-DSA-87 signature verified).
+**Audit Verification:** Signed master receipt available at [compliance_reports/defense_master_audit_receipt.json](../compliance_reports/defense_master_audit_receipt.json) (ML-DSA-87 signature verified).

@@ -42,24 +42,24 @@ Coverage verified line-by-line across all 18 functional modules:
 
 | Module Name | Tracked Files | Product Lines | Audit Document | Claims Register | Status |
 |---|---|---|---|---|---|
-| `crypto_pqc` | 15 | 14,916 | [`docs/audit/modules/crypto_pqc.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/crypto_pqc.md) | `docs/audit/claims/crypto_pqc_claims.md` | VERIFIED |
-| `key_management_pki` | 19 | 26,542 | [`docs/audit/modules/key_management_pki.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/key_management_pki.md) | `docs/audit/claims/key_management_pki_claims.md` | VERIFIED |
-| `ratchet_kex_protocol` | 10 | 15,437 | [`docs/audit/modules/ratchet_kex_protocol.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/ratchet_kex_protocol.md) | `docs/audit/claims/ratchet_kex_protocol_claims.md` | VERIFIED |
-| `tls_channel` | 4 | 7,362 | [`docs/audit/modules/tls_channel.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/tls_channel.md) | `docs/audit/claims/tls_channel_claims.md` | VERIFIED |
-| `transport_anonymity` | 11 | 12,612 | [`docs/audit/modules/transport_anonymity.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/transport_anonymity.md) | `docs/audit/claims/transport_anonymity_claims.md` | VERIFIED |
-| `mesh_ddil_networking` | 12 | 9,204 | [`docs/audit/modules/mesh_ddil_networking.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/mesh_ddil_networking.md) | `docs/audit/claims/mesh_ddil_networking_claims.md` | VERIFIED |
-| `host_runtime_attestation` | 23 | 6,204 | [`docs/audit/modules/host_runtime_attestation.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/host_runtime_attestation.md) | `docs/audit/claims/host_runtime_attestation_claims.md` | VERIFIED |
-| `rust_data_plane` | 44 | 18,250 | [`docs/audit/modules/rust_data_plane.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/rust_data_plane.md) | `docs/audit/claims/rust_data_plane_claims.md` | VERIFIED |
-| `memory_security` | 9 | 10,357 | [`docs/audit/modules/memory_security.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/memory_security.md) | `docs/audit/claims/memory_security_claims.md` | VERIFIED |
-| `messaging_file_transfer` | 17 | 11,160 | [`docs/audit/modules/messaging_file_transfer.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/messaging_file_transfer.md) | `docs/audit/claims/messaging_file_transfer_claims.md` | VERIFIED |
-| `system_hardening_integrity` | 18 | 35,695 | [`docs/audit/modules/system_hardening_integrity.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/system_hardening_integrity.md) | `docs/audit/claims/system_hardening_integrity_claims.md` | VERIFIED |
-| `tactical_command_cjadc2` | 14 | 8,254 | [`docs/audit/modules/tactical_command_cjadc2.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/tactical_command_cjadc2.md) | `docs/audit/claims/tactical_command_cjadc2_claims.md` | VERIFIED |
-| `audit_threat_monitoring` | 18 | 13,296 | [`docs/audit/modules/audit_threat_monitoring.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/audit_threat_monitoring.md) | `docs/audit/claims/audit_threat_monitoring_claims.md` | VERIFIED |
-| `security_framework` | 16 | 8,889 | [`docs/audit/modules/security_framework.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/security_framework.md) | `docs/audit/claims/security_framework_claims.md` | VERIFIED |
-| `orchestrator_application` | 17 | 31,548 | [`docs/audit/modules/orchestrator_application.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/orchestrator_application.md) | `docs/audit/claims/orchestrator_application_claims.md` | VERIFIED |
-| `ui_presentation` | 7 | 2,317 | [`docs/audit/modules/ui_presentation.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/ui_presentation.md) | `docs/audit/claims/ui_presentation_claims.md` | VERIFIED |
-| `utilities_support` | 22 | 4,431 | [`docs/audit/modules/utilities_support.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/utilities_support.md) | `docs/audit/claims/utilities_support_claims.md` | VERIFIED |
-| `operational_scripts` | 34 | 8,409 | [`docs/audit/modules/operational_scripts.md`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/operational_scripts.md) | `docs/audit/claims/operational_scripts_claims.md` | VERIFIED |
+| `crypto_pqc` | 15 | 14,916 | [`docs/audit/modules/crypto_pqc.md`](modules/crypto_pqc.md) | `docs/audit/claims/crypto_pqc_claims.md` | VERIFIED |
+| `key_management_pki` | 19 | 26,542 | [`docs/audit/modules/key_management_pki.md`](modules/key_management_pki.md) | `docs/audit/claims/key_management_pki_claims.md` | VERIFIED |
+| `ratchet_kex_protocol` | 10 | 15,437 | [`docs/audit/modules/ratchet_kex_protocol.md`](modules/ratchet_kex_protocol.md) | `docs/audit/claims/ratchet_kex_protocol_claims.md` | VERIFIED |
+| `tls_channel` | 4 | 7,362 | [`docs/audit/modules/tls_channel.md`](modules/tls_channel.md) | `docs/audit/claims/tls_channel_claims.md` | VERIFIED |
+| `transport_anonymity` | 11 | 12,612 | [`docs/audit/modules/transport_anonymity.md`](modules/transport_anonymity.md) | `docs/audit/claims/transport_anonymity_claims.md` | VERIFIED |
+| `mesh_ddil_networking` | 12 | 9,204 | [`docs/audit/modules/mesh_ddil_networking.md`](modules/mesh_ddil_networking.md) | `docs/audit/claims/mesh_ddil_networking_claims.md` | VERIFIED |
+| `host_runtime_attestation` | 23 | 6,204 | [`docs/audit/modules/host_runtime_attestation.md`](modules/host_runtime_attestation.md) | `docs/audit/claims/host_runtime_attestation_claims.md` | VERIFIED |
+| `rust_data_plane` | 44 | 18,250 | [`docs/audit/modules/rust_data_plane.md`](modules/rust_data_plane.md) | `docs/audit/claims/rust_data_plane_claims.md` | VERIFIED |
+| `memory_security` | 9 | 10,357 | [`docs/audit/modules/memory_security.md`](modules/memory_security.md) | `docs/audit/claims/memory_security_claims.md` | VERIFIED |
+| `messaging_file_transfer` | 17 | 11,160 | [`docs/audit/modules/messaging_file_transfer.md`](modules/messaging_file_transfer.md) | `docs/audit/claims/messaging_file_transfer_claims.md` | VERIFIED |
+| `system_hardening_integrity` | 18 | 35,695 | [`docs/audit/modules/system_hardening_integrity.md`](modules/system_hardening_integrity.md) | `docs/audit/claims/system_hardening_integrity_claims.md` | VERIFIED |
+| `tactical_command_cjadc2` | 14 | 8,254 | [`docs/audit/modules/tactical_command_cjadc2.md`](modules/tactical_command_cjadc2.md) | `docs/audit/claims/tactical_command_cjadc2_claims.md` | VERIFIED |
+| `audit_threat_monitoring` | 18 | 13,296 | [`docs/audit/modules/audit_threat_monitoring.md`](modules/audit_threat_monitoring.md) | `docs/audit/claims/audit_threat_monitoring_claims.md` | VERIFIED |
+| `security_framework` | 16 | 8,889 | [`docs/audit/modules/security_framework.md`](modules/security_framework.md) | `docs/audit/claims/security_framework_claims.md` | VERIFIED |
+| `orchestrator_application` | 17 | 31,548 | [`docs/audit/modules/orchestrator_application.md`](modules/orchestrator_application.md) | `docs/audit/claims/orchestrator_application_claims.md` | VERIFIED |
+| `ui_presentation` | 7 | 2,317 | [`docs/audit/modules/ui_presentation.md`](modules/ui_presentation.md) | `docs/audit/claims/ui_presentation_claims.md` | VERIFIED |
+| `utilities_support` | 22 | 4,431 | [`docs/audit/modules/utilities_support.md`](modules/utilities_support.md) | `docs/audit/claims/utilities_support_claims.md` | VERIFIED |
+| `operational_scripts` | 34 | 8,409 | [`docs/audit/modules/operational_scripts.md`](modules/operational_scripts.md) | `docs/audit/claims/operational_scripts_claims.md` | VERIFIED |
 
 ---
 

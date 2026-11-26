@@ -1437,7 +1437,7 @@ In-repo audit reviews ([`AUDIT_REPORT_ST2027.md`](AUDIT_REPORT_ST2027.md) and [`
 
 | Remediation Wave / Area | Addressed Vulnerability / Gap | Concrete Defense Remediation Implemented in Code | Verification Basis |
 |---|---|---|---|
-| **Key Custody & Mutual Auth** | Rust `node --key-file`/`--key-stdin` and `--auth-sk-file` bypassed mutual auth / hardware custody in production | `rust_data_plane/src/main.rs` refuses `--auth-sk-file` and raw `--key-file`/`--key-stdin` in production unless PKCS#11/hardware custody and `--require-mutual-auth` + peer pin are satisfied; `PcsRatchet` re-encapsulation integrated across epoch rotation | `cargo test --no-default-features`, `tests/test_rust_standalone_binary.py` |
+| **Key Custody & Mutual Auth** | Rust `node --key-file`/`--key-stdin` and `--auth-sk-file` bypassed mutual auth / hardware custody in production; PKCS#11 HSM `sign_with_hsm` permitted classical fallback | `rust_data_plane/src/main.rs` refuses `--auth-sk-file` and raw `--key-file`/`--key-stdin` in production unless PKCS#11/hardware custody and `--require-mutual-auth` + peer pin are satisfied; `rust_data_plane/src/auth.rs` refuses `EC`/`EC_EDWARDS`/`RSA` and classical fallback cascades in `sign_with_hsm` under `is_production_env()`; `PcsRatchet` re-encapsulation integrated across epoch rotation | `cargo test --no-default-features`, `tests/test_rust_standalone_binary.py` |
 | **Durable Nonce & AEAD Hygiene** | Python AES-GCM random-prefix IV risked cross-restart nonce reuse under persistent keys | Added durable SQLite/atomic monotonic counter ledger (`gcm_nonce_ledger.db`), process restart enforcement (`tests/test_gcm_nonce_durability.py`), and domain-separated XAES-256-GCM support | `tests/test_gcm_nonce_durability.py` |
 | **TPM Quote, TLS & PKI Binding** | Simulated TPM quotes, unpinned peer identities, and CLI secret exposure in flags | Required `hardware_mode` validation & AK trust-anchor verification (`ts_attest.py`), strict TLS hostname verification & fail-closed TOFU blocking in prod (`tls_channel_manager.py`), unified PKI trust validation, and `P2P_AUTH_TOKEN_FD` / `stdin` secret ingestion | `tests/test_2027_defense_hardening.py`, `tests/test_tpm_hardware_phase2.py` |
 | **Supply Chain, CLI & SAST** | `scripts/audit_pins.py` unimportable / tolerant of `skipped_offline`; unpinned pip/cargo CI checks; `destroyer.py` import-time arming | Fixed module-scope imports & fail-closed mirror checks (`scripts/audit_pins.py`), enforced `pip-audit`/`cargo-audit`/`cargo-deny` in `defense_ci.yml`, deferred `destroyer.py` production arming past `argparse`, removed unsafe `B311`/`B101` patterns, and triaged Bandit LOW findings | `tests/test_2027_defense_hardening.py`, `compliance_reports/bandit_low_triage.md` |
@@ -1454,10 +1454,10 @@ In-repo audit reviews ([`AUDIT_REPORT_ST2027.md`](AUDIT_REPORT_ST2027.md) and [`
 The platform includes automated verification suites across Python, native Rust (`--no-default-features` and `--features lab-surfaces`), `ts_rt`, `sel4_mils_appliance`, DudeCT statistical timing tests, ProVerif symbolic models, and Linux Kani CBMC CI gates. Verified local run metrics (November 26, 2026) vs. external host/lab gates:
 
 ```bash
-# 1. Full Non-Live Python Verification Suite (1979 passed, 30 platform/legacy skipped, 26 @live deselected):
+# 1. Full Non-Live Python Verification Suite (1979 passed, 30 platform/legacy skipped, 26 @live deselected; on AMD TPM 2.0 Windows host all 25 tests across test_ts_attest.py, test_tpm_quote.py, test_tpm_hardware_phase2.py passed live):
 python -m pytest tests/ -q -m "not live"
 
-# 2. Native Rust Data-Plane Cryptographic Core & Harness Suite (327 tests under --no-default-features):
+# 2. Native Rust Data-Plane Cryptographic Core & Harness Suite (328 tests under --no-default-features: 269 unit + 12 dudect_ct + 44 kani_harness + 2 mtu + 1 doc-test):
 cargo clippy --all-targets --manifest-path rust_data_plane/Cargo.toml -- -D warnings
 cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
 

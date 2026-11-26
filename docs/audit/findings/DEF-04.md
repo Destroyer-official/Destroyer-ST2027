@@ -2,7 +2,7 @@
 
 - **Finding ID:** `DEF-04`
 - **Module:** `operational_scripts` / `system_hardening_integrity`
-- **Affected File & Line:** [`scripts/audit_pins.py:25-45`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/scripts/audit_pins.py#L25-L45)
+- **Affected File & Line:** [`scripts/audit_pins.py:25-45`](../../../scripts/audit_pins.py#L25-L45)
 - **Classification:** Confirmed Defect / Air-Gap Compatibility (Remediated)
 - **Severity:** Medium (Operational Tooling Failure in Isolated Networks)
 

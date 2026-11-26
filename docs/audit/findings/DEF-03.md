@@ -2,7 +2,7 @@
 
 - **Finding ID:** `DEF-03`
 - **Module:** `host_runtime_attestation`
-- **Affected File & Line:** [`tpm_quote.py:38-42,185-215`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/tpm_quote.py#L38-L42)
+- **Affected File & Line:** [`tpm_quote.py:38-42,185-215`](../../../tpm_quote.py#L38-L42)
 - **Classification:** Confirmed Defect / Deployment Blocker (Remediated)
 - **Severity:** High (Attestation Failure in Air-Gapped Field Deployments)
 

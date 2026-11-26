@@ -84,7 +84,7 @@ ST2027 operates across six distinct operational environments. Each environment e
 #### Topology 1: Tactical Edge DDIL Radio (Vehicular / Soldier Dismounted)
 - **Where Used:** Forward tactical operating bases, unmanned systems, vehicular ad-hoc networks, high-frequency tactical radios.
 - **Transport Behavior:** Operates over direct **IPv6 UDP**. Never establishes persistent TCP connections. Frames are quantized into uniform 1232-byte cells.
-- **Fail-Closed Condition:** If packets fail AEAD GHASH verification or arrive outside the 2048-packet RFC 6479 replay window, they are discarded silently with zero wire acknowledgement.
+- **Fail-Closed Condition:** If packets fail AEAD GHASH verification or arrive outside the 1024-packet RFC 6479 replay window, they are discarded silently with zero wire acknowledgement.
 
 #### Topology 2: Public WAN (Adversarial Public Internet)
 - **Where Used:** Communications traversing commercial internet, unclassified telecom backbones, or untrusted commercial ISP networks.
@@ -124,55 +124,55 @@ Every architectural capability is mapped to specific source code implementations
 | COMPONENT NAME              | EXACT SOURCE FILE & LINE           | OPERATIONAL PURPOSE & STANDARD | RUNTIME BEHAVIOR         |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Python Master Orchestrator  | `secure_transmit_2027.py`          | Central tactical CLI & daemon  | Coordinates 5 pillars,   |
-|                             | [`secure_transmit_2027.py:L1-L150`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/secure_transmit_2027.py#L1-L150) | binds transport, crypto, HW    | CLI mode dispatch        |
+|                             | [`secure_transmit_2027.py:L1-L150`](../secure_transmit_2027.py#L1-L150) | binds transport, crypto, HW    | CLI mode dispatch        |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Native Standalone Binary    | `rust_data_plane/src/main.rs`      | Zero-Python high-assurance CLI | Standalone daemon, pure  |
-|                             | [`rust_data_plane/src/main.rs:L1-L100`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/main.rs#L1-L100) | & data-plane executor          | Rust memory model        |
+|                             | [`rust_data_plane/src/main.rs:L1-L100`](../rust_data_plane/src/main.rs#L1-L100) | & data-plane executor          | Rust memory model        |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Rust Secure Data Plane      | `rust_data_plane/src/lib.rs`       | PyO3 native extension binding  | Zero-heap allocation     |
-| (`destroyer_core`)          | [`rust_data_plane/src/lib.rs:L1-L80`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/lib.rs#L1-L80) | (`destroyer_core`) for Python  | C-ABI compatible FFI     |
+| (`destroyer_core`)          | [`rust_data_plane/src/lib.rs:L1-L80`](../rust_data_plane/src/lib.rs#L1-L80) | (`destroyer_core`) for Python  | C-ABI compatible FFI     |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Zero-Allocation AEAD Engine | `rust_data_plane/src/aead.rs`      | FIPS 197 AES-256-GCM           | Stack buffers only,      |
-|                             | [`rust_data_plane/src/aead.rs:L1-L120`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/aead.rs#L1-L120) | In-place encryption & 16B tag  | Volatile zeroization     |
+|                             | [`rust_data_plane/src/aead.rs:L1-L120`](../rust_data_plane/src/aead.rs#L1-L120) | In-place encryption & 16B tag  | Volatile zeroization     |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Sequence Anti-Rollback      | `rust_data_plane/src/ratchet.rs`   | Nonce-reuse prevention         | Strict 64-bit saturation |
-| Ratchet Latch               | [`rust_data_plane/src/ratchet.rs:L102-L131`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/ratchet.rs#L102-L131) | 64-bit sequence counter        | Latches shut at u64::MAX |
+| Ratchet Latch               | [`rust_data_plane/src/ratchet.rs:L102-L131`](../rust_data_plane/src/ratchet.rs#L102-L131) | 64-bit sequence counter        | Latches shut at u64::MAX |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
-| RFC 6479 Replay Window      | `rust_data_plane/src/replay.rs`    | Anti-replay attack defense     | 2048-packet bitmask,     |
-|                             | [`rust_data_plane/src/replay.rs:L1-L80`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs#L1-L80) | Decoupled bitmap sliding       | O(1) bitwise operations  |
+| RFC 6479 Replay Window      | `rust_data_plane/src/replay.rs`    | Anti-replay attack defense     | 1024-packet bitmask,     |
+|                             | [`rust_data_plane/src/replay.rs:L1-L80`](../rust_data_plane/src/replay.rs#L1-L80) | Decoupled bitmap sliding       | O(1) bitwise operations  |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | TPM 2.0 NV Monotonic Guard  | `rust_data_plane/src/tpm_nv.rs`    | Hardware state anti-rollback   | Compares ratchet to NV   |
-|                             | [`rust_data_plane/src/tpm_nv.rs:L180-L260`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/tpm_nv.rs#L180-L260) | Index 0x01800003 monotonic ctr | Purges keys on rollback  |
+|                             | [`rust_data_plane/src/tpm_nv.rs:L180-L260`](../rust_data_plane/src/tpm_nv.rs#L180-L260) | Index 0x01800003 monotonic ctr | Purges keys on rollback  |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Native Locked Memory Core   | `ts_rt/src/lib.rs`                 | Zero-leakage memory engine     | VirtualLock / mlock,     |
-|                             | [`ts_rt/src/lib.rs:L1-L90`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_rt/src/lib.rs#L1-L90) | Volatile zeroize, ct_equal     | Prevents pagefile swap   |
+|                             | [`ts_rt/src/lib.rs:L1-L90`](../ts_rt/src/lib.rs#L1-L90) | Volatile zeroize, ct_equal     | Prevents pagefile swap   |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Physical Hardware Layer     | `ts_hw_layer.py`                   | Win32 TBS TPM 2.0 PCR verifier | Probes PCRs [0,1,2,7],   |
-|                             | [`ts_hw_layer.py:L1-L85`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/ts_hw_layer.py#L1-L85) | CNG Platform Crypto Provider   | Enforces hardware gating |
+|                             | [`ts_hw_layer.py:L1-L85`](../ts_hw_layer.py#L1-L85) | CNG Platform Crypto Provider   | Enforces hardware gating |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Verify-After-Sign (VAS)     | `liboqs_wrapper.py`                | In-RAM fault-attack defense    | Verifies signature in    |
-| Security Gate               | [`liboqs_wrapper.py:L620-L642`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py#L620-L642) | Lattice laser glitching defense| RAM before emission      |
+| Security Gate               | [`liboqs_wrapper.py:L620-L642`](../liboqs_wrapper.py#L620-L642) | Lattice laser glitching defense| RAM before emission      |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Digital Signature Engine    | `crypto/signatures.py`             | FIPS 204 ML-DSA-87 /           | High-assurance signing,  |
-|                             | [`crypto/signatures.py:L35-L65`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/crypto/signatures.py#L35-L65) | FIPS 205 SLH-DSA-256f          | Fast & robust modes      |
+|                             | [`crypto/signatures.py:L35-L65`](../crypto/signatures.py#L35-L65) | FIPS 205 SLH-DSA-256f          | Fast & robust modes      |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Hybrid KEX Combiner         | `hybrid_kex.py`                    | RFC 10024 Post-Quantum KEM     | ML-KEM-1024 + X25519/P384|
-|                             | [`hybrid_kex.py:L1-L110`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/hybrid_kex.py#L1-L110) | Dual-combiner key exchange     | HKDF-SHA3-512 extract    |
+|                             | [`hybrid_kex.py:L1-L110`](../hybrid_kex.py#L1-L110) | Dual-combiner key exchange     | HKDF-SHA3-512 extract    |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Bell-LaPadula MLS Guard     | `cjadc2_cross_domain_guard.py`     | Cross-Domain Multi-Level Sec   | HKDF-SHA3-512 compartment|
-|                             | [`cjadc2_cross_domain_guard.py:L231-L255`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py#L231-L255) | SP 800-56C compartment keys    | No read up, no write down|
+|                             | [`cjadc2_cross_domain_guard.py:L231-L255`](../cjadc2_cross_domain_guard.py#L231-L255) | SP 800-56C compartment keys    | No read up, no write down|
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Simplex Optical Data Diode  | `tactical_data_diode.py`           | Cross-domain RED/BLACK diode   | Cauchy-Reed-Solomon FEC, |
-|                             | [`tactical_data_diode.py:L1-L120`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_data_diode.py#L1-L120) | Unidirectional transmission    | Zero return path         |
+|                             | [`tactical_data_diode.py:L1-L120`](../tactical_data_diode.py#L1-L120) | Unidirectional transmission    | Zero return path         |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Sovereign Group Ratchet     | `sovereign_group_ratchet.py`       | Multi-party tactical group     | Dynamic epoch resync,    |
-|                             | [`sovereign_group_ratchet.py:L220-L265`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/sovereign_group_ratchet.py#L220-L265) | Ephemeral sender key ratchets  | PCS break-in recovery    |
+|                             | [`sovereign_group_ratchet.py:L220-L265`](../sovereign_group_ratchet.py#L220-L265) | Ephemeral sender key ratchets  | PCS break-in recovery    |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Active Cyber Defense Engine | `active_cyber_defense.py`          | DoD cATO continuous monitoring | Anomaly detection,       |
-|                             | [`active_cyber_defense.py:L1-L100`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/active_cyber_defense.py#L1-L100) | Autonomous incident containment| Auto-zeroization on probe|
+|                             | [`active_cyber_defense.py:L1-L100`](../active_cyber_defense.py#L1-L100) | Autonomous incident containment| Auto-zeroization on probe|
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 | Nuclear Command & Control   | `nc3_nuclear_command.py`           | DoD S-5210.41M Two-Person      | Dual-terminal release,   |
-| (NC3 Engine)                | [`nc3_nuclear_command.py:L1-L130`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py#L1-L130) | Integrity (TPI) authorization  | Split cryptographic auth |
+| (NC3 Engine)                | [`nc3_nuclear_command.py:L1-L130`](../nc3_nuclear_command.py#L1-L130) | Integrity (TPI) authorization  | Split cryptographic auth |
 +-----------------------------+------------------------------------+--------------------------------+--------------------------+
 ```
 
@@ -196,11 +196,11 @@ All primary production communications use exclusively NSA CNSA Suite 2.0 algorit
 ### 4.2 In-RAM Verify-After-Sign (VAS) Fault-Injection Countermeasure
 - **Standard Reference:** CHES 2024 / IACR ePrint 2025/2009.
 - **Vulnerability:** Physical laser fault injection (LFI) or clock glitching during the sampling of polynomial coefficients in lattice-based signature algorithms (ML-DSA) can induce single-bit errors that directly leak the private secret vector $\mathbf{s}$.
-- **Remediation Implementation:** [`liboqs_wrapper.py:L620-L642`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/liboqs_wrapper.py#L620-L642). Immediately following signature generation in memory, the public verification function is executed on the signature against the message. If verification fails, the private key buffer is immediately overwritten with volatile zeroization (`memset_s`) and a fatal `FaultInjectionError` is raised. The malformed signature is never written to wire buffers.
+- **Remediation Implementation:** [`liboqs_wrapper.py:L620-L642`](../liboqs_wrapper.py#L620-L642). Immediately following signature generation in memory, the public verification function is executed on the signature against the message. If verification fails, the private key buffer is immediately overwritten with volatile zeroization (`memset_s`) and a fatal `FaultInjectionError` is raised. The malformed signature is never written to wire buffers.
 
 ### 4.3 Quarantined Diversity Reserves (Non-Default Primitives)
 To hedge against unforeseen theoretical cryptanalysis targeting lattice mathematics:
-- **Classic McEliece-8192128f:** Maintained in [`archive/legacy_prototype/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/archive/legacy_prototype/) as an emergency diversity reserve. Features 1.3 MB public keys based on binary Goppa codes (unbroken since 1978). Quarantined from default line-rate transport due to MTU fragmentation constraints.
+- **Classic McEliece-8192128f:** Maintained in [`archive/legacy_prototype/`](../archive/legacy_prototype/) as an emergency diversity reserve. Features 1.3 MB public keys based on binary Goppa codes (unbroken since 1978). Quarantined from default line-rate transport due to MTU fragmentation constraints.
 - **Falcon-1024:** Fast Fourier lattice signature maintained as an experimental reserve. Quarantined from production default due to floating-point side-channel complexities requiring constant-time emulation.
 
 ---
@@ -225,7 +225,7 @@ The standalone data-plane wire frame layout ensures that no cleartext protocol f
 +-----------------------------+-----------------------------+----------------------------------------+
 | GHASH Authentication Tag    | 16 bytes                    | Cleartext (Authenticates Header + Data)|
 +-----------------------------+-----------------------------+----------------------------------------+
-| Whitened Header Mask        | 8 bytes                     | XOR-masked with PRF(Tag, Key)          |
+| Whitened Header Mask        | 8 bytes                     | XOR-masked with SHA-384("ST2027-hdr-mask" \|\| key \|\| tag) |
 |   - Sequence Number         | 6 bytes (48-bit monotonic)  | Decrypted only after tag validation    |
 |   - Frame Type Identifier   | 1 byte (Data / Chaff / Rekey)| Protected by AEAD Additional Data     |
 |   - Payload Length          | 1 byte (Quantum Class Index)| Protected by AEAD Additional Data     |
@@ -239,18 +239,18 @@ The standalone data-plane wire frame layout ensures that no cleartext protocol f
 ## 6. High-Assurance Rust Data Plane Specification (`destroyer_core`)
 
 ### 6.1 Memory Discipline & Allocation Invariants
-The core data plane in [`rust_data_plane/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/) is designed with zero-heap-allocation invariants for all datagram processing paths:
+The core data plane in [`rust_data_plane/`](../rust_data_plane/) is designed with zero-heap-allocation invariants for all datagram processing paths:
 1. **Zero Dynamic Allocation:** Per-frame encryption and decryption operate strictly on pre-allocated stack-allocated arrays `[u8; 1280]`.
 2. **Volatile Memory Wiping:** Key-holding structures implement the `Zeroize` and `ZeroizeOnDrop` traits, ensuring cryptographic keys are purged from processor registers and stack frames immediately upon exiting scope.
 3. **Locked Memory Pages:** Key storage buffers invoke `VirtualLock` (Windows Win32 API) or `mlock` (POSIX) to prevent key material from being swapped out to persistent disk storage (pagefile.sys / swap partitions).
 
 ### 6.2 Counter Saturation & Nonce-Reuse Fail-Closed Gate
 Under AES-GCM, encrypting two distinct messages with the same initialization vector / nonce destroys Galois field authenticity.
-- In [`rust_data_plane/src/ratchet.rs:L102-L131`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/ratchet.rs#L102-L131), the sequence counter is a 64-bit unsigned integer (`u64`).
+- In [`rust_data_plane/src/ratchet.rs:L102-L131`](../rust_data_plane/src/ratchet.rs#L102-L131), the sequence counter is a 64-bit unsigned integer (`u64`).
 - If `send_seq` ever reaches `u64::MAX`, the ratchet state machine transitions to a permanently latched-shut error state (`self.latched_closed = true`). The channel refuses any further encryption attempts, forcing an explicit re-keying handshake before transmission can resume.
 
 ### 6.3 RFC 6479 Decoupled Sliding Replay Window
-- In [`rust_data_plane/src/replay.rs:L1-L80`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/replay.rs#L1-L80), the replay state tracks received packets across a **2048-packet window** using an array of 32 `u64` integers ($32 \times 64 = 2048\text{ bits}$).
+- In [`rust_data_plane/src/replay.rs:L1-L80`](../rust_data_plane/src/replay.rs#L1-L80), the replay state tracks received packets across a **1024-packet window** using an array of 16 `u64` integers ($16 \times 64 = 1024\text{ bits}$).
 - Duplicate packets, packets older than the trailing edge of the window, or forged sequence numbers are dropped with $O(1)$ constant-time bit operations, mitigating packet-flooding denial-of-service attacks.
 
 ---
@@ -268,7 +268,7 @@ Platform security is verified via native **Win32 TBS (Trusted Platform Module Ba
 ### 7.2 Hardware NVRAM Monotonic Counter Anti-Rollback
 To prevent adversary replay of VM snapshots or disk rollback attacks:
 - The system binds session epoch counters to a physical TPM 2.0 NVRAM Monotonic Counter at index `0x01800003`.
-- During startup and session advancement, [`rust_data_plane/src/tpm_nv.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/tpm_nv.rs) reads the hardware counter. If the software session counter is less than the hardware counter, a snapshot rollback is detected, all active keys are zeroized, and execution halts immediately.
+- During startup and session advancement, [`rust_data_plane/src/tpm_nv.rs`](../rust_data_plane/src/tpm_nv.rs) reads the hardware counter. If the software session counter is less than the hardware counter, a snapshot rollback is detected, all active keys are zeroized, and execution halts immediately.
 
 ---
 
@@ -288,7 +288,7 @@ Supported classification labels:
 - `TOP SECRET`
 - `TOP SECRET // SCI // NOFORN`
 
-Compartment keys are derived via standard **SP 800-56C HKDF-SHA3-512** in [`cjadc2_cross_domain_guard.py:L231-L255`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_cross_domain_guard.py#L231-L255). A key derived for `SECRET` cannot mathematically derive or decrypt `TOP SECRET` payloads.
+Compartment keys are derived via standard **SP 800-56C HKDF-SHA3-512** in [`cjadc2_cross_domain_guard.py:L231-L255`](../cjadc2_cross_domain_guard.py#L231-L255). A key derived for `SECRET` cannot mathematically derive or decrypt `TOP SECRET` payloads.
 
 ### 8.3 Simplex Optical Tactical Data Diode FEC
 For unidirectional cross-domain data transfer:
@@ -300,13 +300,13 @@ For unidirectional cross-domain data transfer:
 ## 9. Multi-Party Ephemeral Communications and Two-Person Integrity (TPI)
 
 ### 9.1 Sovereign Group Ratchet & Post-Compromise Security (PCS)
-Tactical talkgroups use the Sovereign Group Ratchet in [`sovereign_group_ratchet.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/sovereign_group_ratchet.py) and [`rust_data_plane/src/group_ratchet.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/group_ratchet.rs):
+Tactical talkgroups use the Sovereign Group Ratchet in [`sovereign_group_ratchet.py`](../sovereign_group_ratchet.py) and [`rust_data_plane/src/group_ratchet.rs`](../rust_data_plane/src/group_ratchet.rs):
 - **Dynamic Epoch Resynchronization:** Group rosters rotate epoch keys dynamically. Ephemeral sender keys advance monotonically per frame.
 - **Break-in Recovery:** If an adversary compromises a tactical handset's ephemeral memory, the next epoch rotation injects fresh ML-KEM-1024 entropy, restoring post-compromise secrecy across the remaining uncompromised group.
 
 ### 9.2 Two-Person Integrity (TPI) for Emergency Action Messages
 In compliance with DoD S-5210.41M:
-- Dual-authorization command release and critical control actions require **Two-Person Integrity (TPI)** implemented in [`nc3_nuclear_command.py:L1-L130`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/nc3_nuclear_command.py#L1-L130).
+- Dual-authorization command release and critical control actions require **Two-Person Integrity (TPI)** implemented in [`nc3_nuclear_command.py:L1-L130`](../nc3_nuclear_command.py#L1-L130).
 - An Emergency Action Message (EAM) payload requires dual digital signatures from two distinct cryptographic key holders using separate physical credentials before the command release engine authorizes execution.
 
 ---
@@ -323,9 +323,9 @@ The codebase undergoes automated verification across ten blocking assurance gate
 | GATE   | CATEGORY                            | VERIFICATION TOOL / METHODOLOGY   | AUDIT VERDICT   |
 +--------+-------------------------------------+-----------------------------------+-----------------+
 | G-1.1  | Rust Data Plane & Compiler Audit    | `cargo clippy -D warnings`        | PASS (0 warns)  |
-| G-1.2  | Rust Unit & Property Battery        | `cargo test` (119 lib + 37 kani)  | PASS (156/156)  |
+| G-1.2  | Rust Unit & Property Battery        | `cargo test --no-default-features`| PASS (328/328)  |
 | G-2.1  | Native Core Memory Discipline       | `ts_rt` clippy + VirtualLock check| PASS (0 warns)  |
-| G-3.1  | CNSA 2.0 Power-Up Known Answer Tests| `crypto_selftest.py` KAT battery  | PASS (FIPS绿)   |
+| G-3.1  | CNSA 2.0 Power-Up Known Answer Tests| `crypto_selftest.py` KAT battery  | PASS (FIPS OK)  |
 | G-4.1  | Symbolic Formal Handshake Proofs    | ProVerif 2.05 (`st2027_*.pv`)     | PASS (Proven)   |
 | G-5.1  | Active Exploit Regressions          | Replay DoS & Nonce Reuse Battery  | PASS (0 bypass) |
 | G-6.1  | Hardware Platform Gating            | Win32 TBS TPM 2.0 PCR Validation  | PASS (Enforced) |
@@ -337,7 +337,7 @@ The codebase undergoes automated verification across ten blocking assurance gate
 ```
 
 ### 10.2 Machine-Checked Formal Verification Proofs (ProVerif 2.05)
-Formal models in [`docs/formal/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/) provide mathematical proofs of protocol correctness:
+Formal models in [`docs/formal/`](formal/) provide mathematical proofs of protocol correctness:
 1. **`docs/formal/st2027_handshake.pv`**:
    - `Query not attacker(secret_payload[]) is true.` (Payload secrecy against active Dolev-Yao attacker).
    - `Query inj-event(S_Accepts) ==> inj-event(R_Receives) is true.` (Mutual authentication and identity binding).
@@ -346,6 +346,6 @@ Formal models in [`docs/formal/`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/d
 
 ### 10.3 Cryptographic Receipt of Audit Verification
 The master evaluation receipt is cryptographically notarized:
-- **Receipt Location:** [`compliance_reports/defense_master_audit_receipt.json`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/compliance_reports/defense_master_audit_receipt.json)
+- **Receipt Location:** [`compliance_reports/defense_master_audit_receipt.json`](../compliance_reports/defense_master_audit_receipt.json)
 - **Signature Algorithm:** FIPS 204 ML-DSA-87 (4,627 bytes)
 - **Signer Public Key Fingerprint:** `f3c0ae0d5b6c20299791d3ca6d9cfd5d8fa2f5f54e406a7cefd7bcd9e24268f4`

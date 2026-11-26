@@ -30,15 +30,15 @@ The audit scope comprises all tracked, untracked, and ignored files in the works
 
 ## 2. Core Audit Deliverables
 
-- [Baseline and Environment Record](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/BASELINE.md) — Unmodified execution of build and test suites, toolchain inspection, and exact exit statuses.
-- [Workspace Inventory](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/WORKSPACE_INVENTORY.md) — Full catalog of tracked, untracked, and ignored files, module line counts, and sensitivity assessments.
-- [Audit Findings Register](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/FINDINGS.md) — Catalog of discovered issues cataloged by severity (Critical, High, Medium, Low, Informational).
-- [Audit Execution Progress](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/PROGRESS.md) — Status tracking table covering phases, start/end timestamps, and module audit status.
-- [Audit Open Questions & Architectural Decisions](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/open_questions.md) — Register of architectural ambiguities, uncommitted user changes, and hash drift notices.
-- [Audit Proposals Register](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/proposals.md) — Proposed protocol, cryptographic, or architectural modifications requiring user approval.
-- [Documentation Discrepancies Register](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/DOCUMENTATION_DISCREPANCIES.md) — Cross-check discrepancies cataloging verified code boundaries vs promotional terminology.
-- [Audit Changelog](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/CHANGELOG.md) — Detailed record of all changes made during the audit lifecycle.
-- [Test and Build Verification Report](file:///D:/code/Main_projects/p2p/p2p_6_1-26/test-results/TEST_AND_BUILD_REPORT.md) — Detailed output of Phase 0 and Phase 4 test executions.
+- [Baseline and Environment Record](BASELINE.md) — Unmodified execution of build and test suites, toolchain inspection, and exact exit statuses.
+- [Workspace Inventory](WORKSPACE_INVENTORY.md) — Full catalog of tracked, untracked, and ignored files, module line counts, and sensitivity assessments.
+- [Audit Findings Register](FINDINGS.md) — Catalog of discovered issues cataloged by severity (Critical, High, Medium, Low, Informational).
+- [Audit Execution Progress](PROGRESS.md) — Status tracking table covering phases, start/end timestamps, and module audit status.
+- [Audit Open Questions & Architectural Decisions](open_questions.md) — Register of architectural ambiguities, uncommitted user changes, and hash drift notices.
+- [Audit Proposals Register](proposals.md) — Proposed protocol, cryptographic, or architectural modifications requiring user approval.
+- [Documentation Discrepancies Register](DOCUMENTATION_DISCREPANCIES.md) — Cross-check discrepancies cataloging verified code boundaries vs promotional terminology.
+- [Audit Changelog](CHANGELOG.md) — Detailed record of all changes made during the audit lifecycle.
+- [Test and Build Verification Report](../../test-results/TEST_AND_BUILD_REPORT.md) — Detailed output of Phase 0 and Phase 4 test executions.
 
 ---
 
@@ -48,24 +48,24 @@ Detailed technical breakdowns and verification registers for each of the 18 prod
 
 | # | Module Name | Files | Lines | Module Documentation | Claims Register |
 |---|---|---|---|---|---|
-| 01 | `crypto_pqc` | 15 | 14,916 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/crypto_pqc.md) | `docs/audit/claims/crypto_pqc_claims.md` |
-| 02 | `key_management_pki` | 19 | 26,542 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/key_management_pki.md) | `docs/audit/claims/key_management_pki_claims.md` |
-| 03 | `ratchet_kex_protocol` | 10 | 15,437 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/ratchet_kex_protocol.md) | `docs/audit/claims/ratchet_kex_protocol_claims.md` |
-| 04 | `tls_channel` | 4 | 7,362 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/tls_channel.md) | `docs/audit/claims/tls_channel_claims.md` |
-| 05 | `transport_anonymity` | 11 | 12,612 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/transport_anonymity.md) | `docs/audit/claims/transport_anonymity_claims.md` |
-| 06 | `mesh_ddil_networking` | 12 | 9,204 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/mesh_ddil_networking.md) | `docs/audit/claims/mesh_ddil_networking_claims.md` |
-| 07 | `host_runtime_attestation` | 23 | 6,204 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/host_runtime_attestation.md) | `docs/audit/claims/host_runtime_attestation_claims.md` |
-| 08 | `rust_data_plane` | 44 | 18,250 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/rust_data_plane.md) | `docs/audit/claims/rust_data_plane_claims.md` |
-| 09 | `memory_security` | 9 | 10,357 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/memory_security.md) | `docs/audit/claims/memory_security_claims.md` |
-| 10 | `messaging_file_transfer` | 17 | 11,160 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/messaging_file_transfer.md) | `docs/audit/claims/messaging_file_transfer_claims.md` |
-| 11 | `system_hardening_integrity` | 18 | 35,695 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/system_hardening_integrity.md) | `docs/audit/claims/system_hardening_integrity_claims.md` |
-| 12 | `tactical_command_cjadc2` | 14 | 8,254 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/tactical_command_cjadc2.md) | `docs/audit/claims/tactical_command_cjadc2_claims.md` |
-| 13 | `audit_threat_monitoring` | 18 | 13,296 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/audit_threat_monitoring.md) | `docs/audit/claims/audit_threat_monitoring_claims.md` |
-| 14 | `security_framework` | 16 | 8,889 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/security_framework.md) | `docs/audit/claims/security_framework_claims.md` |
-| 15 | `orchestrator_application` | 17 | 31,548 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/orchestrator_application.md) | `docs/audit/claims/orchestrator_application_claims.md` |
-| 16 | `ui_presentation` | 7 | 2,317 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/ui_presentation.md) | `docs/audit/claims/ui_presentation_claims.md` |
-| 17 | `utilities_support` | 22 | 4,431 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/utilities_support.md) | `docs/audit/claims/utilities_support_claims.md` |
-| 18 | `operational_scripts` | 34 | 8,409 | [Documentation](file:///D:/code/Main_projects/p2p/p2p_6_1-26/docs/audit/modules/operational_scripts.md) | `docs/audit/claims/operational_scripts_claims.md` |
+| 01 | `crypto_pqc` | 15 | 14,916 | [Documentation](modules/crypto_pqc.md) | `docs/audit/claims/crypto_pqc_claims.md` |
+| 02 | `key_management_pki` | 19 | 26,542 | [Documentation](modules/key_management_pki.md) | `docs/audit/claims/key_management_pki_claims.md` |
+| 03 | `ratchet_kex_protocol` | 10 | 15,437 | [Documentation](modules/ratchet_kex_protocol.md) | `docs/audit/claims/ratchet_kex_protocol_claims.md` |
+| 04 | `tls_channel` | 4 | 7,362 | [Documentation](modules/tls_channel.md) | `docs/audit/claims/tls_channel_claims.md` |
+| 05 | `transport_anonymity` | 11 | 12,612 | [Documentation](modules/transport_anonymity.md) | `docs/audit/claims/transport_anonymity_claims.md` |
+| 06 | `mesh_ddil_networking` | 12 | 9,204 | [Documentation](modules/mesh_ddil_networking.md) | `docs/audit/claims/mesh_ddil_networking_claims.md` |
+| 07 | `host_runtime_attestation` | 23 | 6,204 | [Documentation](modules/host_runtime_attestation.md) | `docs/audit/claims/host_runtime_attestation_claims.md` |
+| 08 | `rust_data_plane` | 44 | 18,250 | [Documentation](modules/rust_data_plane.md) | `docs/audit/claims/rust_data_plane_claims.md` |
+| 09 | `memory_security` | 9 | 10,357 | [Documentation](modules/memory_security.md) | `docs/audit/claims/memory_security_claims.md` |
+| 10 | `messaging_file_transfer` | 17 | 11,160 | [Documentation](modules/messaging_file_transfer.md) | `docs/audit/claims/messaging_file_transfer_claims.md` |
+| 11 | `system_hardening_integrity` | 18 | 35,695 | [Documentation](modules/system_hardening_integrity.md) | `docs/audit/claims/system_hardening_integrity_claims.md` |
+| 12 | `tactical_command_cjadc2` | 14 | 8,254 | [Documentation](modules/tactical_command_cjadc2.md) | `docs/audit/claims/tactical_command_cjadc2_claims.md` |
+| 13 | `audit_threat_monitoring` | 18 | 13,296 | [Documentation](modules/audit_threat_monitoring.md) | `docs/audit/claims/audit_threat_monitoring_claims.md` |
+| 14 | `security_framework` | 16 | 8,889 | [Documentation](modules/security_framework.md) | `docs/audit/claims/security_framework_claims.md` |
+| 15 | `orchestrator_application` | 17 | 31,548 | [Documentation](modules/orchestrator_application.md) | `docs/audit/claims/orchestrator_application_claims.md` |
+| 16 | `ui_presentation` | 7 | 2,317 | [Documentation](modules/ui_presentation.md) | `docs/audit/claims/ui_presentation_claims.md` |
+| 17 | `utilities_support` | 22 | 4,431 | [Documentation](modules/utilities_support.md) | `docs/audit/claims/utilities_support_claims.md` |
+| 18 | `operational_scripts` | 34 | 8,409 | [Documentation](modules/operational_scripts.md) | `docs/audit/claims/operational_scripts_claims.md` |
 
 ---
 

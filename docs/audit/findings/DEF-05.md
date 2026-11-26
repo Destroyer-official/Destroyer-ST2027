@@ -2,7 +2,7 @@
 
 - **Finding ID:** `DEF-05`
 - **Module:** `operational_security` / `memory_security`
-- **Affected File & Line:** [`operational_security.py:709-725`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/operational_security.py#L709-L725)
+- **Affected File & Line:** [`operational_security.py:709-725`](../../../operational_security.py#L709-L725)
 - **Classification:** Confirmed Defect (Remediated)
 - **Severity:** High (Resource Exhaustion / Memory Leak Risk)
 

@@ -53,9 +53,9 @@ Phase G implements RFC 9171 Bundle Protocol v7 (BPv7) with non-interactive 0-RTT
    - **Custody Transfer:** Hop-by-hop custody signals (`BundleCustodySignal`) guarantee zero message loss across contested relays.
 
 ### 1.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/dtn_bundle.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/dtn_bundle.rs)
-- Python Mesh Router: [`network/dtn_mesh_router.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/network/dtn_mesh_router.py)
-- Test Suite: [`tests/test_dtn_zero_rtt_mesh.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tests/test_dtn_zero_rtt_mesh.py) (14/14 passed)
+- Rust Data Plane: [`rust_data_plane/src/dtn_bundle.rs`](../rust_data_plane/src/dtn_bundle.rs)
+- Python Mesh Router: [`network/dtn_mesh_router.py`](../network/dtn_mesh_router.py)
+- Test Suite: [`tests/test_dtn_zero_rtt_mesh.py`](../tests/test_dtn_zero_rtt_mesh.py) (14/14 passed)
 
 ---
 
@@ -84,9 +84,9 @@ Phase H implements a post-quantum zero-knowledge membership proof over a 32-leve
    $$e = \text{SHA-256}(\text{Root} \parallel C_{leaf} \parallel \text{Nullifier} \parallel \text{Epoch} \parallel \text{Context})$$
 
 ### 2.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/pq_zkp.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/pq_zkp.rs)
-- Python Identity Verifier: [`identity/pq_zkp_verifier.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/identity/pq_zkp_verifier.py)
-- Test Suite: [`tests/test_pq_zkp_identity.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tests/test_pq_zkp_identity.py) (12/12 passed)
+- Rust Data Plane: [`rust_data_plane/src/pq_zkp.rs`](../rust_data_plane/src/pq_zkp.rs)
+- Python Identity Verifier: [`identity/pq_zkp_verifier.py`](../identity/pq_zkp_verifier.py)
+- Test Suite: [`tests/test_pq_zkp_identity.py`](../tests/test_pq_zkp_identity.py) (12/12 passed)
 
 ---
 
@@ -115,9 +115,9 @@ Phase I synthesizes direct baseband I/Q samples for software-defined radios:
    - Raw interleaved 16-bit signed PCM (`CS16`) export format for USRP and HackRF SDR frontends.
 
 ### 3.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/sdr_dsss.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/sdr_dsss.rs)
-- Python SDR Controller: [`tactical_sdr_controller.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tactical_sdr_controller.py)
-- Test Suite: [`tests/test_sdr_dsss_waveforms.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tests/test_sdr_dsss_waveforms.py) (8/8 passed)
+- Rust Data Plane: [`rust_data_plane/src/sdr_dsss.rs`](../rust_data_plane/src/sdr_dsss.rs)
+- Python SDR Controller: [`tactical_sdr_controller.py`](../tactical_sdr_controller.py)
+- Test Suite: [`tests/test_sdr_dsss_waveforms.py`](../tests/test_sdr_dsss_waveforms.py) (8/8 passed)
 
 ---
 
@@ -148,9 +148,9 @@ Phase J enforces DoD 5200.01 / CNSSI 1253 Bell-LaPadula Multilevel Security (MLS
    $$\text{Attestation} = \text{HMAC-SHA256}(K_{guard}, \text{"CDS\_EGRESS\_ATTESTATION\_V1"} \parallel \text{Hash}(Ciphertext) \parallel \text{Src} \parallel \text{Dst} \parallel \text{L} \parallel \text{Timestamp})$$
 
 ### 4.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/blinded_cds.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/blinded_cds.rs)
-- Python Blinded Guard: [`cjadc2_blinded_guard.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_blinded_guard.py)
-- Test Suite: [`tests/test_blinded_cross_domain_guard.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tests/test_blinded_cross_domain_guard.py) (7/7 passed)
+- Rust Data Plane: [`rust_data_plane/src/blinded_cds.rs`](../rust_data_plane/src/blinded_cds.rs)
+- Python Blinded Guard: [`cjadc2_blinded_guard.py`](../cjadc2_blinded_guard.py)
+- Test Suite: [`tests/test_blinded_cross_domain_guard.py`](../tests/test_blinded_cross_domain_guard.py) (7/7 passed)
 
 ---
 
@@ -178,9 +178,9 @@ Phase K provides SMT-LIB2 theorem lemmas and deductive property sweeps:
    Fuzzing and bounded model checking prove that arbitrary malformed, truncated, or oversized payloads return `Result::Err` and **never panic**.
 
 ### 5.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/formal_proofs.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/formal_proofs.rs)
-- Python Verification Runner: [`scripts/verify_mathematical_contracts.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/scripts/verify_mathematical_contracts.py)
-- Test Suite: [`tests/test_formal_code_contracts.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tests/test_formal_code_contracts.py) (6/6 passed)
+- Rust Data Plane: [`rust_data_plane/src/formal_proofs.rs`](../rust_data_plane/src/formal_proofs.rs)
+- Python Verification Runner: [`scripts/verify_mathematical_contracts.py`](../scripts/verify_mathematical_contracts.py)
+- Test Suite: [`tests/test_formal_code_contracts.py`](../tests/test_formal_code_contracts.py) (6/6 passed)
 
 ---
 
@@ -207,9 +207,9 @@ Phase L implements rateless Luby Transform (LT) codes with belief propagation de
    Transmits at 60 FPS with pseudo-random optical scrambling polynomial ($0x80000057$) to eliminate optical Hamming weight leakage on SCIF glass reflections.
 
 ### 6.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/fso_transceiver.rs`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/fso_transceiver.rs)
-- Python Transceiver: [`hardware/visual_airgap_diode.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/hardware/visual_airgap_diode.py)
-- Test Suite: [`tests/test_visual_airgap_transceiver.py`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/tests/test_visual_airgap_transceiver.py) (6/6 passed)
+- Rust Data Plane: [`rust_data_plane/src/fso_transceiver.rs`](../rust_data_plane/src/fso_transceiver.rs)
+- Python Transceiver: [`hardware/visual_airgap_diode.py`](../hardware/visual_airgap_diode.py)
+- Test Suite: [`tests/test_visual_airgap_transceiver.py`](../tests/test_visual_airgap_transceiver.py) (6/6 passed)
 
 ---
 

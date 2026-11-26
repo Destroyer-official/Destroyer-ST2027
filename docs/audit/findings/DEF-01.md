@@ -2,7 +2,7 @@
 
 - **Finding ID:** `DEF-01`
 - **Module:** `tactical_command_cjadc2`
-- **Affected File & Line:** [`cjadc2_allied_gateway.py:184`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/cjadc2_allied_gateway.py#L184)
+- **Affected File & Line:** [`cjadc2_allied_gateway.py:184`](../../../cjadc2_allied_gateway.py#L184)
 - **Classification:** Confirmed Defect (Remediated)
 - **Severity:** Medium (Availability & Error Propagation)
 

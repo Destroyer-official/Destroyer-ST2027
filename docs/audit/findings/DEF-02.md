@@ -2,7 +2,7 @@
 
 - **Finding ID:** `DEF-02`
 - **Module:** `crypto_pqc` / `utilities_support`
-- **Affected File & Line:** [`entropy_manager.py:270-330`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/entropy_manager.py#L270-L330)
+- **Affected File & Line:** [`entropy_manager.py:270-330`](../../../entropy_manager.py#L270-L330)
 - **Classification:** Confirmed Defect / False Capability Claim (Remediated)
 - **Severity:** High (Cryptographic Entropy Provenance)
 

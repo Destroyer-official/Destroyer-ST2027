@@ -42,23 +42,23 @@ Categories:
 | `README.md:346` | `NC3` | `Architecture & Strategy       Formal Verification & PQC     Doctrine, NC3 & CONOPS         Security Policies & CC` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:367` | `destroyer` | `- incident_response.md                                     - Node Orchestration & Policies (destroyer, policy, ...)` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:380` | `tactical` | `1. **[`docs/TECHNICAL_MANUAL_ST2027_TACTICAL_COMMUNICATIONS.md`](docs/TECHNICAL_MANUAL_ST2027_TACTICAL_COMMUNICATIONS...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:383` | `sovereign` | `4. **[`docs/SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md`](docs/SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md):** Master...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:388` | `sovereign` | `9. **[`docs/OPEN_INTERNET_HARDENING_PLAN.md`](docs/OPEN_INTERNET_HARDENING_PLAN.md):** Strategic blueprint for direct...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:383` | `sovereign` | `4. **[`docs/SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md`](../SOVEREIGN_MILITARY_TRANSIT_SPEC_AND_PLAN.md):** Master...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:388` | `sovereign` | `9. **[`docs/OPEN_INTERNET_HARDENING_PLAN.md`](../OPEN_INTERNET_HARDENING_PLAN.md):** Strategic blueprint for direct...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:399` | `NC3` | `### 6.3 Research Track 3: High-Consequence Military Operations, Doctrine & NC3 Protocols` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:400` | `nuclear command` | `1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD ...` | (b) Standard Identifier | KEEP |
-| `README.md:400` | `nuclear` | `1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD ...` | (b) Standard Identifier | KEEP |
-| `README.md:400` | `NC3` | `1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD ...` | (b) Standard Identifier | KEEP |
-| `README.md:401` | `tactical` | `2. **[`docs/CONOPS_TACTICAL_DEPLOYMENT.md`](docs/CONOPS_TACTICAL_DEPLOYMENT.md):** Concept of Operations for forward ...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:438` | `sovereign` | `12. **[`docs/modules/ca_services.md`](docs/modules/ca_services.md):** Certificate Authority Services — Sovereign PKI ...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:446` | `tactical` | `20. **[`docs/modules/destroyer_node.md`](docs/modules/destroyer_node.md):** Tactical Node Orchestrator — Tactical ope...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:453` | `zero-trust` | `27. **[`docs/modules/trust_policy.md`](docs/modules/trust_policy.md):** Zero-Trust Policy Engine — Real-time dynamic ...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `README.md:459` | `tactical` | `4. **[`docs/README.md`](docs/README.md):** Tactical documentation charter, standards cross-reference guide, and modul...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:400` | `nuclear command` | `1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](../MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD ...` | (b) Standard Identifier | KEEP |
+| `README.md:400` | `nuclear` | `1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](../MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD ...` | (b) Standard Identifier | KEEP |
+| `README.md:400` | `NC3` | `1. **[`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](../MILITARY_NC3_DEPLOYMENT_GUIDE.md):** Nuclear Command (NC3) / DoD ...` | (b) Standard Identifier | KEEP |
+| `README.md:401` | `tactical` | `2. **[`docs/CONOPS_TACTICAL_DEPLOYMENT.md`](../CONOPS_TACTICAL_DEPLOYMENT.md):** Concept of Operations for forward ...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:438` | `sovereign` | `12. **[`docs/modules/ca_services.md`](../modules/ca_services.md):** Certificate Authority Services — Sovereign PKI ...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:446` | `tactical` | `20. **[`docs/modules/destroyer_node.md`](../modules/destroyer_node.md):** Tactical Node Orchestrator — Tactical ope...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:453` | `zero-trust` | `27. **[`docs/modules/trust_policy.md`](../modules/trust_policy.md):** Zero-Trust Policy Engine — Real-time dynamic ...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:459` | `tactical` | `4. **[`docs/README.md`](../README.md):** Tactical documentation charter, standards cross-reference guide, and modul...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:494` | `NC3` | `* **Trajectory Charlie: High-Consequence NC3 & Dual-Custody Doctrine:**` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:496` | `tactical` | `* **Trajectory Delta: Systems Engineering & Forward Tactical Deployment:**` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:514` | `zero-trust` | `- **Subcommands:** `auth-keygen`, `auth-sign`, `auth-verify`, `keygen`, `send`, `recv`, `send-file`, `recv-file`, `ch...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:514` | `tactical` | `- **Subcommands:** `auth-keygen`, `auth-sign`, `auth-verify`, `keygen`, `send`, `recv`, `send-file`, `recv-file`, `ch...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:515` | `tactical` | `- **Tactical Military Operations:** Emits ML-DSA-87 signed NATO MIL-STD-6090 Cursor-on-Target beacons (`cot-beacon`),...` | (b) Standard Identifier | KEEP |
-| `README.md:525` | `tactical` | `### 4. Tactical C4ISR Operations Console ([`tactical_operator_console.py`](tactical_operator_console.py))` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `README.md:525` | `tactical` | `### 4. Tactical C4ISR Operations Console ([`tactical_operator_console.py`](../../tactical_operator_console.py))` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:526` | `tactical` | `A turnkey command-and-control operations terminal designed for tactical field workstations and Joint All-Domain Comma...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:527` | `tactical` | `- **Interactive Operator Terminal:** Command interface for situational awareness, Cursor-on-Target beacon dispatch, a...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `README.md:528` | `tactical` | `- **ATAK / WinTAK Multicast Bridge:** Broadcasts standard MIL-STD-6090 CoT XML datagrams over UDP multicast (`239.2.3...` | (a) Promotional / Overclaiming Phrase | REPLACE |
@@ -421,8 +421,8 @@ Categories:
 | `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:13` | `NC3` | `**CONDITIONALLY SUITABLE FOR CONTROLLED AIR-GAPPED EVALUATION & FIELD PILOTS; STRICTLY NOT AUTHORIZED FOR LIVE STRATE...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:25` | `sovereign` | `- **F-07 (MEDIUM):** Sovereign Group Ratchet epoch synchronization gap resolved via automatic roster-wide key re-deri...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:33` | `tactical` | `The audit inspected the complete repository across 356 files spanning Python tactical runtimes, Rust deterministic mi...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:37` | `destroyer` | `\| **Tactical Runtime Core** \| [destroyer.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/destroyer.py), [secure_tr...` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:37` | `tactical` | `\| **Tactical Runtime Core** \| [destroyer.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/destroyer.py), [secure_tr...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:37` | `destroyer` | `\| **Tactical Runtime Core** \| [destroyer.py](../../destroyer.py), [secure_tr...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:37` | `tactical` | `\| **Tactical Runtime Core** \| [destroyer.py](../../destroyer.py), [secure_tr...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:42` | `tactical` | `\| **Cross-Domain & Tactical Diode** \| [cjadc2_cross_domain_guard.py](file:///d:/code/Main_projects/p2p/p2p_6_1-26/c...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:50` | `tactical` | `- **Pytest Master Suite:** 1,500+ tests verified across cryptographic KATs, exploit regressions, tactical diode simul...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/FORENSIC_SECURITY_AUDIT_FINAL_2026_10_24.md:58` | `sovereign` | `The Destroyer-ST2027 platform operates as a multi-tier sovereign defense communications enclave designed for conteste...` | (a) Promotional / Overclaiming Phrase | REPLACE |
@@ -978,7 +978,7 @@ Categories:
 | `docs/audit/BASELINE.md:97` | `NC3` | `- Step 5: NC3 strict keyword safety gate enforcement (blocked unauthorised directives) — PASS` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/audit/BASELINE.md:114` | `NC3` | `5. `src/pipeline.rs:224`: `clippy::collapsible-if` on NC3 safety gate check.` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/audit/CHANGELOG.md:5` | `destroyer` | `**Project:** Destroyer-ST2027` | (a) Promotional / Overclaiming Phrase | REPLACE |
-| `docs/audit/CHANGELOG.md:23` | `destroyer` | `\| **CHG-11** \| [`secure_p2p.py:61-75`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/secure_p2p.py#L61-L75) \| Proto...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `docs/audit/CHANGELOG.md:23` | `destroyer` | `\| **CHG-11** \| [`secure_p2p.py:61-75`](../../secure_p2p.py#L61-L75) \| Proto...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/audit/CHANGELOG.md:29` | `NC3` | `\| **CHG-17** \| [`rust_data_plane/src/ffi.rs`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/rust_data_plane/src/ffi....` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/audit/DEFENSE_SCORECARD_100_IMPLEMENTATION_PLAN.md:7` | `destroyer` | `**Baseline Repository:** `Destroyer-ST2027` (`https://github.com/Destroyer-official/Destroyer-ST2027.git`)` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/audit/DEFENSE_SCORECARD_100_IMPLEMENTATION_PLAN.md:82` | `tactical` | `- *Baseline Defect:* Flat pairwise sender-key ratchets scaled $O(N)$ across multi-party tactical networks, creating p...` | (a) Promotional / Overclaiming Phrase | REPLACE |
@@ -1109,7 +1109,7 @@ Categories:
 | `docs/modules/rust_data_plane.md:38` | `zero-trust` | `- Commands: `keygen`, `auth-keygen`, `auth-sign`, `auth-verify`, `send`, `recv`, `send-file`, `recv-file`, `channel`,...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/modules/rust_data_plane.md:38` | `tactical` | `- Commands: `keygen`, `auth-keygen`, `auth-sign`, `auth-verify`, `send`, `recv`, `send-file`, `recv-file`, `channel`,...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/modules/transport_anonymity.md:5` | `sovereign` | `This module implements **Pillar 4: Network Anonymity & Traffic Shaping** for the 2027 Top-Secret transmission pipelin...` | (b) Standard Identifier | KEEP |
-| `docs/modules/transport_anonymity.md:13` | `sovereign` | `\| [`transport_anonymity.py`](transport_anonymity.py) \| ~800 \| SOCKS5 Tor client with remote DNS, sovereign APN pin...` | (a) Promotional / Overclaiming Phrase | REPLACE |
+| `docs/modules/transport_anonymity.md:13` | `sovereign` | `\| [`transport_anonymity.py`](../../transport_anonymity.py) \| ~800 \| SOCKS5 Tor client with remote DNS, sovereign APN pin...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/modules/transport_anonymity.md:25` | `sovereign` | `### 2.2. Sovereign Private APN Pinning (`InterfacePinnedTransport`)` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/modules/transport_anonymity.md:26` | `tactical` | `- **Use Case:** Tactical tactical cellular, SATCOM, or direct point-to-point links where Tor is prohibited or unavail...` | (a) Promotional / Overclaiming Phrase | REPLACE |
 | `docs/modules/ts_hw_layer.md:37` | `classified` | `- Enforces that plain RED traffic (internal classified data) and encrypted BLACK traffic (external transport) travers...` | (a) Promotional / Overclaiming Phrase | REPLACE |

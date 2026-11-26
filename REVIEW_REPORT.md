@@ -86,6 +86,6 @@ All mathematical formulations, wire datagram schemas, and cryptographic state ma
 
 ## 4. Documentation & Assurance Integrity
 
-All repository markdown documentation files ([`README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/README.md), [`SECURITY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/SECURITY.md), [`docs/FIPS_140_3_SECURITY_POLICY.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/FIPS_140_3_SECURITY_POLICY.md), [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md), [`docs/formal/README.md`](file:///d:/code/Main_projects/p2p/p2p_6_1-26/docs/formal/README.md)) have been synchronized with the implemented codebase.
+All repository markdown documentation files ([`README.md`](README.md), [`SECURITY.md`](SECURITY.md), [`docs/FIPS_140_3_SECURITY_POLICY.md`](docs/FIPS_140_3_SECURITY_POLICY.md), [`docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md`](docs/MILITARY_NC3_DEPLOYMENT_GUIDE.md), [`docs/formal/README.md`](docs/formal/README.md)) have been synchronized with the implemented codebase.
 
 Mandatory physical boundary and truth-in-claims disclosures (`HONESTY_SENTENCE`, `MEMORY_DISCLOSURE`, `TRAFFIC_DISCLOSURE`) are retained verbatim.

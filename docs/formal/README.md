@@ -7,9 +7,10 @@ This directory contains the machine-checked symbolic formal verification models 
 The protocol is formally modeled and **symbolically** verified in the applied pi-calculus using **ProVerif 2.05**, with the computational reduction established in `docs/formal/HAKE_SECURITY_PROOF.md`. The deployed handshake implements a SIGMA-I hybrid authenticated key exchange over a NIST SP 800-227 / SP 800-56C Rev 2 split-key combiner, using ML-DSA-87 signatures bound to domain-separated transcript hashes rather than vulnerable static lattice-KEM reuse (Hashimoto et al., CCS'24 / ePrint 2025/1758). The symbolic ProVerif model proves injective agreement, secrecy, forward secrecy, and identity privacy under unbounded active adversaries.
 
 1. **`st2027_handshake.pv`**: Full symbolic model of the deployed Noise_XXhfs handshake with P-384 ECDHE, ML-KEM-1024, ML-DSA-87, AES-256-GCM, and transcript-bound KEM combination.
-   - Evaluates 7 core security queries: secrecy of payload under session keys, injective agreement `inj-event(S_Accepts ==> C_Accepts)`, forward secrecy under ephemeral leak phases, client verification `C_VerifiedM2`, and initiator identity privacy.
+   - Evaluates secrecy of payload under session keys, injective agreement `inj-event(S_Accepts ==> C_Accepts)`, forward secrecy under ephemeral leak phases, client verification `C_VerifiedM2`, and initiator identity privacy.
 2. **`st2027_pcs.pv`**: Symbolic model of the Continuous Epoch Ratchet (CER).
    - Evaluates Post-Compromise Security (PCS) healing: proves that an attacker who compromises epoch $N$ cannot compromise epoch $N+1$ once fresh ephemerals are exchanged.
+3. **`st2027_kex_auth.pv`**, **`st2027_ratchet_pcs.pv`**, **`nc3_dual_custody.pv`**, and **`handshake_model.pv`**: Domain-separated ML-DSA-87 KEX authentication, fresh-KEM ratchet epoch isolation, DoD S-5210.41M two-person custody authorization, and structural baseline handshake verification.
 
 ### Running ProVerif
 
@@ -18,6 +19,9 @@ Requires ProVerif ≥ 2.05:
 ```sh
 proverif docs/formal/st2027_handshake.pv
 proverif docs/formal/st2027_pcs.pv
+proverif docs/formal/st2027_kex_auth.pv
+proverif docs/formal/st2027_ratchet_pcs.pv
+proverif docs/formal/nc3_dual_custody.pv
 ```
 
 Automated verification suite:
@@ -68,9 +72,10 @@ replay_window_monotonic_and_drops
 ```
 
 (`test_stack_secret_zeroize_on_drop` is a plain `cargo test` unit test
-in `nostd_microcore`, re-exported into the 30-test harness binary — not
-a Kani proof. The harness binary total includes 23 re-exported module unit tests
-alongside the 7 doubles.)
+in `nostd_microcore`, included alongside the 8 property doubles and
+re-exported module unit tests in the 44-test `kani_harness` binary — part of
+328 total `--no-default-features` Rust tests: 269 lib unit + 12 `dudect_ct`
++ 44 `kani_harness` + 2 `test_mtu_framing_budget` + 1 doc-test.)
 
 ## 3. Bridging Symbolic Models & Implementation: DudeCT Constant-Time Timing Analysis
 

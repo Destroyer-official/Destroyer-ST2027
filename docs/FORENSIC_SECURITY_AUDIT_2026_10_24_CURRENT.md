@@ -241,25 +241,25 @@ These are minimal reproduction conditions, followed by the regression evidence n
 
 ### Standards alignment
 
-NIST FIPS 203 defines ML-KEM, FIPS 204 defines ML-DSA, and FIPS 205 defines SLH-DSA. Algorithm names and parameter sizes alone do not prove a secure composition or a validated implementation. [NIST FIPS 203](kimi-cite://web?url=https%3A%2F%2Fcsrc.nist.gov%2Fpubs%2Ffips%2F203%2Ffinal "citation"), [NIST FIPS 204](kimi-cite://web?url=https%3A%2F%2Fcsrc.nist.gov%2Fpubs%2Ffips%2F204%2Ffinal "citation"), [NIST FIPS 205](kimi-cite://web?url=https%3A%2F%2Fcsrc.nist.gov%2Fpubs%2Ffips%2F205%2Ffinal "citation")
+NIST FIPS 203 defines ML-KEM, FIPS 204 defines ML-DSA, and FIPS 205 defines SLH-DSA. Algorithm names and parameter sizes alone do not prove a secure composition or a validated implementation. [NIST FIPS 203](https://csrc.nist.gov/pubs/fips/203/final), [NIST FIPS 204](https://csrc.nist.gov/pubs/fips/204/final), [NIST FIPS 205](https://csrc.nist.gov/pubs/fips/205/final)
 
-The group implementation uses AES-256-GCM. GCM is an AEAD mode when used within its nonce, key-use, and verification requirements; the remediated counter and AAD work addresses composition hazards rather than alleging AES-GCM itself is broken. NIST has announced an intention to revise SP 800-38D, so current guidance should be rechecked at release time. [NIST SP 800-38D](kimi-cite://web?url=https%3A%2F%2Fcsrc.nist.gov%2Fpubs%2Fsp%2F800%2F38%2Fd%2Ffinal "citation")
+The group implementation uses AES-256-GCM. GCM is an AEAD mode when used within its nonce, key-use, and verification requirements; the remediated counter and AAD work addresses composition hazards rather than alleging AES-GCM itself is broken. NIST has announced an intention to revise SP 800-38D, so current guidance should be rechecked at release time. [NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final)
 
-Current TLS 1.3 is specified by RFC 9846, which obsoletes RFC 8446 and tightens requirements including key-share reuse and key-update limits. RFC 9325 remains BCP 195 but its info page records later updates; release guidance must use the current RFC graph rather than a frozen citation. [RFC 9846](kimi-cite://web?url=https%3A%2F%2Fwww.rfc-editor.org%2Finfo%2Frfc9846 "citation"), [RFC 9325](kimi-cite://web?url=https%3A%2F%2Fwww.rfc-editor.org%2Finfo%2Frfc9325 "citation")
+Current TLS 1.3 is specified by RFC 9846, which obsoletes RFC 8446 and tightens requirements including key-share reuse and key-update limits. RFC 9325 remains BCP 195 but its info page records later updates; release guidance must use the current RFC graph rather than a frozen citation. [RFC 9846](https://www.rfc-editor.org/info/rfc9846), [RFC 9325](https://www.rfc-editor.org/info/rfc9325)
 
-RFC 10024 standardizes only `X25519MLKEM768`, `SecP256r1MLKEM768`, and `SecP384r1MLKEM1024` for its TLS hybrid profile. It explicitly warns that the analysis depends on the TLS transcript and cannot simply be transferred to arbitrary hybrid protocols. The repository’s custom hybrid compositions therefore require their own binding and review evidence. [RFC 10024](kimi-cite://web?url=https%3A%2F%2Fwww.rfc-editor.org%2Finfo%2Frfc10024 "citation")
+RFC 10024 standardizes only `X25519MLKEM768`, `SecP256r1MLKEM768`, and `SecP384r1MLKEM1024` for its TLS hybrid profile. It explicitly warns that the analysis depends on the TLS transcript and cannot simply be transferred to arbitrary hybrid protocols. The repository’s custom hybrid compositions therefore require their own binding and review evidence. [RFC 10024](https://www.rfc-editor.org/info/rfc10024)
 
 ### Group protocol versus MLS
 
-MLS (RFC 9420) defines authenticated proposals/commits, linear epochs, membership state, key schedules, and an Authentication Service/Delivery Service model. RFC 9750 makes clear that application authorization policy—such as administrator or dual-officer approval—must be consistently enforced above MLS; MLS itself does not invent that policy. This project’s sender-chain primitive provides neither MLS nor that missing application layer. [RFC 9420](kimi-cite://web?url=https%3A%2F%2Fwww.rfc-editor.org%2Finfo%2Frfc9420 "citation"), [RFC 9750](kimi-cite://web?url=https%3A%2F%2Fwww.rfc-editor.org%2Finfo%2Frfc9750 "citation")
+MLS (RFC 9420) defines authenticated proposals/commits, linear epochs, membership state, key schedules, and an Authentication Service/Delivery Service model. RFC 9750 makes clear that application authorization policy—such as administrator or dual-officer approval—must be consistently enforced above MLS; MLS itself does not invent that policy. This project’s sender-chain primitive provides neither MLS nor that missing application layer. [RFC 9420](https://www.rfc-editor.org/info/rfc9420), [RFC 9750](https://www.rfc-editor.org/info/rfc9750)
 
 **Assessment:** the v2 primitive is materially safer than the audited v1 implementation, but security of a local HKDF/AEAD transform is not security of group membership, authorization, agreement, recovery, or asynchronous delivery.
 
 ### Authentication and password-derived protection
 
-NIST SP 800-63B-4 requires salted suitable password hashing, recommends costs as high as practical, and recommends storing scheme/cost metadata for migration. AAL3 requires phishing-resistant public-key authentication with a non-exportable private key, replay resistance, authentication intent, and validated cryptography in the relevant government context. [NIST SP 800-63B-4](kimi-cite://web?url=https%3A%2F%2Fpages.nist.gov%2F800-63-4%2Fsp800-63b.html "citation")
+NIST SP 800-63B-4 requires salted suitable password hashing, recommends costs as high as practical, and recommends storing scheme/cost metadata for migration. AAL3 requires phishing-resistant public-key authentication with a non-exportable private key, replay resistance, authentication intent, and validated cryptography in the relevant government context. [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html)
 
-OWASP currently lists 220,000 iterations for PBKDF2-HMAC-SHA512 and describes versioned work-factor upgrades. The repository’s 210,000-iteration sites are a modest hardening gap, not an emergency plaintext-password finding. Migration must preserve existing verifiers and encrypted backups. [OWASP Password Storage Cheat Sheet](kimi-cite://web?url=https%3A%2F%2Fcheatsheetseries.owasp.org%2Fcheatsheets%2FPassword_Storage_Cheat_Sheet.html "citation")
+OWASP currently lists 220,000 iterations for PBKDF2-HMAC-SHA512 and describes versioned work-factor upgrades. The repository’s 210,000-iteration sites are a modest hardening gap, not an emergency plaintext-password finding. Migration must preserve existing verifiers and encrypted backups. [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
 
 ### Secret lifetime and side channels
 
@@ -280,11 +280,11 @@ This comparison is architectural and evidence-based; it is not a claim that any 
 | Identity-key consistency | Manual identity fingerprint/safety-number mechanisms remain relevant to PQXDH authentication. | Append-only AKD plus third-party public audit record; QR/security-code verification remains an additional option. | TOFU/lab enrollment and local trust stores exist in parts; no independently operated public key-transparency/auditor system was demonstrated. |
 | Verification evidence | Public specifications cite formal analyses and years of external review; exact assurance still depends on implementation/deployment. | Public engineering design and deployed auditor ecosystem. | Broad tests and scans, but no independent protocol review or comparable operational evidence. |
 
-Signal’s PQXDH documentation is especially important because it refutes the simplistic claim that “post-quantum” automatically covers both confidentiality and active authentication. [Signal PQXDH revision 3](kimi-cite://web?url=https%3A%2F%2Fsignal.org%2Fdocs%2Fspecifications%2Fpqxdh%2F "citation")
+Signal’s PQXDH documentation is especially important because it refutes the simplistic claim that “post-quantum” automatically covers both confidentiality and active authentication. [Signal PQXDH revision 3](https://signal.org/docs/specifications/pqxdh/)
 
-Signal Double Ratchet revision 4, dated 2025-11-04, requires discarding state changes on authentication failure and documents skipped-key and ongoing PQ mechanisms; the group remediation follows the first principle, but does not implement the full protocol. [Signal Double Ratchet revision 4](kimi-cite://web?url=https%3A%2F%2Fsignal.org%2Fdocs%2Fspecifications%2Fdoubleratchet%2F "citation")
+Signal Double Ratchet revision 4, dated 2025-11-04, requires discarding state changes on authentication failure and documents skipped-key and ongoing PQ mechanisms; the group remediation follows the first principle, but does not implement the full protocol. [Signal Double Ratchet revision 4](https://signal.org/docs/specifications/doubleratchet/)
 
-WhatsApp key transparency uses an append-only Auditable Key Directory and third-party public audit record, explicitly complementing rather than replacing QR/security-code verification. A later Meta deployment article confirms the AKD/auditor model and its extension to Messenger. [Meta: WhatsApp key transparency](kimi-cite://web?url=https%3A%2F%2Fengineering.fb.com%2F2023%2F04%2F13%2Fsecurity%2Fwhatsapp-key-transparency%2F "citation"), [Meta: key transparency deployment and auditor model](kimi-cite://web?url=https%3A%2F%2Fengineering.fb.com%2F2025%2F11%2F20%2Fsecurity%2Fkey-transparency-comes-to-messenger%2F "citation")
+WhatsApp key transparency uses an append-only Auditable Key Directory and third-party public audit record, explicitly complementing rather than replacing QR/security-code verification. A later Meta deployment article confirms the AKD/auditor model and its extension to Messenger. [Meta: WhatsApp key transparency](https://engineering.fb.com/2023/04/13/security/whatsapp-key-transparency/), [Meta: key transparency deployment and auditor model](https://engineering.fb.com/2025/11/20/security/key-transparency-comes-to-messenger/)
 
 **Conclusion:** the repository should not advertise “better than Signal,” “PQ3 superiority,” or WhatsApp-equivalent identity assurance. Its current differentiators are custom deployment/tactical controls, which themselves increase the review burden.
 
@@ -335,11 +335,11 @@ The 37 harness tests are ordinary executable tests, not 37 completed formal proo
 - `scripts/verify_reproducible_build.py` verified both DLL signatures/hashes, all four critical module hashes, and both SBOM signatures. The generated receipt was restored afterward to avoid test contamination.
 - Despite the script title/output, this was **not** an independent rebuild and does **not** establish reproducibility or SLSA L2/L3.
 
-SLSA 1.2 Build L2 requires signed provenance generated by a hosted build platform; L3 requires hardened builds that isolate runs and protect signing secrets from user-defined build steps. Local self-signed receipts do not meet those levels. [SLSA 1.2 Build Track](kimi-cite://web?url=https%3A%2F%2Fslsa.dev%2Fspec%2Fv1.2%2Fbuild-track-basics "citation")
+SLSA 1.2 Build L2 requires signed provenance generated by a hosted build platform; L3 requires hardened builds that isolate runs and protect signing secrets from user-defined build steps. Local self-signed receipts do not meet those levels. [SLSA 1.2 Build Track](https://slsa.dev/spec/v1.2/build-track-basics)
 
 ### Secure-development assessment
 
-The remediations follow the SSDF themes of protecting software from tampering, responding to vulnerabilities, and verifying third-party components, but the non-hermetic test suite, missing independent build provenance, and open review gaps prevent a mature SSDF conclusion. [NIST SP 800-218 SSDF](kimi-cite://web?url=https%3A%2F%2Fcsrc.nist.gov%2Fpubs%2Fsp%2F800%2F218%2Ffinal "citation")
+The remediations follow the SSDF themes of protecting software from tampering, responding to vulnerabilities, and verifying third-party components, but the non-hermetic test suite, missing independent build provenance, and open review gaps prevent a mature SSDF conclusion. [NIST SP 800-218 SSDF](https://csrc.nist.gov/pubs/sp/800/218/final)
 
 ---
 

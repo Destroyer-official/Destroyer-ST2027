@@ -43,8 +43,13 @@ docs/
 ├── liboqs_pin.md                            # Native LibOQS DLL build hashes and pin provenance
 ├── formal/                                  # Machine-checked formal verification models
 │   ├── README.md                            # Formal verification architecture & proof index
+│   ├── HAKE_SECURITY_PROOF.md               # Computational reduction & security proof notes
+│   ├── check.py / check.sh                  # ProVerif verification harness runners
 │   ├── st2027_handshake.pv                  # ProVerif model: hybrid secrecy & mutual auth proof
+│   ├── st2027_kex_auth.pv                   # ProVerif model: ML-DSA-87 + transcript binding
 │   ├── st2027_pcs.pv                        # ProVerif model: post-compromise security (PCS) healing
+│   ├── st2027_ratchet_pcs.pv                # ProVerif model: ratchet rekey & epoch isolation
+│   ├── nc3_dual_custody.pv                  # ProVerif model: DoD S-5210.41M dual custody TPI
 │   └── handshake_model.pv                   # Structural baseline handshake model
 └── modules/                                 # Per-module technical charters and line audits (27 modules)
     ├── ts_hw_layer.md                       # Pillar 1: Hardware & Physical Security (FIPS/TEMPEST/CNG)
@@ -80,22 +85,22 @@ docs/
 
 ## 2. Core 2027 Architecture: The 5 Strategic Pillars
 
-The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`](secure_transmit_2027.py) across 5 fail-closed pillars:
+The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`](../secure_transmit_2027.py) across 5 fail-closed pillars:
 
 | Pillar | Focus Area | Primary Source Files | Primary Specifications & Module Docs |
 |---|---|---|---|
-| **Pillar 1** | **Hardware & Physical Security** | [`ts_hw_layer.py`](ts_hw_layer.py)<br>[`cng_platform.py`](cng_platform.py) | [modules/ts_hw_layer.md](modules/ts_hw_layer.md)<br>[FIPS_140_3_SECURITY_POLICY.md](FIPS_140_3_SECURITY_POLICY.md)<br>[hw_tpm_hsm_setup.md](hw_tpm_hsm_setup.md) |
-| **Pillar 2** | **OS & Execution Runtime** | [`ts_runtime.py`](ts_runtime.py)<br>[`ts_rt/src/lib.rs`](ts_rt/src/lib.rs)<br>[`ts_attest.py`](ts_attest.py) | [modules/ts_runtime.md](modules/ts_runtime.md)<br>[deployment_hardening_guide.md](deployment_hardening_guide.md)<br>[ARCHITECTURE.md §3-§6](ARCHITECTURE.md) |
-| **Pillar 3** | **Cryptography & Protocol** | [`noise_pq.py`](noise_pq.py)<br>[`cnsa_purity.py`](cnsa_purity.py)<br>[`crypto_selftest.py`](crypto_selftest.py) | [modules/noise_pq.md](modules/noise_pq.md)<br>[formal/st2027_handshake.pv](formal/st2027_handshake.pv)<br>[formal/st2027_pcs.pv](formal/st2027_pcs.pv) |
-| **Pillar 4** | **Network Anonymity & Shaping** | [`transport_anonymity.py`](transport_anonymity.py)<br>[`spo_dpo.py`](spo_dpo.py) | [modules/transport_anonymity.md](modules/transport_anonymity.md)<br>[MILITARY_NC3_DEPLOYMENT_GUIDE.md](MILITARY_NC3_DEPLOYMENT_GUIDE.md)<br>[CONOPS_TACTICAL_DEPLOYMENT.md](CONOPS_TACTICAL_DEPLOYMENT.md) |
-| **Pillar 5** | **Trust Infrastructure & PKI** | [`trust_anchor.py`](trust_anchor.py) | [modules/trust_anchor.md](modules/trust_anchor.md)<br>[KEY_CEREMONY.md](KEY_CEREMONY.md)<br>[KEY_MANAGEMENT_PLAN_KMP.md](KEY_MANAGEMENT_PLAN_KMP.md) |
+| **Pillar 1** | **Hardware & Physical Security** | [`ts_hw_layer.py`](../ts_hw_layer.py)<br>[`cng_platform.py`](../cng_platform.py) | [modules/ts_hw_layer.md](modules/ts_hw_layer.md)<br>[FIPS_140_3_SECURITY_POLICY.md](FIPS_140_3_SECURITY_POLICY.md)<br>[hw_tpm_hsm_setup.md](hw_tpm_hsm_setup.md) |
+| **Pillar 2** | **OS & Execution Runtime** | [`ts_runtime.py`](../ts_runtime.py)<br>[`ts_rt/src/lib.rs`](../ts_rt/src/lib.rs)<br>[`ts_attest.py`](../ts_attest.py) | [modules/ts_runtime.md](modules/ts_runtime.md)<br>[deployment_hardening_guide.md](deployment_hardening_guide.md)<br>[ARCHITECTURE.md §3-§6](ARCHITECTURE.md) |
+| **Pillar 3** | **Cryptography & Protocol** | [`noise_pq.py`](../noise_pq.py)<br>[`cnsa_purity.py`](../cnsa_purity.py)<br>[`crypto_selftest.py`](../crypto_selftest.py) | [modules/noise_pq.md](modules/noise_pq.md)<br>[formal/st2027_handshake.pv](formal/st2027_handshake.pv)<br>[formal/st2027_pcs.pv](formal/st2027_pcs.pv) |
+| **Pillar 4** | **Network Anonymity & Shaping** | [`transport_anonymity.py`](../transport_anonymity.py)<br>[`spo_dpo.py`](../spo_dpo.py) | [modules/transport_anonymity.md](modules/transport_anonymity.md)<br>[MILITARY_NC3_DEPLOYMENT_GUIDE.md](MILITARY_NC3_DEPLOYMENT_GUIDE.md)<br>[CONOPS_TACTICAL_DEPLOYMENT.md](CONOPS_TACTICAL_DEPLOYMENT.md) |
+| **Pillar 5** | **Trust Infrastructure & PKI** | [`trust_anchor.py`](../trust_anchor.py) | [modules/trust_anchor.md](modules/trust_anchor.md)<br>[KEY_CEREMONY.md](KEY_CEREMONY.md)<br>[KEY_MANAGEMENT_PLAN_KMP.md](KEY_MANAGEMENT_PLAN_KMP.md) |
 
 ---
 
 ## 3. Operational Standards & Verification Traceability
 
 ### A. Automated Test Gates (100% Pass)
-The codebase is validated by the full automated battery (Python suites plus 118 cargo-test Rust tests: 88 library unit tests + 30-test harness binary: 7 property doubles + re-exported module tests; 5 `#[kani::proof]` harnesses defined, Kani run required) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
+The codebase is validated by the full automated battery (Python suites plus 328 `cargo test --no-default-features` Rust tests: 269 library unit tests + 12 DudeCT timing tests + 44 Kani/property harness tests + 2 MTU framing tests + 1 doc-test; 6 `#[kani::proof]` harnesses executed in Linux CI via `kani-proofs.yml`) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
 ```bash
 # Execute the unified 2027 Top-Secret test battery
 pytest tests/test_ts_hw_layer.py tests/test_ts_runtime.py tests/test_secure_transmit_2027.py \
@@ -105,13 +110,11 @@ pytest tests/test_ts_hw_layer.py tests/test_ts_runtime.py tests/test_secure_tran
        tests/test_no_marketing_buzzwords_property.py tests/test_no_emoji_property.py -v
 
 # Execute the native Rust data-plane test battery
-cargo test --manifest-path rust_data_plane/Cargo.toml
+cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
 ```
 
 ### B. Machine-Checked Formal Proofs
-Protocol models in `docs/formal/` are executed via ProVerif 2.05:
-1. **`docs/formal/st2027_handshake.pv`**: Proves payload secrecy (`RESULT not attacker(secret_payload) is true`) and mutual authentication (`inj-event(S_Accepts)` and `inj-event(R_Receives)` are true).
-2. **`docs/formal/st2027_pcs.pv`**: Proves Post-Compromise Security (PCS) healing—compromise of ephemeral keys in Epoch $N$ does not compromise Epoch $N-1$ and is actively healed in Epoch $N+1$ upon fresh hybrid rekeying.
+Six protocol models in `docs/formal/` (`st2027_handshake.pv`, `st2027_kex_auth.pv`, `st2027_pcs.pv`, `st2027_ratchet_pcs.pv`, `nc3_dual_custody.pv`, and `handshake_model.pv`) are executed via ProVerif 2.05 (`tests/test_proverif_st2027.py` / `docs/formal/check.sh --strict`), proving payload secrecy, injective mutual authentication, dual-custody authorization invariants, and Post-Compromise Security (PCS) healing across epoch ratchets.
 
 ---
 

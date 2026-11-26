@@ -117,9 +117,9 @@ jobs:
           (cd rust_data_plane && cargo deny check)
           cargo deny --manifest-path ts_rt/Cargo.toml check advisories
           cargo deny --manifest-path sel4_mils_appliance/Cargo.toml check advisories
-          cargo audit --file rust_data_plane/Cargo.lock
-          cargo audit --file ts_rt/Cargo.lock
-          cargo audit --file sel4_mils_appliance/Cargo.lock
+          cargo audit --db /tmp/cargo-audit-db --file rust_data_plane/Cargo.lock
+          cargo audit --db /tmp/cargo-audit-db -n --file ts_rt/Cargo.lock
+          cargo audit --db /tmp/cargo-audit-db -n --file sel4_mils_appliance/Cargo.lock
 
       - name: Execute Rust Test Suites (data plane, ts_rt, seL4 MILS) + Clippy
         run: |

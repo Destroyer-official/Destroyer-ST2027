@@ -2,7 +2,7 @@
 
 - **Finding ID:** `SEC-01`
 - **Module:** `crypto_pqc`
-- **Affected File & Line:** [`pqc_algorithms.py:6355-6410`](file:///D:/code/Main_projects/p2p/p2p_6_1-26/pqc_algorithms.py#L6355-L6410)
+- **Affected File & Line:** [`pqc_algorithms.py:6355-6410`](../../../pqc_algorithms.py#L6355-L6410)
 - **Classification:** Cryptographic Risk Management / Fail-Closed Policy Gate
 - **Severity:** High (Upstream Vulnerability Exposure in Non-Primary Ciphersuites)
 
