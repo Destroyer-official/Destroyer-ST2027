@@ -41,7 +41,7 @@ jobs:
         uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9 immutable pin
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           head: HEAD
           extra_args: --only-verified
         continue-on-error: false
@@ -69,7 +69,7 @@ jobs:
           cmake --build /tmp/liboqs/build -j$(nproc)
           sudo cmake --install /tmp/liboqs/build
           sudo ldconfig
-          OQS_SO=$(find /usr/local/lib /usr/local/lib64 -name 'liboqs.so*' -type f | head -n 1)
+          OQS_SO=$(find /usr/local/lib /usr/local/lib64 -name 'liboqs.so*' -type f 2>/dev/null | head -n 1 || true)
           if [ -z "$OQS_SO" ]; then
             echo "FAIL: compiled liboqs.so not found after install" >&2
             exit 1
@@ -140,7 +140,7 @@ jobs:
       - name: Build & Install Native Data-Plane Extension (destroyer_core)
         run: |
           pip install maturin
-          maturin develop -r --no-default-features -m rust_data_plane/Cargo.toml
+          python -c "import glob, os, subprocess, sys, tempfile; d = os.path.join(tempfile.gettempdir(), 'dw'); subprocess.check_call(['maturin', 'build', '-r', '--no-default-features', '--offline', '-m', 'rust_data_plane/Cargo.toml', '-i', sys.executable, '-o', d]); whls = glob.glob(os.path.join(d, 'destroyer_core-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--force-reinstall'] + whls)"
 
       - name: Verify Production Destroyer Core Extension
         env:
@@ -418,7 +418,11 @@ jobs:
           cmake --build /tmp/liboqs/build -j$(nproc)
           sudo cmake --install /tmp/liboqs/build
           sudo ldconfig
-          OQS_SO=$(find /usr/local/lib /usr/local/lib64 -name 'liboqs.so*' -type f | head -n 1)
+          OQS_SO=$(find /usr/local/lib /usr/local/lib64 -name 'liboqs.so*' -type f 2>/dev/null | head -n 1 || true)
+          if [ -z "$OQS_SO" ]; then
+            echo "FAIL: compiled liboqs.so not found after install" >&2
+            exit 1
+          fi
           OQS_SHA384=$(sha384sum "$OQS_SO" | awk '{print $1}')
           echo "P2P_OQS_POSIX_SHA384=${OQS_SHA384}" >> "$GITHUB_ENV"
 
@@ -428,7 +432,7 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path rust_data_plane/Cargo.toml
           pip install maturin
-          maturin develop -r --no-default-features -m rust_data_plane/Cargo.toml
+          python -c "import glob, os, subprocess, sys, tempfile; d = os.path.join(tempfile.gettempdir(), 'dw'); subprocess.check_call(['maturin', 'build', '-r', '--no-default-features', '--offline', '-m', 'rust_data_plane/Cargo.toml', '-i', sys.executable, '-o', d]); whls = glob.glob(os.path.join(d, 'destroyer_core-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--force-reinstall'] + whls)"
           cargo build --offline --manifest-path rust_data_plane/Cargo.toml --features lab-surfaces --bin secure-transmit
 
       # Blocking gate: full test suite minus live-hardware tests (which require real TPM/HSM silicon).

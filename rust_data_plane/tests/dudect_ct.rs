@@ -61,6 +61,35 @@ fn welch_t_statistic(a: &WelfordAccumulator, b: &WelfordAccumulator) -> f64 {
     (a.mean - b.mean) / denom
 }
 
+/// Reparaz et al. (ePrint 2016/1123, §2.2) pooled upper-tail outlier cropping:
+/// determines the 90th-percentile threshold blindly across combined classes so OS
+/// scheduling/hypervisor spikes are discarded symmetrically without biasing classes.
+fn cropped_welch_t_statistic(samples0: &[f64], samples1: &[f64]) -> f64 {
+    let mut pooled = Vec::with_capacity(samples0.len() + samples1.len());
+    pooled.extend_from_slice(samples0);
+    pooled.extend_from_slice(samples1);
+    if pooled.is_empty() {
+        return 0.0;
+    }
+    pooled.sort_by(|a, b| a.total_cmp(b));
+    let cutoff_idx = ((pooled.len() * 90) / 100).min(pooled.len() - 1);
+    let cutoff = pooled[cutoff_idx];
+
+    let mut acc0 = WelfordAccumulator::new();
+    let mut acc1 = WelfordAccumulator::new();
+    for &x in samples0 {
+        if x <= cutoff {
+            acc0.update(x);
+        }
+    }
+    for &x in samples1 {
+        if x <= cutoff {
+            acc1.update(x);
+        }
+    }
+    welch_t_statistic(&acc0, &acc1)
+}
+
 /// Simple deterministic xorshift64 RNG for reproducible testing without extra dependencies.
 fn xorshift64(state: &mut u64) -> u64 {
     *state ^= *state << 13;
@@ -85,8 +114,8 @@ fn leaky_cmp(a: &[u8], b: &[u8]) -> bool {
 
 #[test]
 fn dudect_rust_ct_eq_passes_statistical_timing() {
-    let mut acc0 = WelfordAccumulator::new();
-    let mut acc1 = WelfordAccumulator::new();
+    let mut samples0 = Vec::with_capacity(13_000);
+    let mut samples1 = Vec::with_capacity(13_000);
     let mut rng: u64 = 0x8842A197D6E35B01;
 
     let fixed_secret_a = [0x5Au8; 64];
@@ -122,13 +151,13 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
         let elapsed = t0.elapsed().as_nanos() as f64;
         black_box(acc_res);
         if coin {
-            acc0.update(elapsed);
+            samples0.push(elapsed);
         } else {
-            acc1.update(elapsed);
+            samples1.push(elapsed);
         }
     }
 
-    let t = welch_t_statistic(&acc0, &acc1);
+    let t = cropped_welch_t_statistic(&samples0, &samples1);
     println!("\n[DudeCT-Rust] ct::ct_eq: |t| = {:.4} (Threshold = 4.5)", t.abs());
     assert!(
         t.abs() < 4.5,
@@ -139,8 +168,8 @@ fn dudect_rust_ct_eq_passes_statistical_timing() {
 
 #[test]
 fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
-    let mut acc0 = WelfordAccumulator::new();
-    let mut acc1 = WelfordAccumulator::new();
+    let mut samples0 = Vec::with_capacity(13_000);
+    let mut samples1 = Vec::with_capacity(13_000);
     let mut rng: u64 = 0xFEDCBA9876543210;
 
     let fixed_secret_a = nostd_microcore::StackSecretBuffer::<32>::from_slice(&[0x42u8; 32]).unwrap();
@@ -176,13 +205,13 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
         let elapsed = t0.elapsed().as_nanos() as f64;
         black_box(acc_res);
         if coin {
-            acc0.update(elapsed);
+            samples0.push(elapsed);
         } else {
-            acc1.update(elapsed);
+            samples1.push(elapsed);
         }
     }
 
-    let t = welch_t_statistic(&acc0, &acc1);
+    let t = cropped_welch_t_statistic(&samples0, &samples1);
     println!("[DudeCT-Rust] StackSecretBuffer::ct_eq: |t| = {:.4} (Threshold = 4.5)", t.abs());
     assert!(
         t.abs() < 4.5,
@@ -193,8 +222,8 @@ fn dudect_rust_nostd_stack_secret_ct_eq_passes() {
 
 #[test]
 fn dudect_rust_leaky_comparator_detected_as_positive_control() {
-    let mut acc0 = WelfordAccumulator::new();
-    let mut acc1 = WelfordAccumulator::new();
+    let mut samples0 = Vec::with_capacity(13_000);
+    let mut samples1 = Vec::with_capacity(13_000);
     let mut rng: u64 = 0x123456789ABCDEF0;
 
     let fixed_secret_a = [0x5Au8; 64];
@@ -224,13 +253,13 @@ fn dudect_rust_leaky_comparator_detected_as_positive_control() {
         let elapsed = t0.elapsed().as_nanos() as f64;
         black_box(acc_res);
         if coin {
-            acc0.update(elapsed);
+            samples0.push(elapsed);
         } else {
-            acc1.update(elapsed);
+            samples1.push(elapsed);
         }
     }
 
-    let t = welch_t_statistic(&acc0, &acc1);
+    let t = cropped_welch_t_statistic(&samples0, &samples1);
     println!("[DudeCT-Rust] Leaky comparator: |t| = {:.4} (Threshold = 3.5)", t.abs());
     assert!(
         t.abs() > 3.5,

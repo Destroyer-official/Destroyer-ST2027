@@ -329,6 +329,8 @@ def generate_certificate(out_dir: Path, strict: bool = False, kani_summary_only:
     print("[*] Executing DudeCT Statistical Constant-Time Leakage Suite...")
     dudect_ok, dudect_out, dudect_details = execute_dudect_timing()
     print(f"    -> DudeCT Verified Constant Time: {dudect_ok}")
+    if not dudect_ok:
+        print(f"    -> DudeCT Failure Details: {json.dumps(dudect_details)}")
 
     model_hashes = {
         "st2027_handshake.pv": sha512_file(HANDSHAKE_MODEL),
