@@ -433,6 +433,10 @@ class TestPqcMultiAssumptionCombiner:
         # 4. Corrupt size file
         bad_file = tmp_path / "bad_len.bin"
         bad_file.write_bytes(b"\x11" * 15)
+        try:
+            os.chmod(bad_file, 0o600)
+        except OSError:
+            pass
         with pytest.raises(ValueError, match="must contain 32 raw bytes"):
             pma.load_hardware_psk(bad_file)
 

@@ -663,6 +663,7 @@ def _s01() -> str:
              "oqs.dll", "oqs.dll.hashes", "oqs.dll.pub", "oqs.dll.sig",
              # Public trust material only (no private key material): reviewed
              # explicitly so any newly tracked cert file still trips the gate.
+             "certs/audit_signer.mldsa87.pub",
              "certs/config_signer.pub", "certs/sbom_mldsa87_signer.pub",
              "certs/crl.json", "certs/key_ceremony_affidavit.json",
              "certs/node_alpha.json", "certs/node_bravo.json",
