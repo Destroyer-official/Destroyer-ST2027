@@ -349,6 +349,8 @@ class SovereignCryptoDomain:
         peer_crypto_domain.black_in.push(kex_init_pkt)
         received_init = peer_crypto_domain.black_in.pop()
         assert received_init is not None
+        if received_init is None:
+            raise CryptoDomainError("Peer black_in ring failed to enqueue KEX initiation")
 
         # Peer processes init and responds into peer's black_out
         peer_crypto_domain._handle_kex_init_from_peer(received_init, self.signing_pk)
@@ -356,15 +358,21 @@ class SovereignCryptoDomain:
         # Peer's black_out delivers response to initiator's black_in
         peer_resp = peer_crypto_domain.black_out.pop()
         assert peer_resp is not None
+        if peer_resp is None:
+            raise CryptoDomainError("Peer black_out ring failed to emit KEX response")
         self.black_in.push(peer_resp)
 
         # Read peer response
         resp_pkt = self.black_in.pop()
         assert resp_pkt is not None
+        if resp_pkt is None:
+            raise CryptoDomainError("Initiator black_in ring failed to receive KEX response")
         self._handle_kex_resp_from_peer(resp_pkt, alice_state, init_wire, peer_crypto_domain.signing_pk)
 
     def _handle_kex_init_from_peer(self, pkt: bytes, peer_pk: bytes) -> None:
         assert pkt[0] == 0x01
+        if len(pkt) < 3 or pkt[0] != 0x01:
+            raise CryptoDomainError("Malformed KEX init packet frame")
         sig_len = struct.unpack(">H", pkt[1:3])[0]
         sig = pkt[3:3 + sig_len]
         init_wire = pkt[3 + sig_len:]
@@ -388,6 +396,8 @@ class SovereignCryptoDomain:
         peer_pk: bytes
     ) -> None:
         assert pkt[0] == 0x02
+        if len(pkt) < 3 or pkt[0] != 0x02:
+            raise CryptoDomainError("Malformed KEX response packet frame")
         sig_len = struct.unpack(">H", pkt[1:3])[0]
         sig = pkt[3:3 + sig_len]
         resp_wire = pkt[3 + sig_len:]

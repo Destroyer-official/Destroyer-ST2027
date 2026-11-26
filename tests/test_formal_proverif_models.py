@@ -93,6 +93,19 @@ class TestFormalProVerifModels(unittest.TestCase):
         self.assertIn("phase 1;", content)
         self.assertIn("event CompromisedOfficerAttempt", content)
 
+    def test_03_native_kex_auth_and_ratchet_models_integrity(self):
+        """Verify st2027_kex_auth.pv and st2027_ratchet_pcs.pv fidelity models exist and are balanced."""
+        for fname, required in (
+            ("st2027_kex_auth.pv", ["DOM_SIG_R", "DOM_AUTH_BIND", "kdf_session", "inj-event(R_Accepts("]),
+            ("st2027_ratchet_pcs.pv", ["DOM_SIG_REKEY", "hkdf_epoch_root", "mldsa_verify", "query attacker(secret_payload1)."]),
+        ):
+            p = os.path.join(FORMAL_DIR, fname)
+            self.assertTrue(os.path.exists(p), f"File missing: {p}")
+            text = open(p, "r", encoding="utf-8").read()
+            self.assertEqual(text.count("(*"), text.count("*)"), fname)
+            for tok in required:
+                self.assertIn(tok, text, f"{fname} missing {tok}")
+
 
 if __name__ == "__main__":
     unittest.main()

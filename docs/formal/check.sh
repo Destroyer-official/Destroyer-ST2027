@@ -29,6 +29,8 @@ fi
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 MODEL_HANDSHAKE="$ROOT/docs/formal/st2027_handshake.pv"
 MODEL_PCS="$ROOT/docs/formal/st2027_pcs.pv"
+MODEL_KEX_AUTH="$ROOT/docs/formal/st2027_kex_auth.pv"
+MODEL_RATCHET_PCS="$ROOT/docs/formal/st2027_ratchet_pcs.pv"
 
 PROVERIF_BIN=""
 if command -v proverif >/dev/null 2>&1; then
@@ -47,10 +49,14 @@ if [ -z "$PROVERIF_BIN" ]; then
 fi
 
 if [ -n "$PROVERIF_BIN" ]; then
-    echo "=== Running ProVerif Handshake Model ==="
+    echo "=== Running ProVerif Handshake Model (Noise_XXhfs) ==="
     "$PROVERIF_BIN" "$MODEL_HANDSHAKE"
-    echo "=== Running ProVerif PCS Healing Model ==="
+    echo "=== Running ProVerif Native kex_auth Model (kex_auth.rs) ==="
+    "$PROVERIF_BIN" "$MODEL_KEX_AUTH"
+    echo "=== Running ProVerif PCS Rehandshake Model ==="
     "$PROVERIF_BIN" "$MODEL_PCS"
+    echo "=== Running ProVerif In-Band Hybrid Ratchet PCS Model ==="
+    "$PROVERIF_BIN" "$MODEL_RATCHET_PCS"
     echo "[+] All formal verification models executed."
     if command -v python3 >/dev/null 2>&1; then
         echo "=== Generating Machine-Checked Verification Certificate ==="

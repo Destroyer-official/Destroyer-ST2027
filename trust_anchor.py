@@ -633,6 +633,89 @@ def verify_peer_identity(peer_id: str, local_pk: bytes, remote_pk: bytes,
         raise TrustError("trust rejected")
 
 
+def verify_pki_bundle(certs_dir: Path, require_external_anchor: Optional[bool] = None) -> Dict[str, Any]:
+    """Verify a certs/ PKI bundle (manifest Merkle root, CRL freshness, and production root anchor).
+
+    In production (``P2P_PRODUCTION=1`` or ``require_external_anchor=True``), any bundle marked
+    ``SOFTWARE_DEV_FIXTURE_NOT_EXTERNALLY_ANCHORED`` or lacking an explicitly pinned external root
+    digest (``P2P_TRUSTED_ROOT_SHA3_384``) is rejected fail-closed with ``TrustError`` (F-10).
+    """
+    from datetime import datetime, timezone
+
+    cdir = Path(certs_dir)
+    manifest_p = cdir / "pki_manifest.json"
+    crl_p = cdir / "crl.json"
+    affidavit_p = cdir / "key_ceremony_affidavit.json"
+    if not manifest_p.exists() or not crl_p.exists():
+        raise TrustError("PKI bundle incomplete (missing manifest or CRL)")
+
+    manifest = json.loads(manifest_p.read_text(encoding="utf-8"))
+    crl_doc = json.loads(crl_p.read_text(encoding="utf-8"))
+    affidavit = json.loads(affidavit_p.read_text(encoding="utf-8")) if affidavit_p.exists() else {}
+
+    prod_enforced = _env_true("P2P_PRODUCTION") if require_external_anchor is None else bool(require_external_anchor)
+    ceremony_markers = {
+        str(manifest.get("ceremony_type", "")),
+        str(crl_doc.get("ceremony_type", "")),
+        str(affidavit.get("affidavit_metadata", {}).get("ceremony_type", "")),
+    }
+    is_dev_fixture = any("SOFTWARE_DEV_FIXTURE" in m for m in ceremony_markers if m) or (
+        manifest.get("externally_anchored") is False
+    )
+
+    if prod_enforced:
+        if is_dev_fixture:
+            raise TrustError("PKI rejected in production: development fixture PKI is not externally anchored (F-10)")
+        pinned_root = os.environ.get("P2P_TRUSTED_ROOT_SHA3_384", "").strip().lower()
+        root_p = cdir / "sovereign_root_ca.json"
+        if not root_p.exists() or not pinned_root:
+            raise TrustError("PKI rejected in production: external P2P_TRUSTED_ROOT_SHA3_384 pin required")
+        actual_root_h = hashlib.sha3_384(root_p.read_bytes()).hexdigest().lower()
+        if not _compare(actual_root_h.encode("ascii"), pinned_root.encode("ascii")):
+            raise TrustError("PKI rejected in production: Root CA SHA3-384 pin mismatch")
+
+    # Verify manifest artifact SHA3-512 digests and Merkle root
+    artifacts = manifest.get("artifacts", {})
+    if not artifacts:
+        raise TrustError("PKI manifest contains no artifacts")
+    leaves: List[bytes] = []
+    for fname, meta in artifacts.items():
+        fp = cdir / fname
+        if not fp.exists():
+            raise TrustError(f"PKI artifact missing: {fname}")
+        raw = fp.read_bytes()
+        digest = hashlib.sha3_512(raw).hexdigest().lower()
+        if not _compare(digest.encode("ascii"), str(meta.get("sha3_512", "")).lower().encode("ascii")):
+            raise TrustError(f"PKI artifact hash mismatch: {fname}")
+        leaves.append(bytes.fromhex(digest))
+    merkle_root = hashlib.sha3_512(b"".join(sorted(leaves))).hexdigest().lower()
+    if not _compare(merkle_root.encode("ascii"), str(manifest.get("merkle_root", "")).lower().encode("ascii")):
+        raise TrustError("PKI manifest Merkle root mismatch")
+
+    if affidavit:
+        aff_merkle = str(affidavit.get("affidavit_metadata", {}).get("pki_manifest_merkle_root", "")).lower()
+        if aff_merkle and not _compare(merkle_root.encode("ascii"), aff_merkle.encode("ascii")):
+            raise TrustError("PKI affidavit Merkle root mismatch against manifest")
+
+    # Verify CRL next_update is not expired
+    crl_body = crl_doc.get("crl", {})
+    next_upd_raw = crl_body.get("next_update")
+    if not next_upd_raw:
+        raise TrustError("PKI CRL missing next_update")
+    next_upd = datetime.fromisoformat(str(next_upd_raw))
+    if next_upd.tzinfo is None:
+        next_upd = next_upd.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > next_upd:
+        raise TrustError(f"PKI CRL expired at {next_upd.isoformat()}")
+
+    return {
+        "merkle_root": merkle_root,
+        "is_dev_fixture": is_dev_fixture,
+        "artifact_count": len(artifacts),
+        "crl_next_update": next_upd.isoformat(),
+    }
+
+
 def _audit(event: str, fields: Dict[str, Any]) -> None:
     try:
         from secure_transmit_2027 import audit_event as _hook

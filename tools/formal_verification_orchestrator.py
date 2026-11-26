@@ -31,7 +31,9 @@ from typing import Any, Dict, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 HANDSHAKE_MODEL = REPO_ROOT / "docs" / "formal" / "st2027_handshake.pv"
+KEX_AUTH_MODEL = REPO_ROOT / "docs" / "formal" / "st2027_kex_auth.pv"
 PCS_MODEL = REPO_ROOT / "docs" / "formal" / "st2027_pcs.pv"
+RATCHET_PCS_MODEL = REPO_ROOT / "docs" / "formal" / "st2027_ratchet_pcs.pv"
 KANI_HARNESS = REPO_ROOT / "rust_data_plane" / "tests" / "kani_harness.rs"
 RUST_DATA_PLANE = REPO_ROOT / "rust_data_plane"
 
@@ -306,17 +308,29 @@ def generate_certificate(out_dir: Path, strict: bool = False, kani_summary_only:
         hs_ok, hs_out, hs_queries = execute_proverif(HANDSHAKE_MODEL)
         print(f"    -> Handshake Queries Verified: {hs_ok} ({len(hs_queries)} queries)")
 
+        print("[*] Verifying ProVerif Model: st2027_kex_auth.pv...")
+        ka_ok, ka_out, ka_queries = execute_proverif(KEX_AUTH_MODEL)
+        print(f"    -> Native kex_auth Queries Verified: {ka_ok} ({len(ka_queries)} queries)")
+
         print("[*] Verifying ProVerif Model: st2027_pcs.pv...")
         pcs_ok, pcs_out, pcs_queries = execute_proverif(PCS_MODEL)
         print(f"    -> PCS Healing Verified: {pcs_ok} ({len(pcs_queries)} queries)")
+
+        print("[*] Verifying ProVerif Model: st2027_ratchet_pcs.pv...")
+        rpcs_ok, rpcs_out, rpcs_queries = execute_proverif(RATCHET_PCS_MODEL)
+        print(f"    -> Ratchet Authenticated PCS Verified: {rpcs_ok} ({len(rpcs_queries)} queries)")
     else:
         print("[*] ProVerif not detected on this runner.")
         if kani_summary_only:
             hs_ok, hs_queries = True, [{"note": "ProVerif executed in dedicated defense_ci.yml runner"}]
+            ka_ok, ka_queries = True, [{"note": "ProVerif executed in dedicated defense_ci.yml runner"}]
             pcs_ok, pcs_queries = True, [{"note": "ProVerif executed in dedicated defense_ci.yml runner"}]
+            rpcs_ok, rpcs_queries = True, [{"note": "ProVerif executed in dedicated defense_ci.yml runner"}]
         else:
             hs_ok, hs_queries = False, []
+            ka_ok, ka_queries = False, []
             pcs_ok, pcs_queries = False, []
+            rpcs_ok, rpcs_queries = False, []
 
     print("[*] Executing Rust Data Plane Property Bounded Model Doubles...")
     doubles_ok, doubles_out, doubles_details = execute_rust_property_doubles()
@@ -334,7 +348,9 @@ def generate_certificate(out_dir: Path, strict: bool = False, kani_summary_only:
 
     model_hashes = {
         "st2027_handshake.pv": sha512_file(HANDSHAKE_MODEL),
+        "st2027_kex_auth.pv": sha512_file(KEX_AUTH_MODEL),
         "st2027_pcs.pv": sha512_file(PCS_MODEL),
+        "st2027_ratchet_pcs.pv": sha512_file(RATCHET_PCS_MODEL),
         "kani_harness.rs": sha512_file(KANI_HARNESS),
         "ct.rs": sha512_file(RUST_DATA_PLANE / "src" / "ct.rs"),
         "nostd_microcore.rs": sha512_file(RUST_DATA_PLANE / "src" / "nostd_microcore.rs"),
@@ -344,7 +360,7 @@ def generate_certificate(out_dir: Path, strict: bool = False, kani_summary_only:
     if kani_summary_only:
         overall_status = "VERIFIED" if (doubles_ok and kani_ok and dudect_ok) else "FAILED"
     else:
-        overall_status = "VERIFIED" if (hs_ok and pcs_ok and doubles_ok and kani_ok and dudect_ok) else "FAILED"
+        overall_status = "VERIFIED" if (hs_ok and ka_ok and pcs_ok and rpcs_ok and doubles_ok and kani_ok and dudect_ok) else "FAILED"
 
     certificate = {
         "schema_version": "ST2027-FORMAL-CERT-V1",
@@ -358,10 +374,20 @@ def generate_certificate(out_dir: Path, strict: bool = False, kani_summary_only:
                 "verified": hs_ok,
                 "queries": hs_queries,
             },
+            "kex_auth_model": {
+                "file": "docs/formal/st2027_kex_auth.pv",
+                "verified": ka_ok,
+                "queries": ka_queries,
+            },
             "pcs_model": {
                 "file": "docs/formal/st2027_pcs.pv",
                 "verified": pcs_ok,
                 "queries": pcs_queries,
+            },
+            "ratchet_pcs_model": {
+                "file": "docs/formal/st2027_ratchet_pcs.pv",
+                "verified": rpcs_ok,
+                "queries": rpcs_queries,
             },
         },
         "tier2_bounded_model_checking_kani": {

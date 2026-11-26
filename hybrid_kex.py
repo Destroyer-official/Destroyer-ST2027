@@ -162,6 +162,7 @@ class HybridKeyExchange2027:
 
     @property
     def falcon_private_key(self):
+        """Legacy-named compatibility alias exposing the CNSA 2.0 ML-DSA-87 secret key."""
         return self._mldsa_sk
 
     @property
@@ -200,6 +201,7 @@ class HybridKeyExchange2027:
             "static_key": base64.b64encode(p384_bytes).decode("ascii"),
             "kem_public_key": base64.b64encode(self._mlkem_pk).decode("ascii"),
             "mldsa_public_key": base64.b64encode(self._mldsa_pk).decode("ascii"),
+            # Legacy-named key kept for schema compatibility; carries ML-DSA-87 (FIPS 204), not Falcon.
             "falcon_public_key": base64.b64encode(self._mldsa_pk).decode("ascii"),
             "signed_prekey": base64.b64encode(p384_bytes).decode("ascii"),
             "signing_key": base64.b64encode(self._mldsa_pk[:32]).decode("ascii"),

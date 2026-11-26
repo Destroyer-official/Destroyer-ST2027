@@ -28,11 +28,8 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Fail-closed default: arm production posture unless explicitly running under lab opt-in or under test harness
-if os.environ.get("P2P_LAB_MODE") != "1" and "pytest" not in sys.modules and not os.environ.get("PYTEST_CURRENT_TEST"):
-    import production_gate
-    production_gate.arm_production_gate("destroyer_cli_default")
-    os.environ.setdefault("P2P_DATA_PLANE", "rust")
+# Production posture arming is performed post-argparse inside main() ONLY for
+# operational command modes (F-12), never at import time or on --help/--version.
 
 # ANSI Color & Styling
 RESET = "\033[0m"
@@ -370,13 +367,15 @@ def run_sovereign_sel4_appliance_drill():
     print(f"\n{GREEN}[STAGE 5] Ingesting Wire Cell at Pentagon Enclave...{RESET}")
     node_bravo.receive_wire_cell(cell)
     received = node_bravo.get_received_messages()
-    assert len(received) == 1 and received[0] == order
+    if len(received) != 1 or received[0] != order:
+        raise RuntimeError(f"seL4 drill failed: unexpected decrypted payload count={len(received)}")
     print(f"{GREEN}          * Decrypted in CRYPTO domain and delivered to RED console:{RESET}")
     print(f"{BOLD}{WHITE}            \"{received[0].decode()}\"{RESET}")
 
     print(f"\n{GREEN}[STAGE 6] Verifying Constant-Rate Wire Camouflage (20 Hz Synthetic Chaff)...{RESET}")
     chaff_cell = node_alpha.step_cycle()
-    assert len(chaff_cell) == 1232
+    if len(chaff_cell) != 1232:
+        raise RuntimeError(f"seL4 drill failed: unexpected chaff cell size {len(chaff_cell)} != 1232")
     print(f"{GREEN}          * Idle cycle emitted synthetic cover traffic: {len(chaff_cell)} bytes (0xFF Chaff).{RESET}")
     print(f"{BOLD}{GREEN}================================================================================")
     print(f"  [DRILL SUCCESSFUL] seL4 DOMAIN SEPARATION APPLIANCE SIMULATION OPERATIONAL")
@@ -420,20 +419,23 @@ def run_multi_assumption_pqc_kex_drill():
 
     print(f"\n{GREEN}[STAGE 4] Alice Decapsulates and Derives Session Keys...{RESET}")
     k_alice = alice.decapsulate(ct_bundle, transcript=transcript)
-    assert secrets.compare_digest(k_alice, k_bob) is True
+    if not secrets.compare_digest(k_alice, k_bob):
+        raise RuntimeError("Multi-assumption KEX drill failed: master keys diverge")
     print(f"{GREEN}          * Master Key bit-for-bit match confirmed: {k_alice[:16].hex()}...[REDACTED]{RESET}")
 
     print(f"\n{GREEN}[STAGE 5] Expanding Role-Separated Transport Keys & Mutual Confirmation...{RESET}")
     keys_alice = alice.expand_session_keys(k_alice, transcript_binding=transcript)
     keys_bob = bob.expand_session_keys(k_bob, transcript_binding=transcript)
-    assert keys_alice.ct_eq(keys_bob) is True
+    if not keys_alice.ct_eq(keys_bob):
+        raise RuntimeError("Multi-assumption KEX drill failed: expanded keys mismatch")
     print(f"{GREEN}          * Initiator Traffic Key (32B): verified matching.{RESET}")
     print(f"{GREEN}          * Responder Traffic Key (32B): verified matching.{RESET}")
     print(f"{GREEN}          * Confirmation Root Key (32B): verified matching.{RESET}")
 
     bob_tag = bob.compute_confirmation_tag(keys_bob.confirmation_key, is_initiator=True, transcript_binding=transcript)
     alice_verified = alice.verify_peer_confirmation_tag(keys_alice.confirmation_key, is_peer_initiator=True, transcript_binding=transcript, peer_tag=bob_tag)
-    assert alice_verified is True
+    if not alice_verified:
+        raise RuntimeError("Multi-assumption KEX drill failed: confirmation tag invalid")
     print(f"{GREEN}          * Mutual key confirmation tags authenticated successfully.{RESET}")
 
     print(f"\n{GREEN}[STAGE 6] Verifying Zero Fallback & Tamper Rejection Invariant...{RESET}")
@@ -442,7 +444,8 @@ def run_multi_assumption_pqc_kex_drill():
     corrupt_ct[42] ^= 0x01
     tampered_bundle = TripleKexCiphertext(mlkem_ct=bytes(corrupt_ct), mceliece_ct=ct_bundle.mceliece_ct)
     k_tampered = alice.decapsulate(tampered_bundle, transcript=transcript)
-    assert not secrets.compare_digest(k_tampered, k_bob)
+    if secrets.compare_digest(k_tampered, k_bob):
+        raise RuntimeError("Multi-assumption KEX drill failed: tampered ciphertext matched master key")
     print(f"{GREEN}          * Tampered ciphertext diverged key material: zero silent fallback confirmed.{RESET}")
 
     # Zeroize keys
@@ -507,17 +510,22 @@ def inspect_tpm_quote():
     """Inspect and attest platform hardware TPM 2.0 PCR state and cryptographically bound quote."""
     print(f"\n{BOLD}{CYAN}[COMMAND] Querying Platform Hardware TPM 2.0 Security Posture...{RESET}")
     try:
+        import production_gate
         import tpm_quote
         pcrs = tpm_quote.read_hardware_pcrs([0, 1, 2, 7, 11])
         print(f"\n{BOLD}{GREEN}[TPM 2.0 HARDWARE PCR REGISTERS]{RESET}")
         for pcr_num, val in pcrs.items():
             print(f"  • PCR-{pcr_num:02d} : {val}")
+        if production_gate.is_production():
+            print(f"\n{YELLOW}[TPM 2.0 NOTICE] Production gate active: ephemeral software AK stub is disabled (F-04).{RESET}")
+            print(f"  • Hardware TPM Quote signing requires a TPM-resident AK + EK cert chain (use hardware TPM/PKCS#11 custodian).")
+            return
         pk, sk = tpm_quote.generate_ak_stub()
         nonce = secrets.token_hex(16)
-        quote = tpm_quote.sign_quote(pcr=pcrs, nonce=nonce, kid="MIL-TPM-AK-01", sk=sk)
+        quote = tpm_quote.sign_quote(pcr=pcrs, nonce=nonce, kid="DEV-LAB-AK-STUB-01", sk=sk, degraded=True, ak_pub=pk)
         verified = tpm_quote.verify_quote(quote, expected_nonce=nonce, trusted_pubs=[pk])
-        status_v = f"{GREEN}[CRYPTO VERIFIED]{RESET}" if verified else f"{RED}[VERIFY FAILED]{RESET}"
-        print(f"\n{BOLD}{GREEN}[HARDWARE ATTESTATION QUOTE (ML-DSA-87 BOUND)]{RESET}")
+        status_v = f"{GREEN}[LAB STUB SIG VERIFIED]{RESET}" if verified else f"{RED}[VERIFY FAILED]{RESET}"
+        print(f"\n{BOLD}{YELLOW}[NON-PRODUCTION SOFTWARE AK STUB QUOTE (NOT HARDWARE TPM)]{RESET}")
         print(f"  • Algorithm  : {quote.get('alg', 'ML-DSA-87')}")
         print(f"  • Key ID     : {quote.get('kid')}")
         print(f"  • Timestamp  : {quote.get('ts')}")
@@ -730,6 +738,19 @@ def main():
                                  "acvp", "formal", "ct", "oscal", "slsa", "certify"],
                         help="Operating mode (default: interactive menu)")
     args = parser.parse_args()
+
+    # F-12: Arm production posture post-argparse and only for operational transit/interactive modes
+    # (--help, --version, imports, and read-only diagnostic probes never force-arm production).
+    _operational_modes = {"interactive", "web", "tactical", "alpha", "bravo", "chat", "zeroize", "terminals"}
+    if (
+        args.mode in _operational_modes
+        and os.environ.get("P2P_LAB_MODE") != "1"
+        and "pytest" not in sys.modules
+        and not os.environ.get("PYTEST_CURRENT_TEST")
+    ):
+        import production_gate
+        production_gate.arm_production_gate("destroyer_cli_default")
+        os.environ.setdefault("P2P_DATA_PLANE", "rust")
 
     if args.mode == "interactive":
         interactive_menu_loop()

@@ -1,9 +1,11 @@
 # SECURITY AUDIT & REMEDIATION RECORD — DESTROYER-ST2027
 
 **Repository:** D:\code\Main_projects\p2p\p2p_6_1-26  
-**Updated:** 2026-11-25  
+**Updated:** 2026-11-26  
 **Scope:** Application-level code, cryptographic protocols, FFI boundaries, seL4 MILS domains, tests, and build/assurance tooling  
 **Classification:** UNCLASSIFIED — Internal Engineering & Pre-Accreditation Audit Document
+
+> **Note on Document Structure:** **Section A** and **Sections I–K** state the current post-remediation assessment (including Waves 1–5 remediations of [`ST2027_FORENSIC_AUDIT_2026-11-26.md`](ST2027_FORENSIC_AUDIT_2026-11-26.md)). **Sections B–H** preserve the historical `2026-11-09` pre-remediation baseline snapshot as an immutable engineering archive; findings listed in Sections B–H do not describe the current remediated codepaths except where carried over into Section A's external prerequisites.
 
 ---
 
@@ -11,7 +13,12 @@
 
 **Verdict: SOFTWARE REMEDIATION COMPLETE FOR TESTED CODEPATHS — NOT EXTERNALLY ACCREDITED FOR HIGH-ASSURANCE / DEFENSE PRODUCTION USE.**
 
-1. **Completed In-Repository Software & Protocol Remediations:**
+1. **Completed In-Repository Software & Protocol Remediations (including 2026-11-26 Forensic Audit F-01..F-15):**
+   - **Fail-Closed Gates & Native Binding Boundaries:** `production_gate.py`, `destroyer.py` (post-`argparse` production arming), `destroyer_node.py`, `destroyer_core` (`_FailClosedNativeStub`), and `--no-default-features` release builds fail closed without runtime package installs or unsafe fallback stubs.
+   - **Native Rust Key Custody, Mutual Auth & PCS Ratchet (`rust_data_plane`):** Production `node`/`terminal`/`channel` flows reject unauthenticated `--key-file`/`--key-stdin` and raw `--auth-sk-file` without hardware PKCS#11 custody; `PcsRatchet` performs per-epoch ML-KEM-1024 re-encapsulation across `main.rs` and `pipeline.rs`.
+   - **Durable Nonces & XAES-256-GCM:** `p2p_core.py` and `platform_hsm_interface.py` enforce durable atomic monotonic counters (`gcm_nonce_ledger.db`) across restarts alongside SP 800-38D composite IVs and XAES-256-GCM support.
+   - **TPM Attestation, TLS, PKI & Auth Binding:** `ts_attest.py` enforces `hardware_mode` and AK trust-anchor checks; `tls_channel_manager.py` restores strict hostname validation and blocks unpinned TOFU in production; `certs/` manifest, `scripts/sign_boot_config.py`, and `P2P_AUTH_TOKEN_FD`/stdin eliminate CLI secret exposure.
+   - **Supply-Chain & SAST:** `scripts/audit_pins.py` is importable and fails closed on stale/unsigned/`skipped_offline` mirrors; `.github/workflows/defense_ci.yml` executes `pip-audit`, `cargo-audit`, and `cargo-deny`; Bandit SAST holds 0 HIGH / 0 MEDIUM (`compliance_reports/bandit_low_triage.md`).
    - **Fail-Closed Gates & Native Binding Boundaries:** `production_gate.py`, `destroyer.py`, `destroyer_node.py`, `destroyer_core` (`_FailClosedNativeStub`), and `--no-default-features` release builds fail closed without runtime package installs or unsafe fallback stubs.
    - **Real Cryptographic Implementations:**
      - `pq_zkp.rs` implements a sound classical Ristretto255 `bLSAG` ring signature (`IS_POST_QUANTUM = false`, refusing `strict_pq=True`) instead of the earlier insecure hash construction.
@@ -36,7 +43,7 @@
 The following components were inspected through source code review:
 
 | Component | Files | Purpose | Security Relevance |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Main P2P Chat | `secure_p2p.py` (919 KB) | Primary application entry point, handshake, Double Ratchet session management | **TCB candidate** — implements the main chat protocol |
 | Core Networking | `p2p_core.py` (119 KB) | IPv6 transport, AES-GCM encryption, connection management | Crypto implementation |
 | Double Ratchet | `double_ratchet.py` (281 KB) | Custom PQ Double Ratchet, message encryption/decryption | **Core crypto TCB** |
@@ -58,7 +65,7 @@ The following components were inspected through source code review:
 ### B.2 Uninspected or Partially Inspected Components
 
 | Component | Limitation |
-|---|---|
+| --- | --- |
 | `archive/` directory | Contains quarantined legacy prototypes; not inspected in depth |
 | `notupload/` directory | Not inspected |
 | `scratch/` directory | Not inspected |
@@ -98,7 +105,7 @@ The following components were inspected through source code review:
 The README describes three planes:
 
 | Plane | Component | Location | Claimed Role |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Plane 1 | Native Rust Data Plane | `rust_data_plane/target/release/secure-transmit` | High-assurance production core; AES-256-GCM, ML-DSA-87, ML-KEM-1024, memory locking, zeroization |
 | Plane 2 | Native System Security Core CDyLib | `ts_rt/` | Memory protection, mlock, constant-time comparisons |
 | Plane 3 | Python Master Control Orchestrator | `secure_p2p.py`, `secure_transmit_2027.py` | Lab/diagnostic only; quarantined from production transit |
@@ -118,7 +125,7 @@ The Rust data plane binary exists at `rust_data_plane/target/release/secure-tran
 ### C.3 Trust Boundaries
 
 | Boundary | Description | Enforcement |
-|---|---|---|
+| --- | --- | --- |
 | Control plane vs data plane | Python control plane vs Rust data plane | `production_gate.py` `enforce_control_plane_boundary()` — only active when `P2P_PRODUCTION=1` |
 | Lab vs production | `P2P_PRODUCTION=1` env var | Opt-in sticky latch; not default |
 | Classical vs PQ | `enable_pq=False` allowed in lab | Refused in production without `P2P_ALLOW_CLASSICAL=1` |
@@ -144,7 +151,7 @@ The Rust data plane binary exists at `rust_data_plane/target/release/secure-tran
 ### Summary of Highest-Risk Findings
 
 | ID | Title | Severity | Fundamental Security Claim Undermined? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | F-01 | Algorithm mismatch: README claims CNSA 2.0 but main code path uses X25519/ChaCha20/FALCON | Critical | **Yes** — core cryptographic suite does not match documented claims |
 | F-02 | Legacy X25519 key exchange used by `secure_p2p.py` instead of claimed P-384 + ML-KEM-1024 | Critical | **Yes** — classical-only hedge not actually hybridized in main path |
 | F-03 | Production security posture is opt-in, not default | High | Partial — weaker lab configuration is the default |
@@ -171,6 +178,7 @@ The Rust data plane binary exists at `rust_data_plane/target/release/secure-tran
 **Attack Prerequisites:** Attacker observes or targets the actual implementation rather than the documented one. The system provides different security properties than claimed (e.g., X25519 = ~128-bit classical security, not P-384's ~192-bit; ChaCha20-Poly1305 has different nonce constraints than AES-256-GCM; FALCON-1024 is not in CNSA 2.0).
 
 **Exploit Steps:**
+
 1. Observer identifies the system claims CNSA 2.0 compliance based on README
 2. Actual traffic uses X25519 (~128-bit classical security) instead of P-384 (~192-bit)
 3. Attacker with quantum capability targets ML-KEM-1024 while classical computer targets X25519 (~2^128 Pollard's rho)
@@ -213,6 +221,7 @@ The `HybridKeyExchange2027` class exists but is **not used** by `secure_p2p.py`.
 **Location:** `production_gate.py`, `config.py:15-50`, `double_ratchet.py:2113-2117`, `secure_p2p.py:2169-2171`
 
 **Description:** Production security posture (`P2P_PRODUCTION=1`) is opt-in via environment variable. The default mode is lab/development with permissive settings:
+
 - `enable_pq=False` is allowed (classical-only X25519, no PQ PCS)
 - `deniable=True` is allowed (no per-message signatures)
 - PQ ratchet v1 (legacy KEM reuse) is allowed (no fresh PQ PCS between DH steps)
@@ -225,6 +234,7 @@ The production gate (`production_gate.py`) is well-designed with a sticky latch 
 **Attack Prerequisites:** Attacker targets a deployment where the operator did not set `P2P_PRODUCTION=1` (the default).
 
 **Exploit Steps:**
+
 1. Deploy system without `P2P_PRODUCTION=1`
 2. System operates in lab mode with classical-only key exchange, no PQ PCS, deniable sessions
 3. Attacker performs classical MITM or key compromise without triggering production-mode alarms
@@ -266,6 +276,7 @@ The `DoubleRatchet` class uses `CounterBasedNonceManager` (salt + counter) which
 **Location:** `double_ratchet.py:2164-2170` (v1 refused in strict mode), `double_ratchet.py:2524-2531` (v1 reuses `_synchronized_kem_secret`), `double_ratchet.py:2216-2227` (v1 default when protocol_version < 2)
 
 **Description:** The Double Ratchet has two PQ ratchet versions:
+
 - **v1 (legacy):** Reuses `_synchronized_kem_secret` across DH steps. Provides NO fresh post-compromise security between ratchet steps. If the KEM secret is compromised, all past and future messages remain decryptable until a new DH exchange with fresh KEM encaps occurs.
 - **v2 (fresh):** Performs fresh ML-KEM-1024 encaps per DH step, mixed via `hybrid_combine_v2`. Provides PQ PCS healing.
 
@@ -276,6 +287,7 @@ The default `protocol_version` is 1, so `pq_ratchet_version` defaults to `PQ_RAT
 **Attack Prerequisites:** Attacker compromises the `_synchronized_kem_secret` or KEM private key in a v1 session.
 
 **Exploit Steps:**
+
 1. Establish v1 Double Ratchet session (default)
 2. Attacker exfiltrates `_synchronized_kem_secret` from memory or storage
 3. All messages encrypted under chains derived from this KEM secret are decryptable, past and future, until the next DH ratchet step (which still reuses the same KEM secret in v1)
@@ -340,7 +352,7 @@ There is no single documented Trusted Computing Base. The README describes Plane
 **Confidence:** High (CPython runtime limitation, acknowledged in code)  
 **Location:** `double_ratchet.py:178-203` (`_wipe_secret_best_effort`), `README.md:38-41` (acknowledgment), `production_gate.py:195-232` (control plane boundary)
 
-**Description:** CPython immutable `bytes` objects cannot be deterministically zeroized due to garbage collector copies, obmalloc arena allocation, and interpreter-internal buffering. The code acknowledges this limitation (`double_ratchet.py:183-184: "CPython bytes are immutable... CANNOT be wiped") but still handles key material in Python (root keys, chain keys, message keys, KEM shared secrets) in `double_ratchet.py`, `secure_p2p.py`, and `p2p_core.py`. The `production_gate.py` attempts to enforce a control plane boundary (`enforce_control_plane_boundary()`) but it is only active when `P2P_PRODUCTION=1` and does not prevent Python from handling keys during handshake setup.
+**Description:** CPython immutable `bytes` objects cannot be deterministically zeroized due to garbage collector copies, obmalloc arena allocation, and interpreter-internal buffering. The code acknowledges this limitation (`double_ratchet.py:183-184: "CPython bytes are immutable... CANNOT be wiped") but still handles key material in Python (root keys, chain keys, message keys, KEM shared secrets) in`double_ratchet.py`,`secure_p2p.py`, and`p2p_core.py`. The`production_gate.py`attempts to enforce a control plane boundary (`enforce_control_plane_boundary()`) but it is only active when`P2P_PRODUCTION=1` and does not prevent Python from handling keys during handshake setup.
 
 **Violated Property:** Key material zeroization; memory forensics resistance.
 
@@ -395,7 +407,7 @@ There is no single documented Trusted Computing Base. The README describes Plane
 ### F.1 Encryption and Authenticated Encryption
 
 | Component | Algorithm | Mode | Nonce Handling | Assessment |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `double_ratchet.py` | ChaCha20-Poly1305 | AEAD | Counter + salt (`CounterBasedNonceManager`) | **Good** — counter-based nonces prevent reuse |
 | `p2p_core.py` | AES-256-GCM | AEAD | Random 96-bit IV (`secrets.token_bytes(12)`) | **Weak** — birthday-bound collision risk (F-04) |
 | `platform_hsm_interface.py` | AES-256-GCM | AEAD | Random 96-bit IV (`secrets.token_bytes(12)`) | **Weak** — same as above |
@@ -404,7 +416,7 @@ There is no single documented Trusted Computing Base. The README describes Plane
 ### F.2 Key Establishment and Key Derivation
 
 | Component | KEX | KDF | Authentication | Assessment |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `double_ratchet.py` (main path) | X25519 + ML-KEM-1024 | HKDF-SHA3-512 (root), HMAC-SHA512 (chain) | FALCON-1024 / ML-DSA-87 | **Non-standard** — deviates from documented CNSA 2.0 |
 | `hybrid_kex_legacy.py` (used by `secure_p2p.py`) | X25519 + ML-KEM-1024 | HKDF-SHA3-512 | Ed25519 / FALCON-1024 | **Not the claimed P-384 hybrid** |
 | `hybrid_kex.py` `HybridKeyExchange2027` (unused) | P-384 + ML-KEM-1024 | HKDF-SHA384 | ML-DSA-87 | **Matches documentation but unused** |
@@ -417,7 +429,7 @@ There is no single documented Trusted Computing Base. The README describes Plane
 ### F.3 Random Number Generation
 
 | Source | Location | Assessment |
-|---|---|---|
+| --- | --- | --- |
 | `secrets.token_bytes()` / `os.urandom()` | `platform_hsm_interface.py:3198` | CSPRNG, software-only unless hardware RNG available |
 | `X25519PrivateKey.generate()` | `cryptography` library | Uses OpenSSL's RNG |
 | ML-KEM keygen | `liboqs_wrapper` via `oqs.dll` | Depends on liboqs internal RNG |
@@ -433,7 +445,7 @@ The `get_secure_random()` function in `platform_hsm_interface.py:3186` falls bac
 ### F.5 Forward Secrecy and Post-Compromise Security
 
 | Property | Claimed | Actual (default) | Actual (production/TS) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Forward Secrecy | Yes | Yes (via DH ratchet + chain keys) | Yes |
 | Post-Compromise Security | Yes (PQ double ratchet + CER) | **No** (v1 reuses KEM secret) | Yes (v2 fresh KEM per DH step) |
 | Continuous Epoch Ratchet | Yes (every 10K packets / 10 MB) | Unverified (Rust data plane) | Unverified |
@@ -443,7 +455,7 @@ The default configuration (v1 PQ ratchet) does **not** provide post-compromise s
 ### F.6 Identity Verification and Authentication
 
 | Mode | Authentication | Non-repudiation | MITM Protection |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Lab (default) | PSK + optional TOFU | No | Weak (TOFU) |
 | Production | PSK + ML-DSA-87 mutual | Yes (ML-DSA-87 signatures) | Strong (pinned peer keys + root CA) |
 | Deniable | AEAD only | No | Weak |
@@ -453,6 +465,7 @@ The `TacticalP2PNode.negotiate_hybrid_kex()` (`secure_p2p.py:14409`) requires mu
 ### F.7 Algorithm Agility and Downgrade Resistance
 
 The codebase has multiple downgrade paths:
+
 - `enable_pq=False` (classical-only) — refused in production, allowed in lab
 - `deniable=True` (no signatures) — allowed via env var
 - `PQ ratchet v1` (no fresh PCS) — default, refused in strict mode
@@ -471,7 +484,7 @@ These are appropriately gated behind environment variables and production-mode c
 ### F.9 Quantum Resistance Assessment
 
 | Component | Classical Security | Post-Quantum Security | Quantum-Resistant? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | X25519 (used) | ~128 bits | Broken by Shor's | **No** |
 | P-384 (claimed, unused) | ~192 bits | Broken by Shor's | **No** |
 | ML-KEM-1024 (used) | N/A | Category 5 | **Yes** |
@@ -487,7 +500,7 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ## G. COMPARATIVE ASSESSMENT
 
 | Security Dimension | Destroyer-ST2027 (Actual Code) | Signal Protocol | WhatsApp (Signal-based) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **End-to-end encryption** | Double Ratchet + optional TLS 1.3 outer | Double Ratchet (Signal Protocol) | Double Ratchet (Signal Protocol) |
 | **Coverage** | Chat messages (Double Ratchet); file transfer; NC3 directives | All messages, calls, attachments | All messages, calls, attachments |
 | **Exceptions** | Lab mode allows classical-only, deniable sessions | None (default configuration) | None |
@@ -523,6 +536,7 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.1 Code Organization
 
 **Strengths:**
+
 - Extensive modularization with clear separation of concerns
 - Comprehensive error handling with custom exception hierarchy (`cryptographic_errors.py`)
 - Fail-closed design patterns throughout security-critical paths
@@ -531,6 +545,7 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 - Replay protection with sliding window and expiry
 
 **Weaknesses:**
+
 - **~200 Python files** with overlapping functionality (multiple crypto stacks, multiple auth systems, multiple network layers)
 - **486 KB `platform_hsm_interface.py`** — monolithic file handling RNG, TPM, HSM, key storage, attestation, audit logging
 - **281 KB `double_ratchet.py`** — combines protocol logic, threat detection, canary protection, side-channel countermeasures
@@ -541,12 +556,14 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.2 Dependency Management
 
 **Strengths:**
+
 - `requirements.txt` uses pinned versions with SHA-256 hashes (`--require-hashes` compatible)
 - `cryptography==50.0.1` (recent, patched)
 - `pycryptodome==3.23.0` (recent)
 - LibOQS pinned to 0.16.0 with known SHA
 
 **Weaknesses:**
+
 - Prebuilt `oqs.dll` and `libsodium.dll` without reproducible build evidence
 - Multiple Python crypto libraries (`cryptography`, `pycryptodome`, `libsodium`) increase supply chain surface
 - No `cargo.lock` or `Cargo.toml` checksum verification evidence for Rust dependencies
@@ -554,12 +571,14 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.3 Error Handling
 
 **Strengths:**
+
 - Fail-closed on cryptographic failures
 - Generic error messages on wire, details in local log
 - KDF self-verification catches library corruption
 - InvalidTag handling raises SecurityError (no oracle)
 
 **Weaknesses:**
+
 - Some `except Exception: pass` blocks swallow errors (e.g., `liboqs_wrapper.py:294`, `double_ratchet.py:3201-3203`)
 - Best-effort wipe functions never raise (`_wipe_secret_best_effort`) — failures are silently logged
 - Silent fallback when `destroyer_core` import fails (`secure_p2p.py:56-59`)
@@ -567,6 +586,7 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.4 Secure Defaults
 
 **Weaknesses:**
+
 - Production mode is opt-in (`P2P_PRODUCTION=1`)
 - Default PQ ratchet is v1 (no fresh PCS)
 - Classical-only key exchange allowed in lab
@@ -576,12 +596,14 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.5 Testability
 
 **Strengths:**
+
 - ~200 test files covering many security aspects
 - Conftest with fixtures for test isolation (`reset_for_tests()`)
 - Negative test paths (replay attacks, tampered messages, invalid signatures)
 - Fuzz gate tests (`test_parser_fuzz_gates.py`)
 
 **Weaknesses:**
+
 - Tests are self-written, not independent
 - No evidence of mutation testing or coverage thresholds
 - No integration tests against external implementations
@@ -590,12 +612,14 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.6 Configuration Management
 
 **Strengths:**
+
 - `config.json` with production and template variants
 - Configuration signatures (`config.json.sig`, `config_production.json.sig`)
 - Environment variable overrides with validation
 - Sticky production latch
 
 **Weaknesses:**
+
 - Multiple config backups with potentially different settings (`config_backup_20261001_*.json`)
 - Configuration signature verification not traced in this audit
 - No evidence of configuration drift detection
@@ -603,6 +627,7 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### H.7 Likelihood of Security Regressions
 
 **High risk** due to:
+
 1. Multiple parallel crypto implementations that can drift apart
 2. Opt-in production mode that operators may forget to enable
 3. Environment-variable-based security toggles that can be misconfigured
@@ -616,6 +641,7 @@ The hybrid construction (X25519 + ML-KEM-1024) provides "dual security": secrecy
 ### Scoring Rubric (0-100)
 
 Each score reflects the implementation state **as verified in-repo**, explicitly capped where external hardware, CMVP-validated binaries, or accredited third-party verification are absent:
+
 - **90-100:** Externally accredited, hardware-provisioned, and independently verified
 - **75-89:** Software & protocol controls remediated and test-verified in-repo; external accreditation/hardware prerequisites pending
 - **50-74:** Notable software/protocol weaknesses requiring remediation before controlled evaluation
@@ -624,7 +650,7 @@ Each score reflects the implementation state **as verified in-repo**, explicitly
 ### Scores (Post-Remediation In-Repo State)
 
 | Dimension | Score | Basis |
-|---|---|---|
+| --- | --- | --- |
 | **Cryptographic Correctness** | **82** | CNSA Suite 2.0 hybrid KEX (`HybridKeyExchange2027`: P-384 + ML-KEM-1024 + ML-DSA-87), NIST SP 800-38D composite nonces, sound Ristretto255 `bLSAG` ring signatures (`pq_zkp.rs`, explicitly marked classical), and fail-closed `ThresholdKeyManager` / DDIL key pinning; capped pending CMVP-validated replacements for prebuilt `oqs.dll` / `libsodium.dll` |
 | **Protocol and Architecture Security** | **84** | DoubleRatchet v2 default with per-epoch ML-KEM-1024 PCS healing, verify-before-mutate AEAD handling across Python/Rust pipelines, fail-closed `production_gate`, and seL4 MILS 3-domain separation (`validate_mils.py --strict`); capped pending Linux CI `ProVerif >= 2.05` & `cargo kani` execution against current models |
 | **Application Security** | **84** | Native Rust `rust_data_plane` data plane with RFC 6479 replay windows, authenticated WebAuthn/CSRF/RBAC fixes, zero tracked Bandit medium/high findings on active modules, and Clippy `-D warnings` clean; capped pending full parser fuzzing campaigns under external QA |
@@ -642,7 +668,7 @@ Each score reflects the implementation state **as verified in-repo**, explicitly
 All identified in-repo software defects (J-01 through J-10 plus follow-up audit remediations) have been implemented in source code:
 
 | ID | Action | Status | Verification Evidence |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **J-01** | Align application paths to use `HybridKeyExchange2027` (P-384 + ML-KEM-1024) | **COMPLETE (SW)** | `tests/test_cnsa2_hybrid_kex_2027.py`, `hybrid_kex.py`, `unified_secure_pipeline.py` |
 | **J-02** | Enforce AES-256-GCM and verify-before-mutate AEAD handling | **COMPLETE (SW)** | `double_ratchet.py`, `rust_data_plane/src/pipeline.rs`, `sovereign_group_ratchet.py` |
 | **J-03** | Enforce deterministic NIST SP 800-38D nonces & eliminate nonce collisions | **COMPLETE (SW)** | `p2p_core.py`, `platform_hsm_interface.py`, `cnsa_crypto_gateway.py`, `threshold_cryptography.py` |
@@ -659,22 +685,27 @@ All identified in-repo software defects (J-01 through J-10 plus follow-up audit 
 ## K. FINAL GO/NO-GO DECISION
 
 ### 1. Further Development & Regression Testing
+
 **Decision: GO**  
 Codebase architecture, fail-closed boundaries, and automated test suites are stabilized and maintainable in CI.
 
 ### 2. Controlled Internal Lab / Evaluation Testing
+
 **Decision: GO (LAB MODE ONLY — DO NOT HANDLE LIVE SENSITIVE DATA)**  
 Non-production evaluation (`P2P_PRODUCTION=0`) clearly surfaces hardware/simulation fallbacks as `WARN` rather than masking missing hardware.
 
 ### 3. Controlled External Accredited Lab Evaluation
+
 **Decision: CONDITIONAL GO**  
 Ready for third-party code review, ProVerif/Kani CI runs, and pre-accreditation assessment once target Linux CI workflows complete cleanly.
 
 ### 4. Production Deployment with Sensitive Data
+
 **Decision: NO-GO PENDING HARDWARE & MODULE PREREQUISITES**  
 Requires provisioned host UEFI SecureBoot + IOMMU/DMA protection, hardware TPM 2.0 NV (`P2P_TPM_NV_INDEX`), physical PKCS#11 tokens/HSMs, CMVP-validated cryptographic libraries, and `P2P_PRODUCTION=1` passing with zero failures/warnings.
 
 ### 5. Military or Classified Sovereign Use
+
 **Decision: NO-GO PENDING FORMAL ACCREDITATION (ATO)**  
 Cannot be authorized solely from internal software tests. Requires independent cryptographic validation, TEMPEST/physical optical diode verification, CMVP-validated crypto, verified formal proofs in CI, and Authorizing Official ATO.
 
@@ -689,4 +720,4 @@ Cannot be authorized solely from internal software tests. Requires independent c
 
 **End of Report**
 
-Updated 2026-11-25 following software remediation verification on D:\code\Main_projects\p2p\p2p_6_1-26. This document makes no claim of external accreditation or absolute security.
+Updated 2026-11-26 following software remediation verification (Waves 1–5 of `ST2027_FORENSIC_AUDIT_2026-11-26.md`) on D:\code\Main_projects\p2p\p2p_6_1-26. This document makes no claim of external accreditation or absolute security.

@@ -222,6 +222,7 @@ docs/review_tmp/
 audit_*.json
 audit_request.txt
 out/
+cache/
 
 *.sk
 *.auth.*

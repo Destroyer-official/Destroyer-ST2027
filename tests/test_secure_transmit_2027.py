@@ -730,7 +730,9 @@ def _make_test_pki(tmp: Path):
 
 def _loopback_ctxs(pki):
     srv_ctx = st.make_server_context(pki["srv"][0], pki["srv"][1], pki["cafile"])
-    cli_ctx = st.make_client_context(pki["cli"][0], pki["cli"][1], pki["cafile"])
+    # fronting=True disables hostname verification for loopback tests where
+    # the test certificate SANs (localhost/127.0.0.1) don't match "loopback-test".
+    cli_ctx = st.make_client_context(pki["cli"][0], pki["cli"][1], pki["cafile"], fronting=True)
     return srv_ctx, cli_ctx
 
 

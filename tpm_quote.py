@@ -118,24 +118,33 @@ def _verify_ek_chain(ek_cert_chain: list[bytes], vendor: str = "amd") -> bool:
     try:
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.asymmetric import ec, ed25519, ed448, padding, rsa
+        import datetime as _dt
     except ImportError:
         return False
-    
+
     if not ek_cert_chain or not isinstance(ek_cert_chain, list):
         return False
-    
+
     try:
         certs = [x509.load_der_x509_certificate(cert) for cert in ek_cert_chain]
     except Exception:
         return False
-    
+
     if not certs:
         return False
-    
+
+    # Validate certificate temporal validity windows for every certificate in chain
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    for cert_obj in certs:
+        nvb = getattr(cert_obj, "not_valid_before_utc", None) or cert_obj.not_valid_before.replace(tzinfo=_dt.timezone.utc)
+        nva = getattr(cert_obj, "not_valid_after_utc", None) or cert_obj.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+        if now_utc < nvb or now_utc > nva:
+            return False
+
     ek_cert = certs[0]
     chain = certs[1:]
-    
+
     # Check EK certificate key usage includes keyAgreement (for AIK/quote)
     try:
         ku = ek_cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.KEY_USAGE)
@@ -143,26 +152,40 @@ def _verify_ek_chain(ek_cert_chain: list[bytes], vendor: str = "amd") -> bool:
             return False
     except x509.ExtensionNotFound:
         pass  # Key usage extension optional per some profiles
-    
-    # Build chain verification (simplified - production MUST use full chain validation)
-    # This is a skeleton; real implementation uses cryptography.x509 verification
+
     if not chain:
         return False
-    
-    # Verify chain signatures up to root
-    # For each cert in chain, verify it was signed by the next cert's private key
+
+    # Verify BasicConstraints(ca=True), issuer->subject linkage, and cryptographic signatures up to root
     current = ek_cert
     for ca_cert in chain:
         try:
-            # Get issuer's public key
+            bc = ca_cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS)
+            if not bc.value.ca:
+                return False
+        except x509.ExtensionNotFound:
+            return False
+        if current.issuer != ca_cert.subject:
+            return False
+        try:
             issuer_pub = ca_cert.public_key()
-            # Verify current cert was signed by issuer
-            issuer_pub.verify(
-                current.signature,
-                current.tbs_certificate_bytes,
-                padding.PKCS1v15(),
-                current.signature_hash_algorithm,
-            )
+            if isinstance(issuer_pub, rsa.RSAPublicKey):
+                issuer_pub.verify(
+                    current.signature,
+                    current.tbs_certificate_bytes,
+                    padding.PKCS1v15(),
+                    current.signature_hash_algorithm,
+                )
+            elif isinstance(issuer_pub, ec.EllipticCurvePublicKey):
+                issuer_pub.verify(
+                    current.signature,
+                    current.tbs_certificate_bytes,
+                    ec.ECDSA(current.signature_hash_algorithm),
+                )
+            elif isinstance(issuer_pub, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+                issuer_pub.verify(current.signature, current.tbs_certificate_bytes)
+            else:
+                return False
             current = ca_cert
         except Exception:
             return False
@@ -227,12 +250,10 @@ def _verify_ek_chain(ek_cert_chain: list[bytes], vendor: str = "amd") -> bool:
                 return False
             return root_fp in trusted_fps
         else:
-            # Non-production: allow matching trusted roots or configured test roots
-            if trusted_fps:
-                return root_fp in trusted_fps
-            if expected_root:
-                return root_fp == expected_root.lower()
-            return True
+            # Even outside production, never trust an unanchored EK root without an explicit trust pin
+            if not trusted_fps:
+                return False
+            return root_fp in trusted_fps
     except Exception:
         return False
 
@@ -321,12 +342,18 @@ def generate_tpm_quote(
             return {"error": "EK certificate chain validation failed"}
 
     # Sign with the TPM-resident AK callback, else software stand-in.
+    # Sign with the TPM-resident AK callback, else software stand-in (forbidden in production).
     if ak_sign_callback is not None:
         sig = ak_sign_callback(quote_data)
         if not sig:
             return {"error": "AK sign callback failed"}
         degraded = False
     else:
+        from production_gate import is_production
+        if is_production():
+            raise HardwareAttestationError(
+                "MILITARY FATAL: Software AK stand-in forbidden in production; supply TPM-resident ak_sign_callback."
+            )
         # Software stand-in (degraded): fresh ephemeral key, clearly branded.
         warnings.warn("Using software ML-DSA-87 AK stand-in; production MUST use TPM-resident AK")
         mldsa = _load_mldsa()
@@ -492,7 +519,14 @@ def generate_ak_stub():
     NOT a TPM-resident key. Production MUST use a TPM-resident AK with the
     EK cert chain to AMD/Intel/Infineon roots (not implemented, needs native).
     Raises RuntimeError with a clear message if liboqs is missing.
+    NOT a TPM-resident key. Forbidden under production posture (raises
+    HardwareAttestationError). Lab/non-production use only.
     """
+    from production_gate import is_production
+    if is_production():
+        raise HardwareAttestationError(
+            "MILITARY FATAL: Ephemeral software AK stub is disabled in production; use hardware TPM/PKCS#11 AK."
+        )
     mldsa = _load_mldsa()
     return mldsa.keygen()
 
@@ -833,9 +867,11 @@ def read_hardware_pcrs(pcr_indices: Optional[List[int]] = None) -> Dict[int, str
         return {idx: results[idx] for idx in indices}
 
     # If physical hardware read failed or was partial, check production enforcement
+    from production_gate import is_production
     from utils.helpers import is_env_true
     is_prod = is_env_true("P2P_PRODUCTION") or is_env_true("SECURE_P2P_PRODUCTION")
     allow_sim = is_env_true("P2P_ALLOW_SIMULATED_TPM") or is_env_true("P2P_ALLOW_DEGRADED_TPM")
+    is_prod = is_production()
     fail_on_sw = is_env_true("P2P_FAIL_ON_SOFTWARE_FALLBACK")
     if is_prod and not allow_sim:
         raise HardwareAttestationError("MILITARY FATAL: Physical TPM 2.0 / HSM hardware attestation failed in production (fail-closed)")

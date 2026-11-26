@@ -13913,8 +13913,17 @@ class SecureP2PChat:
         bind_chan = f"{bind_addr}:{channel_port}"
         peer_chan = f"{peer_addr}:{peer_channel_port}"
 
+        is_lab = bool(getattr(self, "lab_mode", False)) and not _production()
+        chan_bin = _native_bin_for_mode(lab=is_lab)
+        chan_env = dict(os.environ)
+        if is_lab:
+            chan_env["P2P_LAB_MODE"] = "1"
+        else:
+            chan_env.pop("P2P_LAB_MODE", None)
+            chan_env.pop("ST2027_LAB_MODE", None)
+
         cmd = [
-            str(NATIVE_BIN), "channel",
+            str(chan_bin), "channel",
             "--key-file", self.key_path,
             "--state", self.state_path,
             "--bind", bind_chan,
@@ -13924,6 +13933,8 @@ class SecureP2PChat:
             "--quantum", str(quantum),
             "--drain-ticks", "8"
         ]
+        if is_lab:
+            cmd.append("--lab")
 
         if interactive:
             cmd.append("--stdin")
@@ -13966,6 +13977,7 @@ class SecureP2PChat:
 
         self.channel_proc = subprocess.Popen(
             cmd,
+            env=chan_env,
             stdin=subprocess.PIPE if interactive else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -14234,6 +14246,20 @@ ROOT = Path(__file__).resolve().parent
 NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
 if not NATIVE_BIN.exists():
     NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+
+
+def _native_bin_for_mode(lab: bool = False) -> Path:
+    """Select the debug (lab-surfaces) binary for explicit non-production lab channels."""
+    if lab and not _production():
+        debug_bin = ROOT / "rust_data_plane" / "target" / "debug" / (
+            "secure-transmit.exe" if os.name == "nt" else "secure-transmit"
+        )
+        release_bin = ROOT / "rust_data_plane" / "target" / "release" / (
+            "secure-transmit.exe" if os.name == "nt" else "secure-transmit"
+        )
+        if Path(NATIVE_BIN) == release_bin and debug_bin.exists():
+            return debug_bin
+    return NATIVE_BIN
 
 # ANSI Terminal Styling
 RESET = "\033[0m"
@@ -14678,8 +14704,17 @@ class TacticalP2PNode:
         bind_chan = _format_endpoint(self.bind_addr, self.channel_port)
         peer_chan = _format_endpoint(self.peer_addr, self.peer_channel_port)
 
+        is_lab = bool(getattr(self, "lab_mode", False)) and not _production()
+        chan_bin = _native_bin_for_mode(lab=is_lab)
+        chan_env = dict(os.environ)
+        if is_lab:
+            chan_env["P2P_LAB_MODE"] = "1"
+        else:
+            chan_env.pop("P2P_LAB_MODE", None)
+            chan_env.pop("ST2027_LAB_MODE", None)
+
         cmd = [
-            str(NATIVE_BIN), "channel",
+            str(chan_bin), "channel",
             "--key-file", self.key_path,
             "--state", self.state_path,
             "--bind", bind_chan,
@@ -14689,6 +14724,8 @@ class TacticalP2PNode:
             "--quantum", str(quantum),
             "--drain-ticks", "8"
         ]
+        if is_lab:
+            cmd.append("--lab")
 
         if interactive:
             cmd.append("--stdin")
@@ -14722,6 +14759,7 @@ class TacticalP2PNode:
 
         self.channel_proc = subprocess.Popen(
             cmd,
+            env=chan_env,
             stdin=subprocess.PIPE if interactive else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -16024,8 +16062,8 @@ def run_interactive_terminal(role: str, bind: str, peer: str, name: str,
         try:
             from production_gate import enforce_control_plane_boundary
             enforce_control_plane_boundary("secure_p2p_node")
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Control-plane boundary enforcement raised: %s", exc)
         sys.exit(2)
 
     node = TacticalP2PNode(
@@ -16373,8 +16411,10 @@ def run_automated_two_terminal_drill() -> bool:
         t1.start(); time.sleep(0.1); t2.start()
         t1.join(); t2.join()
 
-        assert kex_results.get("norad") and kex_results.get("pentagon"), "KEX Failed"
-        assert norad.sas == pentagon.sas, f"SAS Mismatch: {norad.sas} != {pentagon.sas}"
+        if not (kex_results.get("norad") and kex_results.get("pentagon")):
+            raise RuntimeError("KEX Failed")
+        if norad.sas != pentagon.sas:
+            raise RuntimeError(f"SAS Mismatch: {norad.sas} != {pentagon.sas}")
         print(f"\n{BOLD}{GREEN}[VERIFIED] Mutual SAS Match Confirmed: {norad.sas}{RESET}")
 
         norad.start_enclave_channel(
@@ -16402,52 +16442,62 @@ def run_automated_two_terminal_drill() -> bool:
         print(f"  [+] NORAD Received Payload    : {norad.received_messages}")
         print(f"  [+] PENTAGON Received Payload : {pentagon.received_messages}")
 
-        assert "PENTAGON_CMD_TACTICAL_ORDER_ALPHA_77" in norad.received_messages
-        assert "NORAD_DEFCON1_ACK_RADAR_LOCK_CONFIRMED" in pentagon.received_messages
+        if "PENTAGON_CMD_TACTICAL_ORDER_ALPHA_77" not in norad.received_messages:
+            raise RuntimeError("NORAD did not receive expected tactical payload")
+        if "NORAD_DEFCON1_ACK_RADAR_LOCK_CONFIRMED" not in pentagon.received_messages:
+            raise RuntimeError("PENTAGON did not receive expected radar ack")
         print(f"{BOLD}{GREEN}[+] 100% IN-BAND BIDIRECTIONAL ENCRYPTED EXCHANGE CONFIRMED!{RESET}")
 
         print(f"\n[*] Executing Live Two-Person Integrity NC3 EAM Transfer...")
-        assert norad.send_eam(
+        if not norad.send_eam(
             directive="DEFCON1_RADAR_CONFIRMED_HOSTILE_TRACK",
             target="PENTAGON_NMCC",
             pal_code="BRAVO-FOXTROT-8890"
-        ), "NORAD failed to dispatch EAM"
+        ):
+            raise RuntimeError("NORAD failed to dispatch EAM")
 
         for _ in range(150):
             if any("BRAVO-FOXTROT-8890" in m for m in pentagon.received_messages):
                 break
             time.sleep(0.1)
 
-        assert any("BRAVO-FOXTROT-8890" in m for m in pentagon.received_messages), "Pentagon failed to unseal EAM PAL code"
+        if not any("BRAVO-FOXTROT-8890" in m for m in pentagon.received_messages):
+            raise RuntimeError("Pentagon failed to unseal EAM PAL code")
         print(f"{BOLD}{GREEN}[+] NC3 DEFCON-1 TWO-PERSON INTEGRITY ML-DSA-87 VERIFICATION CONFIRMED!{RESET}")
 
         print(f"\n[*] Executing MMHS Military Precedence (FLASH) In-Band Transfer...")
-        assert pentagon.send_mmhs_message(
+        if not pentagon.send_mmhs_message(
             text="STRATEGIC DEFENSE SATELLITE ACQUIRED TRAJECTORY",
             precedence="Z",
             clearance="TOP_SECRET",
             caveats="NOFORN"
-        ), "Pentagon failed to send MMHS Flash message"
+        ):
+            raise RuntimeError("Pentagon failed to send MMHS Flash message")
 
         for _ in range(80):
             if any("STRATEGIC DEFENSE SATELLITE" in m for m in norad.received_messages):
                 break
             time.sleep(0.1)
-        assert any("STRATEGIC DEFENSE SATELLITE" in m for m in norad.received_messages), "NORAD failed to receive MMHS message"
+        if not any("STRATEGIC DEFENSE SATELLITE" in m for m in norad.received_messages):
+            raise RuntimeError("NORAD failed to receive MMHS message")
         print(f"{BOLD}{GREEN}[+] MMHS TACTICAL FLASH TELEGRAM TRANSMISSION CONFIRMED!{RESET}")
 
         print(f"\n[*] Executing Cursor-on-Target Situational Awareness & BFT Beacon...")
-        assert norad.send_cot(lat=38.8719, lon=-77.0563, callsign="NORAD-EARLY-WARNING-01")
+        if not norad.send_cot(lat=38.8719, lon=-77.0563, callsign="NORAD-EARLY-WARNING-01"):
+            raise RuntimeError("NORAD failed to send CoT beacon")
         for _ in range(40):
             if any("NORAD-EARLY-WARNING-01" in m for m in pentagon.received_messages):
                 break
             time.sleep(0.1)
-        assert any("NORAD-EARLY-WARNING-01" in m for m in pentagon.received_messages), "Pentagon failed to receive CoT beacon"
+        if not any("NORAD-EARLY-WARNING-01" in m for m in pentagon.received_messages):
+            raise RuntimeError("Pentagon failed to receive CoT beacon")
         print(f"{BOLD}{GREEN}[+] ZERO-GAP MIL-STD CURSOR-ON-TARGET SITUATIONAL BEACON CONFIRMED!{RESET}")
 
         print(f"\n[*] Executing Emergency Media Sanitization Drill...")
-        assert norad.emergency_zeroize(), "NORAD Zeroize Failed"
-        assert pentagon.emergency_zeroize(), "Pentagon Zeroize Failed"
+        if not norad.emergency_zeroize():
+            raise RuntimeError("NORAD Zeroize Failed")
+        if not pentagon.emergency_zeroize():
+            raise RuntimeError("Pentagon Zeroize Failed")
         print(f"{BOLD}{GREEN}[+] NIST SP 800-88 3-PASS SANITIZATION VERIFIED!{RESET}")
 
         print("\n" + "=" * 80)
@@ -16517,13 +16567,20 @@ def _production_crypto_violations():
     return hits
 
 
-def _validate_auth_material(auth_sk_file: str = None, peer_pk_file: str = None, auth_tpm_sealed: str = None):
+def _validate_auth_material(
+    auth_sk_file: str = None,
+    peer_pk_file: str = None,
+    auth_tpm_sealed: str = None,
+    auth_pkcs11_label: str = None,
+    auth_pkcs11_id: str = None,
+    auth_pk_file: str = None,
+):
     """Validate ML-DSA-87 key material without echoing secret material.
 
-    If auth_tpm_sealed is provided, validates that the TPM sealed private key
-    object exists on disk as a binary blob (zero-disk key containment).
-    Otherwise, the signing seed must be exactly 32 bytes of hex (64 chars)
-    and owner-only on POSIX.
+    Supports three custody mechanisms:
+      1. Hardware PKCS#11 HSM/token (`auth_pkcs11_label` / `auth_pkcs11_id` + optional `auth_pk_file`)
+      2. Hardware TPM 2.0 PCR-sealed seed (`auth_tpm_sealed`)
+      3. Non-production disk seed (`auth_sk_file`, refused in production)
     The pinned peer public key must be exactly 2592 bytes of hex (5184 chars).
     """
     import stat as _stat
@@ -16542,6 +16599,19 @@ def _validate_auth_material(auth_sk_file: str = None, peer_pk_file: str = None, 
         return False, "pinned peer ML-DSA-87 public key is not valid hexadecimal"
     if len(raw_pk) != 2592:
         return False, "pinned peer ML-DSA-87 public key has an invalid byte length"
+
+    if auth_pkcs11_label or auth_pkcs11_id:
+        if auth_pk_file:
+            if not os.path.exists(auth_pk_file):
+                return False, f"PKCS#11 public key file not found: {auth_pk_file!r}"
+            try:
+                pk_text = Path(auth_pk_file).read_text(encoding="utf-8").strip()
+                raw_local = bytes.fromhex(pk_text)
+            except (OSError, ValueError) as exc:
+                return False, f"PKCS#11 public key file invalid: {exc}"
+            if len(raw_local) != 2592:
+                return False, "PKCS#11 local ML-DSA-87 public key must be 2592 bytes"
+        return True, ""
 
     if auth_tpm_sealed:
         if not os.path.exists(auth_tpm_sealed):
@@ -16876,7 +16946,15 @@ def get_tactical_key_dir() -> Path:
 
 
 def _auto_provision_tactical_credentials() -> None:
-    """Ensure tactical military credentials exist with owner-only permissions."""
+    """Explicit LAB-ONLY helper: generate local dual-station credentials for isolated loopback testing.
+
+    Production NEVER generates both peer keys on a single host or plaintext `.sk` seeds (F-01/F-05).
+    """
+    if _production():
+        raise PermissionError(
+            "MILITARY FATAL: Dual-station auto-provisioning of plaintext .sk files is forbidden in production (F-01/F-05). "
+            "Use single-station `secure_p2p.py enroll` with hardware custody + out-of-band peer public key."
+        )
     key_dir = get_tactical_key_dir()
     psk_file = key_dir / "tactical_station.psk"
     if not psk_file.exists():
@@ -16884,8 +16962,8 @@ def _auto_provision_tactical_credentials() -> None:
         if os.name != "nt":
             try:
                 os.chmod(psk_file, 0o600)
-            except OSError:
-                pass
+            except OSError as exc:
+                raise PermissionError(f"Failed setting 0600 permissions on {psk_file}: {exc}") from exc
 
     alpha_sk = key_dir / "alpha.auth.sk"
     alpha_pk = key_dir / "alpha.auth.pk"
@@ -16903,31 +16981,67 @@ def _auto_provision_tactical_credentials() -> None:
     bravo_cert = key_dir / "bravo_pentagon.crt"
 
     if not root_ca_file.exists() or not alpha_cert.exists() or not bravo_cert.exists():
-        try:
-            from pq_certificate_authority import create_certificate_authority
-            ca = create_certificate_authority("US_STRATEGIC_DEFENSE_ROOT_CA")
-            ca.save_root_certificate(str(root_ca_file))
-            if alpha_pk.exists():
-                a_pk_bytes = bytes.fromhex(alpha_pk.read_text(encoding="utf-8").strip())
-                c_a = ca.issue_certificate("NORAD_ALPHA", a_pk_bytes, validity_days=365)
-                c_a.save_to_file(str(alpha_cert))
-            if bravo_pk.exists():
-                b_pk_bytes = bytes.fromhex(bravo_pk.read_text(encoding="utf-8").strip())
-                c_b = ca.issue_certificate("PENTAGON_BRAVO", b_pk_bytes, validity_days=365)
-                c_b.save_to_file(str(bravo_cert))
-        except Exception:
-            pass
+        from pq_certificate_authority import create_certificate_authority
+        ca = create_certificate_authority("US_STRATEGIC_DEFENSE_ROOT_CA")
+        ca.save_root_certificate(str(root_ca_file))
+        if alpha_pk.exists():
+            a_pk_bytes = bytes.fromhex(alpha_pk.read_text(encoding="utf-8").strip())
+            c_a = ca.issue_certificate("NORAD_ALPHA", a_pk_bytes, validity_days=365)
+            c_a.save_to_file(str(alpha_cert))
+        if bravo_pk.exists():
+            b_pk_bytes = bytes.fromhex(bravo_pk.read_text(encoding="utf-8").strip())
+            c_b = ca.issue_certificate("PENTAGON_BRAVO", b_pk_bytes, validity_days=365)
+            c_b.save_to_file(str(bravo_cert))
+
+
+def run_single_station_enroll(
+    name: str,
+    out_dir: Optional[str] = None,
+    out_pk: Optional[str] = None,
+    lab_sk: Optional[str] = None,
+) -> int:
+    """Provision ONLY the local station's public identity for out-of-band exchange (F-05).
+
+    Never generates a peer's private key. In non-lab/production mode, outputs a
+    template/guidance if no hardware PKCS#11/TPM seal helper is passed, or writes
+    only the requested local keypair when `--lab-sk` is explicitly requested outside production.
+    """
+    target_dir = Path(out_dir) if out_dir else get_tactical_key_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (name or "station").lower())
+    pk_path = Path(out_pk) if out_pk else (target_dir / f"{safe_name}.auth.pk")
+
+    if _production():
+        if lab_sk:
+            print(f"{RED}[PRODUCTION REFUSAL] Cannot write plaintext signing seed (--lab-sk) in production (F-01/F-05).{RESET}")
+            return 2
+        print(f"{GREEN}[SINGLE-STATION ENROLLMENT]{RESET} Callsign={name}")
+        print("  1. Provision local ML-DSA-87 key inside PKCS#11 HSM (`--auth-pkcs11-label`) or TPM (`--auth-tpm-sealed`).")
+        print(f"  2. Export ONLY local public key to out-of-band transfer artifact: {pk_path}")
+        print("  3. Import peer's independently generated public key via `P2P_PEER_AUTH_PK_FILE` (never co-generate peer .sk).")
+        return 0
+
+    sk_path = Path(lab_sk) if lab_sk else (target_dir / f"{safe_name}.auth.sk")
+    if not NATIVE_BIN.exists():
+        print(f"{RED}[FATAL] Native binary missing: {NATIVE_BIN}{RESET}")
+        return 2
+    subprocess.run(
+        [str(NATIVE_BIN), "auth-keygen", "--out-sk", str(sk_path), "--out-pk", str(pk_path)],
+        check=True,
+        capture_output=True,
+    )
+    print(f"{GREEN}[ENROLLED SINGLE STATION (LAB)] Callsign={name}{RESET}")
+    print(f"  • Local Public Key (share out-of-band) : {pk_path}")
+    print(f"  • Local Lab Seed (local custody ONLY)  : {sk_path}")
+    return 0
 
 
 def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer: str = None, ipv6: bool = False) -> int:
-    """Launch Base Alpha or Base Bravo with zero manual flags in full DEFCON-1 mode."""
+    """Launch Base Alpha or Base Bravo in production (hardware custody + out-of-band peer key) or lab mode."""
     if not lab:
         import production_gate
         production_gate.arm_production_gate("run_tactical_station")
-    _auto_provision_tactical_credentials()
     key_dir = get_tactical_key_dir()
-    psk_file = str(key_dir / "tactical_station.psk")
-    root_ca_file = str(key_dir / "military_root_ca.crt")
 
     # IPv6 resolution
     if ipv6 or (bind and ":" in bind) or (peer and ":" in peer):
@@ -16942,15 +17056,38 @@ def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer
     name = "NORAD_ALPHA" if role == "responder" else "PENTAGON_BRAVO"
     chan_port = 9060 if role == "responder" else 9061
     peer_chan_port = 9061 if role == "responder" else 9060
-    auth_sk = str(key_dir / ("alpha.auth.sk" if role == "responder" else "bravo.auth.sk"))
-    peer_pk = str(key_dir / ("bravo.auth.pk" if role == "responder" else "alpha.auth.pk"))
-    node_cert = str(key_dir / ("alpha_norad.crt" if role == "responder" else "bravo_pentagon.crt"))
-    peer_cert = str(key_dir / ("bravo_pentagon.crt" if role == "responder" else "alpha_norad.crt"))
 
     if not lab:
-        # High-Assurance Canonical Production Execution (F-02, F-03, F-08 Remediation)
-        # All operational C2 loops and cryptographic key handling execute 100% within the native
-        # Rust standalone executable (secure-transmit node). Zero key material crosses into Python memory.
+        # F-01 / F-05 Fail-Closed Production Custody:
+        # Never auto-generate dual .sk files on a single host and never pass --auth-sk-file.
+        # Require out-of-band provisioned PSK, pinned peer PK, and hardware custody handle.
+        psk_file = os.environ.get("P2P_PSK_FILE", "").strip()
+        peer_pk = os.environ.get("P2P_PEER_AUTH_PK_FILE", "").strip()
+        auth_tpm_sealed = os.environ.get("P2P_AUTH_TPM_SEALED", "").strip()
+        auth_tpm_pub = os.environ.get("P2P_AUTH_TPM_PUB", "").strip()
+        auth_p11_label = os.environ.get("P2P_AUTH_PKCS11_LABEL", "").strip()
+        auth_p11_id = os.environ.get("P2P_AUTH_PKCS11_ID", "").strip()
+        auth_pk_file = os.environ.get("P2P_AUTH_PK_FILE", "").strip()
+        if not psk_file or not peer_pk or not (auth_tpm_sealed or auth_p11_label or auth_p11_id):
+            print(
+                f"{RED}[PRODUCTION REFUSAL] Station '{name}' requires out-of-band provisioned credentials and hardware custody (F-01/F-05).\n"
+                f"  Required env/flags: P2P_PSK_FILE, P2P_PEER_AUTH_PK_FILE, and either\n"
+                f"  P2P_AUTH_TPM_SEALED (+ optional P2P_AUTH_TPM_PUB) or P2P_AUTH_PKCS11_LABEL / P2P_AUTH_PKCS11_ID.\n"
+                f"  Never co-generate peer secret keys locally; use `secure_p2p.py enroll --name {name}` per host.{RESET}"
+            )
+            return 2
+
+        ok, reason = _validate_auth_material(
+            peer_pk_file=peer_pk,
+            auth_tpm_sealed=auth_tpm_sealed or None,
+            auth_pkcs11_label=auth_p11_label or None,
+            auth_pkcs11_id=auth_p11_id or None,
+            auth_pk_file=auth_pk_file or None,
+        )
+        if not ok:
+            print(f"{RED}[FATAL] Station authentication material invalid: {reason}{RESET}")
+            return 2
+
         print(f"\n{BOLD}{GREEN}[CANONICAL PRODUCTION PIPELINE] Launching standalone native Rust data plane:{RESET}")
         print(f"  {CYAN}secure-transmit node --role {role} --bind {_format_endpoint(bind, chan_port)} --to {_format_endpoint(peer, peer_chan_port)}{RESET}")
         native_cmd = [
@@ -16959,14 +17096,31 @@ def run_tactical_station(station: str, lab: bool = False, bind: str = None, peer
             "--bind", _format_endpoint(bind, chan_port),
             "--to", _format_endpoint(peer, peer_chan_port),
             "--psk-file", psk_file,
-            "--auth-sk-file", auth_sk,
             "--peer-auth-pk-file", peer_pk,
             "--require-mutual-auth",
             "--callsign", name,
         ]
+        if auth_tpm_sealed:
+            native_cmd.extend(["--auth-tpm-sealed", auth_tpm_sealed])
+            if auth_tpm_pub:
+                native_cmd.extend(["--auth-tpm-pub", auth_tpm_pub])
+        if auth_p11_label:
+            native_cmd.extend(["--auth-pkcs11-label", auth_p11_label])
+        if auth_p11_id:
+            native_cmd.extend(["--auth-pkcs11-id", auth_p11_id])
+        if auth_pk_file:
+            native_cmd.extend(["--auth-pk-file", auth_pk_file])
         return subprocess.call(native_cmd)
 
-    # Explicit lab mode: run the Python interactive test terminal harness
+    # Explicit lab mode ONLY: auto-provision local loopback drill credentials
+    _auto_provision_tactical_credentials()
+    psk_file = str(key_dir / "tactical_station.psk")
+    root_ca_file = str(key_dir / "military_root_ca.crt")
+    auth_sk = str(key_dir / ("alpha.auth.sk" if role == "responder" else "bravo.auth.sk"))
+    peer_pk = str(key_dir / ("bravo.auth.pk" if role == "responder" else "alpha.auth.pk"))
+    node_cert = str(key_dir / ("alpha_norad.crt" if role == "responder" else "bravo_pentagon.crt"))
+    peer_cert = str(key_dir / ("bravo_pentagon.crt" if role == "responder" else "alpha_norad.crt"))
+
     run_interactive_terminal(
         role=role,
         bind=bind,
@@ -17055,13 +17209,21 @@ def main(argv=None) -> int:
     parser.add_argument("--peer-diode-port", type=int, default=None, help="Peer simplex diode port")
     parser.add_argument("--psk-file", default=None, help="Pre-shared key file for authenticated KEX")
     parser.add_argument("--auth-sk-file", default=None,
-                        help="Local ML-DSA-87 signing-key seed file (32 bytes hex, 0600)")
+                        help="[NON-PRODUCTION] Local ML-DSA-87 signing-key seed file (32 bytes hex, 0600); refused in production")
     parser.add_argument("--peer-auth-pk-file", default=None,
                         help="Pinned peer ML-DSA-87 public-key file (2592 bytes hex)")
     parser.add_argument("--auth-tpm-sealed", default=None,
                         help="Path to TPM 2.0 PCR-sealed ML-DSA-87 seed object (zero-disk silicon custody)")
     parser.add_argument("--auth-tpm-pub", default=None,
                         help="Path to TPM 2.0 sealed object public portion")
+    parser.add_argument("--auth-pkcs11-label", default=None,
+                        help="PKCS#11 HSM ML-DSA-87 private key CKA_LABEL (in-silicon signing custody)")
+    parser.add_argument("--auth-pkcs11-id", default=None,
+                        help="PKCS#11 HSM ML-DSA-87 private key CKA_ID hex (in-silicon signing custody)")
+    parser.add_argument("--auth-pk-file", default=None,
+                        help="Local ML-DSA-87 public key file paired with hardware PKCS#11 signing key")
+    parser.add_argument("--auth-pkcs11", action="store_true",
+                        help="Require hardware PKCS#11 signing mode")
     parser.add_argument("--pcrs", default=None,
                         help="Comma-separated PCR list for TPM measured boot policy (default: 0,1,2,7)")
     parser.add_argument("--tpm-owner", default=None,
@@ -17104,13 +17266,21 @@ def main(argv=None) -> int:
     p_node.add_argument("--peer-diode-port", type=int, default=None, help="Peer simplex diode port")
     p_node.add_argument("--psk-file", default=None, help="Pre-shared key file (required in production)")
     p_node.add_argument("--auth-sk-file", default=None,
-                        help="Local ML-DSA-87 signing-key seed file (host disk mode)")
+                        help="[NON-PRODUCTION] Local ML-DSA-87 signing-key seed file (refused under P2P_PRODUCTION=1)")
     p_node.add_argument("--peer-auth-pk-file", default=None,
                         help="Pinned peer ML-DSA-87 public-key file (required in production)")
     p_node.add_argument("--auth-tpm-sealed", default=None,
                         help="Path to TPM 2.0 PCR-sealed ML-DSA-87 seed object (zero-disk silicon custody)")
     p_node.add_argument("--auth-tpm-pub", default=None,
                         help="Path to TPM 2.0 sealed object public portion")
+    p_node.add_argument("--auth-pkcs11-label", default=None,
+                        help="PKCS#11 HSM ML-DSA-87 private key CKA_LABEL (in-silicon signing custody)")
+    p_node.add_argument("--auth-pkcs11-id", default=None,
+                        help="PKCS#11 HSM ML-DSA-87 private key CKA_ID hex (in-silicon signing custody)")
+    p_node.add_argument("--auth-pk-file", default=None,
+                        help="Local ML-DSA-87 public key file paired with hardware PKCS#11 signing key")
+    p_node.add_argument("--auth-pkcs11", action="store_true",
+                        help="Require hardware PKCS#11 signing mode")
     p_node.add_argument("--pcrs", default=None,
                         help="Comma-separated PCR list for TPM measured boot policy (default: 0,1,2,7)")
     p_node.add_argument("--tpm-owner", default=None,
@@ -17151,6 +17321,12 @@ def main(argv=None) -> int:
     p_bravo.add_argument("--bind", default=None, help="Custom bind address")
     p_bravo.add_argument("--peer", default=None, help="Custom peer address")
 
+    p_enroll = sub.add_parser("enroll", help="Enroll ONLY this local station identity for out-of-band key distribution")
+    p_enroll.add_argument("--name", default="COMMAND_NODE", help="Local station callsign")
+    p_enroll.add_argument("--out-dir", default=None, help="Output directory (default: user ST2027 key dir)")
+    p_enroll.add_argument("--out-pk", default=None, help="Explicit output path for public key (.auth.pk)")
+    p_enroll.add_argument("--lab-sk", default=None, help="[LAB ONLY] Explicit path for local seed (.auth.sk); forbidden in production")
+
     p_selftest = sub.add_parser("selftest", help="Run local production-stack self-checks")
     p_selftest.add_argument("--lab", action="store_true", help=argparse.SUPPRESS)
 
@@ -17182,6 +17358,14 @@ def main(argv=None) -> int:
             bind=getattr(args, "bind", None),
             peer=getattr(args, "peer", None),
             ipv6=getattr(args, "ipv6", False)
+        )
+
+    if cmd == "enroll":
+        return run_single_station_enroll(
+            name=getattr(args, "name", "COMMAND_NODE"),
+            out_dir=getattr(args, "out_dir", None),
+            out_pk=getattr(args, "out_pk", None),
+            lab_sk=getattr(args, "lab_sk", None),
         )
 
     if cmd == "selftest":
@@ -17254,6 +17438,15 @@ def main(argv=None) -> int:
                            or os.environ.get("P2P_AUTH_TPM_SEALED"))
         auth_tpm_pub = (getattr(args, "auth_tpm_pub", None)
                         or os.environ.get("P2P_AUTH_TPM_PUB"))
+        auth_pkcs11_label = (getattr(args, "auth_pkcs11_label", None)
+                             or os.environ.get("P2P_AUTH_PKCS11_LABEL"))
+        auth_pkcs11_id = (getattr(args, "auth_pkcs11_id", None)
+                          or os.environ.get("P2P_AUTH_PKCS11_ID"))
+        auth_pk_file = (getattr(args, "auth_pk_file", None)
+                        or os.environ.get("P2P_AUTH_PK_FILE"))
+        auth_pkcs11 = bool(getattr(args, "auth_pkcs11", False)) or (
+            os.environ.get("P2P_AUTH_PKCS11", "").strip().lower() in _TRUTHY_ENV
+        )
         tpm_pcrs = getattr(args, "pcrs", None) or os.environ.get("P2P_TPM_PCRS")
         tpm_owner = getattr(args, "tpm_owner", None) or os.environ.get("P2P_TPM_OWNER")
         auth_sk_file = (getattr(args, "auth_sk_file", None)
@@ -17261,27 +17454,52 @@ def main(argv=None) -> int:
         peer_auth_pk_file = (getattr(args, "peer_auth_pk_file", None)
                              or os.environ.get("P2P_PEER_AUTH_PK_FILE"))
         require_mutual = bool(getattr(args, "require_mutual_auth", False)) or not lab_mode
+
+        if not lab_mode and _production():
+            violations = _production_crypto_violations()
+            if violations:
+                print(f"{RED}[FATAL] Production crypto-policy self-check failed. "
+                      f"Weakening overrides are active:{RESET}")
+                for item in violations:
+                    print(f"  {RED}- {item}{RESET}")
+                print(f"{RED}Refusing to start the production message path.{RESET}")
+                return 2
+            if auth_sk_file:
+                print(f"{RED}[PRODUCTION REFUSAL] Plaintext --auth-sk-file / P2P_AUTH_SK_FILE "
+                      f"is forbidden in production (F-01). Use --auth-tpm-sealed or "
+                      f"--auth-pkcs11-label / --auth-pkcs11-id.{RESET}")
+                return 2
+
         if require_mutual:
-            if not (auth_sk_file or auth_tpm_sealed) or not peer_auth_pk_file:
+            has_local_custody = bool(
+                auth_sk_file or auth_tpm_sealed or auth_pkcs11_label or auth_pkcs11_id
+            )
+            if not has_local_custody or not peer_auth_pk_file:
                 print(f"{RED}[FATAL] Mutual ML-DSA-87 authentication is required. "
-                      f"Provide --auth-tpm-sealed PATH (zero-disk custody) or --auth-sk-file FILE, "
-                      f"and --peer-auth-pk-file FILE. "
+                      f"Provide --auth-tpm-sealed PATH or --auth-pkcs11-label / --auth-pkcs11-id "
+                      f"(hardware custody), plus --peer-auth-pk-file FILE. "
                       f"PSK-only KEX is refused outside explicit --lab mode.{RESET}")
                 return 2
             ok, reason = _validate_auth_material(
                 auth_sk_file=auth_sk_file,
                 peer_pk_file=peer_auth_pk_file,
                 auth_tpm_sealed=auth_tpm_sealed,
+                auth_pkcs11_label=auth_pkcs11_label,
+                auth_pkcs11_id=auth_pkcs11_id,
+                auth_pk_file=auth_pk_file,
             )
             if not ok:
                 print(f"{RED}[FATAL] Invalid authentication material: {reason}{RESET}")
                 return 2
-            if auth_tpm_sealed:
+            if auth_pkcs11_label or auth_pkcs11_id:
+                print(f"{GREEN}[CRYPTO POLICY] Mutual ML-DSA-87 identity authentication ARMED "
+                      f"(PKCS#11 IN-SILICON CUSTODY + pinned peer key + PSK).{RESET}")
+            elif auth_tpm_sealed:
                 print(f"{GREEN}[CRYPTO POLICY] Mutual ML-DSA-87 identity authentication ARMED "
                       f"(TPM 2.0 PCR-SEALED ZERO-DISK CUSTODY + pinned peer key + PSK).{RESET}")
             else:
                 print(f"{GREEN}[CRYPTO POLICY] Mutual ML-DSA-87 identity authentication ARMED "
-                  f"(pinned peer key + PSK).{RESET}")
+                      f"(pinned peer key + PSK).{RESET}")
 
         root_ca_file = getattr(args, "root_ca_file", None) or os.environ.get("P2P_ROOT_CA_FILE")
         node_cert_file = getattr(args, "node_cert_file", None) or os.environ.get("P2P_NODE_CERT_FILE")
@@ -17330,6 +17548,14 @@ def main(argv=None) -> int:
             ]
             if auth_sk_file:
                 native_cmd.extend(["--auth-sk-file", auth_sk_file])
+            if auth_pkcs11_label:
+                native_cmd.extend(["--auth-pkcs11-label", auth_pkcs11_label])
+            if auth_pkcs11_id:
+                native_cmd.extend(["--auth-pkcs11-id", auth_pkcs11_id])
+            if auth_pk_file:
+                native_cmd.extend(["--auth-pk-file", auth_pk_file])
+            if auth_pkcs11:
+                native_cmd.append("--auth-pkcs11")
             if peer_auth_pk_file:
                 native_cmd.extend(["--peer-auth-pk-file", peer_auth_pk_file])
             if require_mutual:

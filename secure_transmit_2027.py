@@ -577,17 +577,15 @@ def _xxhfs_record_key(k_send: bytes, k_recv: bytes, h: bytes,
 def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
                       peer_cert: Optional[str], peer_subject: Optional[str],
                       tag: str) -> None:
-    """Identity continuity: strict PKI (no TOFU) when required, else TOFU.
-
-    Ephemeral KEM material always rotates and is never pinned — only the
-    long-term ML-DSA-87 identities revealed at Split are gated here.
-    """
+    """Identity continuity: strict PKI (no TOFU) in production/strict modes."""
     if not peer_sig_pk:
         raise SecurityError("peer identity missing")
     try:
+        from production_gate import is_production as _pg_is_production
         from trust_anchor import ephemeral_required as _eph_req
         from trust_anchor import pki_required as _pki_req
-        _need_pki = bool(_pki_req())
+        _is_prod = bool(_pg_is_production())
+        _need_pki = bool(_pki_req()) or _is_prod
         _need_eph = bool(_eph_req())
     except Exception as e:
         # FAIL CLOSED: inability to evaluate trust policy must never silently
@@ -595,7 +593,7 @@ def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
         raise SecurityError(
             f"trust_anchor policy unavailable (refusing to downgrade to TOFU): {e}"
         ) from e
-    if peer_id == "selftest":
+    if peer_id == "selftest" and not _is_prod:
         # In-process selftest exercises the ephemeral-isolated pin store (PIN_DIR in tmp).
         check_pin(tag + peer_id, identity_pin(local_sig_pk, peer_sig_pk))
     elif _need_pki:
@@ -606,6 +604,8 @@ def _xxhfs_peer_gates(local_sig_pk: bytes, peer_sig_pk: bytes, peer_id: str,
         from trust_anchor import verify_peer_identity as _vpi
         _vpi(tag + peer_id, local_sig_pk, peer_sig_pk)
     else:
+        if _is_prod:
+            raise SecurityError("TOFU pinning prohibited in production posture")
         check_pin(tag + peer_id, identity_pin(local_sig_pk, peer_sig_pk))
 
 
@@ -1187,7 +1187,8 @@ _TLS_HOSTNAME_WARNED = False
 
 
 def make_client_context(certfile: str, keyfile: str, cafile: str,
-                        check_hostname: Optional[bool] = None) -> ssl.SSLContext:
+                        check_hostname: Optional[bool] = None,
+                        fronting: bool = False) -> ssl.SSLContext:
     global _TLS_HOSTNAME_WARNED
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = TLS_MIN
@@ -1199,22 +1200,23 @@ def make_client_context(certfile: str, keyfile: str, cafile: str,
     ctx.load_cert_chain(certfile, keyfile)
     ctx.load_verify_locations(cafile)
     ctx.verify_mode = ssl.CERT_REQUIRED
+    fronting_profile = fronting or _env_true("P2P_DOMAIN_FRONTING_PROFILE")
     if check_hostname is not None:
+        if not check_hostname and not fronting_profile:
+            from production_gate import is_production as _pg_is_production
+            if _pg_is_production():
+                raise SecurityError("Disabling TLS hostname verification requires explicit P2P_DOMAIN_FRONTING_PROFILE=1 in production")
         ctx.check_hostname = check_hostname
-    else:
+    elif fronting_profile:
         ctx.check_hostname = _env_true("P2P_CHECK_HOSTNAME")
+    else:
+        # F-11 remediation: direct connections enforce hostname verification by default
+        ctx.check_hostname = True
     if not ctx.check_hostname and not _TLS_HOSTNAME_WARNED:
-        # A4-F4 (2026-10-17): deliberate domain-fronting design - the outer
-        # SNI is the cover domain (default cdn-front.example.net) while peer
-        # identity is pinned inside the Noise/PQ handshake. PKI hostname
-        # checking therefore cannot validate the real peer name. Documented
-        # residual risk; warn once so operators see the trade-off.
         _TLS_HOSTNAME_WARNED = True
         log.warning(
-            "TLS hostname verification DISABLED (A4-F4): outer SNI is the "
-            "cover domain; peer identity is authenticated by the inner "
-            "Noise/PQ handshake, not PKI. Set P2P_CHECK_HOSTNAME=1 for "
-            "direct (non-fronted) operation with a matching certificate."
+            "TLS hostname verification DISABLED under explicit domain-fronting profile: "
+            "outer SNI uses cover domain while peer identity is authenticated by inner Noise/PQ handshake."
         )
     ctx.options |= getattr(ssl, "OP_NO_TICKET", 0)
     return ctx

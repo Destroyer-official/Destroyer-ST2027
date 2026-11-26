@@ -27,8 +27,8 @@
 use destroyer_core::acd::{ActiveCyberDefenseEngine, DefensivePlaybook, ThreatTrigger};
 use destroyer_core::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
 use destroyer_core::auth::{
-    sign_initiator, sign_responder, verify_initiator, verify_responder, Mldsa87SigningKey,
-    Mldsa87VerifyingKey,
+    sign_initiator_auth, sign_responder_auth, verify_initiator, verify_responder, AuthSigner,
+    Mldsa87SigningKey, Mldsa87VerifyingKey,
 };
 use destroyer_core::cookie::StatelessCookieGate;
 use destroyer_core::ct;
@@ -216,11 +216,35 @@ fn load_auth_signing_key(path: &str) -> Mldsa87SigningKey {
     sk
 }
 
-/// Load ML-DSA-87 signing key from either TPM 2.0 PCR-sealed storage (zero-disk silicon custody)
-/// or fallback hardened key file.
-fn load_auth_signing_key_from_args(args: &[String]) -> Mldsa87SigningKey {
+/// Load ML-DSA-87 signing authority from PKCS#11 HSM (hardware silicon),
+/// TPM 2.0 PCR-sealed custody, or (outside production ONLY) hardened disk seed file.
+fn load_auth_signing_key_from_args(args: &[String]) -> AuthSigner {
+    let pkcs11_label = get_flag(args, "--auth-pkcs11-label");
+    let pkcs11_id = get_flag(args, "--auth-pkcs11-id");
+    let pkcs11_flag = has_flag(args, "--auth-pkcs11");
     let tpm_sealed = get_flag(args, "--auth-tpm-sealed").or_else(|| get_flag(args, "--tpm-sealed"));
     let sk_file = get_flag(args, "--auth-sk-file").or_else(|| get_flag(args, "--sk-file"));
+
+    if pkcs11_flag || pkcs11_label.is_some() || pkcs11_id.is_some() {
+        let id_bytes = pkcs11_id.as_deref().map(|h| {
+            decode_hex(h).unwrap_or_else(|_| fail("bad --auth-pkcs11-id HEX"))
+        });
+        let pub_override = get_flag(args, "--auth-pk-file").map(|p| {
+            let hex_str = std::fs::read_to_string(&p)
+                .unwrap_or_else(|_| fail("local auth public-key file unreadable"));
+            decode_hex(&hex_str).unwrap_or_else(|_| fail("local auth public-key file is not valid hex"))
+        });
+        eprintln!(
+            "PKCS#11 HARDWARE SILICON CUSTODY: Binding ML-DSA-87 signing key (label={:?})",
+            pkcs11_label
+        );
+        return AuthSigner::open_pkcs11(
+            pkcs11_label.as_deref(),
+            id_bytes.as_deref(),
+            pub_override,
+        )
+        .unwrap_or_else(|e| fail(&format!("PKCS#11 hardware signing custody failed: {e}")));
+    }
 
     if let Some(priv_path) = tpm_sealed {
         let pub_path =
@@ -255,12 +279,21 @@ fn load_auth_signing_key_from_args(args: &[String]) -> Mldsa87SigningKey {
         seed.copy_from_slice(locked_seed.as_bytes());
         let (sk, _vk) = Mldsa87SigningKey::from_seed(&seed);
         seed.zeroize();
-        sk
+        AuthSigner::SoftwareOrTpmUnsealed(sk)
     } else if let Some(path) = sk_file {
-        load_auth_signing_key(&path)
+        if policy::is_production_env() {
+            fail(
+                "production posture refuses plaintext disk --auth-sk-file (F-01): use hardware custody (--auth-pkcs11-label or --auth-tpm-sealed)",
+            );
+        }
+        AuthSigner::SoftwareOrTpmUnsealed(load_auth_signing_key(&path))
+    } else if policy::is_production_env() {
+        fail(
+            "mutual auth in production requires hardware custody (--auth-tpm-sealed PATH or --auth-pkcs11-label LABEL); --auth-sk-file is prohibited",
+        );
     } else {
         fail(
-            "mutual auth requires --auth-sk-file PATH or --auth-tpm-sealed PATH (silicon custody)",
+            "mutual auth requires --auth-sk-file PATH, --auth-tpm-sealed PATH, or --auth-pkcs11-label LABEL (silicon custody)",
         );
     }
 }
@@ -1967,11 +2000,34 @@ fn cmd_stream_chaff(args: &[String]) {
     });
 }
 
+fn enforce_raw_symmetric_key_policy(args: &[String], subcommand: &str) {
+    let uses_raw = get_flag(args, "--key-file").is_some() || has_flag(args, "--key-stdin");
+    if !uses_raw {
+        return;
+    }
+    if policy::is_production_env() {
+        fail(&format!(
+            "production posture refuses raw --key-file / --key-stdin on `{subcommand}` (F-02 bypass): use --psk-file with ML-DSA-87 KEX"
+        ));
+    }
+    if mutual_auth_required(args) {
+        fail(&format!(
+            "mutual auth policy refuses unauthenticated --key-file / --key-stdin on `{subcommand}` (F-02): pass authenticated KEX (--psk-file) or explicit --lab in non-production lab builds"
+        ));
+    }
+}
+
 #[allow(unused_variables, unused_mut)]
 fn cmd_channel(args: &[String]) {
     reject_forbidden_cli(args);
-    let key_file_path = get_flag(args, "--key-file");
+    enforce_raw_symmetric_key_policy(args, "channel");
     let (kb, key_id) = load_key_material(args);
+    cmd_channel_core(args, kb, key_id);
+}
+
+#[allow(unused_variables, unused_mut)]
+fn cmd_channel_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
+    let key_file_path = get_flag(args, "--key-file");
     let mut key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind: SocketAddr = get_flag(args, "--bind")
@@ -2485,7 +2541,9 @@ fn cmd_channel(args: &[String]) {
                                     inbound_rekey_buffers.remove(&tx_id);
                                 }
                                 if let Some(raw_rekey) = finished_payload {
-                                    if raw_rekey.len() == destroyer_core::frame::IN_BAND_REKEY_PAYLOAD_LEN {
+                                    if raw_rekey.len() == destroyer_core::frame::IN_BAND_REKEY_PAYLOAD_LEN
+                                        || raw_rekey.len() == destroyer_core::frame::IN_BAND_REKEY_AUTH_PAYLOAD_LEN
+                                    {
                                         match pcs_ratchet.process_in_band_epoch_rekey(&raw_rekey) {
                                             Ok(_new_key) => {
                                                 let new_epoch = pcs_ratchet.epoch();
@@ -2816,12 +2874,18 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             "--auth-tpm-pub",
             "--pcrs",
             "--tpm-owner",
+            "--auth-pkcs11-label",
+            "--auth-pkcs11-id",
+            "--auth-pk-file",
             "--timeout-ms",
         ] {
             if let Some(val) = get_flag(args, flag) {
                 kex_args.push((*flag).to_string());
                 kex_args.push(val);
             }
+        }
+        if has_flag(args, "--auth-pkcs11") {
+            kex_args.push("--auth-pkcs11".to_string());
         }
         println!("[KEX] Listening for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
         cmd_kex_listen(&kex_args);
@@ -2858,6 +2922,9 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
             "--auth-tpm-pub",
             "--pcrs",
             "--tpm-owner",
+            "--auth-pkcs11-label",
+            "--auth-pkcs11-id",
+            "--auth-pk-file",
             "--timeout-ms",
         ] {
             if let Some(val) = get_flag(args, flag) {
@@ -2865,28 +2932,44 @@ fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
                 kex_args.push(val);
             }
         }
+        if has_flag(args, "--auth-pkcs11") {
+            kex_args.push("--auth-pkcs11".to_string());
+        }
         println!("[KEX] Connecting to peer for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
         cmd_kex_connect(&kex_args);
     }
     temp_key
 }
 
+fn negotiate_ephemeral_kex_in_memory(args: &[String], role: &str) -> (LockedKey32, [u8; 16]) {
+    let temp_key = negotiate_ephemeral_kex(args, role);
+    let out = keystore::read_key_file(&temp_key)
+        .unwrap_or_else(|_| fail("ephemeral KEX session key unreadable"));
+    let _ = purge::purge_file(&temp_key);
+    let digest = Sha384::digest(out.as_bytes());
+    let mut key_id = [0u8; 16];
+    key_id.copy_from_slice(&digest[..16]);
+    (out, key_id)
+}
+
 fn cmd_terminal(args: &[String]) {
     reject_forbidden_cli(args);
-    let mut effective_args = args.to_vec();
-    let mut ephemeral_key_path: Option<String> = None;
-    if get_flag(&effective_args, "--key-file").is_none()
-        && !has_flag(&effective_args, "--key-stdin")
-        && get_flag(&effective_args, "--psk-file").is_some()
+    if get_flag(args, "--psk-file").is_some()
+        && get_flag(args, "--key-file").is_none()
+        && !has_flag(args, "--key-stdin")
     {
-        let role = get_flag(&effective_args, "--role").unwrap_or_else(|| "initiator".to_string());
-        let temp_key = negotiate_ephemeral_kex(&effective_args, &role);
-        effective_args.push("--key-file".to_string());
-        effective_args.push(temp_key.clone());
-        ephemeral_key_path = Some(temp_key);
+        let role = get_flag(args, "--role").unwrap_or_else(|| "initiator".to_string());
+        let (kb, key_id) = negotiate_ephemeral_kex_in_memory(args, &role);
+        cmd_terminal_core(args, kb, key_id);
+        return;
     }
-    let key_file_path = get_flag(&effective_args, "--key-file");
-    let (kb, key_id) = load_key_material(&effective_args);
+    enforce_raw_symmetric_key_policy(args, "terminal");
+    let (kb, key_id) = load_key_material(args);
+    cmd_terminal_core(args, kb, key_id);
+}
+
+fn cmd_terminal_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
+    let key_file_path = get_flag(args, "--key-file");
     let mut key_bytes: [u8; 32] = *kb.as_bytes();
     let state = state_path(args);
     let bind: SocketAddr = get_flag(args, "--bind")
@@ -3149,9 +3232,6 @@ fn cmd_terminal(args: &[String]) {
                             key_bytes.zeroize();
                             if let Some(ref kf) = key_file_path {
                                 let _ = purge::purge_file(kf);
-                            }
-                            if let Some(ref ek) = ephemeral_key_path {
-                                let _ = purge::purge_file(ek);
                             }
                             let _ = purge::purge_file(&state);
                             for suffix in [".seqlog", ".nvck", ".crl_seq"] {
@@ -3439,10 +3519,6 @@ fn cmd_terminal(args: &[String]) {
             ep.drops
         );
     });
-
-    if let Some(ref tk) = ephemeral_key_path {
-        let _ = purge::purge_file(tk);
-    }
 }
 
 fn cmd_node(args: &[String]) {
@@ -3456,10 +3532,12 @@ fn cmd_node(args: &[String]) {
         println!("  --role <initiator|responder>   P2P role (initiator establishes, responder listens)");
         println!("  --bind ADDR                    Local UDP socket address to bind (e.g. 127.0.0.1:9060)");
         println!("  --to ADDR                      Remote peer UDP socket address (e.g. 127.0.0.1:9061)");
-        println!("  --key-file PATH                Pre-shared/session symmetric 32B key file (0600)");
-        println!("  --psk-file PATH                Pre-shared key file for authenticated KEX");
-        println!("  --auth-sk-file PATH            Local ML-DSA-87 signing key seed file (32B hex, 0600)");
+        println!("  --psk-file PATH                Pre-shared key file for authenticated KEX (required in prod)");
+        println!("  --auth-tpm-sealed PATH         TPM 2.0 PCR-sealed ML-DSA-87 signing key (production custody)");
+        println!("  --auth-pkcs11-label LABEL      PKCS#11 HSM signing key label (production silicon custody)");
+        println!("  --auth-sk-file PATH            Local ML-DSA-87 signing key seed file (non-production/lab only)");
         println!("  --peer-auth-pk-file PATH       Pinned peer ML-DSA-87 public key file (2592B hex)");
+        println!("  --key-file PATH                Raw symmetric 32B key file (non-production --lab only)");
         println!("  --state PATH                   Path to sequence state file (default: session.state)");
         println!("  --quantum BYTES                Wire quantization size (256, 512, or 1232, default: 1232)");
         println!("  --interval-ms MS               Constant-rate wire pacing interval in ms (default: 20)");
@@ -3479,27 +3557,28 @@ fn cmd_node(args: &[String]) {
         forwarded.push("--state".to_string());
         forwarded.push(format!("node_{role}.state"));
     }
-    let mut ephemeral_key_path: Option<String> = None;
-    if get_flag(&forwarded, "--key-file").is_none() && !has_flag(&forwarded, "--key-stdin") {
-        if get_flag(&forwarded, "--psk-file").is_some() {
-            let temp_key = negotiate_ephemeral_kex(&forwarded, &role);
-            forwarded.push("--key-file".to_string());
-            forwarded.push(temp_key.clone());
-            ephemeral_key_path = Some(temp_key);
-        } else {
-            fail("missing --key-file PATH (or --psk-file PATH) for authenticated operational node");
-        }
-    }
-
     let is_headless = get_flag(args, "--headless").is_some() || args.iter().any(|a| a == "--headless");
-    if is_headless {
-        cmd_channel(&forwarded);
-    } else {
-        cmd_terminal(&forwarded);
+
+    if get_flag(&forwarded, "--key-file").is_some() || has_flag(&forwarded, "--key-stdin") {
+        enforce_raw_symmetric_key_policy(&forwarded, "node");
+        let (kb, key_id) = load_key_material(&forwarded);
+        if is_headless {
+            cmd_channel_core(&forwarded, kb, key_id);
+        } else {
+            cmd_terminal_core(&forwarded, kb, key_id);
+        }
+        return;
     }
 
-    if let Some(ref tk) = ephemeral_key_path {
-        let _ = purge::purge_file(tk);
+    if get_flag(&forwarded, "--psk-file").is_some() {
+        let (kb, key_id) = negotiate_ephemeral_kex_in_memory(&forwarded, &role);
+        if is_headless {
+            cmd_channel_core(&forwarded, kb, key_id);
+        } else {
+            cmd_terminal_core(&forwarded, kb, key_id);
+        }
+    } else {
+        fail("missing --psk-file PATH (authenticated P-384 + ML-KEM-1024 + ML-DSA-87 KEX required for operational node)");
     }
 }
 
@@ -3543,7 +3622,7 @@ fn cmd_kex_listen(args: &[String]) {
 
     if let (Some(sk), Some((_, cert))) = (auth_sk.as_ref(), our_cert_data.as_ref()) {
         if cert.subject_pk.as_slice() != &sk.verifying_bytes()[..] {
-            fail("local certificate SubjectPublicKeyInfo does not match --auth-sk-file");
+            fail("local certificate SubjectPublicKeyInfo does not match local signing key");
         }
     }
 
@@ -3618,7 +3697,8 @@ fn cmd_kex_listen(args: &[String]) {
             let binding = if let Some(sk) = auth_sk.as_ref() {
                 if let (Some((our_cert_der, _)), Some(custodians)) = (our_cert_data.as_ref(), ca_custodians.as_ref()) {
                     let crl_bytes = our_crl_data.as_ref().map(|(b, _)| b.as_slice()).unwrap_or(&[]);
-                    let resp_sig = sign_responder(sk, &transcript_hash);
+                    let resp_sig = sign_responder_auth(sk, &transcript_hash)
+                        .map_err(|_| "responder ML-DSA-87 signing failed")?;
 
                     socket.write_all(&(our_cert_der.len() as u32).to_be_bytes()).await.map_err(|_| "write cert len failed")?;
                     socket.write_all(our_cert_der).await.map_err(|_| "write cert failed")?;
@@ -3704,7 +3784,8 @@ fn cmd_kex_listen(args: &[String]) {
 
                     auth_binding_pki(&transcript_hash, our_cert_der, &resp_sig, &init_cert_der, &init_sig)
                 } else if let Some(vk) = pinned_peer_vk.as_ref() {
-                    let resp_sig = sign_responder(sk, &transcript_hash);
+                    let resp_sig = sign_responder_auth(sk, &transcript_hash)
+                        .map_err(|_| "responder ML-DSA-87 signing failed")?;
                     socket
                         .write_all(&resp_sig)
                         .await
@@ -3813,7 +3894,7 @@ fn cmd_kex_connect(args: &[String]) {
 
     if let (Some(sk), Some((_, cert))) = (auth_sk.as_ref(), our_cert_data.as_ref()) {
         if cert.subject_pk.as_slice() != &sk.verifying_bytes()[..] {
-            fail("local certificate SubjectPublicKeyInfo does not match --auth-sk-file");
+            fail("local certificate SubjectPublicKeyInfo does not match local signing key");
         }
     }
 
@@ -3965,7 +4046,8 @@ fn cmd_kex_connect(args: &[String]) {
                         .map_err(|_| "responder ML-DSA-87 signature invalid")?;
 
                     let crl_bytes = our_crl_data.as_ref().map(|(b, _)| b.as_slice()).unwrap_or(&[]);
-                    let init_sig = sign_initiator(sk, &transcript_hash);
+                    let init_sig = sign_initiator_auth(sk, &transcript_hash)
+                        .map_err(|_| "initiator ML-DSA-87 signing failed")?;
 
                     socket.write_all(&(our_cert_der.len() as u32).to_be_bytes()).await.map_err(|_| "write cert len failed")?;
                     socket.write_all(our_cert_der).await.map_err(|_| "write cert failed")?;
@@ -3984,7 +4066,8 @@ fn cmd_kex_connect(args: &[String]) {
                         .map_err(|_| "responder signature read failed")?;
                     verify_responder(vk, &transcript_hash, &resp_sig)
                         .map_err(|_| "responder ML-DSA-87 signature invalid")?;
-                    let init_sig = sign_initiator(sk, &transcript_hash);
+                    let init_sig = sign_initiator_auth(sk, &transcript_hash)
+                        .map_err(|_| "initiator ML-DSA-87 signing failed")?;
                     socket
                         .write_all(&init_sig)
                         .await

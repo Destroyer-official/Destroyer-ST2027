@@ -35,7 +35,8 @@ def _canonical(obj) -> bytes:
 def cmd_keygen(args) -> int:
     from liboqs_wrapper import LibOQS_MLDSA_87
     pk, sk = LibOQS_MLDSA_87().keygen()
-    assert len(pk) == 2592
+    if len(pk) != 2592:
+        raise RuntimeError(f"Unexpected ML-DSA-87 public key length: {len(pk)} (expected 2592)")
     with open(args.out + ".sk", "wb") as f:
         f.write(sk)
     os.chmod(args.out + ".sk", 0o600)

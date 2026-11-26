@@ -1,18 +1,19 @@
 # 2027 High-Assurance Implementation Plan & Cryptographic Architecture
-## Project Sentinel / Destroyer-ST2027 — Production-Ready Defense Posture
+## Project Sentinel / Destroyer-ST2027 — Pre-Evaluation Defense Architecture Plan
+
+> **Pre-Evaluation Historical Planning Notice:** This document reflects an internal November 2026 software-architecture milestone prior to [`ST2027_FORENSIC_AUDIT_2026-11-26.md`](ST2027_FORENSIC_AUDIT_2026-11-26.md). It is **not** an external accreditation, CMVP certificate, or Authorizing Official ATO. See [`README.md`](README.md) Section 12 and [`AUDIT_REPORT_ST2027.md`](AUDIT_REPORT_ST2027.md) for current empirical evidence boundaries and Waves 1–5 remediation records.
 
 **Classification:** High-Assurance Sovereign / Military C2 Defense Specification  
-**Standard Compliance:** CNSA Suite 2.0 (NIST Category 5+), FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA-256f), IETF RFC 10024 (`SecP384r1MLKEM1024`), RFC 6479, NIST SP 800-38D Section 8.2.1, SLSA Level 3+  
+**Standard Compliance Target:** CNSA Suite 2.0 (NIST Category 5+), FIPS 203 (ML-KEM-1024), FIPS 204 (ML-DSA-87), FIPS 205 (SLH-DSA-256f), IETF RFC 10024 (`SecP384r1MLKEM1024`), RFC 6479, NIST SP 800-38D Section 8.2.1, SLSA Level 3+  
 **Target Environment:** Zero-Trust Air-Gapped Enclaves / Sovereign Networks / Tactical IPv6 Peer-to-Peer  
 **Verification Date:** November 2026 (Audit Target: 2027 Posture)  
-**Master Audit Status:** **10/10 DEFENSE GATES SATISFIED (100% PASS)** — Cryptographically Signed with ML-DSA-87 (VAS Validated)  
-**Deployment Verification:** **103/103 PASS (100% CLEAN — 0 FAIL, 0 WARN, 0 SKIP)**  
+**Internal Audit Runner (`run_defense_audit.py`):** Local ML-DSA-87 signed developer scorecard (does not substitute for lab evaluation)  
 
 ---
 
 ## 1. Executive Summary & SOTA Research Grounding (2026/2027)
 
-Destroyer-ST2027 is a dual-language (Rust data plane + Python orchestration core) zero-trust, post-quantum peer-to-peer secure communication architecture. Following comprehensive forensic audit remediation, algorithmic purification, and full implementation verification, the system achieves **100% production readiness** with zero fragile fallbacks and zero known exploitable vulnerabilities.
+Destroyer-ST2027 is a dual-language (Rust data plane + Python orchestration core) zero-trust, post-quantum peer-to-peer secure communication architecture designed as a pre-evaluation engineering baseline for sovereign/C2 research environments. Following forensic audit remediation, algorithmic hardening, and automated regression verification, software controls operate fail-closed while physical hardware provisioning, FIPS 140-3 CMVP validation, and government ATO remain mandatory external prerequisites.
 
 ### 2026–2027 SOTA Cryptographic Research & Standards Integration:
 

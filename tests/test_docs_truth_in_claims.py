@@ -64,6 +64,11 @@ FORBIDDEN_BADGE_FRAGMENTS = [
     "29 formal Kani",
     "24 Property Tests",
     "24 automated property",
+    "100/100",
+    "zero divergence",
+    "UNCONDITIONAL PRODUCTION GO",
+    "10/10 SATISFIED",
+    "Tested natively against YubiKey",
 ]
 
 KANI_PROOFS = [
@@ -94,6 +99,17 @@ def test_no_false_accreditation_claims():
     assert "Pre-Evaluation" in README
     # Design-target rows must carry their qualifier.
     assert "design target, NOT lab-certified" in README
+
+
+def test_algorithm_path_and_evidence_boundaries_accurate():
+    """F-06/F-09: README distinguishes Rust production KEX from --lab legacy KEX."""
+    norm_readme = _norm(README)
+    assert "SecP384r1MLKEM1024" in norm_readme
+    assert "--lab" in norm_readme
+    assert "hybrid_kex_legacy" in norm_readme
+    assert "X25519" in norm_readme
+    assert "bandit_low_triage.md" in norm_readme
+    assert "Explicit Evidence Boundary" in norm_readme
 
 
 def test_kani_attribution_matches_harness():

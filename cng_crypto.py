@@ -164,7 +164,8 @@ class _AuthInfo(ctypes.Structure):
     ]
 
 
-assert ctypes.sizeof(_AuthInfo) == 88, "BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO layout"
+if ctypes.sizeof(_AuthInfo) != 88:
+    raise RuntimeError("BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO layout mismatch")
 
 
 def _open_aes_gcm():

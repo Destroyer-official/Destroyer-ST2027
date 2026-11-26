@@ -8,10 +8,10 @@ visual framing and TEMPEST Level A optical emission security.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import os
-import random
 import struct
 import sys
 import zlib
@@ -126,11 +126,24 @@ class VisualAirgapDiodeTransceiver:
     ) -> List[bytes]:
         """
         Simulates optical channel disruptions (glare, frame drops, camera motion).
-        Randomly drops a fraction of frames.
+        Deterministically drops a reproducible fraction of frames via SHA-256 ranking.
         """
-        rng = random.Random(seed)
-        surviving = [f for f in frames if rng.random() >= loss_rate]
-        return surviving
+        if loss_rate <= 0.0 or not frames:
+            return list(frames)
+        if loss_rate >= 1.0:
+            return []
+        drop_count = int(len(frames) * loss_rate)
+        if drop_count <= 0:
+            drop_count = 1 if len(frames) > 1 else 0
+        if drop_count == 0:
+            return list(frames)
+        scored = []
+        for idx in range(len(frames)):
+            digest = hashlib.sha256(f"airgap-channel-v1|{seed}|{idx}".encode("ascii")).digest()
+            scored.append((int.from_bytes(digest[:8], "big"), idx))
+        scored.sort()
+        drop_indices = {idx for _, idx in scored[:drop_count]}
+        return [frame for idx, frame in enumerate(frames) if idx not in drop_indices]
 
     # --- Internal Python Fallback Helpers ---
 

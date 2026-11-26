@@ -1,0 +1,164 @@
+(* st2027_kex_auth.pv -- Machine-checked model of rust_data_plane/src/kex_auth.rs
+ * (and `secure-transmit node` / `kex-listen` / `kex-connect` wire protocol).
+ *
+ * Wire correspondence to rust_data_plane/src/main.rs & kex_auth.rs:
+ *   M1 Responder bundle : resp_p384_pub(97) || ml_ek(1568)
+ *   M2 Initiator bundle : eph_p384_pub(97)  || ml_ct(1568)
+ *   transcript          : sha384((resp_bundle, init_bundle))
+ *   M3 Responder leg    : sig_R = mldsa_sign(sksR, (DOM_SIG_R, transcript))
+ *   Initiator Gate      : verify sig_R under pinned pkR BEFORE signing sig_I
+ *   M4 Initiator leg    : sig_I = mldsa_sign(sksI, (DOM_SIG_I, transcript))
+ *   Responder Gate      : verify sig_I under pinned pkI BEFORE deriving frame_key
+ *   auth_binding        : sha384((DOM_AUTH_BIND, transcript, sig_R, sig_I))
+ *   frame_key           : kdf(ecdh(P-384), mlkem_ss(ML-KEM-1024), psk, auth_binding)
+ *   Key Confirmation    : resp_tag = mac(frame_key, (DOM_CONF_R, auth_binding))
+ *                         init_tag = mac(frame_key, (DOM_CONF_I, auth_binding))
+ *
+ * Honest scope notes:
+ *   - Models mutual pinned-key mode (mandatory in production without PKI CA).
+ *   - Does NOT claim responder/initiator identity hiding against passive
+ *     observers (signatures are exchanged plaintext; use Noise_XXhfs in
+ *     st2027_handshake.pv when identity privacy is required).
+ *   - Forward secrecy verified via phase 1 leakage of (sksI, sksR, psk).
+ *)
+
+free net: channel.
+
+type key.
+type skey.
+type pkey.
+type ss.
+type nonce.
+
+(* --- P-384 ECDHE (CDH abstraction) --- *)
+fun pk(skey): pkey.
+fun ecdh(skey, pkey): ss.
+equation forall a:skey, b:skey;
+  ecdh(a, pk(b)) = ecdh(b, pk(a)).
+
+(* --- ML-KEM-1024 (FIPS 203 IND-CCA KEM abstraction) --- *)
+fun mlkem_pk(skey): pkey.
+fun mlkem_ct(pkey, nonce): bitstring.
+fun mlkem_ss(pkey, nonce): ss.
+fun mlkem_open(skey, bitstring): ss.
+equation forall sk:skey, r:nonce;
+  mlkem_open(sk, mlkem_ct(mlkem_pk(sk), r)) = mlkem_ss(mlkem_pk(sk), r).
+
+(* --- ML-DSA-87 (FIPS 204 EUF-CMA signatures with domain separation) --- *)
+fun mldsa_sign(skey, bitstring): bitstring.
+fun mldsa_verify(pkey, bitstring, bitstring): bool
+reduc forall sk:skey, m:bitstring;
+  mldsa_verify(pk(sk), m, mldsa_sign(sk, m)) = true.
+
+(* --- HKDF-SHA384 hybrid + PSK + auth_binding combiner --- *)
+fun kdf_session(ss, ss, key, bitstring): key.
+fun mac(key, bitstring): bitstring.
+fun sha384(bitstring): bitstring.
+
+(* --- AES-256-GCM record layer --- *)
+fun aead_enc(key, nonce, bitstring, bitstring): bitstring.
+fun aead_dec(key, nonce, bitstring, bitstring): bitstring
+reduc forall k:key, n:nonce, p:bitstring, aad:bitstring;
+  aead_dec(k, n, aead_enc(k, n, p, aad), aad) = p.
+
+(* --- Domain separation constants matching policy.rs / kex_auth.rs --- *)
+free DOM_SIG_R: bitstring.
+free DOM_SIG_I: bitstring.
+free DOM_AUTH_BIND: bitstring.
+free DOM_CONF_R: bitstring.
+free DOM_CONF_I: bitstring.
+
+(* --- Protocol secrets & long-term pinned credentials --- *)
+free sksR: skey [private].
+free sksI: skey [private].
+free shared_psk: key [private].
+free secret_payload: bitstring [private].
+
+table seen(key, nonce).
+
+(* --- Events --- *)
+event R_Derived(key, bitstring, pkey).
+event I_Accepts(key, bitstring, pkey).
+event R_Accepts(key, bitstring, pkey).
+event I_SendsRecord(key, nonce, bitstring).
+event R_RecvsRecord(key, nonce, bitstring, pkey).
+
+(* === RESPONDER (`kex-listen` / `node --role responder`) === *)
+let Responder(skR:skey, pkI_pin:pkey, psk:key) =
+  new eR:skey;
+  new dkR:skey;
+  let resp_bundle = (pk(eR), mlkem_pk(dkR)) in
+  out(net, resp_bundle);
+  in(net, init_bundle:bitstring);
+  let (eI_pub:pkey, ct:bitstring) = init_bundle in
+  let he = ecdh(eR, eI_pub) in
+  let hm = mlkem_open(dkR, ct) in
+  let tr = sha384((resp_bundle, init_bundle)) in
+  let sigR = mldsa_sign(skR, (DOM_SIG_R, tr)) in
+  out(net, sigR);
+  in(net, sigI:bitstring);
+  (* Verify-before-derive against pinned initiator verifying key *)
+  if mldsa_verify(pkI_pin, (DOM_SIG_I, tr), sigI) = true then
+  let ab = sha384((DOM_AUTH_BIND, tr, sigR, sigI)) in
+  let fk = kdf_session(he, hm, psk, ab) in
+  let r_tag = mac(fk, (DOM_CONF_R, ab)) in
+  let expected_i_tag = mac(fk, (DOM_CONF_I, ab)) in
+  event R_Derived(fk, ab, pkI_pin);
+  out(net, r_tag);
+  in(net, i_tag:bitstring);
+  if i_tag = expected_i_tag then
+  event R_Accepts(fk, ab, pkI_pin);
+  in(net, (seq:nonce, rec:bitstring));
+  let (msg:bitstring, d:bitstring) = aead_dec(fk, seq, rec, (seq, ab)) in
+  if d = sha384(msg) then
+  get seen(=fk, =seq) in 0
+  else (insert seen(fk, seq); event R_RecvsRecord(fk, seq, msg, pkI_pin)).
+
+(* === INITIATOR (`kex-connect` / `node --role initiator`) === *)
+let Initiator(skI:skey, pkR_pin:pkey, psk:key) =
+  in(net, resp_bundle:bitstring);
+  let (eR_pub:pkey, ekR:pkey) = resp_bundle in
+  new eI:skey;
+  new r:nonce;
+  let ct = mlkem_ct(ekR, r) in
+  let he = ecdh(eI, eR_pub) in
+  let hm = mlkem_ss(ekR, r) in
+  let init_bundle = (pk(eI), ct) in
+  out(net, init_bundle);
+  let tr = sha384((resp_bundle, init_bundle)) in
+  in(net, sigR:bitstring);
+  (* Verify-before-sign & verify-before-derive *)
+  if mldsa_verify(pkR_pin, (DOM_SIG_R, tr), sigR) = true then
+  let sigI = mldsa_sign(skI, (DOM_SIG_I, tr)) in
+  let ab = sha384((DOM_AUTH_BIND, tr, sigR, sigI)) in
+  let fk = kdf_session(he, hm, psk, ab) in
+  let expected_r_tag = mac(fk, (DOM_CONF_R, ab)) in
+  let i_tag = mac(fk, (DOM_CONF_I, ab)) in
+  out(net, sigI);
+  in(net, r_tag:bitstring);
+  if r_tag = expected_r_tag then
+  event I_Accepts(fk, ab, pkR_pin);
+  out(net, i_tag);
+  new seq:nonce;
+  event I_SendsRecord(fk, seq, secret_payload);
+  out(net, (seq, aead_enc(fk, seq, (secret_payload, sha384(secret_payload)), (seq, ab)))).
+
+(* === Queries === *)
+(* 1. Payload secrecy vs active Dolev-Yao attacker + phase 1 compromise of ALL long-term secrets *)
+query attacker(secret_payload).
+
+(* 2. Mutual injective agreement with key confirmation *)
+query fk:key, ab:bitstring;
+  inj-event(R_Accepts(fk, ab, pk(sksI))) ==> inj-event(I_Accepts(fk, ab, pk(sksR))).
+
+query fk:key, ab:bitstring;
+  inj-event(I_Accepts(fk, ab, pk(sksR))) ==> inj-event(R_Derived(fk, ab, pk(sksI))).
+
+(* 3. Record integrity / anti-replay *)
+query fk:key, s:nonce, m:bitstring;
+  inj-event(R_RecvsRecord(fk, s, m, pk(sksI))) ==> inj-event(I_SendsRecord(fk, s, m)).
+
+process
+  ( (!Responder(sksR, pk(sksI), shared_psk))
+  | (!Initiator(sksI, pk(sksR), shared_psk))
+  | (phase 1; out(net, sksR); out(net, sksI); out(net, shared_psk)) )

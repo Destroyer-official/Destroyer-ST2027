@@ -86,8 +86,8 @@ class Test2027DefenseHardening(unittest.TestCase):
         self.assertIn("quote", attestation_data)
         self.assertIn("signature", attestation_data)
 
-        # Verify attestation with correct public key and nonce
-        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=nonce)
+        # Verify attestation with correct public key and nonce (explicit non-production simulation test)
+        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=nonce, allow_simulation=True)
         self.assertTrue(valid)
 
     def test_tpm_remote_attestation_verification_falcon1024_valid(self):
@@ -108,8 +108,8 @@ class Test2027DefenseHardening(unittest.TestCase):
         self.assertIn("quote", attestation_data)
         self.assertIn("signature", attestation_data)
 
-        # Verify attestation with correct FALCON-1024 public key and nonce
-        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=nonce)
+        # Verify attestation with correct FALCON-1024 public key and nonce (explicit non-production simulation test)
+        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=nonce, allow_simulation=True)
         self.assertTrue(valid)
 
     def test_tpm_remote_attestation_nonce_replay_rejected(self):
@@ -127,7 +127,7 @@ class Test2027DefenseHardening(unittest.TestCase):
             signer_callback=lambda q: mldsa.sign(sk, q)
         )
 
-        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=wrong_nonce)
+        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=wrong_nonce, allow_simulation=True)
         self.assertFalse(valid)
 
     def test_tpm_remote_attestation_tampered_quote_rejected(self):
@@ -149,7 +149,7 @@ class Test2027DefenseHardening(unittest.TestCase):
         bad_quote[0] ^= 0xFF
         attestation_data["quote"] = bytes(bad_quote).hex()
 
-        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=nonce)
+        valid = att.verify_attestation(attestation_data, public_key=pk, expected_nonce=nonce, allow_simulation=True)
         self.assertFalse(valid)
 
     def test_tpm_remote_attestation_forged_signature_rejected(self):
@@ -168,8 +168,33 @@ class Test2027DefenseHardening(unittest.TestCase):
         )
 
         # Verify against wrong public key pk2
-        valid = att.verify_attestation(attestation_data, public_key=pk2, expected_nonce=nonce)
+        valid = att.verify_attestation(attestation_data, public_key=pk2, expected_nonce=nonce, allow_simulation=True)
         self.assertFalse(valid)
+
+    def test_tpm_remote_attestation_production_rejects_simulated_self_signed_quote(self):
+        """F-04 regression: production rejects DEGRADED_SECONDARY_SIMULATION even with valid caller signature."""
+        old_prod = os.environ.get("P2P_PRODUCTION")
+        os.environ["P2P_PRODUCTION"] = "1"
+        try:
+            att = TPMRemoteAttestation()
+            att._hardware_enforced = False
+            nonce = secrets.token_bytes(32)
+            mldsa = pqc_algorithms.LibOQS_MLDSA_87()
+            pk, sk = mldsa.keygen()
+            att_data = att.generate_attestation(
+                key_name="spoof_test",
+                nonce=nonce,
+                signer_callback=lambda q: mldsa.sign(sk, q),
+            )
+            with self.assertRaises(HardwareSecurityRequirementError):
+                att.verify_attestation(att_data, public_key=pk, expected_nonce=nonce)
+        finally:
+            import production_gate
+            production_gate.reset_for_tests()
+            if old_prod is None:
+                os.environ.pop("P2P_PRODUCTION", None)
+            else:
+                os.environ["P2P_PRODUCTION"] = old_prod
 
     def test_tpm_remote_attestation_production_fail_closed_missing_pubkey(self):
         """In production mode, verifying attestation without public key MUST fail-closed."""
@@ -550,6 +575,231 @@ class Test2027DefenseHardening(unittest.TestCase):
                 os.environ.pop("SECURE_P2P_PRODUCTION", None)
             else:
                 os.environ["SECURE_P2P_PRODUCTION"] = old_prod
+
+
+    def test_f10_pki_bundle_consistent_and_rejected_as_dev_fixture_in_production(self):
+        """F-10 regression: certs/ dev PKI bundle has consistent Merkle/CRL locally but is rejected in production."""
+        import trust_anchor
+        import production_gate
+
+        certs_dir = PROJECT_ROOT / "certs"
+        info = trust_anchor.verify_pki_bundle(certs_dir, require_external_anchor=False)
+        self.assertTrue(info["is_dev_fixture"])
+        self.assertGreaterEqual(info["artifact_count"], 5)
+
+        old_prod = os.environ.get("P2P_PRODUCTION")
+        os.environ["P2P_PRODUCTION"] = "1"
+        try:
+            with self.assertRaises(trust_anchor.TrustError):
+                trust_anchor.verify_pki_bundle(certs_dir)
+        finally:
+            production_gate.reset_for_tests()
+            if old_prod is None:
+                os.environ.pop("P2P_PRODUCTION", None)
+            else:
+                os.environ["P2P_PRODUCTION"] = old_prod
+
+    def test_f11_direct_tls_hostname_verification_enabled_and_tofu_refused_in_prod(self):
+        """F-11 regression: direct TLS sets check_hostname=True by default and production refuses TOFU."""
+        import datetime
+        import tempfile
+        import ssl
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        import secure_transmit_2027 as st
+        import production_gate
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            ca_key = ec.generate_private_key(ec.SECP384R1())
+            ca_cert = (
+                x509.CertificateBuilder()
+                .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "f11-test-ca")]))
+                .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "f11-test-ca")]))
+                .public_key(ca_key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=1))
+                .add_extension(x509.BasicConstraints(ca=True, path_length=0), True)
+                .sign(ca_key, hashes.SHA384())
+            )
+            cli_key = ec.generate_private_key(ec.SECP384R1())
+            cli_cert = (
+                x509.CertificateBuilder()
+                .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "f11-test-cli")]))
+                .issuer_name(ca_cert.subject)
+                .public_key(cli_key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=1))
+                .sign(ca_key, hashes.SHA384())
+            )
+            ca_pem = td_path / "ca.crt"
+            cli_pem = td_path / "cli.crt"
+            key_pem = td_path / "cli.key"
+            ca_pem.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+            cli_pem.write_bytes(cli_cert.public_bytes(serialization.Encoding.PEM))
+            key_pem.write_bytes(
+                cli_key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+            )
+
+            # Direct client context (no fronting profile) must enforce check_hostname=True by default
+            ctx = st.make_client_context(str(cli_pem), str(key_pem), str(ca_pem))
+            self.assertIsInstance(ctx, ssl.SSLContext)
+            self.assertTrue(ctx.check_hostname, "Direct TLS client context must enable check_hostname=True by default")
+
+            # Explicit fronting profile disables outer SNI hostname check only when requested
+            old_front = os.environ.get("P2P_DOMAIN_FRONTING_PROFILE")
+            os.environ["P2P_DOMAIN_FRONTING_PROFILE"] = "1"
+            try:
+                ctx_front = st.make_client_context(str(cli_pem), str(key_pem), str(ca_pem))
+                self.assertFalse(ctx_front.check_hostname)
+            finally:
+                if old_front is None:
+                    os.environ.pop("P2P_DOMAIN_FRONTING_PROFILE", None)
+                else:
+                    os.environ["P2P_DOMAIN_FRONTING_PROFILE"] = old_front
+
+        # Production refuses TOFU in _xxhfs_peer_gates (requires PKI/cert)
+        old_prod = os.environ.get("P2P_PRODUCTION")
+        os.environ["P2P_PRODUCTION"] = "1"
+        try:
+            with self.assertRaises(Exception):
+                st._xxhfs_peer_gates(
+                    "peer-alpha",
+                    b"\x11" * 2592,
+                    b"\x22" * 2592,
+                    b"\x33" * 32,
+                    peer_cert_json=None,
+                )
+        finally:
+            production_gate.reset_for_tests()
+            if old_prod is None:
+                os.environ.pop("P2P_PRODUCTION", None)
+            else:
+                os.environ["P2P_PRODUCTION"] = old_prod
+
+    def test_f07_f13_audit_pins_importable_and_fail_closed(self):
+        """F-07 / F-13 regression: scripts.audit_pins is importable, verifies signed mirror, and fails closed."""
+        import subprocess
+        import tempfile
+        import datetime
+        import scripts.audit_pins as audit_pins
+
+        # Verify committed signed offline mirror passes with strict signature check (F-07)
+        rc = audit_pins.main(["--offline", "--require-signature"])
+        self.assertEqual(rc, 0, "Committed signed offline mirror must pass --offline --require-signature")
+
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+
+            # Missing mirror fails closed
+            self.assertNotEqual(
+                audit_pins.main(["--offline", "--mirror", str(td_path / "missing.json")]),
+                0,
+            )
+
+            # Build incomplete/stale/skipped mirrors (should all fail closed)
+            base_mirror = json.loads((PROJECT_ROOT / "compliance_reports" / "cve_scan_offline.json").read_text(encoding="utf-8"))
+
+            stale_mirror = dict(base_mirror)
+            stale_mirror["generated_utc"] = (
+                datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=45)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            stale_path = td_path / "stale.json"
+            stale_path.write_text(json.dumps(stale_mirror), encoding="utf-8")
+            self.assertNotEqual(audit_pins.main(["--offline", "--mirror", str(stale_path)]), 0)
+
+            skipped_mirror = dict(base_mirror)
+            skipped_mirror["skipped_offline"] = True
+            skipped_path = td_path / "skipped.json"
+            skipped_path.write_text(json.dumps(skipped_mirror), encoding="utf-8")
+            self.assertNotEqual(audit_pins.main(["--offline", "--mirror", str(skipped_path)]), 0)
+
+            incomplete_mirror = dict(base_mirror)
+            pkgs = list(incomplete_mirror["packages"])[:-1]
+            incomplete_mirror["packages"] = pkgs
+            inc_path = td_path / "incomplete.json"
+            inc_path.write_text(json.dumps(incomplete_mirror), encoding="utf-8")
+            self.assertNotEqual(audit_pins.main(["--offline", "--mirror", str(inc_path)]), 0)
+
+            # Unsigned/tampered default-style check with --require-signature fails closed
+            valid_unsigned = td_path / "unsigned.json"
+            valid_unsigned.write_text(json.dumps(base_mirror), encoding="utf-8")
+            self.assertNotEqual(
+                audit_pins.main(["--offline", "--require-signature", "--mirror", str(valid_unsigned)]),
+                0,
+            )
+
+            # Tampered mirror with copied signature fails closed
+            tampered_mirror = dict(base_mirror)
+            tampered_mirror["pin_count"] = 999
+            tampered_path = td_path / "tampered.json"
+            tampered_path.write_text(json.dumps(tampered_mirror), encoding="utf-8")
+            sig_src = PROJECT_ROOT / "compliance_reports" / "cve_scan_offline.json.mldsa87.sig"
+            (td_path / "tampered.json.mldsa87.sig").write_bytes(sig_src.read_bytes())
+            self.assertNotEqual(
+                audit_pins.main(["--offline", "--require-signature", "--mirror", str(tampered_path)]),
+                0,
+            )
+
+            # Live OSV outage falling back to a mirror containing a vuln MUST fail closed
+            vuln_mirror = dict(base_mirror)
+            vuln_pkgs = list(vuln_mirror["packages"])
+            vuln_pkgs[0] = dict(vuln_pkgs[0], osv_ids=["GHSA-TEST-9999"], status="vulnerable")
+            vuln_mirror["packages"] = vuln_pkgs
+            vuln_path = td_path / "vuln_mirror.json"
+            vuln_path.write_text(json.dumps(vuln_mirror), encoding="utf-8")
+
+            orig_query = audit_pins.osv_query
+            audit_pins.osv_query = lambda _n, _v: (_ for _ in ()).throw(ConnectionError("simulated OSV outage"))
+            try:
+                self.assertNotEqual(
+                    audit_pins.main(["--mirror", str(vuln_path)]),
+                    0,
+                )
+            finally:
+                audit_pins.osv_query = orig_query
+
+    def test_f12_destroyer_help_and_import_do_not_arm_production(self):
+        """F-12 regression: importing destroyer or invoking --help does not force-arm production."""
+        import subprocess
+
+        env = dict(os.environ)
+        env.pop("P2P_PRODUCTION", None)
+        env.pop("SECURE_P2P_PRODUCTION", None)
+        res = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "destroyer.py"), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        combined = (res.stdout or "") + (res.stderr or "")
+        self.assertNotIn("FORCE-ARMED", combined)
+
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import destroyer, production_gate; print('ARMED=' + str(production_gate.is_production()))",
+            ],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertIn("ARMED=False", probe.stdout)
 
 
 if __name__ == "__main__":

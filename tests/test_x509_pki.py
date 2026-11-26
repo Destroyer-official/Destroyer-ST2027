@@ -33,7 +33,10 @@ sys.path.insert(0, str(REPO_ROOT))
 import trust_anchor as ta
 import secure_transmit_2027 as st
 
-BIN = REPO_ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+# Prefer debug binary (has lab-surfaces feature for --lab flag); fall back to release.
+_BIN_DEBUG = REPO_ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+_BIN_RELEASE = REPO_ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+BIN = _BIN_DEBUG if _BIN_DEBUG.exists() else _BIN_RELEASE
 
 
 def _free_tcp_port() -> int:
@@ -52,7 +55,7 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         if not BIN.exists():
-            cmd = ["cargo", "build", "--release", "--manifest-path",
+            cmd = ["cargo", "build", "--features", "lab-surfaces", "--manifest-path",
                    str(REPO_ROOT / "rust_data_plane" / "Cargo.toml"), "--bin", "secure-transmit"]
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode != 0:
@@ -323,7 +326,7 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         init_cert_file.write_bytes(init_der)
 
         resp_proc = subprocess.Popen(
-            [str(BIN), "channel", "--key-file", str(key_file), "--state", str(state_resp),
+            [str(BIN), "channel", "--lab", "--key-file", str(key_file), "--state", str(state_resp),
              "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
              "--role", "responder", "--interval-ms", "10", "--quantum", "1232",
              "--cert-file", str(resp_cert_file), "--ca-file", str(self.ca_file),
@@ -334,7 +337,7 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         time.sleep(0.15)
 
         init_proc = subprocess.Popen(
-            [str(BIN), "channel", "--key-file", str(key_file), "--state", str(state_init),
+            [str(BIN), "channel", "--lab", "--key-file", str(key_file), "--state", str(state_init),
              "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
              "--role", "initiator", "--interval-ms", "10", "--quantum", "1232",
              "--cert-file", str(init_cert_file), "--ca-file", str(self.ca_file),
@@ -389,7 +392,7 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         crl_file.write_bytes(crl_der)
 
         resp_proc = subprocess.Popen(
-            [str(BIN), "channel", "--key-file", str(key_file), "--state", str(state_resp),
+            [str(BIN), "channel", "--lab", "--key-file", str(key_file), "--state", str(state_resp),
              "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
              "--role", "responder", "--interval-ms", "10", "--quantum", "1232",
              "--cert-file", str(resp_cert_file), "--ca-file", str(self.ca_file),
@@ -400,7 +403,7 @@ class TestAutomatedPostQuantumPki(unittest.TestCase):
         time.sleep(0.15)
 
         init_proc = subprocess.Popen(
-            [str(BIN), "channel", "--key-file", str(key_file), "--state", str(state_init),
+            [str(BIN), "channel", "--lab", "--key-file", str(key_file), "--state", str(state_init),
              "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
              "--role", "initiator", "--interval-ms", "10", "--quantum", "1232",
              "--cert-file", str(init_cert_file), "--ca-file", str(self.ca_file),

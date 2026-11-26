@@ -21,7 +21,7 @@ Enforces:
 from __future__ import annotations
 
 import os
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec: B405 - XML generation only; parsing uses defusedxml.ElementTree.parse
 from dataclasses import dataclass, field
 from defusedxml.ElementTree import parse as secure_xml_parse
 from pathlib import Path

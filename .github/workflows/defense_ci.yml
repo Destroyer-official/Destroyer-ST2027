@@ -33,9 +33,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements.txt
 
-      - name: OSV Pin Audit (fail on known CVEs in shipped pins)
+      - name: OSV Pin Audit + Installed Environment pip-audit (blocking)
         run: |
           python scripts/audit_pins.py
+          pip install pip-audit
+          pip-audit --local
 
       - name: TruffleHog Secret Scan Gate (Supply-Chain & Credential Leakage)
         uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9 immutable pin
@@ -78,6 +80,10 @@ jobs:
           echo "P2P_OQS_POSIX_SHA384=${OQS_SHA384}" >> "$GITHUB_ENV"
           echo "Exported P2P_OQS_POSIX_SHA384=$OQS_SHA384 ($OQS_SO)"
 
+      - name: Verify Signed Offline CVE Mirror (ML-DSA-87 + freshness after liboqs install)
+        run: |
+          python scripts/audit_pins.py --offline --require-signature
+
       - name: Execute NIST CAVP Known Answer Tests (KAT)
         run: |
           python scripts/cavp_algorithm_validator.py
@@ -104,10 +110,16 @@ jobs:
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable (tip verified 2026-10-16; refresh if GitHub returns 422)
 
-      - name: Rust Dependency Security & License Audit (cargo-deny)
+      - name: Rust Dependency Security & License Audit (cargo-deny + cargo-audit across all crates)
         run: |
           cargo install --locked cargo-deny
+          cargo install --locked cargo-audit
           (cd rust_data_plane && cargo deny check)
+          cargo deny --manifest-path ts_rt/Cargo.toml check advisories
+          cargo deny --manifest-path sel4_mils_appliance/Cargo.toml check advisories
+          cargo audit --file rust_data_plane/Cargo.lock
+          cargo audit --file ts_rt/Cargo.lock
+          cargo audit --file sel4_mils_appliance/Cargo.lock
 
       - name: Execute Rust Test Suites (data plane, ts_rt, seL4 MILS) + Clippy
         run: |

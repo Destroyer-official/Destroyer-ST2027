@@ -335,7 +335,9 @@ class MLDSA_SLHDSA_HybridSignature:
         """
         return self.impl.verify(public_key, message, signature)
 
-# Backward compatibility alias to avoid breaking callers or tests expecting FALCON identifier
+# DEPRECATED LEGACY ALIAS (F-06): Preserved strictly for backward compatibility with
+# quarantined `--lab` SecureP2PChat callers. Despite the legacy identifier name `FALCON`,
+# the underlying engine executes ML-DSA-87 (FIPS 204) + SLH-DSA-256f (FIPS 205), NOT Falcon-1024.
 FALCON = MLDSA_SLHDSA_HybridSignature
 
 # Import secure key management utilities
@@ -351,15 +353,15 @@ class QuantumResistanceModule:
     algorithms that meet NIST Level-5 security requirements. It enforces the use
     of only the strongest PQC algorithms with no fallbacks to weaker security levels.
 
-    Supported Algorithms:
+    Supported Legacy Algorithms (`--lab` compatibility adapter only):
     1. ML-KEM-1024: Module Lattice-based Key Encapsulation Mechanism (NIST FIPS 203)
        - 256-bit post-quantum security (NIST Level 5)
        - Based on the Module Learning With Errors problem
        - Provides IND-CCA2 security against quantum adversaries
 
-    2. FALCON-1024: Fast-Fourier Lattice-based Compact Signatures over NTRU (NIST FIPS 205)
+    2. ML-DSA-87 / SLH-DSA-256f (exposed via deprecated legacy slot ``FALCON``):
+       - Primary: ML-DSA-87 (NIST FIPS 204) / Fallback: SLH-DSA-256f (NIST FIPS 205)
        - 256-bit post-quantum security (NIST Level 5)
-       - Based on the Short Integer Solution problem over NTRU lattices
        - Provides EUF-CMA security against quantum adversaries
 
     Security Properties:
@@ -576,10 +578,10 @@ class QuantumResistanceModule:
                 "compliant": True
             },
             "FALCON": {
-                "standard": "NIST FIPS 205",
+                "standard": "NIST FIPS 204 / FIPS 205 (legacy compatibility slot; Falcon FIPS 206 IPD-track not executed)",
                 "version": "August 2024",
                 "security_level": "NIST Level 5 (256-bit)",
-                "parameter_set": "FALCON-1024",
+                "parameter_set": "ML-DSA-87 + SLH-DSA-256f (via deprecated FALCON alias)",
                 "compliant": True
             }
         }

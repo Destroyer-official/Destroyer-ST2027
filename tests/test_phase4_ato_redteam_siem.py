@@ -335,19 +335,52 @@ class TestDoDZeroTrustSuite:
 
     def test_zero_trust_7_pillar_scoring(self):
         from zero_trust_assessment import DoDZeroTrustEvaluator
+        import platform_hsm_interface as phi
 
         evaluator = DoDZeroTrustEvaluator()
         assessment = evaluator.perform_full_assessment()["dod_zero_trust_assessment"]
+        pillars = assessment["pillars"]
+        assert len(pillars) == 7  # nosec: B101
 
+        snap = os.environ.get("P2P_ALLOW_TPM_NATIVE")
+        os.environ["P2P_ALLOW_TPM_NATIVE"] = "1"
+        try:
+            host_has_tpm = bool(
+                (hasattr(phi, "_windows_tbs_available") and phi._windows_tbs_available())
+                or (hasattr(phi, "is_tpm_available") and phi.is_tpm_available())
+            )
+        finally:
+            if snap is None:
+                os.environ.pop("P2P_ALLOW_TPM_NATIVE", None)
+            else:
+                os.environ["P2P_ALLOW_TPM_NATIVE"] = snap
+
+        for p in pillars:
+            if p["pillar_id"] == 2 and not host_has_tpm:
+                # F-10 honesty: without physical TPM on host, software fixture affidavit MUST NOT forge Device compliance
+                assert p["status"] == "NON_COMPLIANT"  # nosec: B101
+                assert p["score_percentage"] < 90.0  # nosec: B101
+            else:
+                assert p["score_percentage"] >= 90.0  # nosec: B101
+                assert p["status"] == "COMPLIANT"  # nosec: B101
+
+        if host_has_tpm:
+            assert assessment["overall_score_percentage"] >= 95.0  # nosec: B101
+            assert assessment["target_level_achieved"] is True  # nosec: B101
+            assert assessment["status"] == "TARGET_LEVEL_ACHIEVED"  # nosec: B101
+        else:
+            assert assessment["target_level_achieved"] is False  # nosec: B101
+
+    def test_zero_trust_7_pillar_scoring_with_hardware_tpm(self, monkeypatch):
+        from zero_trust_assessment import DoDZeroTrustEvaluator
+        import platform_hsm_interface as phi
+
+        monkeypatch.setattr(phi, "_windows_tbs_available", lambda: True)
+        evaluator = DoDZeroTrustEvaluator()
+        assessment = evaluator.perform_full_assessment()["dod_zero_trust_assessment"]
         assert assessment["overall_score_percentage"] >= 95.0  # nosec: B101
         assert assessment["target_level_achieved"] is True  # nosec: B101
         assert assessment["status"] == "TARGET_LEVEL_ACHIEVED"  # nosec: B101
-
-        pillars = assessment["pillars"]
-        assert len(pillars) == 7  # nosec: B101
-        for p in pillars:
-            assert p["score_percentage"] >= 90.0  # nosec: B101
-            assert p["status"] == "COMPLIANT"  # nosec: B101
 
     def test_zero_trust_report_signing_and_verification(self, tmp_path):
         from zero_trust_assessment import (
@@ -395,22 +428,57 @@ class TestAoDecisionEngineAndAto:
     """
 
     def test_ao_evaluation_and_evidence_pack_complete(self, tmp_path):
-        """Evaluate all 10 gates and assert the evidence pack is complete."""
+        """Evaluate all 10 gates honestly: software dev fixtures cannot spoof hardware Gate 4 on hosts without TPM."""
+        import platform_hsm_interface as phi
+
+        snap = os.environ.get("P2P_ALLOW_TPM_NATIVE")
+        os.environ["P2P_ALLOW_TPM_NATIVE"] = "1"
+        try:
+            host_has_tpm = bool(
+                (hasattr(phi, "_windows_tbs_available") and phi._windows_tbs_available())
+                or (hasattr(phi, "is_tpm_available") and phi.is_tpm_available())
+            )
+        finally:
+            if snap is None:
+                os.environ.pop("P2P_ALLOW_TPM_NATIVE", None)
+            else:
+                os.environ["P2P_ALLOW_TPM_NATIVE"] = snap
+
         engine = AODecisionEngine(verbose=False)
         decision = engine.evaluate_all_and_package_evidence(output_dir=tmp_path)
 
         assert decision["assessment_kind"].startswith("SELF-ASSESSMENT")  # nosec: B101
         summary = decision["evaluation_summary"]
-        failed = [f"{g.get('gate_id')}:{g.get('title')}:{g.get('details')}" for g in (decision.get("gates") or decision.get("gate_evaluations") or []) if g.get("status") != "PASS"]
+        gate_map = {g["gate_id"]: g for g in decision["gate_evaluations"]}
         assert summary["total_gates"] == 10, f"Expected 10 total gates, got {summary.get('total_gates')}"  # nosec: B101
-        assert summary["passed_gates"] == 10, f"Failed gates: {failed}"  # nosec: B101
-        assert summary["all_gates_passed"] is True, f"Gates failed: {failed}"  # nosec: B101
+        for sw_gate in ("G1", "G2", "G3", "G5", "G6", "G7", "G8", "G9", "G10"):
+            assert gate_map[sw_gate]["status"] == "PASS", f"Gate {sw_gate} failed: {gate_map[sw_gate]}"  # nosec: B101
 
         auth = decision["authorization_decision"]
-        assert auth["status"] == "SELF-ASSESS-PASS"  # nosec: B101
-        assert auth["authorization_type"] == "SELF-ASSESSMENT EVIDENCE PACK FOR AO REVIEW"  # nosec: B101
         assert "GRANTED" not in auth["status"]  # nosec: B101
         assert auth["valid_through_utc"] is None  # nosec: B101
+        if host_has_tpm:
+            assert summary["passed_gates"] == 10  # nosec: B101
+            assert summary["all_gates_passed"] is True  # nosec: B101
+            assert auth["status"] == "SELF-ASSESS-PASS"  # nosec: B101
+            assert auth["authorization_type"] == "SELF-ASSESSMENT EVIDENCE PACK FOR AO REVIEW"  # nosec: B101
+        else:
+            # F-10 honesty: without hardware TPM on host, Gate 4 MUST fail closed rather than trust dev fixture affidavit
+            assert gate_map["G4"]["status"] == "FAIL"  # nosec: B101
+            assert summary["passed_gates"] == 9  # nosec: B101
+            assert summary["all_gates_passed"] is False  # nosec: B101
+            assert auth["status"] == "SELF-ASSESS-FAIL"  # nosec: B101
+
+    def test_ao_evaluation_passes_all_gates_with_hardware_tpm(self, tmp_path, monkeypatch):
+        """When platform hardware TPM probe returns True, all 10/10 self-assessment gates pass."""
+        import platform_hsm_interface as phi
+
+        monkeypatch.setattr(phi, "_windows_tbs_available", lambda: True)
+        engine = AODecisionEngine(verbose=False)
+        decision = engine.evaluate_all_and_package_evidence(output_dir=tmp_path)
+        assert decision["evaluation_summary"]["passed_gates"] == 10  # nosec: B101
+        assert decision["evaluation_summary"]["all_gates_passed"] is True  # nosec: B101
+        assert decision["authorization_decision"]["status"] == "SELF-ASSESS-PASS"  # nosec: B101
 
 
 class TestTwinFileParityPhase4:

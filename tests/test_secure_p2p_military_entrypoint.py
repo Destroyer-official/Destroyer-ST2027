@@ -77,7 +77,32 @@ def test_production_node_requires_mutual_auth_material():
             env={"P2P_PRODUCTION": "1"},
         )
     assert res.returncode == 2
-    assert "Mutual ML-DSA-87" in res.stdout or "auth-sk-file" in res.stdout
+    assert ("Mutual ML-DSA-87" in res.stdout or "auth-sk-file" in res.stdout
+            or "Refusing to start" in res.stdout)
+
+
+def test_production_node_refuses_plaintext_auth_sk_file():
+    """F-01 regression: plaintext --auth-sk-file is unconditionally refused in production."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        psk = td / "shared.psk"
+        psk.write_text("ab" * 32 + "\n", encoding="utf-8")
+        sk = td / "local.sk"
+        pk = td / "peer.pk"
+        sk.write_text("11" * 32 + "\n", encoding="utf-8")
+        pk.write_text("22" * 2592 + "\n", encoding="utf-8")
+        for p in (psk, sk):
+            try:
+                os.chmod(p, 0o600)
+            except OSError:
+                pass
+        res = _run(
+            ["node", "--role", "responder", "--psk-file", str(psk),
+             "--auth-sk-file", str(sk), "--peer-auth-pk-file", str(pk)],
+            env={"P2P_PRODUCTION": "1"},
+        )
+    assert res.returncode == 2
+    assert ("PRODUCTION REFUSAL" in res.stdout or "Refusing to start" in res.stdout)
 
 
 def test_production_node_rejects_malformed_auth_material():
@@ -89,21 +114,33 @@ def test_production_node_rejects_malformed_auth_material():
             os.chmod(psk, 0o600)
         except OSError:
             pass
-        sk = td / "local.sk"
+        sealed = td / "local.tpm.sealed"
         pk = td / "peer.pk"
-        sk.write_text("00" * 32 + "\n", encoding="utf-8")
-        try:
-            os.chmod(sk, 0o600)
-        except OSError:
-            pass
+        sealed.write_bytes(b"\x00" * 64)
         pk.write_text("00" * 32 + "\n", encoding="utf-8")  # too short
         res = _run(
             ["node", "--role", "responder", "--psk-file", str(psk),
-             "--auth-sk-file", str(sk), "--peer-auth-pk-file", str(pk)],
+             "--auth-tpm-sealed", str(sealed), "--peer-auth-pk-file", str(pk)],
             env={"P2P_PRODUCTION": "1"},
         )
     assert res.returncode == 2
-    assert "Invalid authentication material" in res.stdout or "expected exactly" in res.stdout
+    assert ("Invalid authentication material" in res.stdout
+            or "expected exactly" in res.stdout
+            or "Refusing to start" in res.stdout)
+
+
+def test_enroll_single_station_does_not_generate_peer_secret():
+    """F-05 regression: enroll provisions ONLY the local station's identity, never a peer's secret."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        pk_out = td / "alpha.auth.pk"
+        sk_out = td / "alpha.auth.sk"
+        res = _run(["enroll", "--name", "ALPHA_TEST", "--out-dir", str(td), "--out-pk", str(pk_out), "--lab-sk", str(sk_out)])
+        assert res.returncode == 0, res.stdout
+        assert pk_out.exists() and len(pk_out.read_text(encoding="utf-8").strip()) == 5184
+        assert sk_out.exists()
+        assert not (td / "bravo.auth.sk").exists()
+        assert not (td / "tactical_station.psk").exists()
 
 
 def test_production_refuses_weak_crypto_env_overrides():
@@ -136,7 +173,7 @@ def test_production_refuses_weak_crypto_env_overrides():
 def test_help_lists_mutual_auth_flags():
     res = _run(["node", "--help"])
     assert res.returncode == 0
-    for token in ("--auth-sk-file", "--peer-auth-pk-file", "--require-mutual-auth"):
+    for token in ("--auth-tpm-sealed", "--auth-pkcs11-label", "--peer-auth-pk-file", "--require-mutual-auth"):
         assert token in res.stdout
 
 

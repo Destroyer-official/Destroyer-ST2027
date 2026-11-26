@@ -205,27 +205,67 @@ def test_f06_formal_checker_strict_requires_proverif():
 
 
 def test_f08_tactical_station_arms_production_gate_when_non_lab():
-    """F-08: Verify run_tactical_station unconditionally arms production gate and dispatches to native binary when lab=False."""
+    """F-01/F-05/F-08: run_tactical_station(lab=False) arms P2P_PRODUCTION=1, refuses unprovisioned local auto-keygen, and dispatches native node with hardware custody."""
+    import tempfile
     import secure_p2p
+    import production_gate
 
     old_prod = os.environ.get("P2P_PRODUCTION")
+    old_psk = os.environ.get("P2P_PSK_FILE")
+    old_peer = os.environ.get("P2P_PEER_AUTH_PK_FILE")
+    old_tpm = os.environ.get("P2P_AUTH_TPM_SEALED")
     try:
         os.environ.pop("P2P_PRODUCTION", None)
-        with patch("secure_p2p._auto_provision_tactical_credentials"), \
-             patch("subprocess.call", return_value=0) as mock_call:
-            res = secure_p2p.run_tactical_station("alpha", lab=False)
+        for k in ("P2P_PSK_FILE", "P2P_PEER_AUTH_PK_FILE", "P2P_AUTH_TPM_SEALED"):
+            os.environ.pop(k, None)
+        # Missing out-of-band hardware custody must fail closed with rc=2 (never auto-provision dual .sk files)
+        with patch("secure_p2p._auto_provision_tactical_credentials") as mock_auto:
+            rc_missing = secure_p2p.run_tactical_station("alpha", lab=False)
+            assert rc_missing == 2
+            assert not mock_auto.called, "non-lab tactical station MUST NOT auto-generate dual .sk files"
             assert os.environ.get("P2P_PRODUCTION") == "1", "P2P_PRODUCTION must be armed when lab=False"
-            assert mock_call.called, "subprocess.call to native binary must be invoked"
-            called_cmd = mock_call.call_args[0][0]
-            assert "node" in called_cmd
-            assert "--role" in called_cmd
-            assert "responder" in called_cmd
-            assert "--require-mutual-auth" in called_cmd
+
+        with tempfile.TemporaryDirectory() as td:
+            psk = os.path.join(td, "station.psk")
+            peer_pk = os.path.join(td, "peer.auth.pk")
+            tpm_sealed = os.path.join(td, "local.tpm.sealed")
+            with open(psk, "w", encoding="utf-8") as fh:
+                fh.write("ab" * 32 + "\n")
+            with open(peer_pk, "w", encoding="utf-8") as fh:
+                fh.write("22" * 2592 + "\n")
+            with open(tpm_sealed, "wb") as fh:
+                fh.write(b"\x01" * 64)
+            for p in (psk,):
+                try:
+                    os.chmod(p, 0o600)
+                except OSError:
+                    pass
+            os.environ["P2P_PSK_FILE"] = psk
+            os.environ["P2P_PEER_AUTH_PK_FILE"] = peer_pk
+            os.environ["P2P_AUTH_TPM_SEALED"] = tpm_sealed
+            with patch("subprocess.call", return_value=0) as mock_call:
+                res = secure_p2p.run_tactical_station("alpha", lab=False)
+                assert res == 0
+                assert mock_call.called, "subprocess.call to native binary must be invoked"
+                called_cmd = mock_call.call_args[0][0]
+                assert "node" in called_cmd
+                assert "--role" in called_cmd
+                assert "responder" in called_cmd
+                assert "--require-mutual-auth" in called_cmd
+                assert "--auth-tpm-sealed" in called_cmd
+                assert "--auth-sk-file" not in called_cmd
     finally:
-        if old_prod is not None:
-            os.environ["P2P_PRODUCTION"] = old_prod
-        else:
-            os.environ.pop("P2P_PRODUCTION", None)
+        production_gate.reset_for_tests()
+        for k, prev in (
+            ("P2P_PRODUCTION", old_prod),
+            ("P2P_PSK_FILE", old_psk),
+            ("P2P_PEER_AUTH_PK_FILE", old_peer),
+            ("P2P_AUTH_TPM_SEALED", old_tpm),
+        ):
+            if prev is not None:
+                os.environ[k] = prev
+            else:
+                os.environ.pop(k, None)
 
 
 def test_f08_canonical_production_dispatch_to_native_binary():

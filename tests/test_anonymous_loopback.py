@@ -53,7 +53,7 @@ def test_anonymous_loopback_top_secret(tmp_path, monkeypatch):
     th.start()
     ta.anonymous_send("127.0.0.1", port, cli_ctx, cli_h, "loop-peer", data,
                       classification="TOP SECRET", receipt=receipt,
-                      server_hostname="loopback-test")
+                      server_hostname="localhost")
     # A-12: under full-suite CPU load the server side has occasionally been
     # observed not to finish (flake ~1 in 3 full runs, never in isolation).
     # Wait with a hard bound, then fail with an explicit diagnostic instead

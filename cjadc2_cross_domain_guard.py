@@ -259,15 +259,23 @@ class CrossDomainGuard:
                                     caveat: str, plaintext_bytes: bytes) -> Dict[str, Any]:
         """Encrypts data inside a cryptographically isolated classification compartment."""
         comp_key = self.derive_compartment_key(master_secret, classification, caveat)
-        from cnsa_crypto_gateway import generate_deterministic_gcm_iv
+        from cnsa_crypto_gateway import cnsa_hkdf_derive, generate_deterministic_gcm_iv
         nonce = generate_deterministic_gcm_iv()
-        cipher = ChaCha20Poly1305(comp_key)
+        msg_key = cnsa_hkdf_derive(
+            comp_key,
+            salt=nonce,
+            info=f"CJADC2-PER-MSG-KEY-V2:{classification.name}:{caveat}".encode("utf-8"),
+            length=32,
+            algorithm="sha384",
+        )
+        cipher = ChaCha20Poly1305(msg_key)
         aad = f"{classification.name}:{caveat}".encode("utf-8")
         ciphertext = cipher.encrypt(nonce, plaintext_bytes, aad)
 
         return {
             "classification": classification.name,
             "caveat": caveat,
+            "kdf_version": 2,
             "nonce_hex": nonce.hex(),
             "ciphertext_hex": ciphertext.hex(),
             "aad_tag": aad.decode("utf-8"),
@@ -299,7 +307,19 @@ class CrossDomainGuard:
         ciphertext = bytes.fromhex(compartment_envelope["ciphertext_hex"])
         aad = compartment_envelope["aad_tag"].encode("utf-8")
 
-        cipher = ChaCha20Poly1305(comp_key)
+        if compartment_envelope.get("kdf_version") == 2:
+            from cnsa_crypto_gateway import cnsa_hkdf_derive
+            aead_key = cnsa_hkdf_derive(
+                comp_key,
+                salt=nonce,
+                info=f"CJADC2-PER-MSG-KEY-V2:{target_class.name}:{target_caveat}".encode("utf-8"),
+                length=32,
+                algorithm="sha384",
+            )
+        else:
+            aead_key = comp_key
+
+        cipher = ChaCha20Poly1305(aead_key)
         return cipher.decrypt(nonce, ciphertext, aad)
 
     def _record_audit_event(self, event_type: str, details: str,

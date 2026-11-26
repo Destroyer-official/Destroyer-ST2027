@@ -1,6 +1,8 @@
 {
   "pki_version": "2027.1.0",
-  "generation_timestamp": "2026-10-25T14:54:41.981201+00:00",
+  "ceremony_type": "SOFTWARE_DEV_FIXTURE_NOT_EXTERNALLY_ANCHORED",
+  "externally_anchored": false,
+  "generation_timestamp": "2026-11-26T09:35:01.019758+00:00",
   "standard_compliance": [
     "FIPS 204",
     "FIPS 205",
@@ -8,27 +10,27 @@
     "NIST SP 800-57"
   ],
   "root_authority": "CN=Sovereign-Defense-Root-CA",
-  "merkle_root": "8bb4140f92b8c47dd13b3cff7f1d8ed532d8fe4b8e1b4f9fe7710b56a4bb744e9da81b3e83caac6e29acba2f3a2b3fa3ea36c1bf657f8f1be855cf6e369a0c7b",
+  "merkle_root": "d6855f8ddcabb7c83373972261c9eb6a6704f3ea3fa7c00faef18b07c1c499625588c82886c20221e45d3bcdd85212ee3d6cb238bcafe448109fa1b8f1d01db5",
   "artifacts": {
     "sovereign_root_ca.json": {
-      "size_bytes": 15289,
-      "sha3_512": "2c615a8eb3102e9778e67c9d49460ee1040ee4826e8b185caf9ad974360659be8549b1468fbbb3546a76cf45afa0818f8948fc7ad62396d21b0c4064f296dd25"
+      "size_bytes": 15357,
+      "sha3_512": "cdb0c0baa47542cc75852edd879dc9e44345dc35e1516e44d4cf79fd3d9535fcb44623481325a61131fb45e643fcd7f9b938fcde87df4de92c0c9f485596cbb0"
     },
     "sovereign_sub_ca.json": {
-      "size_bytes": 14977,
-      "sha3_512": "3f25738be729ec29be6169361806de7909e245a4ec6991d33c76b94eafb1ccbb69afa494da59f5fbf24c101d89a7207d75aa53b585138ce1d57e15f6d3034b75"
+      "size_bytes": 15045,
+      "sha3_512": "e6787dee59d499e0e29cc37b37827912d14d89d1c81b16ecd0d84b51bde98cf7ec8a9a44580662b3fef019609d3273a9cb071e3633a7113dce4bb9d7420b02ae"
     },
     "node_alpha.json": {
-      "size_bytes": 15138,
-      "sha3_512": "42380d5dbb7b79997933b14bc4f1a49a510fa25ba8d4c5afb5f5b2805548a51b32fb2a17b20ee098636c5c56aacc4514a223c0c8f88550ff95be96db605689a0"
+      "size_bytes": 15206,
+      "sha3_512": "e6e53611d3a5b8d2ec99b4d39606affa77257e61ae20fc9c4daf5634b3f004d0228c17438b747a49def07acf8b270e456670d21ff9f1304a73f7ba8c0066fc6b"
     },
     "node_bravo.json": {
-      "size_bytes": 15138,
-      "sha3_512": "c2bb18d816c31a0a41a114ea3a37579f793d9a2423f30adc1ec307b32cf5b7fbdde21962fbc89a88203edb65f27a862fcdfd15718d7819c4d910febba3b62282"
+      "size_bytes": 15206,
+      "sha3_512": "df2004f5cb1643f6bce21910077947d00026cad25fe0f8d77040c58b627d9e82aceefe405168add42a22ab55530f130029fd96c053178374608518e54934d930"
     },
     "crl.json": {
-      "size_bytes": 9740,
-      "sha3_512": "83824ca984ba24f29703aefda093cf1af90e9d5302ae8259fe534117ac511ad3b83de69f41db5bfe54c8e2d7b3bc8764ef8a87efd1834e6d8ca66be5c53c7408"
+      "size_bytes": 9808,
+      "sha3_512": "f7fdf2c533b6f0cb96574000b0edf2a75185c3abf9f451d2806b607464fc7b4776a780bddb77716cdb322c24887b363497ad3ffe717f203d0cda7480f39a088d"
     }
   }
 }

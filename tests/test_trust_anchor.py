@@ -296,7 +296,7 @@ def test_pki_loopback_transfer_over_sockets(tmp_path, monkeypatch):
     th = _threading.Thread(target=run_server, daemon=True)
     th.start()
     st.client_send("127.0.0.1", port, cli_ctx, kp_a, "sess-pki-loop", data,
-                   server_hostname="loopback-test",
+                   server_hostname="localhost",
                    peer_cert=ta.cert_to_json(cert_b),
                    peer_subject="officer-bravo")
     th.join(timeout=60)

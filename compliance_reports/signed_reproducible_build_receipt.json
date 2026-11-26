@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-25T09:19:42.822301+00:00",
+  "timestamp_utc": "2026-11-26T13:09:39.263378+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -27,8 +27,8 @@
   },
   "core_modules": {
     "platform_hsm_interface.py": {
-      "size_bytes": 529686,
-      "sha3_512": "159227def5118cc3b11ac12b3f9347e83c251edbd9510dd9e71cc5830d2b0007e7e9e2b79894aec6566c9385680f2e1d1d5338c5a0f159c255b803583fe78b43"
+      "size_bytes": 531730,
+      "sha3_512": "7bdc062e7ba86a838264ee499f7d691d8425f781b0ff50afb25676b6e2f7fa3e75500ff8a1b7044644d3e997358f1410e24894b4f8a14dee37f98b36dbceb3ba"
     },
     "cnsa2_policy_engine.py": {
       "size_bytes": 36770,
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 929025,
-      "sha3_512": "cdb974db4172102c7578d228c1a7c8f8b3c270123a4a8eeff2f7b16963fc8c93cdd138ead175b39c47da26e7d11efe2047f1683778a945fe2222e6127785f653"
+      "size_bytes": 940905,
+      "sha3_512": "00240ea587f7cc90724a9c8cf807fce0da6bfa135bc6e4cd25c8efc9535a04ead5e92f9f1481c1b3b2403429a1e9210bfdaab7f41e4abe3c17e063a28299fa68"
     }
   },
   "sbom_status": {
@@ -65,19 +65,19 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "d4e1f28137b88d4f54adb312a10513f4df85b04306d5169d83721f6cf194a7f9b3d9aa6e4617e72515a7d034695f8126e63858c19600928279700b6480c15687",
-  "full_source_merkle_root": "7cd82aba6f4aa031e5110ddbfcc83c4504ebbed193d4cd4ba89816f3ee5969535603278287a19d4147f157c54f18be7eda9bfbf8b50459943a69d908d1e09e65",
+  "source_tree_merkle_root": "3f466d7c53d818642ccfe7f017c3b2195f334600b5d2f4398371a7d3c00c905fb78ccdd1a72591a1a5ff1e2bddd353a3741f390698b08636432ecc4415aa16e2",
+  "full_source_merkle_root": "0ad62c893c445860970ff2241fd2c06d319b83ca2346114bae92eeb3805a5336d05db788b168564314419510d4034ddbc796de6010a118a01d309407195c8791",
   "full_source_file_count": 58,
   "full_source_scope_description": "Authoritative Sovereign Data Plane (50 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
-      "expected_sha3_512": "84ee770997ae6820d0d7a341d57b389cc7acc9a8ac519a1311e468f1a1aefaab64972f4197634cafadfe1c7a8b2c32012b7ce4f3678487f2387f86557fea3b18",
-      "actual_sha3_512": "84ee770997ae6820d0d7a341d57b389cc7acc9a8ac519a1311e468f1a1aefaab64972f4197634cafadfe1c7a8b2c32012b7ce4f3678487f2387f86557fea3b18",
+      "expected_sha3_512": "e173a1ec7d8967cebc575469770c6e047d010cf0bfe9cd807b42856a57e0b96cd3fce5285e3e3390fd8837fb4cd0939daf67cfb29fc7bd95e5b5f3f8ad5313ec",
+      "actual_sha3_512": "e173a1ec7d8967cebc575469770c6e047d010cf0bfe9cd807b42856a57e0b96cd3fce5285e3e3390fd8837fb4cd0939daf67cfb29fc7bd95e5b5f3f8ad5313ec",
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "b462b45ae8878187bfd623fc1676121db81ceb508545a337a8eb26ff2c7b47f1d7cbfd7de585bc2d8c34be2b83c6bf1bbb2571ff4d432ac172ca762e970933b1",
-      "actual_sha3_512": "b462b45ae8878187bfd623fc1676121db81ceb508545a337a8eb26ff2c7b47f1d7cbfd7de585bc2d8c34be2b83c6bf1bbb2571ff4d432ac172ca762e970933b1",
+      "expected_sha3_512": "51b49d799f74cf5d67830d8e61be665c378c85a9b5f764ce5bc0c1e8dec6d9c28456e9f039cc50f1efaec4face8e5aafa3b5702fcab7773db9305fb0bea2dabc",
+      "actual_sha3_512": "51b49d799f74cf5d67830d8e61be665c378c85a9b5f764ce5bc0c1e8dec6d9c28456e9f039cc50f1efaec4face8e5aafa3b5702fcab7773db9305fb0bea2dabc",
       "matched": true
     },
     "ts_runtime.py": {

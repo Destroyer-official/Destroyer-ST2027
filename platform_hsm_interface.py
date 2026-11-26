@@ -10,44 +10,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 from utils.helpers import is_env_true
-
-# NIST SP 800-38D Section 8.2.1 Deterministic Nonce/IV Generator
-# 96 bits = 32-bit fixed context/device field + 64-bit atomic monotonic counter.
-# Reseeds automatically on fork to prevent cross-process AES-GCM nonce reuse.
-_gcm_iv_lock = threading.Lock()
-_gcm_iv_pid = os.getpid()
-_gcm_iv_fixed = secrets.token_bytes(4)
-_gcm_iv_counter = 0
-
-
-def _reseed_gcm_iv_locked() -> None:
-    global _gcm_iv_pid, _gcm_iv_fixed, _gcm_iv_counter
-    _gcm_iv_pid = os.getpid()
-    _gcm_iv_fixed = secrets.token_bytes(4)
-    _gcm_iv_counter = 0
-
-
-def _on_gcm_fork_child() -> None:
-    with _gcm_iv_lock:
-        _reseed_gcm_iv_locked()
-
-
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_on_gcm_fork_child)
-
-
-def generate_deterministic_gcm_iv() -> bytes:
-    """Generate 96-bit deterministic IV per NIST SP 800-38D Section 8.2.1.
-    Fixed field (4 bytes) || Atomic Counter (8 bytes, big-endian).
-    """
-    global _gcm_iv_counter
-    with _gcm_iv_lock:
-        if os.getpid() != _gcm_iv_pid:
-            _reseed_gcm_iv_locked()
-        _gcm_iv_counter += 1
-        if _gcm_iv_counter >= (1 << 64) - 1:
-            raise OverflowError("NIST SP 800-38D counter exhaustion: rekey required")
-        return _gcm_iv_fixed + _gcm_iv_counter.to_bytes(8, byteorder="big")
+from cnsa_crypto_gateway import (
+    cnsa_aes_256_gcm_decrypt,
+    cnsa_aes_256_gcm_encrypt,
+    generate_deterministic_gcm_iv,
+)
 
 
 
@@ -76,18 +43,12 @@ def secure_hash(data: bytes) -> bytes:
     return hashlib.sha3_512(data).digest()
 
 def secure_encrypt_aes_256_gcm(plaintext: bytes, key: bytes) -> tuple:
-    """Encrypt with AES-256-GCM using NIST SP 800-38D Section 8.2.1 deterministic 96-bit IV."""
-    iv = generate_deterministic_gcm_iv()
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(plaintext) + encryptor.finalize()
-    return ciphertext, iv, encryptor.tag
+    """Encrypt with AES-256-GCM via canonical cnsa_crypto_gateway (key-bound durable IV)."""
+    return cnsa_aes_256_gcm_encrypt(plaintext, key)
 
 def secure_decrypt_aes_256_gcm(ciphertext: bytes, key: bytes, iv: bytes, tag: bytes) -> bytes:
-    """Decrypt with AES-256-GCM (NIST Level 5+)"""
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    return decryptor.update(ciphertext) + decryptor.finalize()
+    """Decrypt with AES-256-GCM via canonical cnsa_crypto_gateway."""
+    return cnsa_aes_256_gcm_decrypt(ciphertext, key, iv, tag)
 
 class NISTLevel5PolicyEngine:
     """NIST Level 5+ Security Policy Engine"""
@@ -6784,31 +6745,75 @@ class TPMRemoteAttestation:
             logger.error(f"Error generating attestation: {e}")
             return None
 
-    def verify_attestation(self, attestation_data, public_key=None, expected_nonce=None):
+    def verify_attestation(self, attestation_data, public_key=None, expected_nonce=None, *, allow_simulation: bool = False):
         """
         Verify a TPM attestation quote and measurements against expected baseline.
 
         FIPS 140-3 Level 3/4 & NIST SP 800-155 compliant.
-        Fail-closed in production mode (SECURE_P2P_PRODUCTION=true).
-
-        Args:
-            attestation_data: Attestation data dict from generate_attestation
-            public_key: Optional public key to verify the quote signature
-            expected_nonce: Optional expected anti-replay challenge nonce (bytes or hex str)
-
-        Returns:
-            bool: True if valid, False otherwise
+        Fail-closed in production mode (P2P_PRODUCTION=1 / SECURE_P2P_PRODUCTION=true):
+        - Rejects DEGRADED_SECONDARY_SIMULATION and unverified software modes unconditionally.
+        - Validates optional binary TPMS_ATTEST magic header (0xFF544347) when provided.
+        - Requires verified hardware EK/AK endorsement proof (no caller-supplied arbitrary
+          public key trust bypass in production).
+        - Outside production, rejects DEGRADED_SECONDARY_SIMULATION unless allow_simulation=True.
         """
         if not attestation_data or not isinstance(attestation_data, dict):
             logger.error("Attestation verification failed: empty or non-dict payload")
             return False
 
         try:
+            from production_gate import is_production as _pg_is_production
             prod_mode = (
-                is_env_true('SECURE_P2P_PRODUCTION')
-                or is_env_true('P2P_PRODUCTION')
+                bool(_pg_is_production())
                 or is_env_true('P2P_FAIL_ON_SOFTWARE_FALLBACK')
             )
+
+            # 0. Hardware-mode & EK/AK endorsement gating (F-04 remediation)
+            hw_mode = str(attestation_data.get("hardware_mode", "")).strip()
+            if prod_mode:
+                if hw_mode != "HARDWARE_ROOT_ENFORCED":
+                    logger.error(
+                        f"MILITARY FATAL: Production attestation refused non-hardware mode {hw_mode!r}"
+                    )
+                    raise HardwareSecurityRequirementError(
+                        f"Production attestation strictly rejects non-hardware mode {hw_mode!r}",
+                        error_code=HardwareSecurityErrorCode.GENERAL_HARDWARE_VIOLATION,
+                        device_diagnostics={"hardware_mode": hw_mode},
+                    )
+                ek_chain = attestation_data.get("ek_cert_chain")
+                vendor = str(attestation_data.get("tpm_vendor", "amd")).strip() or "amd"
+                if not ek_chain or not isinstance(ek_chain, list):
+                    logger.error(
+                        "MILITARY FATAL: Production attestation missing TPM EK certificate chain (arbitrary caller public_key not accepted)"
+                    )
+                    raise HardwareSecurityRequirementError(
+                        "Production TPM attestation requires verified EK certificate chain",
+                        error_code=HardwareSecurityErrorCode.ATTESTATION_PUBKEY_REQUIRED,
+                        device_diagnostics={"hardware_mode": hw_mode, "has_ek_chain": False},
+                    )
+                from tpm_quote import _verify_ek_chain
+                chain_bytes = [bytes.fromhex(c) if isinstance(c, str) else bytes(c) for c in ek_chain]
+                if not _verify_ek_chain(chain_bytes, vendor=vendor):
+                    logger.error("MILITARY FATAL: TPM EK certificate chain failed vendor root validation")
+                    raise HardwareSecurityRequirementError(
+                        "TPM EK certificate chain failed vendor root verification",
+                        error_code=HardwareSecurityErrorCode.ATTESTATION_SIGNATURE_FAILED,
+                        device_diagnostics={"vendor": vendor},
+                    )
+            else:
+                if hw_mode == "DEGRADED_SECONDARY_SIMULATION" and not allow_simulation:
+                    logger.error(
+                        "Attestation rejected: DEGRADED_SECONDARY_SIMULATION requires explicit allow_simulation=True in non-production"
+                    )
+                    return False
+
+            # Optional raw TPMS_ATTEST magic header validation (0xFF544347 = "\xffTCG")
+            tpms_attest_hex = attestation_data.get("tpms_attest_hex")
+            if tpms_attest_hex is not None:
+                raw_tpms = bytes.fromhex(str(tpms_attest_hex).strip())
+                if len(raw_tpms) < 4 or raw_tpms[:4] != b"\xffTCG":
+                    logger.error("Attestation TPMS_ATTEST magic != 0xFF544347")
+                    return False
 
             # 1. Verify timestamp (must be within last 300 seconds / 5 minutes)
             timestamp = attestation_data.get("timestamp", 0)

@@ -21,49 +21,144 @@ pub const IN_BAND_EPOCH_REKEY: u8 = 0x07;
 pub const FTYPE_CHAFF: u8 = 0xFF;
 
 /// In-Band Epoch Rekey payload format constants:
-/// Payload format: EpochIndex (u32) || Ephemeral_MLKEM_Ciphertext (1568 bytes) || AuthTag (16 bytes).
+/// Payload format:
+/// `EpochIndex (u32 BE) || Ephemeral_P384_Pub (97B) || Ephemeral_MLKEM_CT (1568B) || Next_P384_Pub (97B) || Next_MLKEM_EK (1568B) || AuthTag (32B)`
 pub const EPOCH_INDEX_LEN: usize = 4;
+pub const P384_PK_WIRE_LEN: usize = 97;
 pub const MLKEM1024_CT_LEN: usize = 1568;
-pub const AUTH_TAG_16_LEN: usize = 16;
-pub const IN_BAND_REKEY_PAYLOAD_LEN: usize = EPOCH_INDEX_LEN + MLKEM1024_CT_LEN + AUTH_TAG_16_LEN; // 1588 bytes
+pub const MLKEM1024_EK_WIRE_LEN: usize = 1568;
+pub const AUTH_TAG_32_LEN: usize = 32;
+pub const MLDSA87_SIG_WIRE_LEN: usize = 4627;
+pub const AUTH_TAG_16_LEN: usize = 16; // preserved constant alias for external references
+pub const IN_BAND_REKEY_PAYLOAD_LEN: usize = EPOCH_INDEX_LEN
+    + P384_PK_WIRE_LEN
+    + MLKEM1024_CT_LEN
+    + P384_PK_WIRE_LEN
+    + MLKEM1024_EK_WIRE_LEN
+    + AUTH_TAG_32_LEN; // 3366 bytes
+pub const IN_BAND_REKEY_AUTH_PAYLOAD_LEN: usize = IN_BAND_REKEY_PAYLOAD_LEN + MLDSA87_SIG_WIRE_LEN; // 7993 bytes
 
-/// Wire representation of an In-Band Continuous Epoch Ratchet (CER) rekey payload.
+/// Wire representation of a hybrid Continuous Epoch Ratchet (CER) rekey payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InBandEpochRekeyPayload {
     /// Monotonic epoch index (32-bit big-endian).
     pub epoch: u32,
+    /// Fresh ephemeral P-384 ECDHE share (97 bytes uncompressed SEC1).
+    pub eph_p_pub: [u8; P384_PK_WIRE_LEN],
     /// Fresh ephemeral ML-KEM-1024 ciphertext (1568 bytes, FIPS 203).
     pub ct: [u8; MLKEM1024_CT_LEN],
-    /// 16-byte HMAC-SHA384 authentication tag covering (epoch || ct) under root key.
-    pub tag: [u8; AUTH_TAG_16_LEN],
+    /// Sender's rotated next P-384 public key for consecutive epochs (97 bytes).
+    pub next_p_pub: [u8; P384_PK_WIRE_LEN],
+    /// Sender's rotated next ML-KEM-1024 encapsulation key (1568 bytes).
+    pub next_ek: [u8; MLKEM1024_EK_WIRE_LEN],
+    /// 32-byte HMAC-SHA384 authentication tag covering all preceding fields under domain-separated root key.
+    pub tag: [u8; AUTH_TAG_32_LEN],
+    /// Optional 4627-byte ML-DSA-87 signature binding long-term peer identity (mandatory in production/identity mode).
+    pub mldsa_sig: Option<Vec<u8>>,
 }
 
 impl InBandEpochRekeyPayload {
-    pub fn new(epoch: u32, ct: [u8; MLKEM1024_CT_LEN], tag: [u8; AUTH_TAG_16_LEN]) -> Self {
-        Self { epoch, ct, tag }
+    pub fn new(
+        epoch: u32,
+        eph_p_pub: [u8; P384_PK_WIRE_LEN],
+        ct: [u8; MLKEM1024_CT_LEN],
+        next_p_pub: [u8; P384_PK_WIRE_LEN],
+        next_ek: [u8; MLKEM1024_EK_WIRE_LEN],
+        tag: [u8; AUTH_TAG_32_LEN],
+    ) -> Self {
+        Self {
+            epoch,
+            eph_p_pub,
+            ct,
+            next_p_pub,
+            next_ek,
+            tag,
+            mldsa_sig: None,
+        }
     }
 
-    /// Serialize payload to contiguous 1588-byte buffer:
-    /// `EpochIndex (u32 BE) || Ephemeral_MLKEM_Ciphertext (1568B) || AuthTag (16B)`
+    pub fn with_signature(mut self, sig: Vec<u8>) -> Result<Self, CoreError> {
+        if sig.len() != MLDSA87_SIG_WIRE_LEN {
+            return Err(CoreError::Malformed);
+        }
+        self.mldsa_sig = Some(sig);
+        Ok(self)
+    }
+
+    /// Serialize body + tag (3366B base) and append ML-DSA-87 signature (4627B) if attached.
+    pub fn to_vec(&self) -> Vec<u8> {
+        let base = self.to_bytes();
+        match self.mldsa_sig {
+            Some(ref sig) => {
+                let mut out = Vec::with_capacity(IN_BAND_REKEY_PAYLOAD_LEN + sig.len());
+                out.extend_from_slice(&base);
+                out.extend_from_slice(sig);
+                out
+            }
+            None => base.to_vec(),
+        }
+    }
+
+    /// Serialize base payload (without optional ML-DSA-87 trailer) to 3366-byte buffer.
     pub fn to_bytes(&self) -> [u8; IN_BAND_REKEY_PAYLOAD_LEN] {
         let mut out = [0u8; IN_BAND_REKEY_PAYLOAD_LEN];
-        out[..4].copy_from_slice(&self.epoch.to_be_bytes());
-        out[4..4 + MLKEM1024_CT_LEN].copy_from_slice(&self.ct);
-        out[4 + MLKEM1024_CT_LEN..].copy_from_slice(&self.tag);
+        let mut off = 0;
+        out[off..off + 4].copy_from_slice(&self.epoch.to_be_bytes());
+        off += 4;
+        out[off..off + P384_PK_WIRE_LEN].copy_from_slice(&self.eph_p_pub);
+        off += P384_PK_WIRE_LEN;
+        out[off..off + MLKEM1024_CT_LEN].copy_from_slice(&self.ct);
+        off += MLKEM1024_CT_LEN;
+        out[off..off + P384_PK_WIRE_LEN].copy_from_slice(&self.next_p_pub);
+        off += P384_PK_WIRE_LEN;
+        out[off..off + MLKEM1024_EK_WIRE_LEN].copy_from_slice(&self.next_ek);
+        off += MLKEM1024_EK_WIRE_LEN;
+        out[off..].copy_from_slice(&self.tag);
         out
     }
 
-    /// Parse and validate payload from binary slice.
+    /// Parse and validate payload from binary slice (accepts 3366B base or 7993B ML-DSA-87 authenticated payload).
     pub fn from_bytes(slice: &[u8]) -> Result<Self, CoreError> {
-        if slice.len() != IN_BAND_REKEY_PAYLOAD_LEN {
+        if slice.len() != IN_BAND_REKEY_PAYLOAD_LEN && slice.len() != IN_BAND_REKEY_AUTH_PAYLOAD_LEN
+        {
             return Err(CoreError::Malformed);
         }
-        let epoch = u32::from_be_bytes(slice[..4].try_into().map_err(|_| CoreError::Malformed)?);
+        let mut off = 0;
+        let epoch = u32::from_be_bytes(
+            slice[off..off + 4]
+                .try_into()
+                .map_err(|_| CoreError::Malformed)?,
+        );
+        off += 4;
+        let mut eph_p_pub = [0u8; P384_PK_WIRE_LEN];
+        eph_p_pub.copy_from_slice(&slice[off..off + P384_PK_WIRE_LEN]);
+        off += P384_PK_WIRE_LEN;
         let mut ct = [0u8; MLKEM1024_CT_LEN];
-        ct.copy_from_slice(&slice[4..4 + MLKEM1024_CT_LEN]);
-        let mut tag = [0u8; AUTH_TAG_16_LEN];
-        tag.copy_from_slice(&slice[4 + MLKEM1024_CT_LEN..]);
-        Ok(Self { epoch, ct, tag })
+        ct.copy_from_slice(&slice[off..off + MLKEM1024_CT_LEN]);
+        off += MLKEM1024_CT_LEN;
+        let mut next_p_pub = [0u8; P384_PK_WIRE_LEN];
+        next_p_pub.copy_from_slice(&slice[off..off + P384_PK_WIRE_LEN]);
+        off += P384_PK_WIRE_LEN;
+        let mut next_ek = [0u8; MLKEM1024_EK_WIRE_LEN];
+        next_ek.copy_from_slice(&slice[off..off + MLKEM1024_EK_WIRE_LEN]);
+        off += MLKEM1024_EK_WIRE_LEN;
+        let mut tag = [0u8; AUTH_TAG_32_LEN];
+        tag.copy_from_slice(&slice[off..off + AUTH_TAG_32_LEN]);
+        off += AUTH_TAG_32_LEN;
+        let mldsa_sig = if slice.len() == IN_BAND_REKEY_AUTH_PAYLOAD_LEN {
+            Some(slice[off..].to_vec())
+        } else {
+            None
+        };
+        Ok(Self {
+            epoch,
+            eph_p_pub,
+            ct,
+            next_p_pub,
+            next_ek,
+            tag,
+            mldsa_sig,
+        })
     }
 }
 
@@ -144,19 +239,25 @@ mod tests {
     }
     #[test]
     fn in_band_epoch_rekey_payload_roundtrip() {
+        let eph_p = [0x11u8; P384_PK_WIRE_LEN];
         let mut ct = [0u8; MLKEM1024_CT_LEN];
         ct[0] = 0xAA;
         ct[MLKEM1024_CT_LEN - 1] = 0x55;
-        let mut tag = [0u8; AUTH_TAG_16_LEN];
+        let next_p = [0x22u8; P384_PK_WIRE_LEN];
+        let next_ek = [0x33u8; MLKEM1024_EK_WIRE_LEN];
+        let mut tag = [0u8; AUTH_TAG_32_LEN];
         tag[0] = 0x12;
-        tag[AUTH_TAG_16_LEN - 1] = 0x34;
+        tag[AUTH_TAG_32_LEN - 1] = 0x34;
 
-        let payload = InBandEpochRekeyPayload::new(42, ct, tag);
+        let payload = InBandEpochRekeyPayload::new(42, eph_p, ct, next_p, next_ek, tag);
         let bytes = payload.to_bytes();
         assert_eq!(bytes.len(), IN_BAND_REKEY_PAYLOAD_LEN);
         assert_eq!(&bytes[..4], &42u32.to_be_bytes());
-        assert_eq!(&bytes[4..4 + MLKEM1024_CT_LEN], &ct);
-        assert_eq!(&bytes[4 + MLKEM1024_CT_LEN..], &tag);
+        assert_eq!(&bytes[4..4 + P384_PK_WIRE_LEN], &eph_p);
+        assert_eq!(
+            &bytes[4 + P384_PK_WIRE_LEN..4 + P384_PK_WIRE_LEN + MLKEM1024_CT_LEN],
+            &ct
+        );
 
         let parsed = InBandEpochRekeyPayload::from_bytes(&bytes).unwrap();
         assert_eq!(parsed, payload);

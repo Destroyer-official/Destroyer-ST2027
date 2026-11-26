@@ -41,6 +41,7 @@
   },
   
   "hsm_tpm": {
+    "_hardware_note": "Provision hsm_library_path (or set P2P_HSM_LIBRARY) for PKCS#11 tokens; tpm_device applies to Linux (/dev/tpm0) only (Windows uses TBS). Production configs must be signed offline with scripts/sign_boot_config.py (.mldsa87.sig/.dsse).",
     "enable_hsm": false,
     "hsm_type": "pkcs11",
     "hsm_library_path": "",

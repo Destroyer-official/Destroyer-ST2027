@@ -17,7 +17,9 @@ use tokio::{net::UdpSocket, time::timeout};
 
 use crate::aead::{self, FrameKey, DIR_RECV, DIR_SEND};
 use crate::fragment::{fragment, Fragment, ReassemblyBuffer};
-use crate::frame::{FTYPE_IN_BAND_EPOCH_REKEY, IN_BAND_REKEY_PAYLOAD_LEN};
+use crate::frame::{
+    FTYPE_IN_BAND_EPOCH_REKEY, IN_BAND_REKEY_AUTH_PAYLOAD_LEN, IN_BAND_REKEY_PAYLOAD_LEN,
+};
 use crate::policy::CoreError;
 use crate::ratchet::PcsRatchet;
 use crate::replay::AntiReplayWindow;
@@ -279,7 +281,7 @@ impl ActiveTransmissionLoop {
         self.previous_frame_key = Some(self.current_frame_key.clone());
         self.current_frame_key = next_key;
 
-        if self.quantum >= 1615 {
+        if self.quantum >= IN_BAND_REKEY_PAYLOAD_LEN + crate::frame::FRAME_OVERHEAD {
             // Direct unfragmented mode (jumbo / enclave)
             let seq = self.next_send_seq;
             self.next_send_seq = self
@@ -503,8 +505,8 @@ impl ActiveTransmissionLoop {
         }
 
         if ftype == FTYPE_IN_BAND_EPOCH_REKEY {
-            // Process rekey payload (either direct 1588 bytes or fragmented)
-            if pt.len() == IN_BAND_REKEY_PAYLOAD_LEN {
+            // Process rekey payload (either direct 3366B/7993B or fragmented)
+            if pt.len() == IN_BAND_REKEY_PAYLOAD_LEN || pt.len() == IN_BAND_REKEY_AUTH_PAYLOAD_LEN {
                 self.ratchet.process_in_band_epoch_rekey(&pt)?;
                 self.previous_frame_key = Some(self.current_frame_key.clone());
                 self.current_frame_key = self.ratchet.current_frame_key()?;
@@ -524,7 +526,9 @@ impl ActiveTransmissionLoop {
                 if should_assemble {
                     if let Some(r) = self.active_reassembly.take() {
                         if let Ok(full_bytes) = r.reassemble() {
-                            if full_bytes.len() == IN_BAND_REKEY_PAYLOAD_LEN {
+                            if full_bytes.len() == IN_BAND_REKEY_PAYLOAD_LEN
+                                || full_bytes.len() == IN_BAND_REKEY_AUTH_PAYLOAD_LEN
+                            {
                                 self.ratchet.process_in_band_epoch_rekey(&full_bytes)?;
                                 self.previous_frame_key = Some(self.current_frame_key.clone());
                                 self.current_frame_key = self.ratchet.current_frame_key()?;

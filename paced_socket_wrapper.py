@@ -34,11 +34,12 @@ from typing import Optional
 
 log = logging.getLogger("paced_socket_wrapper")
 
-# Workspace resolution for the native binary
+# Workspace resolution for the native binary — prefer debug build (has lab-surfaces
+# feature for --lab flag in non-production mode); fall back to release.
 ROOT = Path(__file__).resolve().parent
-NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
-if not NATIVE_BIN.exists():
-    NATIVE_BIN = ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+_BIN_DEBUG = ROOT / "rust_data_plane" / "target" / "debug" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+_BIN_RELEASE = ROOT / "rust_data_plane" / "target" / "release" / ("secure-transmit.exe" if os.name == "nt" else "secure-transmit")
+NATIVE_BIN = _BIN_DEBUG if _BIN_DEBUG.exists() else _BIN_RELEASE
 
 
 class PacedChannel:
@@ -113,6 +114,12 @@ class PacedChannel:
             "--drain-ticks", str(self.DEFAULT_DRAIN_TICKS),
             "--stdin",  # Enable interactive stdin for sending messages
         ]
+        try:
+            import production_gate
+            if not production_gate.is_production():
+                cmd.append("--lab")
+        except Exception:
+            cmd.append("--lab")
 
         try:
             self._proc = subprocess.Popen(

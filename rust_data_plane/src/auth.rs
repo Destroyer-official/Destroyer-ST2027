@@ -599,6 +599,111 @@ impl Mldsa87SigningKey {
     }
 }
 
+/// Hardware-agnostic ML-DSA-87 signing authority (in-silicon PKCS#11 HSM,
+/// TPM 2.0 PCR-unsealed key, or non-production disk seed).
+pub enum AuthSigner {
+    SoftwareOrTpmUnsealed(Mldsa87SigningKey),
+    Pkcs11 {
+        session: HsmSession,
+        priv_handle: ObjectHandle,
+        pub_bytes: Vec<u8>,
+    },
+}
+
+impl AuthSigner {
+    /// Open a hardware-resident signing key inside a PKCS#11 token / HSM.
+    /// Rejects extractable private keys (`CKA_EXTRACTABLE = true`) in production.
+    pub fn open_pkcs11(
+        label: Option<&str>,
+        id_bytes: Option<&[u8]>,
+        pub_override: Option<Vec<u8>>,
+    ) -> Result<Self, HsmError> {
+        let mut cfg = HsmConfig::from_env();
+        if let Some(l) = label {
+            cfg.key_label = Some(l.to_string());
+        }
+        if let Some(i) = id_bytes {
+            cfg.key_id = Some(i.to_vec());
+        }
+        let eff_label = cfg.key_label.clone();
+        let eff_id = cfg.key_id.clone();
+
+        let session = HsmSession::open(&cfg)?;
+        let priv_handle = session.find_private_key(eff_label.as_deref(), eff_id.as_deref())?;
+
+        // FIPS 140-3 IG enforcement: verify CKA_EXTRACTABLE != true on production tokens
+        if crate::policy::is_production_env() {
+            if let Ok(attrs) = session
+                .session()
+                .get_attributes(priv_handle, &[AttributeType::Extractable])
+            {
+                for attr in attrs {
+                    if let Attribute::Extractable(true) = attr {
+                        return Err(HsmError::HardwareRefusal(
+                            "Token key has CKA_EXTRACTABLE=true; production requires non-extractable silicon custody".into(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let pub_bytes = if let Some(pb) = pub_override {
+            pb
+        } else {
+            let pub_handle = session.find_public_key(eff_label.as_deref(), eff_id.as_deref())?;
+            session.get_public_key_bytes(pub_handle)?
+        };
+        if pub_bytes.len() != MLDSA87_PK {
+            return Err(HsmError::KeyNotFound(format!(
+                "PKCS#11 public key length {} != MLDSA87_PK ({})",
+                pub_bytes.len(),
+                MLDSA87_PK
+            )));
+        }
+
+        Ok(Self::Pkcs11 {
+            session,
+            priv_handle,
+            pub_bytes,
+        })
+    }
+
+    pub fn sign(&self, domain: &[u8], message: &[u8]) -> Result<Vec<u8>, CoreError> {
+        match self {
+            Self::SoftwareOrTpmUnsealed(sk) => Ok(sk.sign(domain, message)),
+            Self::Pkcs11 {
+                session,
+                priv_handle,
+                ..
+            } => {
+                let mut m = Vec::with_capacity(domain.len() + message.len());
+                m.extend_from_slice(domain);
+                m.extend_from_slice(message);
+                session
+                    .sign(*priv_handle, &m)
+                    .map_err(|_| CoreError::BadSignature)
+            }
+        }
+    }
+
+    pub fn verifying_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::SoftwareOrTpmUnsealed(sk) => sk.verifying_bytes(),
+            Self::Pkcs11 { pub_bytes, .. } => pub_bytes.clone(),
+        }
+    }
+}
+
+/// Sign responder transcript leg via `AuthSigner` (PKCS#11 HSM, TPM-unsealed, or non-prod seed).
+pub fn sign_responder_auth(signer: &AuthSigner, transcript: &[u8; 48]) -> Result<Vec<u8>, CoreError> {
+    signer.sign(DOMAIN_SIG_RESPONDER, transcript)
+}
+
+/// Sign initiator transcript leg via `AuthSigner` (PKCS#11 HSM, TPM-unsealed, or non-prod seed).
+pub fn sign_initiator_auth(signer: &AuthSigner, transcript: &[u8; 48]) -> Result<Vec<u8>, CoreError> {
+    signer.sign(DOMAIN_SIG_INITIATOR, transcript)
+}
+
 /// ML-DSA-87 verifying key (public, enrolled out-of-band).
 #[derive(Debug, Clone)]
 pub struct Mldsa87VerifyingKey {

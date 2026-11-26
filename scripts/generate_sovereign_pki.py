@@ -54,8 +54,12 @@ def main():
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
+    now_utc = datetime.now(timezone.utc)
+    CEREMONY_TYPE = "SOFTWARE_DEV_FIXTURE_NOT_EXTERNALLY_ANCHORED"
+
     root_cert_data = {
         "certificate_type": "SOVEREIGN_ROOT_CA",
+        "ceremony_type": CEREMONY_TYPE,
         "subject": root_cert.subject,
         "issuer": root_cert.issuer,
         "serial_number": root_cert.serial,
@@ -85,6 +89,7 @@ def main():
 
     sub_cert_data = {
         "certificate_type": "SOVEREIGN_SUB_CA",
+        "ceremony_type": CEREMONY_TYPE,
         "subject": sub_cert.subject,
         "issuer": sub_cert.issuer,
         "serial_number": sub_cert.serial,
@@ -102,14 +107,14 @@ def main():
 
     # 3. Issue Node Alpha Identity Certificate
     print("  -> Issuing Node Alpha Certificate...")
-    alpha_pk, alpha_sk = mldsa.keygen()
+    alpha_pk, _alpha_sk = mldsa.keygen()
     tbs_alpha = {
         "serial_number": 1001,
         "subject": "CN=tactical-node-alpha.mil,OU=Forward Base Alpha,O=Tactical P2P,C=US",
         "issuer": "CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
         "public_key": alpha_pk.hex(),
-        "not_before": datetime.now(timezone.utc).isoformat(),
-        "not_after": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(),
+        "not_before": now_utc.isoformat(),
+        "not_after": (now_utc + timedelta(days=365)).isoformat(),
         "san": ["DNS:tactical-node-alpha.mil", "IP:127.0.0.1", "TOR:alpha5739281.onion"],
         "key_usage": ["digitalSignature", "keyEncipherment", "clientAuth", "serverAuth"]
     }
@@ -117,6 +122,7 @@ def main():
 
     alpha_cert_data = {
         "certificate_type": "TACTICAL_PEER_IDENTITY",
+        "ceremony_type": CEREMONY_TYPE,
         "tbs_data": tbs_alpha,
         "signature_algorithm": "ML-DSA-87",
         "signature_hex": alpha_sig.hex()
@@ -126,14 +132,14 @@ def main():
 
     # 4. Issue Node Bravo Identity Certificate
     print("  -> Issuing Node Bravo Certificate...")
-    bravo_pk, bravo_sk = mldsa.keygen()
+    bravo_pk, _bravo_sk = mldsa.keygen()
     tbs_bravo = {
         "serial_number": 1002,
         "subject": "CN=tactical-node-bravo.mil,OU=Forward Base Bravo,O=Tactical P2P,C=US",
         "issuer": "CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
         "public_key": bravo_pk.hex(),
-        "not_before": datetime.now(timezone.utc).isoformat(),
-        "not_after": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(),
+        "not_before": now_utc.isoformat(),
+        "not_after": (now_utc + timedelta(days=365)).isoformat(),
         "san": ["DNS:tactical-node-bravo.mil", "IP:127.0.0.1", "TOR:bravo9184712.onion"],
         "key_usage": ["digitalSignature", "keyEncipherment", "clientAuth", "serverAuth"]
     }
@@ -141,6 +147,7 @@ def main():
 
     bravo_cert_data = {
         "certificate_type": "TACTICAL_PEER_IDENTITY",
+        "ceremony_type": CEREMONY_TYPE,
         "tbs_data": tbs_bravo,
         "signature_algorithm": "ML-DSA-87",
         "signature_hex": bravo_sig.hex()
@@ -153,13 +160,14 @@ def main():
     crl_data = {
         "crl_number": 1,
         "issuer": "CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
-        "this_update": datetime.now(timezone.utc).isoformat(),
-        "next_update": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "this_update": now_utc.isoformat(),
+        "next_update": (now_utc + timedelta(days=365)).isoformat(),
         "revoked_certificates": [],
         "hash_chain_digest": hashlib.sha3_512(b"GENESIS_CRL_STATE").hexdigest()
     }
     crl_sig = mldsa.sign(sub_sk, json.dumps(crl_data, sort_keys=True).encode())
     crl_manifest = {
+        "ceremony_type": CEREMONY_TYPE,
         "crl": crl_data,
         "signature_algorithm": "ML-DSA-87",
         "signature_hex": crl_sig.hex()
@@ -186,7 +194,9 @@ def main():
 
     manifest_data = {
         "pki_version": "2027.1.0",
-        "generation_timestamp": datetime.now(timezone.utc).isoformat(),
+        "ceremony_type": CEREMONY_TYPE,
+        "externally_anchored": False,
+        "generation_timestamp": now_utc.isoformat(),
         "standard_compliance": ["FIPS 204", "FIPS 205", "CNSA 2.0", "NIST SP 800-57"],
         "root_authority": "CN=Sovereign-Defense-Root-CA",
         "merkle_root": pki_merkle_root,
@@ -195,7 +205,49 @@ def main():
     with open(certs_dir / "pki_manifest.json", "w", encoding="utf-8") as f:
         json.dump(manifest_data, f, indent=2)
 
-    print(f"[SUCCESS] Post-Quantum PKI generated successfully in {certs_dir}!")
+    # 7. Write synchronized, non-fabricated development ceremony affidavit
+    affidavit_data = {
+        "affidavit_metadata": {
+            "document_title": "Development PKI Fixture Record (Not Externally Anchored)",
+            "ceremony_type": CEREMONY_TYPE,
+            "ceremony_standard": "NIST SP 800-57 Part 1 Rev. 5 / CNSA 2.0 (Software Fixture Only)",
+            "ceremony_id": "DEV-FIXTURE-CNSA2-LOCAL-PKI",
+            "execution_timestamp_utc": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "pki_manifest_merkle_root": pki_merkle_root,
+        },
+        "ceremony_custodian_quorum": [],
+        "enrolled_root_credentials": {
+            "root_ca": {
+                "file": "certs/sovereign_root_ca.json",
+                "subject": root_cert.subject,
+                "algorithm": "ML-DSA-87 (FIPS 204) + NIST P-521 (FIPS 186-5)",
+                "sha3_512": manifest_entries["sovereign_root_ca.json"]["sha3_512"],
+            },
+            "sub_ca": {
+                "file": "certs/sovereign_sub_ca.json",
+                "subject": sub_cert.subject,
+                "algorithm": "ML-DSA-87 (FIPS 204)",
+                "sha3_512": manifest_entries["sovereign_sub_ca.json"]["sha3_512"],
+            },
+            "crl": {
+                "file": "certs/crl.json",
+                "issuer": "CN=Sovereign-Tactical-Issuing-CA-1,O=Sovereign Defense,C=US",
+                "sha3_512": manifest_entries["crl.json"]["sha3_512"],
+            },
+        },
+        "hardware_root_of_trust": {
+            "status": "SOFTWARE_DEV_FIXTURE_UNVERIFIED",
+            "verified": False,
+            "hardware_tamper_resistant": False,
+            "attestation_method": "SOFTWARE_KEYGEN_LOCAL_FIXTURE",
+            "note": "Local software-generated dev fixture for offline tests only; external CA anchor and physical HSM/TPM ceremony required in production.",
+        },
+        "verdict": "DEV_FIXTURE_UNANCHORED",
+    }
+    with open(certs_dir / "key_ceremony_affidavit.json", "w", encoding="utf-8") as f:
+        json.dump(affidavit_data, f, indent=2)
+
+    print(f"[SUCCESS] Post-Quantum PKI dev fixture generated cleanly in {certs_dir}!")
     print(f"          PKI Merkle Root: {pki_merkle_root[:32]}...")
 
 

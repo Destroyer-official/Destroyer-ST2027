@@ -246,8 +246,8 @@ class DmaBusSecurityAuditor:
                 dma_val, _ = winreg.QueryValueEx(k, "KernelDMAProtection")
                 if dma_val == 0 and is_production_mode():
                     return True, "Kernel DMA Protection disabled in strict production environment"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Windows KernelDMAProtection registry probe unavailable: %s", exc)
         return False, "Kernel DMA Protection active; bus mastering restricted"
 
     def _check_linux_iommu(self) -> Tuple[bool, str]:

@@ -818,7 +818,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
             # Start responder on port_resp, pointing to port_init
             resp_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
                  "--reply", "TACTICAL_RESPONSE_CONFIRMED", "--recv-count", "1",
@@ -829,7 +829,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
             # Start initiator on port_init, pointing to port_resp
             init_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_init,
                  "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
                  "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
                  "--msg", "TACTICAL_COORDINATES_ENCLAVE_ALPHA", "--recv-count", "1",
@@ -866,7 +866,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             state_resp = os.path.join(tmp, "resp_sat.state")
 
             resp_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--tactical-profile", "satellite", "--interval-ms", "25",
                  "--reply", "SATCOM_CONFIRMED_ACK", "--recv-count", "1",
@@ -876,7 +876,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             time.sleep(0.15)
 
             init_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_init,
                  "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
                  "--role", "initiator", "--tactical-profile", "satellite", "--interval-ms", "25",
                  "--msg", "TACTICAL_SATCOM_BURST_MSG", "--recv-count", "1",
@@ -912,7 +912,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
             import threading as _thr
             resp_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
                  "--poisson",
@@ -932,7 +932,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             self.assertTrue(resp_active.wait(timeout=10.0), "Poisson responder channel did not become ACTIVE")
 
             init_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_init,
                  "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
                  "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
                  "--poisson",
@@ -973,7 +973,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
             # Start responder on port_resp, pointing to port_init with --rekey-interval 8
             resp_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
                  "--rekey-interval", "8",
@@ -985,7 +985,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
             # Start initiator on port_init, pointing to port_resp with --rekey-interval 8
             init_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_init,
                  "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
                  "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
                  "--rekey-interval", "8",
@@ -1026,7 +1026,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             state_resp = os.path.join(tmp, "resp_interactive.state")
 
             resp_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_resp,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_resp,
                  "--bind", f"127.0.0.1:{port_resp}", "--to", f"127.0.0.1:{port_init}",
                  "--role", "responder", "--interval-ms", "15", "--quantum", "1232",
                  "--recv-count", "1", "--drain-ticks", "10", "--timeout-ms", "12000"],
@@ -1035,7 +1035,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             time.sleep(0.25)
 
             init_proc = subprocess.Popen(
-                [BIN, "channel", "--key-file", kf, "--state", state_init,
+                [BIN, "channel", "--lab", "--key-file", kf, "--state", state_init,
                  "--bind", f"127.0.0.1:{port_init}", "--to", f"127.0.0.1:{port_resp}",
                  "--role", "initiator", "--interval-ms", "15", "--quantum", "1232",
                  "--stdin", "--timeout-ms", "12000"],
@@ -1130,7 +1130,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             # Start responder
             resp_proc = subprocess.Popen(
                 [
-                    str(BIN), "terminal",
+                    str(BIN), "terminal", "--lab",
                     "--key-file", keyfile,
                     "--state", state_resp,
                     "--bind", addr_resp,
@@ -1153,7 +1153,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
             # Start initiator
             init_proc = subprocess.Popen(
                 [
-                    str(BIN), "terminal",
+                    str(BIN), "terminal", "--lab",
                     "--key-file", keyfile,
                     "--state", state_init,
                     "--bind", addr_init,
@@ -1221,7 +1221,7 @@ class TestRustStandaloneBinary(unittest.TestCase):
 
             proc = subprocess.Popen(
                 [
-                    str(BIN), "terminal",
+                    str(BIN), "terminal", "--lab",
                     "--key-file", keyfile,
                     "--state", state_file,
                     "--bind", f"127.0.0.1:{port}",
@@ -1251,6 +1251,65 @@ class TestRustStandaloneBinary(unittest.TestCase):
             # Verify NIST SP 800-88 purge: files must be wiped and unlinked
             self.assertFalse(os.path.exists(keyfile), "Keyfile must be purged from disk")
             self.assertFalse(os.path.exists(state_file), "State file must be purged from disk")
+
+    def test_production_refuses_key_file_bypass_and_disk_auth_sk(self):
+        """F-01 / F-02 regression: production posture rejects --key-file and --auth-sk-file."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _hex, kf = _new_key_file(tmp)
+            psk = os.path.join(tmp, "shared.psk")
+            with open(psk, "w") as f:
+                f.write(("44" * 32) + "\n")
+            sk = os.path.join(tmp, "id.sk")
+            pk = os.path.join(tmp, "peer.pk")
+            with open(sk, "w") as f:
+                f.write(("11" * 32) + "\n")
+            with open(pk, "w") as f:
+                f.write(("22" * 2592) + "\n")
+            for p in (psk, sk):
+                try:
+                    os.chmod(p, 0o600)
+                except OSError:
+                    pass
+            state_p = os.path.join(tmp, "s.state")
+            env_prod = dict(os.environ)
+            env_prod["P2P_PRODUCTION"] = "1"
+            for bad_k in ("P2P_LAB_MODE", "ST2027_LAB_MODE"):
+                env_prod.pop(bad_k, None)
+
+            # F-02: node --key-file rejected in production AND rejected without --lab
+            r_node_prod = _run(
+                "node", "--role", "initiator", "--bind", "127.0.0.1:0", "--to", "127.0.0.1:1",
+                "--key-file", kf, "--state", state_p, env=env_prod,
+            )
+            self.assertNotEqual(r_node_prod.returncode, 0)
+            self.assertIn("--key-file", r_node_prod.stderr)
+
+            env_nonprod = {k: v for k, v in os.environ.items() if "LAB" not in k and "PRODUCTION" not in k}
+            r_node_nolab = _run(
+                "node", "--role", "initiator", "--bind", "127.0.0.1:0", "--to", "127.0.0.1:1",
+                "--key-file", kf, "--state", state_p, env=env_nonprod,
+            )
+            self.assertNotEqual(r_node_nolab.returncode, 0)
+
+            # F-02: channel --require-mutual-auth --key-file rejected even with --lab
+            r_chan_ma = _run(
+                "channel", "--lab", "--require-mutual-auth",
+                "--key-file", kf, "--state", state_p,
+                "--bind", "127.0.0.1:0", "--to", "127.0.0.1:1", env=env_nonprod,
+            )
+            self.assertNotEqual(r_chan_ma.returncode, 0)
+            self.assertIn("mutual auth", r_chan_ma.stderr.lower())
+
+            # F-01: P2P_PRODUCTION=1 kex-listen --auth-sk-file refused
+            r_sk_prod = _run(
+                "kex-listen", "--bind", "127.0.0.1:0",
+                "--out-key", os.path.join(tmp, "out.key"),
+                "--psk-file", psk, "--auth-sk-file", sk,
+                "--peer-auth-pk-file", pk, env=env_prod,
+            )
+            self.assertNotEqual(r_sk_prod.returncode, 0)
+            self.assertIn("--auth-sk-file", r_sk_prod.stderr)
 
 
 if __name__ == "__main__":

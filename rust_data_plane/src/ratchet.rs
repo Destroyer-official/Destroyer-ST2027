@@ -31,7 +31,8 @@ use std::collections::VecDeque;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::frame::{
-    InBandEpochRekeyPayload, AUTH_TAG_16_LEN, IN_BAND_REKEY_PAYLOAD_LEN, MLKEM1024_CT_LEN,
+    InBandEpochRekeyPayload, AUTH_TAG_32_LEN, IN_BAND_REKEY_PAYLOAD_LEN, MLKEM1024_CT_LEN,
+    MLKEM1024_EK_WIRE_LEN, P384_PK_WIRE_LEN,
 };
 use crate::kem::{EphemeralKeys, HYBRID_SS, MLKEM_CT, MLKEM_PK, P384_PK};
 use crate::policy::{
@@ -216,6 +217,8 @@ pub struct PcsRatchet {
     bundle: EphemeralKeys,
     /// Last received advertised bundle from the peer.
     peer_bundle: Option<AdvertBundle>,
+    /// Optional pinned peer ML-DSA-87 verifying key for authenticated epoch rekeying.
+    peer_vk: Option<crate::auth::Mldsa87VerifyingKey>,
     /// Skipped message keys (bounded).
     skipped: VecDeque<([u8; 32], u64)>,
     /// Automatic rollover packet counter (threshold N = 10,000).
@@ -253,6 +256,7 @@ impl PcsRatchet {
             send_seq: 0,
             bundle,
             peer_bundle: None,
+            peer_vk: None,
             skipped: VecDeque::new(),
             packets_transmitted: 0,
             bytes_transmitted: 0,
@@ -278,6 +282,13 @@ impl PcsRatchet {
     /// Set or update the peer's advertised bundle.
     pub fn set_peer_bundle(&mut self, bundle: AdvertBundle) {
         self.peer_bundle = Some(bundle);
+    }
+
+    /// Pin the peer's long-term ML-DSA-87 identity verifying key.
+    /// When set, `process_in_band_epoch_rekey` rejects any rekey payload lacking
+    /// a valid ML-DSA-87 signature from this identity even if Epoch root RAM leaked.
+    pub fn set_peer_auth_vk(&mut self, vk: crate::auth::Mldsa87VerifyingKey) {
+        self.peer_vk = Some(vk);
     }
 
     /// Peer's current advertised bundle, if received.
@@ -365,34 +376,45 @@ impl PcsRatchet {
         self.bytes_transmitted = 0;
     }
 
-    /// Compute 16-byte HMAC-SHA384 authentication tag covering (epoch || ct) under root key.
+    /// Compute 32-byte HMAC-SHA384 authentication tag covering
+    /// `(epoch || eph_p_pub || ct || next_p_pub || next_ek)` under a domain-separated root key.
     pub fn compute_epoch_auth_tag(
         root: &[u8; 32],
         epoch: u32,
+        eph_p_pub: &[u8; P384_PK_WIRE_LEN],
         ct: &[u8; MLKEM1024_CT_LEN],
-    ) -> Result<[u8; AUTH_TAG_16_LEN], CoreError> {
+        next_p_pub: &[u8; P384_PK_WIRE_LEN],
+        next_ek: &[u8; MLKEM1024_EK_WIRE_LEN],
+    ) -> Result<[u8; AUTH_TAG_32_LEN], CoreError> {
         use hmac::{Hmac, Mac};
         type HmacSha384 = Hmac<sha2::Sha384>;
-        let auth_key = hkdf32(root, DOMAIN_EPOCH_AUTH_KEY, b"ST2027-EPOCH-REKEY-AUTH")?;
+        let auth_key = hkdf32(root, DOMAIN_EPOCH_AUTH_KEY, b"ST2027-EPOCH-REKEY-AUTH-HYBRID-V2")?;
         let mut mac = <HmacSha384 as hmac::digest::KeyInit>::new_from_slice(&auth_key)
             .map_err(|_| CoreError::Malformed)?;
         mac.update(&epoch.to_be_bytes());
+        mac.update(eph_p_pub);
         mac.update(ct);
+        mac.update(next_p_pub);
+        mac.update(next_ek);
         let full_tag = mac.finalize().into_bytes();
-        let mut tag = [0u8; AUTH_TAG_16_LEN];
-        tag.copy_from_slice(&full_tag[..AUTH_TAG_16_LEN]);
+        let mut tag = [0u8; AUTH_TAG_32_LEN];
+        tag.copy_from_slice(&full_tag[..AUTH_TAG_32_LEN]);
         Ok(tag)
     }
 
-    /// Constant-time verification of 16-byte HMAC-SHA384 authentication tag.
+    /// Constant-time verification of 32-byte HMAC-SHA384 authentication tag.
     pub fn verify_epoch_auth_tag(
         root: &[u8; 32],
         epoch: u32,
+        eph_p_pub: &[u8; P384_PK_WIRE_LEN],
         ct: &[u8; MLKEM1024_CT_LEN],
-        tag: &[u8; AUTH_TAG_16_LEN],
+        next_p_pub: &[u8; P384_PK_WIRE_LEN],
+        next_ek: &[u8; MLKEM1024_EK_WIRE_LEN],
+        tag: &[u8; AUTH_TAG_32_LEN],
     ) -> Result<(), CoreError> {
         use subtle::ConstantTimeEq;
-        let expected = Self::compute_epoch_auth_tag(root, epoch, ct)?;
+        let expected =
+            Self::compute_epoch_auth_tag(root, epoch, eph_p_pub, ct, next_p_pub, next_ek)?;
         if expected.ct_eq(tag).into() {
             Ok(())
         } else {
@@ -400,14 +422,14 @@ impl PcsRatchet {
         }
     }
 
-    /// HKDF-SHA384 root derivation:
-    /// `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ML-KEM-1024-Decaps(ct))`
+    /// HKDF-SHA384 root derivation combining BOTH P-384 + ML-KEM-1024 shared secrets:
+    /// `RootKey_{epoch+1} = HKDF-SHA384(salt=RootKey_{epoch}, ikm=hybrid_ss, info=DOMAIN || epoch)`
     fn hkdf_epoch_root(
         current_root: &[u8; 32],
-        ml_ss: &[u8],
+        hybrid_ss: &[u8],
         next_epoch: u32,
     ) -> Result<[u8; 32], CoreError> {
-        let hk = Hkdf::<Sha384>::new(Some(current_root), ml_ss);
+        let hk = Hkdf::<Sha384>::new(Some(current_root), hybrid_ss);
         let mut info = Vec::with_capacity(DOMAIN_EPOCH_RATCHET_ROOT.len() + 4);
         info.extend_from_slice(DOMAIN_EPOCH_RATCHET_ROOT);
         info.extend_from_slice(&next_epoch.to_be_bytes());
@@ -417,14 +439,12 @@ impl PcsRatchet {
         Ok(next_root)
     }
 
-    /// Build a fresh Frame Type 0x07 IN_BAND_EPOCH_REKEY payload (1588 bytes)
-    /// using peer's advertised ML-KEM-1024 encapsulation key.
-    ///
-    /// Payload format: `EpochIndex (u32) || Ephemeral_MLKEM_Ciphertext (1568 bytes) || AuthTag (16 bytes)`.
-    /// Enforces: `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ML-KEM-1024-Decaps(ct))`.
-    /// Immediately volatile-zeroizes old root, old chain, shared secret, and intermediate keys.
+    /// Build a fresh Frame Type 0x07 IN_BAND_EPOCH_REKEY payload (3366 bytes)
+    /// encapsulating BOTH P-384 ECDHE and ML-KEM-1024 against the peer's advertised bundle,
+    /// while carrying our rotated `(next_p_pub, next_ek)` for multi-epoch continuity.
     pub fn build_in_band_epoch_rekey(
         &mut self,
+        peer_p_pub: &[u8; P384_PK],
         peer_ml_ek: &[u8],
     ) -> Result<[u8; IN_BAND_REKEY_PAYLOAD_LEN], CoreError> {
         if peer_ml_ek.len() != MLKEM1024_PK {
@@ -433,21 +453,34 @@ impl PcsRatchet {
         let next_epoch = (self.epoch as u32)
             .checked_add(1)
             .ok_or(CoreError::Oversize)?;
-        let (ct_vec, ml_ss) =
-            crate::kem::encapsulate_mlkem(peer_ml_ek).map_err(|_| CoreError::Malformed)?;
+        let (ct_vec, hybrid_ss, eph_p_pub) =
+            EphemeralKeys::encapsulate(peer_p_pub, peer_ml_ek).map_err(|_| CoreError::Malformed)?;
         if ct_vec.len() != MLKEM1024_CT_LEN {
             return Err(CoreError::Malformed);
         }
         let mut ct = [0u8; MLKEM1024_CT_LEN];
         ct.copy_from_slice(&ct_vec);
 
-        // Compute 16-byte AuthTag bound to (epoch || ct) under current root
-        let tag = Self::compute_epoch_auth_tag(&self.root, next_epoch, &ct)?;
-
-        // Advance root key: RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ss)
-        let new_root = Self::hkdf_epoch_root(&self.root, ml_ss.as_slice(), next_epoch)?;
-        let new_chain = hkdf32(&new_root, DOMAIN_RATCHET_CHAIN, &next_epoch.to_be_bytes())?;
         let fresh_bundle = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
+        let next_p_pub = fresh_bundle.p_public;
+        let mut next_ek = [0u8; MLKEM1024_EK_WIRE_LEN];
+        if fresh_bundle.ml_ek.len() != MLKEM1024_EK_WIRE_LEN {
+            return Err(CoreError::Malformed);
+        }
+        next_ek.copy_from_slice(&fresh_bundle.ml_ek);
+
+        let tag = Self::compute_epoch_auth_tag(
+            &self.root,
+            next_epoch,
+            &eph_p_pub,
+            &ct,
+            &next_p_pub,
+            &next_ek,
+        )?;
+
+        // Advance root key: RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, P384 || ML-KEM-1024)
+        let new_root = Self::hkdf_epoch_root(&self.root, &hybrid_ss[..], next_epoch)?;
+        let new_chain = hkdf32(&new_root, DOMAIN_RATCHET_CHAIN, &next_epoch.to_be_bytes())?;
 
         // Volatile zeroization of old epoch secrets
         self.root.zeroize();
@@ -458,21 +491,45 @@ impl PcsRatchet {
         self.bundle = fresh_bundle;
         self.reset_rollover_counters();
 
-        let mut payload = [0u8; IN_BAND_REKEY_PAYLOAD_LEN];
-        payload[..4].copy_from_slice(&next_epoch.to_be_bytes());
-        payload[4..4 + MLKEM1024_CT_LEN].copy_from_slice(&ct);
-        payload[4 + MLKEM1024_CT_LEN..].copy_from_slice(&tag);
-        Ok(payload)
+        Ok(InBandEpochRekeyPayload::new(
+            next_epoch, eph_p_pub, ct, next_p_pub, next_ek, tag,
+        )
+        .to_bytes())
     }
 
-    /// Process and verify an inbound Frame Type 0x07 IN_BAND_EPOCH_REKEY payload (1588 bytes).
+    /// Build a signed/authenticated Frame Type 0x07 IN_BAND_EPOCH_REKEY payload.
+    /// Returns 7993 bytes when signed by `AuthSigner`, or 3366 bytes when `signer` is `None`.
+    pub fn build_in_band_epoch_rekey_signed(
+        &mut self,
+        peer_p_pub: &[u8; P384_PK],
+        peer_ml_ek: &[u8],
+        signer: Option<&crate::auth::AuthSigner>,
+    ) -> Result<Vec<u8>, CoreError> {
+        let base_bytes = self.build_in_band_epoch_rekey(peer_p_pub, peer_ml_ek)?;
+        if let Some(s) = signer {
+            let parsed = InBandEpochRekeyPayload::from_bytes(&base_bytes)?;
+            let sig = s.sign(b"ST2027-EPOCH-REKEY-MLDSA87-V1", &base_bytes)?;
+            let full = parsed.with_signature(sig)?;
+            Ok(full.to_vec())
+        } else {
+            Ok(base_bytes.to_vec())
+        }
+    }
+
+    /// Process and verify an inbound Frame Type 0x07 IN_BAND_EPOCH_REKEY payload (3366B or 7993B).
     ///
-    /// Verifies 16-byte AuthTag in constant-time BEFORE any state mutation.
-    /// Decapsulates ML-KEM-1024 ciphertext with local private key.
-    /// Evolves root key: `RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, ML-KEM-1024-Decaps(ct))`.
-    /// Immediately volatile-zeroizes old root, old chain, decapsulation key, and intermediate secrets.
+    /// If `peer_vk` is pinned, verifies the ML-DSA-87 long-term signature BEFORE verifying
+    /// `AuthTag` or mutating state (defeating active forgery even under Epoch-0 RAM disclosure).
+    /// Decapsulates BOTH P-384 + ML-KEM-1024 with local private bundle, updates `peer_bundle`
+    /// to sender's freshly advertised `(next_p_pub, next_ek)`, and volatile-zeroizes old secrets.
     pub fn process_in_band_epoch_rekey(&mut self, payload: &[u8]) -> Result<[u8; 32], CoreError> {
         let parsed = InBandEpochRekeyPayload::from_bytes(payload)?;
+        if let Some(ref vk) = self.peer_vk {
+            let sig = parsed.mldsa_sig.as_deref().ok_or(CoreError::AuthRequired)?;
+            vk.verify(b"ST2027-EPOCH-REKEY-MLDSA87-V1", &parsed.to_bytes(), sig)?;
+        } else if parsed.mldsa_sig.is_some() {
+            return Err(CoreError::AuthRequired);
+        }
         let expected_epoch = (self.epoch as u32)
             .checked_add(1)
             .ok_or(CoreError::Oversize)?;
@@ -480,19 +537,32 @@ impl PcsRatchet {
             return Err(CoreError::Stale);
         }
 
-        // Verify 16-byte AuthTag constant-time under current root BEFORE state mutation or decaps
-        Self::verify_epoch_auth_tag(&self.root, parsed.epoch, &parsed.ct, &parsed.tag)?;
+        // Verify 32-byte AuthTag constant-time under current root BEFORE state mutation or decaps
+        Self::verify_epoch_auth_tag(
+            &self.root,
+            parsed.epoch,
+            &parsed.eph_p_pub,
+            &parsed.ct,
+            &parsed.next_p_pub,
+            &parsed.next_ek,
+            &parsed.tag,
+        )?;
 
-        // Decapsulate ML-KEM-1024 ciphertext with local private key
-        let ml_ss = self
+        // Decapsulate BOTH P-384 ECDHE and ML-KEM-1024 with local private bundle
+        let hybrid_ss = self
             .bundle
-            .decapsulate_mlkem(&parsed.ct)
+            .decapsulate(&parsed.eph_p_pub, &parsed.ct)
             .map_err(|_| CoreError::Malformed)?;
 
-        // Advance root key: RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, Decaps(ct))
-        let new_root = Self::hkdf_epoch_root(&self.root, ml_ss.as_slice(), parsed.epoch)?;
+        // Advance root key: RootKey_{epoch+1} = HKDF-SHA384(RootKey_{epoch}, hybrid_ss)
+        let new_root = Self::hkdf_epoch_root(&self.root, &hybrid_ss[..], parsed.epoch)?;
         let new_chain = hkdf32(&new_root, DOMAIN_RATCHET_CHAIN, &parsed.epoch.to_be_bytes())?;
         let fresh_bundle = EphemeralKeys::generate().map_err(|_| CoreError::OsRandom)?;
+        let next_peer_bundle = AdvertBundle::new(
+            parsed.next_p_pub,
+            parsed.next_ek.to_vec(),
+            parsed.epoch as u64,
+        )?;
 
         // Volatile zeroization of old epoch secrets
         self.root.zeroize();
@@ -501,6 +571,7 @@ impl PcsRatchet {
         self.chain = new_chain;
         self.epoch = parsed.epoch as u64;
         self.bundle = fresh_bundle;
+        self.peer_bundle = Some(next_peer_bundle);
         self.reset_rollover_counters();
 
         let mut frame_key_bytes = [0u8; 32];
@@ -508,16 +579,15 @@ impl PcsRatchet {
         Ok(frame_key_bytes)
     }
 
-    /// Autonomous send step using stored peer advertised ML-KEM key.
+    /// Autonomous send step using stored peer advertised hybrid `(p_pub, ek)` bundle.
     pub fn build_in_band_epoch_rekey_auto(
         &mut self,
     ) -> Result<[u8; IN_BAND_REKEY_PAYLOAD_LEN], CoreError> {
-        let peer_ek = self
+        let peer_adv = self
             .peer_bundle
-            .as_ref()
-            .map(|b| b.ek.clone())
+            .clone()
             .ok_or(CoreError::AuthRequired)?;
-        self.build_in_band_epoch_rekey(&peer_ek)
+        self.build_in_band_epoch_rekey(&peer_adv.p_pub, &peer_adv.ek)
     }
 
     /// Sending step against the peer's advertised `(peer_p_pub, peer_ek)`:
@@ -948,14 +1018,14 @@ mod tests {
         assert_eq!(bytes, 640_000);
 
         // Alice triggers in-band continuous epoch rekey (Frame Type 0x07)
-        let rekey_payload = alice.build_in_band_epoch_rekey(&bob_adv.ek).unwrap();
+        let rekey_payload = alice.build_in_band_epoch_rekey(&bob_adv.p_pub, &bob_adv.ek).unwrap();
         assert_eq!(rekey_payload.len(), IN_BAND_REKEY_PAYLOAD_LEN);
         assert_eq!(alice.epoch(), 1);
         assert!(!alice.needs_rollover(), "counters reset after rollover");
         assert_eq!(alice.rollover_counters(), (0, 0));
 
         // Attacker intercepts rekey_payload on the wire
-        // Bob receives rekey_payload and processes it
+        // Bob receives rekey_payload and processes it (and automatically stores Alice's rotated bundle!)
         let _new_key_bob = bob.process_in_band_epoch_rekey(&rekey_payload).unwrap();
         assert_eq!(bob.epoch(), 1);
         assert_eq!(bob.rollover_counters(), (0, 0));
@@ -981,15 +1051,13 @@ mod tests {
         assert!(open_indexed(&stolen_k0, DIR_SEND, &f1).is_err());
 
         // 2. Attacker attempts to compute Epoch 1 root key from stolen Epoch 0 root and wire payload:
-        // Attacker parses epoch and ciphertext from wire payload
         let parsed = InBandEpochRekeyPayload::from_bytes(&rekey_payload).unwrap();
         assert_eq!(parsed.epoch, 1);
-        // Attacker does NOT have Bob's ML-KEM-1024 private decapsulation key.
-        // Trying to decapsulate with an attacker key yields IND-CCA2 rejection value:
+        // Attacker does NOT have Bob's private (P-384, ML-KEM-1024) decapsulation bundle.
         let fake_bundle = EphemeralKeys::generate().unwrap();
-        let fake_ml_ss = fake_bundle.decapsulate_mlkem(&parsed.ct).unwrap();
+        let fake_hybrid_ss = fake_bundle.decapsulate(&parsed.eph_p_pub, &parsed.ct).unwrap();
         let fake_root_1 =
-            PcsRatchet::hkdf_epoch_root(&stolen_root_0, fake_ml_ss.as_slice(), 1).unwrap();
+            PcsRatchet::hkdf_epoch_root(&stolen_root_0, &fake_hybrid_ss[..], 1).unwrap();
         let fake_chain_1 = hkdf32(&fake_root_1, DOMAIN_RATCHET_CHAIN, &1u32.to_be_bytes()).unwrap();
         let fake_fk_1 = crate::aead::FrameKey::from_bytes(fake_chain_1);
 
@@ -998,6 +1066,12 @@ mod tests {
             open_indexed(&fake_fk_1, DIR_SEND, &f1).is_err(),
             "Attacker cannot decrypt Epoch 1"
         );
+
+        // Consecutive Epoch 2 healing using auto-rotated peer_bundle from Epoch 1!
+        let rekey_2 = bob.build_in_band_epoch_rekey_auto().unwrap();
+        alice.process_in_band_epoch_rekey(&rekey_2).unwrap();
+        assert_eq!(alice.epoch(), 2);
+        assert_eq!(bob.epoch(), 2);
     }
 
     #[test]
@@ -1019,7 +1093,7 @@ mod tests {
             "must trigger rollover when byte threshold reached"
         );
 
-        let rekey_payload = alice.build_in_band_epoch_rekey(&bob_adv.ek).unwrap();
+        let rekey_payload = alice.build_in_band_epoch_rekey(&bob_adv.p_pub, &bob_adv.ek).unwrap();
 
         // 1. Tampered AuthTag fails closed
         let mut tampered_payload = rekey_payload;
@@ -1053,6 +1127,49 @@ mod tests {
 
         // 4. Authentic rekey succeeds
         assert!(bob.process_in_band_epoch_rekey(&rekey_payload).is_ok());
+        assert_eq!(bob.epoch(), 1);
+    }
+
+    #[test]
+    fn in_band_epoch_rekey_authenticated_pcs_blocks_root0_forgery() {
+        let initial_sk = [0x7Cu8; 32];
+        let (sk_alice, vk_alice) = crate::auth::Mldsa87SigningKey::generate().unwrap();
+        let signer_alice = crate::auth::AuthSigner::SoftwareOrTpmUnsealed(sk_alice);
+
+        let mut alice = PcsRatchet::new(&initial_sk).unwrap();
+        let mut bob = PcsRatchet::new(&initial_sk).unwrap();
+        bob.set_peer_auth_vk(vk_alice);
+        let bob_adv = bob.advertise_bundle();
+
+        // Unsigned rekey must be refused when peer identity is pinned
+        let mut clone_alice = PcsRatchet::new(&initial_sk).unwrap();
+        let unsigned = clone_alice
+            .build_in_band_epoch_rekey(&bob_adv.p_pub, &bob_adv.ek)
+            .unwrap();
+        assert_eq!(
+            bob.process_in_band_epoch_rekey(&unsigned),
+            Err(CoreError::AuthRequired)
+        );
+
+        // Even an attacker holding Epoch-0 root key (`initial_sk`) cannot forge an ML-DSA-87 rekey
+        let (sk_evil, _) = crate::auth::Mldsa87SigningKey::generate().unwrap();
+        let signer_evil = crate::auth::AuthSigner::SoftwareOrTpmUnsealed(sk_evil);
+        let mut attacker = PcsRatchet::new(&initial_sk).unwrap();
+        let forged = attacker
+            .build_in_band_epoch_rekey_signed(&bob_adv.p_pub, &bob_adv.ek, Some(&signer_evil))
+            .unwrap();
+        assert_eq!(
+            bob.process_in_band_epoch_rekey(&forged),
+            Err(CoreError::BadSignature)
+        );
+        assert_eq!(bob.epoch(), 0);
+
+        // Valid ML-DSA-87 authenticated rekey advances Epoch cleanly
+        let authentic = alice
+            .build_in_band_epoch_rekey_signed(&bob_adv.p_pub, &bob_adv.ek, Some(&signer_alice))
+            .unwrap();
+        assert_eq!(authentic.len(), crate::frame::IN_BAND_REKEY_AUTH_PAYLOAD_LEN);
+        assert!(bob.process_in_band_epoch_rekey(&authentic).is_ok());
         assert_eq!(bob.epoch(), 1);
     }
 }
