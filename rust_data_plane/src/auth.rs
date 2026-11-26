@@ -483,10 +483,28 @@ impl HsmSession {
     }
 }
 
+/// Enforce CNSA 2.0 / FIPS 204 algorithm purity on PKCS#11 HSM signing.
+/// Under production posture (`P2P_PRODUCTION=1` / `SECURE_P2P_PRODUCTION=1`),
+/// classical signing mechanisms (ECDSA, EdDSA, RSA) and fallback cascades
+/// are unconditionally rejected — only FIPS 204 ML-DSA is permitted.
+fn reject_classical_when(is_prod: bool, mechanism_name: &str) -> Result<(), HsmError> {
+    if is_prod {
+        return Err(HsmError::MechanismUnsupported(format!(
+            "CNSA 2.0 production posture refuses classical signing mechanism: {mechanism_name} (only FIPS 204 ML-DSA permitted)"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_classical_in_production(mechanism_name: &str) -> Result<(), HsmError> {
+    reject_classical_when(crate::policy::is_production_env(), mechanism_name)
+}
+
 /// Native PKCS#11 hardware signature generation inside HSM / secure element silicon.
 ///
-/// Private key material never leaves hardware containment. Supports ML-DSA-87 (PQC),
-/// ECDSA, EDDSA, and RSA with automatic mechanism selection and vendor fallback.
+/// Private key material never leaves hardware containment. Enforces CNSA 2.0
+/// FIPS 204 ML-DSA-87 exclusively in production (`is_production_env()`), refusing
+/// classical ECDSA / EDDSA / RSA key types or fallback downgrades fail-closed.
 pub fn sign_with_hsm(
     session: &Session,
     key_handle: ObjectHandle,
@@ -522,16 +540,19 @@ pub fn sign_with_hsm(
                 }
             }
         } else if kt == KeyType::EC {
+            reject_classical_in_production("ECDSA (KeyType::EC)")?;
             let mech = Mechanism::Ecdsa;
             return session
                 .sign(&mech, key_handle, digest)
                 .map_err(HsmError::Pkcs11);
         } else if kt == KeyType::EC_EDWARDS {
+            reject_classical_in_production("EdDSA (KeyType::EC_EDWARDS)")?;
             let mech = Mechanism::Eddsa(EddsaParams::new(EddsaSignatureScheme::Pure));
             return session
                 .sign(&mech, key_handle, digest)
                 .map_err(HsmError::Pkcs11);
         } else if kt == KeyType::RSA {
+            reject_classical_in_production("RSA (KeyType::RSA)")?;
             let mech = Mechanism::RsaPkcs;
             return session
                 .sign(&mech, key_handle, digest)
@@ -539,11 +560,22 @@ pub fn sign_with_hsm(
         }
     }
 
-    // 3. Fallback cascade: try ML-DSA, ECDSA, EDDSA, then RSA
+    // 3. Unknown/unreported KeyType: attempt FIPS 204 ML-DSA / Hash-ML-DSA first.
     let mldsa_mech = Mechanism::MlDsa(SignAdditionalContext::new(HedgeType::Preferred, None));
     if let Ok(sig) = session.sign(&mldsa_mech, key_handle, digest) {
         return Ok(sig);
     }
+    let hmldsa_mech = Mechanism::HashMlDsaSha384(SignAdditionalContext::new(
+        HedgeType::Preferred,
+        None,
+    ));
+    if let Ok(sig) = session.sign(&hmldsa_mech, key_handle, digest) {
+        return Ok(sig);
+    }
+
+    // Fail-closed in CNSA 2.0 production: never silently downgrade to classical mechanisms.
+    reject_classical_in_production("classical ECDSA/EdDSA/RSA fallback")?;
+
     let ecdsa_mech = Mechanism::Ecdsa;
     if let Ok(sig) = session.sign(&ecdsa_mech, key_handle, digest) {
         return Ok(sig);
@@ -863,5 +895,26 @@ mod tests {
         assert!(format!("{err_pin}").contains("PIN authentication failed"));
         let err_refusal = HsmError::HardwareRefusal("Physical tamper detection tripped".into());
         assert!(format!("{err_refusal}").contains("silicon security boundary"));
+    }
+
+    #[test]
+    fn hsm_refuses_classical_mechanisms_in_production() {
+        for alg in [
+            "ECDSA (KeyType::EC)",
+            "EdDSA (KeyType::EC_EDWARDS)",
+            "RSA (KeyType::RSA)",
+            "classical ECDSA/EdDSA/RSA fallback",
+        ] {
+            let err = reject_classical_when(true, alg)
+                .expect_err("CNSA 2.0 production must refuse classical HSM fallback");
+            assert!(
+                matches!(err, HsmError::MechanismUnsupported(ref msg) if msg.contains("ML-DSA")),
+                "unexpected error for {alg}: {err}"
+            );
+            assert!(
+                reject_classical_when(false, alg).is_ok(),
+                "non-production lab mode may still permit {alg}"
+            );
+        }
     }
 }

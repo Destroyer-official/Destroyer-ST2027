@@ -1718,7 +1718,10 @@ def _get_audit_chain():
         from remote_siem_forwarder import TamperEvidentAuditChain
         ledger = os.environ.get("P2P_SIEM_LEDGER")
         if ledger:
-            _audit_chain = TamperEvidentAuditChain(ledger_path=_P(ledger))
+            _audit_chain = TamperEvidentAuditChain(
+                ledger_path=_P(ledger),
+                anchor_path=_P(f"{ledger}.anchor"),
+            )
         else:
             from trust_anchor import ephemeral_required as _eph_req
             if _eph_req():
@@ -2077,17 +2080,83 @@ def _cmd_selftest() -> int:
             if not _saved_siem_key:
                 os.environ["P2P_SIEM_KEY"] = "selftest-ephemeral-siem-audit-key-32b"
             globals()["_audit_chain"] = None
+            _selftest_configured_ta = False
+            _saved_cust = None
+            _saved_cache = None
             try:
                 cli_pk, cli_sk = generate_identity()
                 srv_pk, srv_sk = generate_identity()
                 cli_kp = generate_hybrid_keypair(cli_pk, cli_sk)
                 srv_kp = generate_hybrid_keypair(srv_pk, srv_sk)
+                cli_cert_json = None
+                srv_cert_json = None
+                peer_subj = None
+                import trust_anchor as _ta
+                from production_gate import is_production as _pg_is_production
+                if _pg_is_production() or _ta.pki_required():
+                    _saved_cust = _ta.active_custodians()
+                    _saved_cache = _ta.active_cache()
+                    cust_handles = []
+                    for _idx in range(1, 6):
+                        _cpk, _csk = generate_identity()
+                        cust_handles.append(
+                            IdentityHandle(
+                                sig_pk=_cpk,
+                                sig_sk=_csk,
+                                key_data=None,
+                                stored_in_hsm=False,
+                                label=f"selftest-custodian-{_idx}",
+                            )
+                        )
+                    _custodians = [
+                        _ta.Custodian(label=h.label, mldsa_pk=bytes(h.sig_pk))
+                        for h in cust_handles
+                    ]
+                    _rev_cache = _ta.RevocationCache(
+                        _custodians,
+                        ledger_path=str(_pl.Path(tmp) / "revocation.json"),
+                    )
+                    _ta.configure(_custodians, _rev_cache)
+                    _selftest_configured_ta = True
+                    _now = int(time.time())
+
+                    def _selftest_cert(subj_pk: bytes, signers: list) -> str:
+                        _tbs = _ta.CertTBS(
+                            serial=secrets.token_bytes(16),
+                            subject="selftest",
+                            subject_pk=bytes(subj_pk),
+                            not_before=_now - 60,
+                            not_after=_now + 3600,
+                        )
+                        _body = _ta.tbs_bytes(_tbs)
+                        _sigs = [
+                            _ta.CertSig(
+                                custodian=h.label,
+                                sig=sign_transcript(h.sig_sk, _body),
+                            )
+                            for h in signers
+                        ]
+                        return _ta.cert_to_json(_ta.Certificate(tbs=_tbs, sigs=_sigs))
+
+                    cli_cert_json = _selftest_cert(cli_pk, cust_handles[:3])
+                    srv_cert_json = _selftest_cert(srv_pk, cust_handles[2:])
+                    peer_subj = "selftest"
                 m1, ini, t0 = xxhfs_initiate(cli_kp, "selftest")
                 if len(m1) != XXHFS_M1_LEN or cli_pk in m1:
                     raise SecurityError("M1 length or identity masking invariant violated")
                 m2, rsp, t_rsp = xxhfs_respond(m1, srv_kp, "selftest")
-                m3, c_st = xxhfs_finalize(ini, m2, cli_kp, "selftest", t0, expected_peer_pk=srv_pk)
-                s_st = xxhfs_complete(rsp, m3, srv_kp, "selftest", t_rsp, expected_peer_pk=cli_pk)
+                m3, c_st = xxhfs_finalize(
+                    ini, m2, cli_kp, "selftest", t0,
+                    expected_peer_pk=srv_pk,
+                    peer_cert=srv_cert_json,
+                    peer_subject=peer_subj,
+                )
+                s_st = xxhfs_complete(
+                    rsp, m3, srv_kp, "selftest", t_rsp,
+                    expected_peer_pk=cli_pk,
+                    peer_cert=cli_cert_json,
+                    peer_subject=peer_subj,
+                )
                 if c_st.key() != s_st.key():
                     raise SecurityError("Client and server derived keys mismatch")
                 cli = Channel(c_st, direction_out=0xA5, direction_in=0x5A)
@@ -2118,6 +2187,16 @@ def _cmd_selftest() -> int:
             except Exception as e:
                 log.debug("selftest handshake refused: %r", e)
                 _record("handshake+replay+zeroize", False, "handshake path refused")
+            finally:
+                if _selftest_configured_ta:
+                    try:
+                        import trust_anchor as _ta
+                        if _saved_cust and len(_saved_cust) == 5 and _saved_cache is not None:
+                            _ta.configure(_saved_cust, _saved_cache)
+                        else:
+                            _ta.clear_registry()
+                    except Exception:
+                        pass
     finally:
         globals()["PIN_DIR"] = _saved_pin
         globals()["_audit_chain"] = _saved_chain
@@ -2467,4 +2546,6 @@ def main(argv: Optional[list] = None) -> int:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+    _sys.modules.setdefault("secure_transmit_2027", _sys.modules[__name__])
     raise SystemExit(main())

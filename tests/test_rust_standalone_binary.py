@@ -53,8 +53,13 @@ def _wait_udp_bound(port, proc, timeout_s=15.0):
     try:
         while time.monotonic() < deadline:
             if proc.poll() is not None:
+                out, err = ("", "")
+                try:
+                    out, err = proc.communicate(timeout=2)
+                except Exception:
+                    pass
                 raise AssertionError(
-                    f"receiver exited before binding (rc={proc.returncode})")
+                    f"receiver exited before binding (rc={proc.returncode})\nOUT: {out}\nERR: {err}")
             try:
                 probe.bind(("127.0.0.1", port))
             except OSError:
@@ -1121,57 +1126,91 @@ class TestRustStandaloneBinary(unittest.TestCase):
             state_init = os.path.join(tmp, "state_init.bin")
             state_resp = os.path.join(tmp, "state_resp.bin")
 
-            port_init = _free_udp_port()
-            port_resp = _free_udp_port()
+            env_lab = {
+                k: v for k, v in os.environ.items()
+                if k not in (
+                    "P2P_PRODUCTION",
+                    "SECURE_P2P_PRODUCTION",
+                    "P2P_TPM_NV_INDEX",
+                    "P2P_REQUIRE_MUTUAL_AUTH",
+                )
+            }
 
-            addr_init = f"127.0.0.1:{port_init}"
-            addr_resp = f"127.0.0.1:{port_resp}"
+            resp_proc = None
+            init_proc = None
+            # Retry UDP port allocation on transient Windows CI bind races while
+            # letting any real configuration/startup error fail immediately.
+            for attempt in range(3):
+                port_init = _free_udp_port()
+                port_resp = _free_udp_port()
+                if port_init == port_resp:
+                    port_resp = _free_udp_port()
 
-            # Start responder
-            resp_proc = subprocess.Popen(
-                [
-                    str(BIN), "terminal", "--lab",
-                    "--key-file", keyfile,
-                    "--state", state_resp,
-                    "--bind", addr_resp,
-                    "--to", addr_init,
-                    "--role", "responder",
-                    "--interval-ms", "25",
-                    "--quantum", "1232",
-                    "--sas", "TEST-SAS-9941",
-                    "--callsign", "BRAVO-NMCC",
-                    "--timeout-ms", "10000",
-                ],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=str(CRATE),
-            )
-            _wait_udp_bound(port_resp, resp_proc)
+                addr_init = f"127.0.0.1:{port_init}"
+                addr_resp = f"127.0.0.1:{port_resp}"
 
-            # Start initiator
-            init_proc = subprocess.Popen(
-                [
-                    str(BIN), "terminal", "--lab",
-                    "--key-file", keyfile,
-                    "--state", state_init,
-                    "--bind", addr_init,
-                    "--to", addr_resp,
-                    "--role", "initiator",
-                    "--interval-ms", "25",
-                    "--quantum", "1232",
-                    "--sas", "TEST-SAS-9941",
-                    "--callsign", "ALPHA-NORAD",
-                    "--timeout-ms", "10000",
-                ],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=str(CRATE),
-            )
-            _wait_udp_bound(port_init, init_proc)
+                try:
+                    # Start responder
+                    resp_proc = subprocess.Popen(
+                        [
+                            str(BIN), "terminal", "--lab",
+                            "--key-file", keyfile,
+                            "--state", state_resp,
+                            "--bind", addr_resp,
+                            "--to", addr_init,
+                            "--role", "responder",
+                            "--interval-ms", "25",
+                            "--quantum", "1232",
+                            "--sas", "TEST-SAS-9941",
+                            "--callsign", "BRAVO-NMCC",
+                            "--timeout-ms", "10000",
+                        ],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        cwd=str(CRATE),
+                        env=env_lab,
+                    )
+                    _wait_udp_bound(port_resp, resp_proc)
+
+                    # Start initiator
+                    init_proc = subprocess.Popen(
+                        [
+                            str(BIN), "terminal", "--lab",
+                            "--key-file", keyfile,
+                            "--state", state_init,
+                            "--bind", addr_init,
+                            "--to", addr_resp,
+                            "--role", "initiator",
+                            "--interval-ms", "25",
+                            "--quantum", "1232",
+                            "--sas", "TEST-SAS-9941",
+                            "--callsign", "ALPHA-NORAD",
+                            "--timeout-ms", "10000",
+                        ],
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        cwd=str(CRATE),
+                        env=env_lab,
+                    )
+                    _wait_udp_bound(port_init, init_proc)
+                    break
+                except AssertionError as exc:
+                    for p in (init_proc, resp_proc):
+                        if p is not None and p.poll() is None:
+                            p.kill()
+                            p.wait(timeout=5)
+                    resp_proc = None
+                    init_proc = None
+                    for st_p in (state_init, state_resp):
+                        if os.path.exists(st_p):
+                            os.remove(st_p)
+                    if attempt < 2 and "UDP bind failed" in str(exc):
+                        continue
+                    raise
 
             # Feed interactive commands into initiator: /status, message, /clear, /quit
             init_stdin = (
