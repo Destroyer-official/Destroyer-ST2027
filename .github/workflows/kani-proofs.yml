@@ -42,4 +42,4 @@ jobs:
         working-directory: rust_data_plane
         run: |
           cargo kani --lib --no-default-features
-          cargo kani --test kani_harness --no-default-features
+          cargo kani --tests --no-default-features
