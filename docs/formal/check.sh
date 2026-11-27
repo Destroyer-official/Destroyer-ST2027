@@ -31,6 +31,7 @@ MODEL_HANDSHAKE="$ROOT/docs/formal/st2027_handshake.pv"
 MODEL_PCS="$ROOT/docs/formal/st2027_pcs.pv"
 MODEL_KEX_AUTH="$ROOT/docs/formal/st2027_kex_auth.pv"
 MODEL_RATCHET_PCS="$ROOT/docs/formal/st2027_ratchet_pcs.pv"
+MODEL_TOR_RENDEZVOUS="$ROOT/docs/formal/st2027_tor_rendezvous.pv"
 
 PROVERIF_BIN=""
 if command -v proverif >/dev/null 2>&1; then
@@ -57,6 +58,8 @@ if [ -n "$PROVERIF_BIN" ]; then
     "$PROVERIF_BIN" "$MODEL_PCS"
     echo "=== Running ProVerif In-Band Hybrid Ratchet PCS Model ==="
     "$PROVERIF_BIN" "$MODEL_RATCHET_PCS"
+    echo "=== Running ProVerif Compromised Tor Rendezvous Model ==="
+    "$PROVERIF_BIN" "$MODEL_TOR_RENDEZVOUS"
     echo "[+] All formal verification models executed."
     if command -v python3 >/dev/null 2>&1; then
         echo "=== Generating Machine-Checked Verification Certificate ==="

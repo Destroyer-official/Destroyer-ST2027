@@ -248,6 +248,43 @@ pub fn build_chaff_frame(
     build_chaff_frame_directed(key, seq, DIR_SEND, quantum)
 }
 
+/// Resolve any sanctioned UDP `[256, 512, 1232]` or Tor-cell `[496, 994]` quantum.
+fn resolve_valid_quantum(quantum: usize) -> usize {
+    if crate::shaper::is_valid_quantum(quantum) {
+        quantum
+    } else {
+        quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM)
+    }
+}
+
+/// Shared quantum-padded AEAD frame builder with CSPRNG filler to eliminate size side-channels.
+fn build_padded_frame_directed(
+    key: &FrameKey,
+    seq: u64,
+    dir: u8,
+    quantum: usize,
+    ftype: u8,
+    payload: &[u8],
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
+    let valid_quantum = resolve_valid_quantum(quantum);
+    let max_payload_len = valid_quantum
+        .checked_sub(FRAME_OVERHEAD)
+        .ok_or(aes_gcm::aead::Error)?;
+    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
+        return Err(aes_gcm::aead::Error);
+    }
+    let mut padded = vec![0u8; max_payload_len];
+    padded[..payload.len()].copy_from_slice(payload);
+    if payload.len() < max_payload_len {
+        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
+    }
+    let frame = aead::seal_with_len(key, seq, dir, ftype, payload.len() as u16, &padded)?;
+    if frame.len() != valid_quantum {
+        return Err(aes_gcm::aead::Error);
+    }
+    Ok(frame)
+}
+
 /// Build a cryptographically indistinguishable synthetic chaff frame with directional separation.
 pub fn build_chaff_frame_directed(
     key: &FrameKey,
@@ -255,7 +292,7 @@ pub fn build_chaff_frame_directed(
     dir: u8,
     quantum: usize,
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
+    let valid_quantum = resolve_valid_quantum(quantum);
     let payload_len = valid_quantum
         .checked_sub(FRAME_OVERHEAD)
         .ok_or(aes_gcm::aead::Error)?;
@@ -278,23 +315,7 @@ pub fn build_data_frame_directed(
     quantum: usize,
     payload: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
-    let max_payload_len = valid_quantum
-        .checked_sub(FRAME_OVERHEAD)
-        .ok_or(aes_gcm::aead::Error)?;
-    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
-        return Err(aes_gcm::aead::Error);
-    }
-    let mut padded = vec![0u8; max_payload_len];
-    padded[..payload.len()].copy_from_slice(payload);
-    if payload.len() < max_payload_len {
-        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
-    }
-    let frame = aead::seal_with_len(key, seq, dir, FTYPE_MSG, payload.len() as u16, &padded)?;
-    if frame.len() != valid_quantum {
-        return Err(aes_gcm::aead::Error);
-    }
-    Ok(frame)
+    build_padded_frame_directed(key, seq, dir, quantum, FTYPE_MSG, payload)
 }
 
 /// Build a quantum-padded in-band rekey frame with CSPRNG filler to eliminate size side-channels.
@@ -305,23 +326,7 @@ pub fn build_rekey_frame_directed(
     quantum: usize,
     payload: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
-    let max_payload_len = valid_quantum
-        .checked_sub(FRAME_OVERHEAD)
-        .ok_or(aes_gcm::aead::Error)?;
-    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
-        return Err(aes_gcm::aead::Error);
-    }
-    let mut padded = vec![0u8; max_payload_len];
-    padded[..payload.len()].copy_from_slice(payload);
-    if payload.len() < max_payload_len {
-        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
-    }
-    let frame = aead::seal_with_len(key, seq, dir, FTYPE_REKEY, payload.len() as u16, &padded)?;
-    if frame.len() != valid_quantum {
-        return Err(aes_gcm::aead::Error);
-    }
-    Ok(frame)
+    build_padded_frame_directed(key, seq, dir, quantum, FTYPE_REKEY, payload)
 }
 
 /// Build a quantum-padded attestation evidence frame (FTYPE_ATTESTATION_EVIDENCE = 0x05) with CSPRNG filler.
@@ -332,30 +337,7 @@ pub fn build_attestation_frame_directed(
     quantum: usize,
     payload: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
-    let max_payload_len = valid_quantum
-        .checked_sub(FRAME_OVERHEAD)
-        .ok_or(aes_gcm::aead::Error)?;
-    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
-        return Err(aes_gcm::aead::Error);
-    }
-    let mut padded = vec![0u8; max_payload_len];
-    padded[..payload.len()].copy_from_slice(payload);
-    if payload.len() < max_payload_len {
-        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
-    }
-    let frame = aead::seal_with_len(
-        key,
-        seq,
-        dir,
-        FTYPE_ATTESTATION_EVIDENCE,
-        payload.len() as u16,
-        &padded,
-    )?;
-    if frame.len() != valid_quantum {
-        return Err(aes_gcm::aead::Error);
-    }
-    Ok(frame)
+    build_padded_frame_directed(key, seq, dir, quantum, FTYPE_ATTESTATION_EVIDENCE, payload)
 }
 
 /// Build a quantum-padded revocation broadcast frame (FTYPE_REVOCATION = 0x06) with CSPRNG filler.
@@ -366,30 +348,7 @@ pub fn build_revocation_frame_directed(
     quantum: usize,
     payload: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
-    let max_payload_len = valid_quantum
-        .checked_sub(FRAME_OVERHEAD)
-        .ok_or(aes_gcm::aead::Error)?;
-    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
-        return Err(aes_gcm::aead::Error);
-    }
-    let mut padded = vec![0u8; max_payload_len];
-    padded[..payload.len()].copy_from_slice(payload);
-    if payload.len() < max_payload_len {
-        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
-    }
-    let frame = aead::seal_with_len(
-        key,
-        seq,
-        dir,
-        FTYPE_REVOCATION,
-        payload.len() as u16,
-        &padded,
-    )?;
-    if frame.len() != valid_quantum {
-        return Err(aes_gcm::aead::Error);
-    }
-    Ok(frame)
+    build_padded_frame_directed(key, seq, dir, quantum, FTYPE_REVOCATION, payload)
 }
 
 /// Build a quantum-padded in-band epoch rekey frame (FTYPE_IN_BAND_EPOCH_REKEY = 0x07) with CSPRNG filler to eliminate size side-channels.
@@ -400,30 +359,7 @@ pub fn build_epoch_rekey_frame_directed(
     quantum: usize,
     payload: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    let valid_quantum = quantize(quantum).unwrap_or(DEFAULT_WIRE_QUANTUM);
-    let max_payload_len = valid_quantum
-        .checked_sub(FRAME_OVERHEAD)
-        .ok_or(aes_gcm::aead::Error)?;
-    if payload.len() > max_payload_len || payload.len() > u16::MAX as usize {
-        return Err(aes_gcm::aead::Error);
-    }
-    let mut padded = vec![0u8; max_payload_len];
-    padded[..payload.len()].copy_from_slice(payload);
-    if payload.len() < max_payload_len {
-        getrandom::fill(&mut padded[payload.len()..]).map_err(|_| aes_gcm::aead::Error)?;
-    }
-    let frame = aead::seal_with_len(
-        key,
-        seq,
-        dir,
-        FTYPE_IN_BAND_EPOCH_REKEY,
-        payload.len() as u16,
-        &padded,
-    )?;
-    if frame.len() != valid_quantum {
-        return Err(aes_gcm::aead::Error);
-    }
-    Ok(frame)
+    build_padded_frame_directed(key, seq, dir, quantum, FTYPE_IN_BAND_EPOCH_REKEY, payload)
 }
 
 /// Calculate the Shannon entropy in bits per byte (0.0 to 8.0) of a byte slice.

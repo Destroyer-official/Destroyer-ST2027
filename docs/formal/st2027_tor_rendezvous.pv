@@ -1,0 +1,147 @@
+(* st2027_tor_rendezvous.pv -- Symbolic model of ST2027 Noise_XXhfs_psk2
+ * executing in-band over a potentially compromised Tor v3 rendezvous stream.
+ *
+ * Threat Model:
+ * - Public channel `tor_net` represents the Tor network (guards, HSDirs,
+ *   introduction points, and rendezvous relays). The Dolev-Yao adversary sees
+ *   the ephemeral `.onion` identifier, intercepts/reorders/injects stream frames,
+ *   and may compromise long-term ML-DSA-87 keys AFTER session completion (phase 1).
+ * - Pre-shared key `psk` + long-term pinned ML-DSA-87 identity keys bind the
+ *   inner end-to-end tunnel inside the Tor stream.
+ *
+ * Proven here even with full Tor relay compromise:
+ * 1. Payload secrecy (`attacker(secret_payload)` = false, even post-phase-1 FS).
+ * 2. Mutual injective authentication between pinned endpoints (`S_Accepts ==> C_Accepts`).
+ * 3. Initiator identity privacy (`attacker(pk(sksC2))` = false).
+ *)
+
+free tor_net: channel.
+
+type key.
+type skey.
+type pkey.
+type ss.
+type nonce.
+
+fun pk(skey): pkey.
+fun ecdh(skey, pkey): ss.
+equation forall a:skey, b:skey;
+  ecdh(a, pk(b)) = ecdh(b, pk(a)).
+
+fun mlkem_pk(skey): pkey.
+fun mlkem_ct(pkey, nonce): bitstring.
+fun mlkem_ss(pkey, nonce): ss.
+fun mlkem_open(skey, bitstring): ss.
+equation forall sk:skey, r:nonce;
+  mlkem_open(sk, mlkem_ct(mlkem_pk(sk), r)) = mlkem_ss(mlkem_pk(sk), r).
+
+fun mldsa_sign(skey, bitstring): bitstring.
+fun mldsa_verify(pkey, bitstring, bitstring): bool
+reduc forall sk:skey, m:bitstring;
+  mldsa_verify(pk(sk), m, mldsa_sign(sk, m)) = true.
+
+fun kdf_psk(ss, ss, ss, bitstring): key.
+
+fun aead_enc(key, nonce, bitstring, bitstring): bitstring.
+fun aead_dec(key, nonce, bitstring, bitstring): bitstring
+reduc forall k:key, n:nonce, p:bitstring, aad:bitstring;
+  aead_dec(k, n, aead_enc(k, n, p, aad), aad) = p.
+
+fun id_enc(key, nonce, pkey, bitstring): bitstring.
+fun id_dec(key, nonce, bitstring, bitstring): pkey
+reduc forall k:key, n:nonce, pkx:pkey, aad:bitstring;
+  id_dec(k, n, id_enc(k, n, pkx, aad), aad) = pkx.
+
+free n1: nonce.
+free n2: nonce.
+free n3: nonce.
+free n4: nonce.
+free n_msg: nonce.
+free onion_addr: bitstring.
+free secret_payload: bitstring [private].
+free psk_secret: ss [private].
+free sksC: skey [private].
+free sksS: skey [private].
+free sksC2: skey [private].
+
+event C_Accepts(key, bitstring).
+event S_Accepts(key, bitstring, pkey).
+
+let TorInitiator(skI:skey, expected_pkR:pkey) =
+  new eC:skey; new dkC:skey;
+  let h1 = (onion_addr, pk(eC), mlkem_pk(dkC)) in
+  out(tor_net, (onion_addr, pk(eC), mlkem_pk(dkC)));
+  in(tor_net, m2:bitstring);
+  let (eS:pkey, ct:bitstring, cpk:bitstring, csig:bitstring) = m2 in
+  let he = ecdh(eC, eS) in
+  let hm = mlkem_open(dkC, ct) in
+  let ck1 = kdf_psk(he, hm, psk_secret, (h1, eS, ct)) in
+  let aad1 = (h1, eS, ct) in
+  let pkRv:pkey = id_dec(ck1, n1, cpk, aad1) in
+  let sigRv:bitstring = aead_dec(ck1, n2, csig, (aad1, cpk)) in
+  if mldsa_verify(pkRv, (h1, eS, ct, cpk), sigRv) = true then
+  if pkRv = expected_pkR then
+  let cpkI = id_enc(ck1, n3, pk(skI), (aad1, cpk, csig)) in
+  let sigI = mldsa_sign(skI, (h1, eS, ct, cpk, csig, cpkI)) in
+  let csigI = aead_enc(ck1, n4, sigI, (aad1, cpk, csig, cpkI)) in
+  let tr = (h1, eS, ct, cpk, csig, cpkI, csigI) in
+  let k = kdf_psk(he, hm, psk_secret, tr) in
+  event C_Accepts(k, tr);
+  out(tor_net, (cpkI, csigI));
+  out(tor_net, aead_enc(k, n_msg, secret_payload, tr)).
+
+let TorResponder(skR:skey, expected_pkI:pkey) =
+  in(tor_net, (on_id:bitstring, eC:pkey, ekC:pkey));
+  if on_id = onion_addr then
+  new eS:skey; new r:nonce;
+  let h1 = (onion_addr, eC, ekC) in
+  let ct = mlkem_ct(ekC, r) in
+  let he = ecdh(eS, eC) in
+  let hm = mlkem_ss(ekC, r) in
+  let ck1 = kdf_psk(he, hm, psk_secret, (h1, pk(eS), ct)) in
+  let aad1 = (h1, pk(eS), ct) in
+  let cpk = id_enc(ck1, n1, pk(skR), aad1) in
+  let sigR = mldsa_sign(skR, (h1, pk(eS), ct, cpk)) in
+  let csig = aead_enc(ck1, n2, sigR, (aad1, cpk)) in
+  out(tor_net, (pk(eS), ct, cpk, csig));
+  in(tor_net, m3:bitstring);
+  let (cpkI:bitstring, csigI:bitstring) = m3 in
+  let aad2 = (aad1, cpk, csig) in
+  let pkIv:pkey = id_dec(ck1, n3, cpkI, aad2) in
+  let sigIv:bitstring = aead_dec(ck1, n4, csigI, (aad2, cpkI)) in
+  if mldsa_verify(pkIv, (h1, pk(eS), ct, cpk, csig, cpkI), sigIv) = true then
+  if pkIv = expected_pkI then
+  let tr = (h1, pk(eS), ct, cpk, csig, cpkI, csigI) in
+  let k = kdf_psk(he, hm, psk_secret, tr) in
+  event S_Accepts(k, tr, pkIv).
+
+let TorInitiatorPriv(expected_pkR:pkey) =
+  new eC:skey; new dkC:skey;
+  let h1 = (onion_addr, pk(eC), mlkem_pk(dkC)) in
+  out(tor_net, (onion_addr, pk(eC), mlkem_pk(dkC)));
+  in(tor_net, m2:bitstring);
+  let (eS:pkey, ct:bitstring, cpk:bitstring, csig:bitstring) = m2 in
+  let he = ecdh(eC, eS) in
+  let hm = mlkem_open(dkC, ct) in
+  let ck1 = kdf_psk(he, hm, psk_secret, (h1, eS, ct)) in
+  let aad1 = (h1, eS, ct) in
+  let pkRv:pkey = id_dec(ck1, n1, cpk, aad1) in
+  let sigRv:bitstring = aead_dec(ck1, n2, csig, (aad1, cpk)) in
+  if mldsa_verify(pkRv, (h1, eS, ct, cpk), sigRv) = true then
+  if pkRv = expected_pkR then
+  let cpkI = id_enc(ck1, n3, pk(sksC2), (aad1, cpk, csig)) in
+  let sigI = mldsa_sign(sksC2, (h1, eS, ct, cpk, csig, cpkI)) in
+  let csigI = aead_enc(ck1, n4, sigI, (aad1, cpk, csig, cpkI)) in
+  out(tor_net, (cpkI, csigI)).
+
+query attacker(secret_payload).
+query k:key, tr:bitstring;
+  inj-event(S_Accepts(k, tr, pk(sksC))) ==> inj-event(C_Accepts(k, tr)).
+query attacker(pk(sksC2)).
+
+process
+  ( out(tor_net, onion_addr)
+  | (!TorInitiator(sksC, pk(sksS)))
+  | (!TorResponder(sksS, pk(sksC)))
+  | (!TorInitiatorPriv(pk(sksS)))
+  | (phase 1; out(tor_net, sksC); out(tor_net, sksS)) )

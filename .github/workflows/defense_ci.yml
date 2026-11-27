@@ -115,16 +115,19 @@ jobs:
           cargo install --locked cargo-deny
           cargo install --locked cargo-audit
           (cd rust_data_plane && cargo deny check)
+          (cd tor_transport && cargo deny check)
           cargo deny --manifest-path ts_rt/Cargo.toml check advisories
           cargo deny --manifest-path sel4_mils_appliance/Cargo.toml check advisories
           cargo audit --db /tmp/cargo-audit-db --file rust_data_plane/Cargo.lock
           cargo audit --db /tmp/cargo-audit-db -n --file ts_rt/Cargo.lock
           cargo audit --db /tmp/cargo-audit-db -n --file sel4_mils_appliance/Cargo.lock
 
-      - name: Execute Rust Test Suites (data plane, ts_rt, seL4 MILS) + Clippy
+      - name: Execute Rust Test Suites (data plane, tor_transport, ts_rt, seL4 MILS) + Clippy
         run: |
           cargo clippy --manifest-path rust_data_plane/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path tor_transport/Cargo.toml --all-targets -- -D warnings
           cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
+          cargo test --manifest-path tor_transport/Cargo.toml
           cargo test --manifest-path ts_rt/Cargo.toml
           cargo test --manifest-path sel4_mils_appliance/Cargo.toml
           python sel4_mils_appliance/validate_mils.py --strict
@@ -135,6 +138,7 @@ jobs:
         # the LockedKey32 key path. Fail-closed on any step.
         run: |
           cargo build --release --no-default-features --manifest-path rust_data_plane/Cargo.toml
+          cargo build --release --manifest-path tor_transport/Cargo.toml
           BIN=rust_data_plane/target/release/secure-transmit
           test -x "$BIN"
           "$BIN" selftest
@@ -445,10 +449,12 @@ jobs:
       - name: Prefetch & Build Rust Artifacts + destroyer_core Extension
         run: |
           cargo fetch --locked --manifest-path rust_data_plane/Cargo.toml
+          cargo fetch --locked --manifest-path tor_transport/Cargo.toml
           cargo fetch --locked --manifest-path ts_rt/Cargo.toml
           pip install maturin
           python -c "import glob, os, subprocess, sys, tempfile; d = os.path.join(tempfile.gettempdir(), 'dw'); subprocess.check_call(['maturin', 'build', '-r', '--no-default-features', '--offline', '-m', 'rust_data_plane/Cargo.toml', '-i', sys.executable, '-o', d]); whls = glob.glob(os.path.join(d, 'destroyer_core-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-index', '--no-deps', '--force-reinstall'] + whls)"
           cargo build --release --offline --manifest-path ts_rt/Cargo.toml
+          cargo build --release --offline --manifest-path tor_transport/Cargo.toml
           cargo build --release --offline --manifest-path rust_data_plane/Cargo.toml --no-default-features --bin secure-transmit --bin verify-binaries
           cargo build --offline --manifest-path rust_data_plane/Cargo.toml --features lab-surfaces --bin secure-transmit
 

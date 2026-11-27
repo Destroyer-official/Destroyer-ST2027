@@ -1,0 +1,53 @@
+# cargo-deny policy for the privilege-separated `tor_transport` worker crate.
+# This process holds NO application secrets (only Tor circuit handles).
+# Core CNSA 2.0 secrets remain strictly in `rust_data_plane` (0 CVEs, 0 ignores).
+
+[graph]
+targets = []
+all-features = true
+
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = [
+    # Pulled transitively by `tor-llcrypto` / `tor-key-forge` 0.48.0 for legacy v2/SSH formats;
+    # `tor_transport` uses exclusively v3 Ed25519/x25519 onion services (RSA never invoked).
+    "RUSTSEC-2023-0071",
+    # `rusqlite` <0.41 / `libsqlite3-sys` 0.38.2 bundled by `tor-dirmgr` 0.48.0; mitigated by
+    # strict 0700 volatile temp dir (`fs-mistrust`) with zero untrusted `-wal` files and
+    # process-level isolation outside `rust_data_plane`. Remove ignore once Arti bumps to rusqlite 0.41+.
+    "RUSTSEC-2026-0459",
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

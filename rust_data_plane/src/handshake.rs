@@ -62,7 +62,7 @@ use p384::{ecdh::EphemeralSecret, elliptic_curve::Generate, PublicKey, Sec1Point
 use sha2::{Digest, Sha384};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::auth::{Mldsa87SigningKey, Mldsa87VerifyingKey};
+use crate::auth::{AuthSigner, Mldsa87SigningKey, Mldsa87VerifyingKey};
 use crate::ct::ct_eq;
 use crate::policy::{CoreError, MLDSA87_PK, MLDSA87_SIG, MLKEM1024_CT, MLKEM1024_PK};
 
@@ -370,7 +370,7 @@ pub struct Handshake {
 impl Handshake {
     fn new(
         is_initiator: bool,
-        sig_sk: Mldsa87SigningKey,
+        sig_sk: Option<Mldsa87SigningKey>,
         sig_pk: Vec<u8>,
         psk: Option<[u8; 32]>,
     ) -> Result<Self, CoreError> {
@@ -389,7 +389,7 @@ impl Handshake {
             sym: SymmetricState::new(proto),
             e_secret: None,
             ml_dk: None,
-            sig_sk: Some(sig_sk),
+            sig_sk,
             sig_pk,
             psk: psk.map(Zeroizing::new),
             peer_sig_pk: None,
@@ -453,6 +453,15 @@ impl Handshake {
     /// no initiator shares — latched shut. Consumes our ephemeral ECDH
     /// secret immediately after use (SP 800-227 zero-dwell).
     pub fn responder_reply(&mut self, m1: &[u8]) -> Result<Vec<u8>, CoreError> {
+        self.responder_reply_with(m1, None)
+    }
+
+    /// M2 using an optional external hardware/software `AuthSigner`.
+    pub fn responder_reply_with(
+        &mut self,
+        m1: &[u8],
+        external_signer: Option<&AuthSigner>,
+    ) -> Result<Vec<u8>, CoreError> {
         self.check_clean(false)?;
         if self.m2_done || self.e_secret.is_some() || m1.len() != M1_LEN {
             return Err(CoreError::Malformed);
@@ -493,8 +502,12 @@ impl Handshake {
         self.sym.mix_key(ml_ss.as_slice())?;
         let enc_pk = self.sym.encrypt_and_hash(&self.sig_pk)?;
         let h_for_sig = self.sym.h;
-        let sk = self.sig_sk.as_ref().ok_or(CoreError::Malformed)?;
-        let mut sig = sk.sign(DOMAIN_SIG_RESP, &h_for_sig);
+        let mut sig = if let Some(ext) = external_signer {
+            ext.sign(DOMAIN_SIG_RESP, &h_for_sig)?
+        } else {
+            let sk = self.sig_sk.as_ref().ok_or(CoreError::Malformed)?;
+            sk.sign(DOMAIN_SIG_RESP, &h_for_sig)
+        };
         // Verify-after-sign fault detection (mirrors `_sign(..., pk=...)`).
         let own_vk = Mldsa87VerifyingKey::from_bytes(&self.sig_pk)?;
         if own_vk.verify(DOMAIN_SIG_RESP, &h_for_sig, &sig).is_err() {
@@ -596,14 +609,26 @@ impl Handshake {
     /// M3: `-> s, se(sig)`. Exactly once per session (handshake-cipher
     /// nonce reuse would be forgery).
     pub fn initiator_complete(&mut self) -> Result<Vec<u8>, CoreError> {
+        self.initiator_complete_with(None)
+    }
+
+    /// M3 using an optional external hardware/software `AuthSigner`.
+    pub fn initiator_complete_with(
+        &mut self,
+        external_signer: Option<&AuthSigner>,
+    ) -> Result<Vec<u8>, CoreError> {
         self.check_clean(true)?;
         if self.peer_sig_pk.is_none() || self.m3_done {
             return Err(CoreError::Malformed);
         }
         let enc_pk = self.sym.encrypt_and_hash(&self.sig_pk)?;
         let h_for_sig = self.sym.h;
-        let sk = self.sig_sk.as_ref().ok_or(CoreError::Malformed)?;
-        let mut sig = sk.sign(DOMAIN_SIG_INIT, &h_for_sig);
+        let mut sig = if let Some(ext) = external_signer {
+            ext.sign(DOMAIN_SIG_INIT, &h_for_sig)?
+        } else {
+            let sk = self.sig_sk.as_ref().ok_or(CoreError::Malformed)?;
+            sk.sign(DOMAIN_SIG_INIT, &h_for_sig)
+        };
         let own_vk = Mldsa87VerifyingKey::from_bytes(&self.sig_pk)?;
         if own_vk.verify(DOMAIN_SIG_INIT, &h_for_sig, &sig).is_err() {
             sig.zeroize();
@@ -690,7 +715,12 @@ impl Handshake {
         sig_pk: Vec<u8>,
         psk: Option<[u8; 32]>,
     ) -> Result<Self, CoreError> {
-        Self::new(true, sig_sk, sig_pk, psk)
+        Self::new(true, Some(sig_sk), sig_pk, psk)
+    }
+
+    /// Construct an initiator session backed by an external `AuthSigner`.
+    pub fn initiator_external(sig_pk: Vec<u8>, psk: Option<[u8; 32]>) -> Result<Self, CoreError> {
+        Self::new(true, None, sig_pk, psk)
     }
 
     /// Construct a responder session.
@@ -699,7 +729,12 @@ impl Handshake {
         sig_pk: Vec<u8>,
         psk: Option<[u8; 32]>,
     ) -> Result<Self, CoreError> {
-        Self::new(false, sig_sk, sig_pk, psk)
+        Self::new(false, Some(sig_sk), sig_pk, psk)
+    }
+
+    /// Construct a responder session backed by an external `AuthSigner`.
+    pub fn responder_external(sig_pk: Vec<u8>, psk: Option<[u8; 32]>) -> Result<Self, CoreError> {
+        Self::new(false, None, sig_pk, psk)
     }
 }
 

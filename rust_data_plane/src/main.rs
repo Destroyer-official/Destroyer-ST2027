@@ -44,12 +44,15 @@ use destroyer_core::keystore;
 use destroyer_core::memlock::LockedKey32;
 use destroyer_core::memory_guard::GuardedBuffer;
 use destroyer_core::net::{Endpoint, MAX_DATAGRAM};
+use destroyer_core::os_hardening;
 use destroyer_core::pacing::{self, PacedScheduler, PoissonScheduler, TacticalProfile};
 use destroyer_core::pki::{self, CertSig, Custodian};
 use destroyer_core::policy::{self, DOMAIN_SIG_INITIATOR, DOMAIN_SIG_RESPONDER, MLDSA87_PK, MLDSA87_SIG};
 use destroyer_core::purge;
 use destroyer_core::ratchet::{self, PcsRatchet};
 use destroyer_core::replay::AntiReplayWindow;
+use destroyer_core::shaper::{self, TamarawAction, TamarawShaper, DEFAULT_TAMARAW_MOD_L, TOR_QUANTUM_SINGLE};
+use destroyer_core::stream_transport;
 use destroyer_core::tpm_nv;
 use destroyer_core::x509;
 #[cfg(feature = "lab-surfaces")]
@@ -111,7 +114,7 @@ fn usage() -> ! {
          stream-chaff --key-file PATH|--key-stdin --state PATH --to ADDR [--interval-ms MS] [--count N] [--quantum 256|512|1232] [--tactical-profile high-throughput|satellite|covert] [--poisson]\n\
          channel --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--tactical-profile high-throughput|satellite|covert] [--poisson] [--msg TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
          terminal --key-file PATH|--key-stdin --state PATH --bind ADDR --to ADDR [--role initiator|responder] [--interval-ms MS] [--quantum 256|512|1232] [--sas TEXT] [--callsign TEXT] [--count N] [--recv-count N] [--timeout-ms MS]\n\
-         node   --role initiator|responder --bind ADDR --to ADDR [--key-file PATH] [--psk-file PATH] [--state PATH] [--interval-ms MS] [--quantum 256|512|1232] [--headless]\n\
+         node   --role initiator|responder [--transport udp|tor|stream] [--tor] [--zero-footprint] [--bind ADDR] [--to ADDR|ONION:PORT] [--key-file PATH] [--psk-file PATH] [--state PATH] [--interval-ms MS] [--quantum 256|496|512|994|1232] [--headless]\n\
          cookie-challenge [--ip IP] [--port PORT] [--payload TEXT] [--difficulty N]  generate anti-amplification micro-PoW challenge\n\
          cookie-solve --challenge HEX [--max-iters N]                                solve anti-amplification PoW challenge\n\
          cookie-verify --solution HEX [--ip IP] [--port PORT] [--payload TEXT]        verify solved PoW cookie challenge\n\
@@ -3526,21 +3529,33 @@ fn cmd_node(args: &[String]) {
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         println!("secure-transmit node — standalone native post-quantum operational C2 node");
         println!();
-        println!("Usage: secure-transmit node --role <initiator|responder> --bind ADDR --to ADDR [OPTIONS]");
+        println!("Usage: secure-transmit node --role <initiator|responder> [OPTIONS]");
         println!();
         println!("Options:");
         println!("  --role <initiator|responder>   P2P role (initiator establishes, responder listens)");
-        println!("  --bind ADDR                    Local UDP socket address to bind (e.g. 127.0.0.1:9060)");
-        println!("  --to ADDR                      Remote peer UDP socket address (e.g. 127.0.0.1:9061)");
+        println!("  --transport <udp|tor|stream>   Transport plane (default: udp; auto-selects tor on --tor or *.onion)");
+        println!("  --tor                          Enable privilege-separated embedded Arti v3 onion bridge");
+        println!("  --zero-footprint               RAM-only session keys & anti-replay (refuses static keys & .state disk files)");
+        println!("  --bind ADDR                    Local socket address to bind (udp/stream mode)");
+        println!("  --to ADDR                      Remote peer address (IP:port or <56-char>.onion:port)");
         println!("  --psk-file PATH                Pre-shared key file for authenticated KEX (required in prod)");
         println!("  --auth-tpm-sealed PATH         TPM 2.0 PCR-sealed ML-DSA-87 signing key (production custody)");
         println!("  --auth-pkcs11-label LABEL      PKCS#11 HSM signing key label (production silicon custody)");
         println!("  --auth-sk-file PATH            Local ML-DSA-87 signing key seed file (non-production/lab only)");
         println!("  --peer-auth-pk-file PATH       Pinned peer ML-DSA-87 public key file (2592B hex)");
-        println!("  --key-file PATH                Raw symmetric 32B key file (non-production --lab only)");
+        println!("  --onion-client-auth-pk KEY     Restricted Discovery ClientAuthV3 peer pubkey (descriptor:x25519:...)");
+        println!("  --onion-auth-sk-file PATH      Initiator ClientAuthV3 x25519 secret key file (64-hex)");
+        println!("  --onion-auth-sk-stdin          Read initiator ClientAuthV3 x25519 secret key from stdin");
+        println!("  --tamaraw-l CELLS              Tamaraw burst-tail alignment multiple L (default: 32)");
+        println!("  --tor-port PORT                Virtual Tor onion service port (default: 443)");
+        println!("  --tor-bridge-bin PATH          Explicit path to secure-transmit-tor helper binary");
+        println!("  --pt-binary PATH               Optional pluggable transport binary (lyrebird) behind firewalls");
+        println!("  --pt-type TYPE                 Pluggable transport type (webtunnel|obfs4)");
+        println!("  --pt-bridge LINE               Bridge line for optional pluggable transport");
+        println!("  --key-file PATH                Raw symmetric 32B key file (non-production --lab only; refused with --zero-footprint)");
         println!("  --state PATH                   Path to sequence state file (default: session.state)");
-        println!("  --quantum BYTES                Wire quantization size (256, 512, or 1232, default: 1232)");
-        println!("  --interval-ms MS               Constant-rate wire pacing interval in ms (default: 20)");
+        println!("  --quantum BYTES                Wire quantization size (256, 496, 512, 994, or 1232)");
+        println!("  --interval-ms MS               Constant-rate wire pacing interval in ms");
         println!("  --tactical-profile NAME        Tactical profile: high-throughput, satellite, covert");
         println!("  --headless                     Run headless background operational daemon (no TTY)");
         println!("  --callsign TEXT                Tactical station callsign (default: TACTICAL-NODE)");
@@ -3550,6 +3565,32 @@ fn cmd_node(args: &[String]) {
     let role = get_flag(args, "--role").unwrap_or_else(|| fail("--role <initiator|responder> is required"));
     if role != "initiator" && role != "responder" {
         fail("--role must be either 'initiator' or 'responder'");
+    }
+
+    let zero_footprint = has_flag(args, "--zero-footprint");
+    if zero_footprint && (get_flag(args, "--key-file").is_some() || has_flag(args, "--key-stdin")) {
+        fail("--zero-footprint refuses static --key-file/--key-stdin (requires fresh ephemeral Noise_XXhfs KEX per session)");
+    }
+
+    let to_flag = get_flag(args, "--to").unwrap_or_default();
+    let explicit_transport = get_flag(args, "--transport").map(|s| s.to_ascii_lowercase());
+    let is_tor = has_flag(args, "--tor")
+        || explicit_transport.as_deref() == Some("tor")
+        || (explicit_transport.is_none() && to_flag.to_ascii_lowercase().contains(".onion"));
+    let is_stream = explicit_transport.as_deref() == Some("stream");
+    if let Some(ref t) = explicit_transport {
+        if t != "udp" && t != "tor" && t != "stream" {
+            fail("bad --transport: must be 'udp', 'tor', or 'stream'");
+        }
+    }
+
+    if is_tor || is_stream {
+        cmd_stream_node(args, &role, is_tor, zero_footprint);
+        return;
+    }
+
+    if zero_footprint {
+        let _ = os_hardening::harden_process(true);
     }
 
     let mut forwarded: Vec<String> = args.to_vec();
@@ -3580,6 +3621,634 @@ fn cmd_node(args: &[String]) {
     } else {
         fail("missing --psk-file PATH (authenticated P-384 + ML-KEM-1024 + ML-DSA-87 KEX required for operational node)");
     }
+}
+
+fn find_tor_bridge_binary(args: &[String]) -> std::path::PathBuf {
+    if let Some(explicit) = get_flag(args, "--tor-bridge-bin") {
+        let p = std::path::PathBuf::from(&explicit);
+        if !p.is_file() {
+            fail(&format!("--tor-bridge-bin not found: {explicit}"));
+        }
+        return p;
+    }
+    let exe_name = if cfg!(windows) {
+        "secure-transmit-tor.exe"
+    } else {
+        "secure-transmit-tor"
+    };
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(parent) = cur.parent() {
+            let sibling = parent.join(exe_name);
+            if sibling.is_file() {
+                return sibling;
+            }
+            if let Some(grand) = parent.parent().and_then(|p| p.parent()) {
+                for rel in [
+                    format!("tor_transport/target/release/{exe_name}"),
+                    format!("tor_transport/target/debug/{exe_name}"),
+                ] {
+                    let cand = grand.join(rel);
+                    if cand.is_file() {
+                        return cand;
+                    }
+                }
+            }
+        }
+    }
+    std::path::PathBuf::from(exe_name)
+}
+
+fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bool) {
+    let report = os_hardening::harden_process(zero_footprint);
+    let callsign = get_flag(args, "--callsign").unwrap_or_else(|| "TACTICAL-NODE".to_string());
+    let is_headless = has_flag(args, "--headless");
+    let use_stdin = has_flag(args, "--stdin") || !is_headless;
+
+    let psk_path = get_flag(args, "--psk-file")
+        .unwrap_or_else(|| fail("--psk-file PATH is required for authenticated in-stream KEX"));
+    let psk = load_psk_file(&psk_path);
+    let peer_pk_path = get_flag(args, "--peer-auth-pk-file")
+        .unwrap_or_else(|| fail("--peer-auth-pk-file PATH is required (pinning mandatory)"));
+    let pinned_peer_vk = load_peer_verifying_key(&peer_pk_path);
+    let expected_peer_pk = pinned_peer_vk.to_bytes();
+    let signer = load_auth_signing_key_from_args(args);
+
+    let quantum: usize = get_flag(args, "--quantum")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --quantum")))
+        .unwrap_or(TOR_QUANTUM_SINGLE);
+    if !shaper::is_valid_quantum(quantum) {
+        fail("bad --quantum: must be 256, 496, 512, 994, or 1232");
+    }
+    let interval_ms: u64 = get_flag(args, "--interval-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
+        .unwrap_or(50)
+        .max(1);
+    let tamaraw_l: usize = get_flag(args, "--tamaraw-l")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --tamaraw-l")))
+        .unwrap_or(DEFAULT_TAMARAW_MOD_L)
+        .max(1);
+    let kex_timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+        .unwrap_or(120_000);
+    let session_timeout_ms: u64 = get_flag(args, "--timeout-ms")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+        .unwrap_or(0);
+    let count: u64 = get_flag(args, "--count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --count")))
+        .unwrap_or(0);
+    let recv_count: u64 = get_flag(args, "--recv-count")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --recv-count")))
+        .unwrap_or(0);
+    let drain_ticks: u64 = get_flag(args, "--drain-ticks")
+        .map(|s| s.parse().unwrap_or(0))
+        .unwrap_or(4);
+    let rekey_interval: u64 = get_flag(args, "--rekey-interval")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(128);
+
+    if is_tor && policy::is_production_env() {
+        if role == "responder" && get_flag(args, "--onion-client-auth-pk").is_none() {
+            fail("production Tor responder requires --onion-client-auth-pk (ClientAuthV3 Restricted Discovery)");
+        }
+        if role == "initiator"
+            && get_flag(args, "--onion-auth-sk-file").is_none()
+            && !has_flag(args, "--onion-auth-sk-stdin")
+        {
+            fail("production Tor initiator requires --onion-auth-sk-file or --onion-auth-sk-stdin");
+        }
+    }
+
+    let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+    let max_chunk = shaper::max_payload_for_quantum(quantum)
+        .unwrap_or_else(|| fail("invalid quantum overhead"));
+    let mut idx = 0;
+    while idx < args.len() {
+        if args[idx] == "--msg" && idx + 1 < args.len() {
+            for piece in args[idx + 1].as_bytes().chunks(max_chunk) {
+                outbound_msgs.push_back(piece.to_vec());
+            }
+            idx += 2;
+        } else {
+            idx += 1;
+        }
+    }
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("tokio runtime unavailable"));
+
+    let max_frame_read = quantum.max(1232);
+    let rekey_chunk_size = max_chunk.saturating_sub(fragment::FRAGMENT_HEADER_LEN).min(600);
+    let (tx_dir, rx_dir) = if role == "responder" {
+        (DIR_RECV, DIR_SEND)
+    } else {
+        (DIR_SEND, DIR_RECV)
+    };
+
+    rt.block_on(async move {
+        struct ChildStream {
+            tx: tokio::process::ChildStdin,
+            rx: tokio::process::ChildStdout,
+        }
+        impl tokio::io::AsyncRead for ChildStream {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::pin::Pin::new(&mut self.rx).poll_read(cx, buf)
+            }
+        }
+        impl tokio::io::AsyncWrite for ChildStream {
+            fn poll_write(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &[u8],
+            ) -> std::task::Poll<std::io::Result<usize>> {
+                std::pin::Pin::new(&mut self.tx).poll_write(cx, buf)
+            }
+            fn poll_flush(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::pin::Pin::new(&mut self.tx).poll_flush(cx)
+            }
+            fn poll_shutdown(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::pin::Pin::new(&mut self.tx).poll_shutdown(cx)
+            }
+        }
+
+        trait AsyncDuplex: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin {}
+        impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> AsyncDuplex for T {}
+
+        let mut bridge_child: Option<tokio::process::Child> = None;
+        let peer_label: String;
+        let mut transport: Box<dyn AsyncDuplex> = if is_tor {
+            let bridge_bin = find_tor_bridge_binary(args);
+            let mut cmd = tokio::process::Command::new(&bridge_bin);
+            cmd.stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            if role == "responder" {
+                let tor_port = get_flag(args, "--tor-port").unwrap_or_else(|| "443".to_string());
+                cmd.arg("--mode").arg("responder").arg("--port").arg(tor_port);
+                if let Some(ca_pk) = get_flag(args, "--onion-client-auth-pk") {
+                    cmd.arg("--client-auth-pk").arg(ca_pk);
+                }
+                if (policy::is_production_env() || !has_flag(args, "--onion-open-descriptor"))
+                    && get_flag(args, "--onion-client-auth-pk").is_some()
+                {
+                    cmd.arg("--require-restricted-discovery");
+                }
+                peer_label = "ephemeral-onion-peer".to_string();
+            } else {
+                let to = get_flag(args, "--to").unwrap_or_else(|| fail("--to <addr>.onion:port required"));
+                peer_label = to.clone();
+                cmd.arg("--mode").arg("initiator").arg("--to").arg(to);
+                if let Some(skf) = get_flag(args, "--onion-auth-sk-file") {
+                    cmd.arg("--auth-sk-file").arg(skf);
+                } else if has_flag(args, "--onion-auth-sk-stdin") {
+                    cmd.arg("--auth-sk-stdin");
+                }
+            }
+            if let Some(pt_bin) = get_flag(args, "--pt-binary") {
+                cmd.arg("--pt-binary").arg(pt_bin);
+                if let Some(t) = get_flag(args, "--pt-type") {
+                    cmd.arg("--pt-type").arg(t);
+                }
+                if let Some(b) = get_flag(args, "--pt-bridge") {
+                    cmd.arg("--pt-bridge").arg(b);
+                }
+            }
+            let mut child = cmd
+                .spawn()
+                .unwrap_or_else(|e| fail(&format!("failed spawning tor bridge ({}): {e}", bridge_bin.display())));
+            let stdout = child.stdout.take().unwrap_or_else(|| fail("tor bridge stdout unavailable"));
+            let mut stdin = child.stdin.take().unwrap_or_else(|| fail("tor bridge stdin unavailable"));
+            if role == "initiator" && has_flag(args, "--onion-auth-sk-stdin") {
+                let mut auth_line = Zeroizing::new(String::new());
+                std::io::stdin()
+                    .read_line(&mut auth_line)
+                    .unwrap_or_else(|e| fail(&format!("failed reading ClientAuthV3 sk from stdin: {e}")));
+                stdin
+                    .write_all(auth_line.as_bytes())
+                    .await
+                    .unwrap_or_else(|_| fail("failed sending ClientAuthV3 sk to tor bridge"));
+                let _ = stdin.flush().await;
+            }
+            let stderr = child.stderr.take().unwrap_or_else(|| fail("tor bridge stderr unavailable"));
+            let mut err_lines = tokio::io::BufReader::new(stderr);
+            use tokio::io::AsyncBufReadExt;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match err_lines.read_line(&mut line).await {
+                    Ok(0) => fail("tor bridge exited unexpectedly before connecting"),
+                    Ok(_) => {
+                        let l = line.trim_end();
+                        println!("{l}");
+                        let _ = std::io::stdout().flush();
+                        if l.starts_with("[CONNECTED]") {
+                            break;
+                        }
+                    }
+                    Err(e) => fail(&format!("tor bridge stderr read error: {e}")),
+                }
+            }
+            tokio::spawn(async move {
+                let mut tmp = String::new();
+                while let Ok(n) = err_lines.read_line(&mut tmp).await {
+                    if n == 0 {
+                        break;
+                    }
+                    tmp.clear();
+                }
+            });
+            bridge_child = Some(child);
+            Box::new(ChildStream { tx: stdin, rx: stdout })
+        } else if role == "responder" {
+            let bind_str = get_flag(args, "--bind").unwrap_or_else(|| fail("--bind ADDR required for stream responder"));
+            let listener = tokio::net::TcpListener::bind(&bind_str)
+                .await
+                .unwrap_or_else(|e| fail(&format!("stream bind failed ({bind_str}): {e}")));
+            let local = listener.local_addr().unwrap_or_else(|_| fail("local_addr failed"));
+            println!("stream: LISTENING addr={local}");
+            let _ = std::io::stdout().flush();
+            let (sock, remote) = listener
+                .accept()
+                .await
+                .unwrap_or_else(|e| fail(&format!("stream accept failed: {e}")));
+            let _ = sock.set_nodelay(true);
+            peer_label = remote.to_string();
+            Box::new(sock)
+        } else {
+            let to_str = get_flag(args, "--to").unwrap_or_else(|| fail("--to ADDR required for stream initiator"));
+            let sock = tokio::net::TcpStream::connect(&to_str)
+                .await
+                .unwrap_or_else(|e| fail(&format!("stream connect failed ({to_str}): {e}")));
+            let _ = sock.set_nodelay(true);
+            peer_label = to_str;
+            Box::new(sock)
+        };
+
+        let kex_res = if role == "initiator" {
+            stream_transport::in_stream_kex_initiator(
+                &mut transport,
+                signer,
+                psk,
+                &expected_peer_pk,
+                Duration::from_millis(kex_timeout_ms),
+            )
+            .await
+        } else {
+            stream_transport::in_stream_kex_responder(
+                &mut transport,
+                signer,
+                psk,
+                &expected_peer_pk,
+                Duration::from_millis(kex_timeout_ms),
+            )
+            .await
+        };
+        let keys = kex_res.unwrap_or_else(|e| fail(&format!("in-stream Noise_XXhfs KEX failed: {e}")));
+
+        let mut current_frame_key = FrameKey::from_slice(keys.frame_key.as_bytes());
+        let mut pcs_ratchet = PcsRatchet::new(keys.ratchet_root.as_bytes())
+            .unwrap_or_else(|e| fail(&format!("ratchet init failed: {e:?}")));
+        let mut pending_frame_key: Option<FrameKey> = None;
+        let mut prev_frame_key: Option<FrameKey> = None;
+        let mut prev_key_remaining_ticks: u32 = 0;
+
+        let mut next_send_seq: u64 = 0;
+        let mut window = AntiReplayWindow::from_parts(0, [0u64; 32]);
+        let mut shaper = TamarawShaper::new(tamaraw_l, true);
+        let zt_engine = ZeroTrustEngine::new(50);
+        zt_engine.register_peer(&peer_label, SecurityRole::Operator);
+
+        let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+        let mut inbound_rekey_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> =
+            std::collections::HashMap::new();
+        let my_adv = pcs_ratchet.advertise_bundle();
+        if let Ok(frags) = fragment::fragment(&ratchet::RekeyMessage::Advert(my_adv).to_wire(), rekey_chunk_size) {
+            for f in frags {
+                outbound_rekeys.push_back(f.to_wire());
+            }
+        }
+
+        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(32);
+        if use_stdin && !(is_tor && role == "initiator" && has_flag(args, "--onion-auth-sk-stdin")) {
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                    if stdin_tx.blocking_send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+
+        let mode_name = if is_tor { "TOR-ONION-STREAM" } else { "DIRECT-STREAM" };
+        println!(
+            "stream: ACTIVE mode={mode_name} role={role} callsign={callsign} peer={peer_label} quantum={quantum}B interval={interval_ms}ms tamaraw_l={tamaraw_l} zero_footprint={zero_footprint} dumps_suppressed={} acg={} sas={}",
+            report.dumps_suppressed,
+            report.dynamic_code_prohibited,
+            keys.sas
+        );
+        let _ = std::io::stdout().flush();
+
+        let mut ticks_emitted = 0u64;
+        let mut msgs_sent = 0u64;
+        let mut msgs_received = 0u64;
+        let mut chaff_received = 0u64;
+        let mut auth_drops = 0u64;
+        let mut draining: Option<u64> = None;
+        let mut zeroized = false;
+        let start_time = Instant::now();
+        let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
+        tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            if count > 0 && ticks_emitted >= count {
+                break;
+            }
+            if recv_count > 0 && msgs_received >= recv_count && draining.is_none() {
+                draining = Some(drain_ticks);
+            }
+            if let Some(rem) = draining {
+                if rem == 0 {
+                    break;
+                }
+            }
+            if session_timeout_ms > 0 && start_time.elapsed() >= Duration::from_millis(session_timeout_ms) {
+                break;
+            }
+
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    zeroized = true;
+                    break;
+                }
+                line_opt = stdin_rx.recv(), if use_stdin => {
+                    if let Some(line) = line_opt {
+                        let trimmed = line.trim();
+                        if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
+                            zeroized = true;
+                            break;
+                        } else if trimmed == "/quit" || trimmed == "/exit" {
+                            break;
+                        } else if trimmed == "/clear" {
+                            print!("\x1b[2J\x1b[3J\x1b[H");
+                            let _ = std::io::stdout().flush();
+                        } else if trimmed == "/status" {
+                            let (last, _) = window.parts();
+                            println!(
+                                "[STATUS] mode={mode_name} role={role} epoch={} send_seq={next_send_seq} recv_last={last} sent_msgs={msgs_sent} recv_msgs={msgs_received} chaff_sent={} chaff_recv={chaff_received} drops={auth_drops}",
+                                pcs_ratchet.epoch(),
+                                shaper.chaff_cells
+                            );
+                        } else if trimmed == "/rekey" || trimmed == "REKEY" {
+                            if pcs_ratchet.peer_bundle().is_some() && pending_frame_key.is_none() && outbound_rekeys.is_empty() {
+                                if let Ok((step, _mk)) = pcs_ratchet.send_step_auto() {
+                                    let next_epoch = step.epoch;
+                                    if let Ok(fk) = pcs_ratchet.current_frame_key() {
+                                        pending_frame_key = Some(fk);
+                                    }
+                                    if let Ok(frags) = fragment::fragment(&ratchet::RekeyMessage::Step(step).to_wire(), rekey_chunk_size) {
+                                        for f in frags {
+                                            outbound_rekeys.push_back(f.to_wire());
+                                        }
+                                    }
+                                    println!("[POST-QUANTUM RATCHET] Rekey emitted for Epoch {next_epoch}");
+                                }
+                            }
+                        } else if !trimmed.is_empty() {
+                            if let Err(indicator) = destroyer_core::nc3::check_nc3_safety_gate(trimmed.as_bytes()) {
+                                println!("[NC3 SAFETY GATE VIOLATION] '{indicator}' blocked");
+                            } else {
+                                for piece in trimmed.as_bytes().chunks(max_chunk) {
+                                    outbound_msgs.push_back(piece.to_vec());
+                                }
+                            }
+                        }
+                    }
+                }
+                _ = tick_timer.tick() => {
+                    if let Some(ref _old) = prev_frame_key {
+                        if prev_key_remaining_ticks > 0 {
+                            prev_key_remaining_ticks -= 1;
+                        } else {
+                            let _ = prev_frame_key.take();
+                        }
+                    }
+                    if rekey_interval > 0
+                        && ticks_emitted > 0
+                        && ticks_emitted.is_multiple_of(rekey_interval)
+                        && role == "initiator"
+                        && pcs_ratchet.peer_bundle().is_some()
+                        && pending_frame_key.is_none()
+                        && outbound_rekeys.is_empty()
+                    {
+                        if let Ok((step, _)) = pcs_ratchet.send_step_auto() {
+                            if let Ok(fk) = pcs_ratchet.current_frame_key() {
+                                pending_frame_key = Some(fk);
+                            }
+                            if let Ok(frags) = fragment::fragment(&ratchet::RekeyMessage::Step(step).to_wire(), rekey_chunk_size) {
+                                for f in frags {
+                                    outbound_rekeys.push_back(f.to_wire());
+                                }
+                            }
+                        }
+                    }
+
+                    let action = shaper.next_action(!outbound_rekeys.is_empty(), !outbound_msgs.is_empty());
+                    let seq = next_send_seq;
+                    next_send_seq += 1;
+                    let frame = match action {
+                        TamarawAction::EmitControlOrRekey => {
+                            let p = outbound_rekeys.pop_front().unwrap_or_default();
+                            pacing::build_rekey_frame_directed(&current_frame_key, seq, tx_dir, quantum, &p)
+                                .unwrap_or_else(|_| fail("build rekey frame failed"))
+                        }
+                        TamarawAction::EmitData => {
+                            let p = outbound_msgs.pop_front().unwrap_or_default();
+                            pcs_ratchet.note_transmission(p.len());
+                            msgs_sent += 1;
+                            println!("stream: EMIT_MSG seq={seq} bytes={}", p.len());
+                            pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &p)
+                                .unwrap_or_else(|_| fail("build data frame failed"))
+                        }
+                        TamarawAction::EmitChaff | TamarawAction::Idle => {
+                            pcs_ratchet.note_transmission(0);
+                            pacing::build_chaff_frame_directed(&current_frame_key, seq, tx_dir, quantum)
+                                .unwrap_or_else(|_| fail("build chaff frame failed"))
+                        }
+                    };
+                    if stream_transport::write_stream_frame(&mut transport, &frame, max_frame_read).await.is_err() {
+                        break;
+                    }
+                    ticks_emitted += 1;
+                    if let Some(ref mut rem) = draining {
+                        if *rem > 0 {
+                            *rem -= 1;
+                        }
+                    }
+                }
+                recv_res = stream_transport::read_stream_frame(&mut transport, max_frame_read) => {
+                    let bytes = match recv_res {
+                        Ok(Some(b)) => b,
+                        Ok(None) | Err(_) => break,
+                    };
+                    if bytes.len() != quantum {
+                        auth_drops += 1;
+                        continue;
+                    }
+                    let mut open_res = None;
+                    let mut matched_pending = false;
+                    for (slot_idx, key_opt) in [
+                        Some(&current_frame_key),
+                        pending_frame_key.as_ref(),
+                        prev_frame_key.as_ref(),
+                    ].into_iter().enumerate() {
+                        if let Some(k) = key_opt {
+                            if let Some(seq) = aead::peek_seq(k, &bytes) {
+                                if window.check(seq) {
+                                    if let Ok((seq2, ftype, pt)) = aead::open_indexed(k, rx_dir, &bytes) {
+                                        if seq2 == seq {
+                                            open_res = Some((seq2, ftype, pt));
+                                            matched_pending = slot_idx == 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let Some((seq2, ftype, pt)) = open_res else {
+                        auth_drops += 1;
+                        continue;
+                    };
+                    if matched_pending {
+                        if let Some(pfk) = pending_frame_key.take() {
+                            prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
+                            prev_key_remaining_ticks = 20;
+                        }
+                    }
+                    window.mark(seq2);
+                    if ftype == FTYPE_MSG {
+                        if zt_engine.evaluate_ingress(&peer_label, &pt, true).is_err() {
+                            auth_drops += 1;
+                            continue;
+                        }
+                        msgs_received += 1;
+                        let text = String::from_utf8_lossy(&pt);
+                        println!("stream: RECV_MSG seq={seq2} bytes={} payload={text}", pt.len());
+                    } else if ftype == FTYPE_CHAFF {
+                        chaff_received += 1;
+                    } else if ftype == FTYPE_REKEY || ftype == FTYPE_IN_BAND_EPOCH_REKEY {
+                        if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
+                            let tx_id = frag.tx_id;
+                            let total = frag.total;
+                            let mut finished = None;
+                            if inbound_rekey_buffers.len() > 16 {
+                                inbound_rekey_buffers.clear();
+                            }
+                            if let Ok(buf) = match inbound_rekey_buffers.entry(tx_id) {
+                                std::collections::hash_map::Entry::Occupied(o) => Ok(o.into_mut()),
+                                std::collections::hash_map::Entry::Vacant(v) => {
+                                    fragment::ReassemblyBuffer::new(tx_id, total).map(|b| v.insert(b))
+                                }
+                            } {
+                                if let Ok(true) = buf.insert(frag) {
+                                    finished = buf.reassemble().ok();
+                                    inbound_rekey_buffers.remove(&tx_id);
+                                }
+                            }
+                            if let Some(raw_rekey) = finished {
+                                match ratchet::RekeyMessage::from_wire(&raw_rekey) {
+                                    Ok(ratchet::RekeyMessage::Advert(bundle)) => {
+                                        pcs_ratchet.set_peer_bundle(bundle);
+                                    }
+                                    Ok(ratchet::RekeyMessage::Step(step)) => {
+                                        if pcs_ratchet.receive_step_with_advert(&step).is_ok() {
+                                            let new_epoch = pcs_ratchet.epoch();
+                                            if let Ok(tag) = pcs_ratchet.compute_confirm_tag(new_epoch) {
+                                                let c = ratchet::RekeyMessage::Confirm { epoch: new_epoch, auth_tag: tag };
+                                                if let Ok(frags) = fragment::fragment(&c.to_wire(), rekey_chunk_size) {
+                                                    for f in frags {
+                                                        outbound_rekeys.push_back(f.to_wire());
+                                                    }
+                                                }
+                                            }
+                                            let a = ratchet::RekeyMessage::Advert(pcs_ratchet.advertise_bundle());
+                                            if let Ok(frags) = fragment::fragment(&a.to_wire(), rekey_chunk_size) {
+                                                for f in frags {
+                                                    outbound_rekeys.push_back(f.to_wire());
+                                                }
+                                            }
+                                            if let Ok(new_fk) = pcs_ratchet.current_frame_key() {
+                                                prev_frame_key = Some(std::mem::replace(&mut current_frame_key, new_fk));
+                                                prev_key_remaining_ticks = 20;
+                                            }
+                                            println!("[POST-QUANTUM RATCHET] Stream epoch advanced to {new_epoch}");
+                                        }
+                                    }
+                                    Ok(ratchet::RekeyMessage::Confirm { epoch, auth_tag }) => {
+                                        if pcs_ratchet.epoch() == epoch {
+                                            if let Ok(exp) = pcs_ratchet.compute_confirm_tag(epoch) {
+                                                if ct::ct_eq(&auth_tag, &exp) {
+                                                    if let Some(pfk) = pending_frame_key.take() {
+                                                        prev_frame_key = Some(std::mem::replace(&mut current_frame_key, pfk));
+                                                        prev_key_remaining_ticks = 20;
+                                                    }
+                                                    println!("[POST-QUANTUM RATCHET] Confirmation verified for Epoch {epoch}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        auth_drops += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        drop(transport);
+        if let Some(mut child) = bridge_child.take() {
+            // Closing stdin triggers clean EOF in `secure-transmit-tor` so its
+            // `VolatileWorkDir::drop` 3-pass wipe runs before process exit.
+            if tokio::time::timeout(Duration::from_secs(3), child.wait())
+                .await
+                .is_err()
+            {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+        }
+        drop(current_frame_key);
+        drop(pending_frame_key.take());
+        drop(prev_frame_key.take());
+        drop(keys);
+
+        if zeroized || zero_footprint {
+            print!("\x1b[2J\x1b[3J\x1b[H");
+            let _ = std::io::stdout().flush();
+            println!(
+                "stream: ZEROIZE_AND_TERMINATED mode={mode_name} ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={auth_drops}"
+            );
+        } else {
+            println!(
+                "stream: TERMINATED mode={mode_name} ticks={ticks_emitted} sent_msgs={msgs_sent} recv_msgs={msgs_received} recv_chaff={chaff_received} drops={auth_drops}"
+            );
+        }
+    });
 }
 
 fn require_kex_auth(psk_present: bool) {
