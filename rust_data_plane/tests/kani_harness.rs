@@ -185,16 +185,12 @@ mod kani_proofs {
 
     /// 5. nostd_microcore frame parse memory safety & non-panic proof:
     /// For any arbitrary slice of bytes, parse_stack_frame_in_place never panics.
-    #[kani::unwind(1240)]
     #[kani::proof]
     fn kani_nostd_frame_parse_never_panics() {
         let len: usize = kani::any();
         kani::assume(len <= 64);
-        let mut buf = vec![0u8; len];
-        for b in buf.iter_mut() {
-            *b = kani::any();
-        }
-        let _ = super::nostd_microcore::parse_stack_frame_in_place(&buf);
+        let arr: [u8; 64] = kani::any();
+        let _ = super::nostd_microcore::parse_stack_frame_in_place(&arr[..len]);
     }
 
     /// 6. Stateless anti-amplification cookie gate verification:

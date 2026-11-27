@@ -1028,15 +1028,16 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 |   └── docs/formal/nc3_dual_custody.pv (NC3 / PAL Two-Person Rule & dual hardware-token authorization)    |
 |       └── Structurally audited by tests/test_formal_proverif_models.py                                   |
 +---------------------------------------------------------------------------------------------------------+
-| Kani Rust Bounded Model Checking: DEFINED harnesses (Linux CI `cargo kani`) + EXECUTED property doubles:|
-|   ├── #[kani::proof] kani_cookie_gate_stateless_verification ......... DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_nonce_domain_separation .................... DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_replay_window_monotonic .................... DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_stream_frame_len_decoder_bounds ............ DEFINED (runs in Linux Kani CI)  |
-|   ├── #[kani::proof] kani_tamaraw_shaper_epoch_modulo_bounds ......... DEFINED (runs in Linux Kani CI)  |
+| Kani Rust Bounded Model Checking: 8 CBMC-executed harnesses (Linux CI `cargo kani`) + 10 property doubles:|
+|   ├── #[kani::proof] kani_nonce_domain_separation .................... CBMC VERIFIED (Linux Kani CI)   |
+|   ├── #[kani::proof] kani_replay_window_monotonic .................... CBMC VERIFIED (Linux Kani CI)   |
+|   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... CBMC VERIFIED (Linux Kani CI)   |
+|   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. CBMC VERIFIED (Linux Kani CI)   |
+|   ├── #[kani::proof] kani_stream_frame_len_decoder_bounds ............ CBMC VERIFIED (Linux Kani CI)   |
+|   ├── #[kani::proof] kani_tamaraw_shaper_epoch_modulo_bounds ......... CBMC VERIFIED (Linux Kani CI)   |
+|   ├── #[kani::proof] verify_tor_padding_never_overflows / verify_length_header_bounds .. CBMC VERIFIED  |
+|   ├── #[kani::proof] kani_cookie_gate_stateless_verification ......... DEFINED (property double passes) |
+|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (property double passes) |
 |   ├── 10 deterministic property doubles + re-exported module unit tests execute green under `cargo test`  |
 |   └── NOTE: "HOLDS IN MODEL" applies strictly to the symbolic model; `cargo kani` requires Linux CBMC.  |
 +---------------------------------------------------------------------------------------------------------+

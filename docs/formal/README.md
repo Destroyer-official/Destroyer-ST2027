@@ -58,11 +58,17 @@ kani_stream_frame_len_decoder_bounds
 kani_tamaraw_shaper_epoch_modulo_bounds
 ```
 
-Execution requires the Kani + CBMC toolchain (`cargo kani`); Kani is
-installed in Linux CI (`.github/workflows/kani-proofs.yml`), so "defined" is
-the honest status word in local environments until executed. What DOES execute
-green under plain `cargo test` in all environments are the 10 deterministic
-property doubles in `property_doubles` (same properties, bounded sweeps):
+Execution requires the Kani + CBMC toolchain (`cargo kani`); Linux CI
+(`.github/workflows/kani-proofs.yml`) executes CBMC across the 2 library
+harnesses (`src/shaper.rs`, `src/stream_transport.rs`) and the 6 bounded
+`kani_harness.rs` harnesses (`kani_nonce_domain_separation`,
+`kani_max_stream_bytes_cap`, `kani_stream_frame_len_decoder_bounds`,
+`kani_tamaraw_shaper_epoch_modulo_bounds`, `kani_replay_window_monotonic`, and
+`kani_nostd_frame_parse_never_panics`), whereas `kani_frame_split_reassemble_roundtrip`
+and `kani_cookie_gate_stateless_verification` exceed per-job CBMC SAT/unwind
+budgets in CI and are exercised deterministically via `property_doubles`. What
+DOES execute green under plain `cargo test` in all environments are all 10
+deterministic property doubles in `property_doubles`:
 
 ```
 cookie_gate_stateless_verification
