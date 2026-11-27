@@ -36,6 +36,7 @@ def _clean_lab_env() -> dict[str, str]:
 def _provision_identity_and_psk(tmp_path: Path, env: dict[str, str]):
     psk_path = tmp_path / "psk.hex"
     psk_path.write_text("42" * 32, encoding="utf-8")
+    os.chmod(psk_path, 0o600)
 
     i_sk = tmp_path / "init.sk"
     i_pk = tmp_path / "init.pk"
@@ -198,6 +199,7 @@ def test_tor_production_requires_client_auth_v3_fail_closed(tmp_path: Path):
     env.pop("P2P_LAB_MODE", None)
     psk = tmp_path / "psk.hex"
     psk.write_text("33" * 32, encoding="utf-8")
+    os.chmod(psk, 0o600)
     sk = tmp_path / "r.sk"
     pk = tmp_path / "p.pk"
     subprocess.run(

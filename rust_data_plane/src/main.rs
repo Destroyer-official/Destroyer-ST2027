@@ -3543,9 +3543,9 @@ fn cmd_node(args: &[String]) {
         println!("  --auth-pkcs11-label LABEL      PKCS#11 HSM signing key label (production silicon custody)");
         println!("  --auth-sk-file PATH            Local ML-DSA-87 signing key seed file (non-production/lab only)");
         println!("  --peer-auth-pk-file PATH       Pinned peer ML-DSA-87 public key file (2592B hex)");
-        println!("  --onion-client-auth-pk KEY     Restricted Discovery ClientAuthV3 peer pubkey (descriptor:x25519:...)");
-        println!("  --onion-auth-sk-file PATH      Initiator ClientAuthV3 x25519 secret key file (64-hex)");
-        println!("  --onion-auth-sk-stdin          Read initiator ClientAuthV3 x25519 secret key from stdin");
+        println!("  --onion-client-auth-pk KEY     Restricted Discovery ClientAuthV3 peer pubkey (string or file)");
+        println!("  --onion-auth-sk-file PATH      Initiator ClientAuthV3 descriptor-auth secret key file (64-hex)");
+        println!("  --onion-auth-sk-stdin          Read initiator ClientAuthV3 descriptor-auth secret key from stdin");
         println!("  --tamaraw-l CELLS              Tamaraw burst-tail alignment multiple L (default: 32)");
         println!("  --tor-port PORT                Virtual Tor onion service port (default: 443)");
         println!("  --tor-bridge-bin PATH          Explicit path to secure-transmit-tor helper binary");
