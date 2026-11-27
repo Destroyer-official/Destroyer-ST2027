@@ -1,0 +1,35 @@
+# 2027+ Sovereign Zero-Footprint P2P Implementation Plan (Hardened Edition)
+
+**Target Architecture:** Feature-Gated Embedded Ephemeral Tor v3 Onion Service (`arti-client 0.48.0`) + In-Stream Post-Quantum `Noise_XXhfs` + In-House Pure-Rust Tamaraw Cell Shaper (`rust_data_plane` Single-Binary)  
+**Compliance & Cryptographic Posture:** NSA CNSA 2.0 (Inner E2EE Tunnel: `ML-KEM-1024`, `ML-DSA-87`, `AES-256-GCM`, `SHA-384`), NIST FIPS 203 / 204, RFC 10024 (`SecP384r1MLKEM1024`), Tor Proposal 359 (`CGO`) + Proposal 327/362 (`hs-pow-full`)  
+**Rollback Baseline on GitHub (`origin`):** Annotated tag `pre-tor-ephemeral-2027` pinned to commit `e13fb7b`
+
+> **Honest Layered Boundary (Outer Anonymity vs. Inner CNSA 2.0 Confidentiality):**
+> Tor circuits (`tor-proto` / `CGO`) use classical cryptography (`Curve25519 ntor`, `AES/UIV+`, `Ed25519` v3 `.onion` identities) because public Tor relays do not yet run NIST PQC. Tor provides **open-internet network metadata anonymity and relay tagging resistance**. **Quantum resistance and CNSA 2.0 compliance come strictly from the end-to-end inner `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) + Continuous Epoch Ratchet (`AES-256-GCM`) tunnel carried inside the Tor stream.** Official DoD/NSS accreditation still requires CMVP FIPS 140-3 validated modules, TPM/PKCS#11 hardware custody, and physical TEMPEST/facility controls.
+
+---
+
+## 1. Deep Research & Supply-Chain Audit Findings
+
+Auditing the draft Tor plan against `rust_data_plane`, `crates.io`, RustSec, and Tor wire framing identified 7 critical upgrades before implementation:
+
+1. **Avoid Unmaintained `bincode 1.3` (`RUSTSEC-2025-0141`) in `maybenot 2.2.2`:** `maybenot 2.2.2` unconditionally depends on `bincode ^1.3` (marked permanently unmaintained in RustSec). Instead of adding `maybenot`, implement a ~200-line in-house pure-Rust **Tamaraw / Constant-Rate Fixed-Cell Shaper (`shaper.rs`)** using `tokio::time` + `getrandom` (0 external crates). Constant-rate emission with fixed batch-tail multiples gives tighter theoretical resistance against ESPRESSO KDE flow correlation (`Jeon et al., ACM CCS '26`) while keeping `cargo audit` and `cargo deny` green.
+2. **OS-Native TLS + Static SQLite (`arti-client 0.48.0`, `MSRV 1.92`):** Configure `arti-client` with `default-features = false` and `["tokio", "native-tls", "static-sqlite", "onion-service-client", "onion-service-service", "vanguards", "ephemeral-keystore", "restricted-discovery", "hs-pow-full", "experimental-api"]`. On Windows, `native-tls` uses OS **SChannel / CNG** (zero external TLS library downloads); `static-sqlite` avoids missing `sqlite3.lib`/`sqlite3.dll` on Windows.
+3. **Compile-Time TCB Isolation (`default = []`):** Keep `tor` opt-in behind `--features tor` so air-gapped UDP/optical-diode builds (`--no-default-features`) keep the minimal ~19-crate TCB untouched.
+4. **Fix 2-Socket KEX + `%TEMP%\*.key` Disk Leak in `rust_data_plane/src/main.rs`:** Tor supports TCP streams only, not UDP. Run `Noise_XXhfs` (`M1 -> M2 -> M3`) in-band inside the single Arti `DataStream` and return `LockedKey32` directly in page-locked RAM with zero temporary key files written to disk.
+5. **Tor Relay Cell Alignment (`496B` / `994B` vs `1232B`):** Tor relay cells hold 498 usable bytes inside each 514-byte link cell. A `1232B` frame + 2-byte length prefix (`1234B`) fragments into 3 Tor cells (260B waste/frame). Tor stream framing uses **`496B`** (`+ 2B = 498B` = exact 1 Tor relay cell) or **`994B`** (`+ 2B = 996B` = exact 2 Tor relay cells), using existing `fragment::fragment()` for `InBandEpochRekeyPayload` and `/doc` transfers.
+6. **`--zero-footprint` Replay Safety Invariant:** Holding `AntiReplayWindow` purely in locked RAM (`memlock.rs`, no `node_*.state` file) strictly requires ephemeral `Noise_XXhfs` per session; static `--key-file`/`--key-stdin` is refused fail-closed in `--zero-footprint`.
+7. **OS Native Process Hardening (0 extra crates):** Direct `kernel32` / `libc` FFI: Windows `SetProcessMitigationPolicy` (`ProcessDynamicCodePolicy` + `ProcessExtensionPointDisablePolicy`), `WerSetFlags(WER_FAULT_REPORTING_NO_UI)`, `SetErrorMode`, `VirtualLock`, `FILE_ATTRIBUTE_TEMPORARY`; Linux `prctl(PR_SET_DUMPABLE, 0)`, `RLIMIT_CORE=0`, `mlock`, `/dev/shm` cache, plus recursive 3-pass `purge::purge_file()` on exit / `Ctrl+C`.
+
+---
+
+## 2. Phased Implementation Plan
+
+- **Phase 0 (Pre-Implementation Rollback Point):** Annotated tag `pre-tor-ephemeral-2027` at `e13fb7b` on GitHub (`origin`) + versioned plan committed to `main`.
+- **Phase 1:** Feature-gate `arti-client 0.48.0` in `rust_data_plane/Cargo.toml`, audit `Cargo.lock` via `cargo deny check` & `cargo audit`, implement native OS dump/injection hardening.
+- **Phase 2 (`rust_data_plane/src/tor_transport.rs`):** Volatile Arti state/cache directory (`ArtiEphemeralKeystore`, `ClientAuthV3` Restricted Discovery, `hs-pow-full`, `vanguards = full`, zero localhost SOCKS port).
+- **Phase 3 (`stream_transport.rs`, `main.rs`):** Unified `SecureTransport` abstraction, Tor-aligned `496B`/`994B` 2-byte length-prefixed framing, in-stream `Noise_XXhfs` (`M1->M2->M3`) with zero `.key` temp files, `--transport tor|udp`.
+- **Phase 4 (`shaper.rs`):** Pure-Rust Tamaraw constant-rate fixed-cell Tor shaper (`0` new crates) + `FTYPE_CHAFF` padding + CER rekey preemption.
+- **Phase 5 (`--zero-footprint`):** RAM-only `AntiReplayWindow`, fail-closed refusal of static keys, TPM NV epoch guard without `.state`, terminal & Arti cache wipe on exit/`Ctrl+C`.
+- **Phase 6 (`--pt-binary` optional):** Disabled by default (`0` external downloads); optional SHA-384-pinned `lyrebird` (`WebTunnel`/`obfs4`) behind firewalls that block Tor guards.
+- **Phase 7 (Verification & Acceptance):** Dual CI (`--no-default-features` + `--features tor`), ProVerif model of compromised Tor rendezvous relay (`docs/formal/st2027_handshake.pv`, `st2027_pcs.pv`), Kani length-decoder bounds, and live 2-node ephemeral `.onion` drill confirming zero open listening ports and zero residual temp/key artifacts after `/zeroize`.
