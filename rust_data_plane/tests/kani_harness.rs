@@ -132,6 +132,7 @@ mod kani_proofs {
 
     /// 3. Replay window monotonicity: strictly increasing seqs accept,
     /// duplicates drop, `drop_count` is monotonic non-decreasing.
+    #[kani::unwind(34)]
     #[kani::proof]
     fn kani_replay_window_monotonic() {
         let base: u64 = kani::any();
@@ -184,6 +185,7 @@ mod kani_proofs {
 
     /// 5. nostd_microcore frame parse memory safety & non-panic proof:
     /// For any arbitrary slice of bytes, parse_stack_frame_in_place never panics.
+    #[kani::unwind(1240)]
     #[kani::proof]
     fn kani_nostd_frame_parse_never_panics() {
         let len: usize = kani::any();
