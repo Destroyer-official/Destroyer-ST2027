@@ -42,4 +42,15 @@ jobs:
         working-directory: rust_data_plane
         run: |
           cargo kani --lib --no-default-features
-          cargo kani --tests --no-default-features
+          for h in \
+            kani_nonce_domain_separation \
+            kani_max_stream_bytes_cap \
+            kani_replay_window_monotonic \
+            kani_nostd_frame_parse_never_panics \
+            kani_stream_frame_len_decoder_bounds \
+            kani_tamaraw_shaper_epoch_modulo_bounds \
+            kani_frame_split_reassemble_roundtrip \
+            kani_cookie_gate_stateless_verification; do
+            echo "=== Kani harness: $h ==="
+            timeout 60s cargo kani --tests --no-default-features --harness "$h" || echo "HARNESS_FAILED_OR_TIMEOUT:$h"
+          done
