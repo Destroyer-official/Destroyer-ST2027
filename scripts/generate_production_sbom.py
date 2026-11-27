@@ -327,11 +327,18 @@ def build_cbom_inventory() -> list:
              _alg("HKDF-SHA512", "RFC 5869", "key separation"),
          ]},
         {"component": "rust_data_plane",
-         "role": "native data-plane (AEAD/framing/replay, X-Wing-style hybrid KEM)",
+         "role": "native data-plane (CNSA 2.0 in-stream Noise_XXhfs, AEAD, CER ratchet, Tamaraw 496B/1232B shaping, RFC 6479 anti-replay)",
          "algorithms": [
-             _alg("ML-KEM-1024", "FIPS 203", "hybrid KEM via ml-kem crate (audited-path cross-checked)"),
-             _alg("X25519", "RFC 7748", "hybrid KEM component via x25519-dalek"),
-             _alg("ChaCha20-Poly1305", "RFC 8439", "frame AEAD (RFC 8439 vectors pinned)"),
+             _alg("SecP384r1MLKEM1024", "FIPS 203 / RFC 10024", "hybrid L5 KEM (p384 + ml-kem crate)"),
+             _alg("ML-DSA-87", "FIPS 204", "transcript authentication (ml-dsa crate / PKCS#11 / TPM 2.0)"),
+             _alg("AES-256-GCM", "NIST SP 800-38D", "per-frame AEAD with deterministic monotonic nonce"),
+             _alg("SHA-384 / HKDF-SHA384 / HMAC-SHA384", "FIPS 180-4 / RFC 5869", "KDF, transcript binding, binary/state pinning"),
+         ]},
+        {"component": "tor_transport",
+         "role": "privilege-separated embedded Arti Tor v3 transport bridge (classical metadata anonymity layer; zero disk keys)",
+         "algorithms": [
+             _alg("Curve25519 ntor / ClientAuthV3 / Ed25519", "Tor v3 Spec (classical outer circuit)", "Arti onion rendezvous + Restricted Discovery"),
+             _alg("OS-Native TLS (SChannel / OpenSSL)", "TLS 1.3 / native-tls", "Tor directory/guard connections without 3rd-party TLS DLLs"),
          ]},
     ]
 

@@ -67,6 +67,9 @@ def generate_slsa_provenance() -> Dict[str, Any]:
     # Core artifacts to attest
     artifacts_to_attest = [
         REPO_ROOT / "rust_data_plane" / "target" / "release" / "secure-transmit.exe",
+        REPO_ROOT / "rust_data_plane" / "target" / "release" / "secure-transmit",
+        REPO_ROOT / "tor_transport" / "target" / "release" / "secure-transmit-tor.exe",
+        REPO_ROOT / "tor_transport" / "target" / "release" / "secure-transmit-tor",
         REPO_ROOT / "oqs.dll",
         REPO_ROOT / "libsodium.dll",
         REPO_ROOT / "secure_transmit_2027.py",

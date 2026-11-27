@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-27T11:12:43.821044+00:00",
+  "timestamp_utc": "2026-11-27T11:39:30.717356+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -88,6 +88,11 @@
     "dependency_security_verifier.py": {
       "expected_sha3_512": "3500d8d0140b6c494c0260cdb4830cac2f573c0b1be610a7b6f1640b1ff18eb35601d440b58d82080306567e6add4fe5f89f73695638e781287f3ba66180da70",
       "actual_sha3_512": "3500d8d0140b6c494c0260cdb4830cac2f573c0b1be610a7b6f1640b1ff18eb35601d440b58d82080306567e6add4fe5f89f73695638e781287f3ba66180da70",
+      "matched": true
+    },
+    "tor_transport/src/main.rs": {
+      "expected_sha3_512": "dee628491cbabcba504c3ed042ca6232b2655697b2232c16daa8d685e8a1a46ed1949bb314f8782ffa5abc872d3ac3f7c8b30c95f86449fa3c51ac76d6e10b99",
+      "actual_sha3_512": "dee628491cbabcba504c3ed042ca6232b2655697b2232c16daa8d685e8a1a46ed1949bb314f8782ffa5abc872d3ac3f7c8b30c95f86449fa3c51ac76d6e10b99",
       "matched": true
     }
   }

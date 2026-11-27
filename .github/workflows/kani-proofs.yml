@@ -1,9 +1,9 @@
 name: Kani Proofs (Linux, CBMC-backed)
 
-# Executes the 5 #[kani::proof] harnesses defined in
-# rust_data_plane/tests/kani_harness.rs under the real Kani + CBMC
-# toolchain (Linux-only upstream; hence a dedicated ubuntu job, not part
-# of the Windows-local master audit, which asserts defined-not-executed).
+# Executes the 2 library #[kani::proof] harnesses (`src/shaper.rs`, `src/stream_transport.rs`)
+# and the 8 integration #[kani::proof] harnesses defined in
+# `rust_data_plane/tests/kani_harness.rs` under the real Kani + CBMC toolchain
+# (Linux-only upstream; hence a dedicated ubuntu job).
 # Fail-closed: any harness failure reds the job.
 
 on:
@@ -38,7 +38,8 @@ jobs:
           cargo install --locked kani-verifier
           cargo kani setup
 
-      - name: Run Kani proof harnesses (destroyer_core)
+      - name: Run Kani proof harnesses (destroyer_core library & kani_harness)
         working-directory: rust_data_plane
         run: |
-          cargo kani
+          cargo kani --lib --no-default-features
+          cargo kani --test kani_harness --no-default-features

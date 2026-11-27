@@ -339,6 +339,40 @@ The console integrates:
 - ATAK/WinTAK multicast bridge emitting on `239.2.3.1:6969` (and unicast port 4242).
 - Two-Person Integrity (TPI) dual-custody authorization for emergency directives.
 
+### SOP-10: Deploying Ephemeral Tor v3 Enclave Link (`--tor --zero-footprint`)
+```bash
+# 1. Generate ClientAuthV3 Restricted Discovery keypair on Responder/Initiator provisioning station:
+./tor_transport/target/release/secure-transmit-tor --mode client-auth-keygen
+# Record CLIENT_AUTH_PK=descriptor:x25519:... (public, for Responder) and CLIENT_AUTH_SK_HEX=... (secret, for Initiator)
+
+# 2. Launch Responder (0 host listening TCP/UDP ports; RAM keystore; 496B Tor-aligned Tamaraw shaping):
+python secure_p2p.py node \
+  --role responder \
+  --tor --zero-footprint \
+  --tor-bridge-sha384 <96_HEX_SHA384_OF_SECURE_TRANSMIT_TOR> \
+  --onion-client-auth-pk descriptor:x25519:<52_CHAR_B32> \
+  --psk-file keys/tactical_shared.psk \
+  --auth-tpm-sealed keys/resp_mldsa87.tpm.priv --auth-tpm-pub keys/resp_mldsa87.tpm.pub \
+  --peer-auth-pk-file keys/init_mldsa87.pk \
+  --quantum 496 --interval-ms 20 --tamaraw-l 16
+
+# 3. Launch Initiator after Responder prints [ONION] <56_char>.onion:443:
+python secure_p2p.py node \
+  --role initiator \
+  --tor --zero-footprint \
+  --tor-bridge-sha384 <96_HEX_SHA384_OF_SECURE_TRANSMIT_TOR> \
+  --to <56_char>.onion:443 \
+  --onion-auth-sk-file keys/client_auth.sk \
+  --psk-file keys/tactical_shared.psk \
+  --auth-tpm-sealed keys/init_mldsa87.tpm.priv --auth-tpm-pub keys/init_mldsa87.tpm.pub \
+  --peer-auth-pk-file keys/resp_mldsa87.pk \
+  --quantum 496 --interval-ms 20 --tamaraw-l 16
+```
+In `--zero-footprint` Tor mode:
+- `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) executes in-band over the single Tor `DataStream` with keys locked exclusively in RAM (`VirtualLock`/`mlock`, OS crash-dump suppression active).
+- Static `--key-file` / `--key-stdin` and plaintext disk keys under `P2P_PRODUCTION=1` are refused fail-closed.
+- Closing `/quit`, `/zeroize`, or `Ctrl+C` shuts down Arti handles and runs NIST SP 800-88 3-pass wipe on the volatile cache before exiting.
+
 ---
 
 ## 8. Communications Security (COMSEC) & Emission Security (EMSEC)
