@@ -42,7 +42,7 @@ from audit_logging_system import log_event, AuditEventType, AuditSeverity
 EAM_PREAMBLE = "[NC3/EAM-AUTH-DEFCON-1]"
 EAM_CLASSIFICATION = "TOP SECRET // SI-OP-IA // NC3 // NOFORN"
 DEFAULT_EAM_VALIDITY_WINDOW = 120.0  # Strict 120-second lifetime
-DEFAULT_MAX_DUAL_SYNC_WINDOW_SECONDS = 2.0  # Strict 2.0-second simultaneous action window (DoD S-5210.41M)
+DEFAULT_MAX_DUAL_SYNC_WINDOW_SECONDS = 2.0  # Project-chosen 2.0s concurrency window (not prescribed by DoD S-5210.41M)
 
 
 class NC3SecurityError(Exception):
@@ -54,7 +54,7 @@ class DualCustodyViolation(NC3SecurityError):
 
 
 class DualCustodySynchronizationError(DualCustodyViolation):
-    """Raised when authorizations exceed the strict simultaneous execution window (DoD S-5210.41M)."""
+    """Raised when dual-officer authorizations exceed the ST2027 simultaneous execution window."""
 
 
 class VSSChecksumMismatchError(NC3SecurityError):
@@ -838,12 +838,12 @@ class NC3CommandController:
         expected scheme ALWAYS comes from this caller-supplied binding, never
         from the wire response's own scheme field (attacker-controlled)."""
         """
-        Verifies dual hardware token responses conforming to DoD Directive S-5210.41M:
+        Verifies dual hardware token responses aligned with the Two-Person Concept (DoD S-5210.41M):
         1. Challenge freshness & validity (anti-replay).
         2. Two distinct officers.
         3. Two distinct physical hardware tokens (prevents single-token multi-signing).
         4. Independent client nonces.
-        5. Physical Temporal Synchronization Window: abs(t1 - t2) <= 2.0 seconds.
+        5. Project-defined temporal synchronization window: abs(t1 - t2) <= 2.0s (not a DoD S-5210.41M-mandated timer).
         6. Cryptographic signature verification with NIST FIPS 204 ML-DSA-87.
         7. TPM 2.0 PCR composite validation (when sealed).
         """

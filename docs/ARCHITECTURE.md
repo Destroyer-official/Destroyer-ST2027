@@ -38,7 +38,7 @@ This is the formal, fail-closed production target conforming to CNSA Suite 2.0 a
 [3] Outer TLS 1.3 Transport (TLS_AES_256_GCM_SHA384 only) ........... secure_transmit_2027.py
 [4] Inner Hybrid Handshake (Noise_XXhfs / SecP384r1MLKEM1024) ....... noise_pq.py / secure_transmit_2027.py
 [5] Transcript & Identity Authentication (ML-DSA-87 FIPS 204) ....... noise_pq.py / cnsa_purity.py
-[6] Two-Person Integrity Gate (DoD S-5210.41M 2.0s DPO) ............. spo_dpo.py
+[6] Two-Person Integrity Gate (DoD S-5210.41M; 2.0s DPO threshold) .... spo_dpo.py
 [7] Trust Anchor (Offline 3-of-5 Threshold ML-DSA-87 Hardware CA) ... trust_anchor.py
 [8] Native Memory Defense (OS-locked pages, volatile zeroize) ....... ts_rt/src/lib.rs (Rust cdylib)
 [9] Hardware & Platform Gating (FIPS 140-3, TEMPEST, seL4/VBS) ...... ts_hw_layer.py + ts_runtime.py

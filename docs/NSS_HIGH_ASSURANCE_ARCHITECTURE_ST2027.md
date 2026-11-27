@@ -13,6 +13,7 @@ Formal Verification: ProVerif 2.05 (Symbolic Handshake Proofs) & Kani (CBMC Boun
 ## 1. Executive Summary & Trusted Computing Base (TCB)
 
 **Sovereign Transmit 2027 (ST2027)** is an advanced, post-quantum secure communications architecture engineered for National Security Systems (NSS), tactical edge networks, and allied joint all-domain operations (CJADC2). ST2027 is specifically designed to eliminate the vulnerabilities of legacy cryptographic protocols against:
+
 1. **Harvest-Now-Decrypt-Later (HNDL)** attacks via universal quantum computers capable of running Shor's and Grover's algorithms.
 2. **Physical Side-Channel & Fault Injection Attacks** (laser-induced fault injection, clock glitching) via mandatory Verify-After-Sign (VAS) in RAM.
 3. **Traffic Analysis & Flow Correlation** via fixed-interval constant-rate cell quantization (1232-byte wire frames at 50ms intervals) and PRF header whitening.
@@ -68,6 +69,7 @@ ST2027 enforces complete conformance with the **National Security Agency Commerc
 As established in CHES 2024 and IACR ePrint 2025/2009, lattice-based digital signature schemes (such as ML-DSA / Dilithium) are susceptible to physical laser and voltage glitching attacks during signing. A single targeted bit-flip during the signing polynomial generation can leak the signer's private key.
 
 To counter physical fault injection, ST2027 implements mandatory in-memory **Verify-After-Sign (VAS)**:
+
 ```python
 # Exact implementation from liboqs_wrapper.py (lines 620-642)
 signature = self._sig.sign(message)
@@ -80,6 +82,7 @@ if not self._sig.verify(message, signature, self._public_key):
         "Private key has been purged from memory."
     )
 ```
+
 Any signature that fails immediate self-verification causes an emergency memory zeroization of the private key before the signature can be emitted over the wire.
 
 ### 2.2 Dual-Combiner Post-Quantum Key Exchange
@@ -99,6 +102,7 @@ For deterministic latency-critical operations and rigorous resilience against me
 ### 3.1 Zero-Heap-Allocation AEAD Encryption
 
 The frame encryption path in [`rust_data_plane/src/aead.rs`](../rust_data_plane/src/aead.rs) operates entirely on pre-allocated stack buffers:
+
 ```rust
 // rust_data_plane/src/aead.rs
 pub fn seal_in_place(
@@ -115,9 +119,10 @@ pub fn seal_in_place(
 
 ### 3.2 Strict Counter Fail-Closed Saturation (Anti-Nonce Reuse)
 
-Under AES-GCM, encrypting two different plaintexts with the same (key, nonce) pair catastrophically destroys the authenticity and confidentiality of the session (the Joux forbidden attack). 
+Under AES-GCM, encrypting two different plaintexts with the same (key, nonce) pair catastrophically destroys the authenticity and confidentiality of the session (the Joux forbidden attack).
 
 In [`rust_data_plane/src/ratchet.rs`](../rust_data_plane/src/ratchet.rs#L102-L131), sequence counter rollover is physically impossible. When the 64-bit sequence counter reaches saturation, the ratchet permanently latches closed:
+
 ```rust
 if self.send_seq == u64::MAX {
     // Latch permanently shut to prevent nonce reuse
@@ -130,6 +135,7 @@ self.send_seq += 1;
 ### 3.3 RFC 6479 Decoupled 1024-Packet Sliding Bitmask Window
 
 Packet replay attacks are mitigated using the RFC 6479 decoupled sliding window algorithm in [`rust_data_plane/src/replay.rs`](../rust_data_plane/src/replay.rs). The replay state tracks a 1024-packet window using an array of 16 `u64` bitmasks ($16 \times 64 = 1024\text{ bits}$):
+
 - Packets ahead of the window update the maximum sequence number and advance the bitmap.
 - Packets within the window are checked and marked in constant time ($O(1)$ bitwise operations).
 - Duplicate or delayed packets falling behind the window boundary are immediately and silently dropped without triggering error acknowledgments that could aid adversary traffic analysis.
@@ -141,12 +147,14 @@ Packet replay attacks are mitigated using the RFC 6479 decoupled sliding window 
 ### 4.1 Physical TPM 2.0 Integration via Win32 TBS
 
 In production deployment, ST2027 binds its identity and cryptographic credentials to the host platform's physical **Trusted Platform Module (TPM 2.0)** via native Windows TBS (`Tbsi_Context_Create`, `Tbsip_Submit_Command`):
+
 - **Platform Configuration Registers (PCRs)**: Regs [0, 1, 2, 7] measure the UEFI firmware, boot loader, secure boot state, and OS kernel integrity.
 - **Cryptographic Attestation Quoting**: Remote peers verify TPM quotes signed by the hardware Endorsement Key (EK) before establishing top-secret associations.
 
 ### 4.2 Hardware NVRAM Monotonic Anti-Rollback Guard
 
 To protect against offline snapshot rollback, forensic disk imaging, or VM replay attacks, ST2027 binds the communication ratchet state to a persistent **TPM 2.0 NVRAM Monotonic Counter** (`rust_data_plane/src/tpm_nv.rs`):
+
 ```rust
 // Check ratchet counter against hardware NVRAM counter
 let hw_nv_count = tpm_nv_read_monotonic(TPM_NV_INDEX_RATCHET)?;
@@ -163,12 +171,14 @@ tpm_nv_increment_monotonic(TPM_NV_INDEX_RATCHET)?;
 ## 5. Multi-Level Security (MLS) & Cross-Domain Enclaves
 
 ST2027 implements strict **Bell-LaPadula Multi-Level Security (MLS)** rules:
+
 - **Simple Security Property (No Read Up)**: A subject at classification level $L_1$ cannot read an object at classification level $L_2$ if $L_2 > L_1$.
 - **$\star$-Property (No Write Down)**: A subject at classification level $L_1$ cannot write an object at classification level $L_2$ if $L_2 < L_1$.
 
 ### 5.1 SP 800-56C Cryptographic Compartment Isolation
 
 In [`cjadc2_cross_domain_guard.py`](../cjadc2_cross_domain_guard.py#L231-L255), compartment keys are derived using standard HKDF-SHA3-512:
+
 ```python
 def derive_compartment_key(master_key: bytes, classification: str, compartment: str) -> bytes:
     context_info = f"ST2027-MLS-COMPARTMENT-{classification.upper()}-{compartment.upper()}".encode("utf-8")
@@ -182,11 +192,13 @@ def derive_compartment_key(master_key: bytes, classification: str, compartment: 
     )
     return hkdf.derive(master_key)
 ```
+
 Keys for `TOP SECRET // SCI // NOFORN` cannot be computed from or downgraded to `SECRET // REL TO USA, FVEY` keys.
 
 ### 5.2 Simplex Optical Tactical Data Diode
 
 For cross-domain boundary transit between RED (classified) and BLACK (unclassified) enclaves, ST2027 provides a **Simplex Optical Data Diode** engine (`tactical_data_diode.py`):
+
 - **Physical Unidirectionality**: The transmission path utilizes optical fiber with the return RX photodiode physically removed.
 - **Cauchy-Reed-Solomon GF($2^8$) Forward Error Correction**: Delivers reliable datagram transport without return acknowledgments or TCP back-channels, preventing any covert reverse exfiltration channel.
 
@@ -195,6 +207,7 @@ For cross-domain boundary transit between RED (classified) and BLACK (unclassifi
 ## 6. Sovereign Ephemeral Ratchet & Two-Person Integrity (TPI)
 
 Multi-party tactical groups communicate via the **Sovereign Group Ratchet** (`sovereign_group_ratchet.py` and `rust_data_plane/src/group_ratchet.rs`):
+
 - **Break-in Recovery (PCS)**: Any compromise of an ephemeral sender key is automatically healed within a single epoch rotation through fresh post-quantum KEM exchanges.
 - **Two-Person Integrity (TPI)**: Critical operational commands (e.g., EAM / Emergency Action Messages) require independent cryptographic dual-custody authorization. Two independent authorized operators must sign the message with distinct ML-DSA-87 / Ed25519 tokens before the cryptographic guard permits decapsulation and execution.
 
@@ -222,6 +235,7 @@ The integrity of ST2027 has been verified through a multi-tier defense assurance
 ## 8. Authoritative Master Audit Receipt
 
 The master defense audit receipt is maintained under offline cryptographic custody at:
+
 - **Receipt Manifest**: [`compliance_reports/defense_master_audit_receipt.json`](../compliance_reports/defense_master_audit_receipt.json)
 - **ML-DSA-87 Digital Signature**: [`compliance_reports/defense_master_audit_receipt.json.sig`](../compliance_reports/defense_master_audit_receipt.json.sig)
 - **Signer Public Key**: [`compliance_reports/defense_master_audit_receipt.json.pub`](../compliance_reports/defense_master_audit_receipt.json.pub)

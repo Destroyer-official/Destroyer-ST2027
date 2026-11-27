@@ -3117,7 +3117,7 @@ fn cmd_terminal_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
   TRAFFIC INVARIANCE : Paced {interval_ms}ms (CBR) | {quantum}B Quantized Cells\n\
   PCS RATCHET        : SPQR Fresh-KEM Dynamic Post-Compromise Security Healing\n\
   LOCAL FORENSICS    : NIST SP 800-88 Deterministic Memory Sanitization\n\
-  ANTI-REPLAY        : RFC 6479 2048-Packet Sliding Window + TPM 2.0 Guard\n\
+  ANTI-REPLAY        : RFC 6479 1024-Packet Sliding Window + TPM 2.0 Guard\n\
   SHORT AUTH STRING  : {sas}\n\
   LINK TOPOLOGY      : {role} (local {bind} <--> peer {to})\n\
   CALLSIGN           : {callsign}\n\

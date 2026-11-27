@@ -88,7 +88,7 @@ docs/
 The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`](../secure_transmit_2027.py) across 5 fail-closed pillars:
 
 | Pillar | Focus Area | Primary Source Files | Primary Specifications & Module Docs |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Pillar 1** | **Hardware & Physical Security** | [`ts_hw_layer.py`](../ts_hw_layer.py)<br>[`cng_platform.py`](../cng_platform.py) | [modules/ts_hw_layer.md](modules/ts_hw_layer.md)<br>[FIPS_140_3_SECURITY_POLICY.md](FIPS_140_3_SECURITY_POLICY.md)<br>[hw_tpm_hsm_setup.md](hw_tpm_hsm_setup.md) |
 | **Pillar 2** | **OS & Execution Runtime** | [`ts_runtime.py`](../ts_runtime.py)<br>[`ts_rt/src/lib.rs`](../ts_rt/src/lib.rs)<br>[`ts_attest.py`](../ts_attest.py) | [modules/ts_runtime.md](modules/ts_runtime.md)<br>[deployment_hardening_guide.md](deployment_hardening_guide.md)<br>[ARCHITECTURE.md §3-§6](ARCHITECTURE.md) |
 | **Pillar 3** | **Cryptography & Protocol** | [`noise_pq.py`](../noise_pq.py)<br>[`cnsa_purity.py`](../cnsa_purity.py)<br>[`crypto_selftest.py`](../crypto_selftest.py) | [modules/noise_pq.md](modules/noise_pq.md)<br>[formal/st2027_handshake.pv](formal/st2027_handshake.pv)<br>[formal/st2027_pcs.pv](formal/st2027_pcs.pv) |
@@ -100,7 +100,9 @@ The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`]
 ## 3. Operational Standards & Verification Traceability
 
 ### A. Automated Test Gates (100% Pass)
+
 The codebase is validated by the full automated battery (Python suites plus 328 `cargo test --no-default-features` Rust tests: 269 library unit tests + 12 DudeCT timing tests + 44 Kani/property harness tests + 2 MTU framing tests + 1 doc-test; 6 `#[kani::proof]` harnesses executed in Linux CI via `kani-proofs.yml`) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
+
 ```bash
 # Execute the unified 2027 Top-Secret test battery
 pytest tests/test_ts_hw_layer.py tests/test_ts_runtime.py tests/test_secure_transmit_2027.py \
@@ -114,6 +116,7 @@ cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
 ```
 
 ### B. Machine-Checked Formal Proofs
+
 Six protocol models in `docs/formal/` (`st2027_handshake.pv`, `st2027_kex_auth.pv`, `st2027_pcs.pv`, `st2027_ratchet_pcs.pv`, `nc3_dual_custody.pv`, and `handshake_model.pv`) are executed via ProVerif 2.05 (`tests/test_proverif_st2027.py` / `docs/formal/check.sh --strict`), proving payload secrecy, injective mutual authentication, dual-custody authorization invariants, and Post-Compromise Security (PCS) healing across epoch ratchets.
 
 ---
@@ -121,6 +124,7 @@ Six protocol models in `docs/formal/` (`st2027_handshake.pv`, `st2027_kex_auth.p
 ## 4. Documentation Quality & Integrity Rules
 
 All documentation in this repository complies with strict defense documentation standards:
+
 1. **No Marketing Buzzwords:** Terms such as "military-grade" or "quantum-proof" must be accompanied by exact cryptographic specifications (e.g. NIST Level 5, 256-bit post-Grover security margin, FIPS 203 ML-KEM-1024).
 2. **Honest Evaluation Boundary:** Target evaluation levels (such as FIPS 140-3 Level 4 or Common Criteria EAL4+) must explicitly disclose whether they are *design targets* or *lab-certified ratings*.
 3. **Traceability:** Technical descriptions must cite exact source code files and functions.

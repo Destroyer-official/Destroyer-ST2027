@@ -114,8 +114,8 @@ ST2027 operates across six standardized operational environments, enforcing tail
 ```
 
 ### Operational Rules per Topology
-- **Topology 1 (Tactical Edge DDIL Radio):** Engineered for high-frequency (HF) / VHF tactical networks, unmanned aerial systems (UAS), and mobile ad-hoc networks (MANET). Eliminates TCP connection overhead. Prevents network amplification attacks via stateless cookie gates ([`rust_data_plane/src/cookie.rs`](rust_data_plane/src/cookie.rs)). Corrupted datagrams are dropped silently without ICMP or wire error emission to prevent RF direction-finding geolocation.
-- **Topology 2 (Adversarial Public WAN):** Operates exclusively via Tor v3 Onion Services over TCP SOCKS5 (RFC 1928). All traffic traverses Tor circuits with remote DNS resolution. Local IP addresses never touch public transit headers. Constant 50ms pacing loop injects Poisson chaff during conversational pauses.
+- **Topology 1 (Tactical Edge DDIL Radio):** Uses direct **IPv6 UDP** (never routed through Tor). Engineered for high-frequency (HF) / VHF tactical networks, unmanned aerial systems (UAS), and mobile ad-hoc networks (MANET). Eliminates TCP connection overhead. Prevents network amplification attacks via stateless cookie gates ([`rust_data_plane/src/cookie.rs`](rust_data_plane/src/cookie.rs)). Corrupted datagrams are dropped silently without ICMP or wire error emission to prevent RF direction-finding geolocation.
+- **Topology 2 (Adversarial Public WAN):** Operates exclusively via Tor v3 Onion Services over **TCP SOCKS5** (RFC 1928; Tor carries TCP streams only, never raw UDP). Length-prefixed 1,232-byte cells travel over TCP TLS 1.3 + `Noise_XXhfs` through Tor circuits with remote DNS resolution (`transport_anonymity.py`), and a 50ms pacing loop injects Poisson chaff during conversational pauses.
 - **Topology 3 (RED/BLACK Cross-Domain Boundary):** Unidirectional data transfer across physically severed optical fiber links. The transmit photodiode on the classified RED enclave pushes Cauchy-Reed-Solomon encoded frames to a receiver on the unclassified BLACK enclave. Reverse reflection is physically impossible (0.000 bps backchannel).
 - **Topology 4 (Air-Gapped Facility Station):** Designed for accredited SCIF operations. Ephemeral keys are exchanged using offline removable media envelopes authenticated via 3-of-5 threshold ML-DSA-87 signatures. Monotonic sequence counters prevent replay of expired command bundles.
 - **Topology 5 (Joint All-Domain CJADC2 Mesh):** Tactical situational awareness tracks formatted as NATO MIL-STD-6090 Cursor-on-Target (CoT) XML authenticated with FIPS 204 ML-DSA-87 signatures.
@@ -552,7 +552,7 @@ High-consequence directives (e.g., Emergency Action Messages `/eam`, station pur
 $$
 \text{DirectiveHash} = \text{SHA3-512}(\text{BE64}(\text{Timestamp}) \parallel \text{Target} \parallel \text{ActionPayload})
 $$
-- **Temporal Hardware Window Gate:** Signatures must be generated within a strict hardware window $\Delta t = |t_1 - t_2| \le 2.0\text{ s}$ (2000 ms). Any serial authorization or delayed replay is rejected fail-closed.
+- **Temporal Concurrency Gate:** Signatures must be generated within a configurable project-defined concurrency threshold $\Delta t = |t_1 - t_2| \le 2.0\text{ s}$ (2000 ms), chosen to operationalize near-simultaneous presence under the DoD Directive 5210.41M Two-Person Concept (DoD S-5210.41M itself does not prescribe a numeric 2.0-second timer). Serial authorizations outside the window are rejected fail-closed.
 - **Constant-Time Physical Separation:** Validates distinct slots (`slot_1 != slot_2`), distinct hardware token serials (`serial_1 != serial_2`), and distinct verifying public keys (`ct_eq(vk_1, vk_2) == 0`).
 - **Zero-Disk Key Custody:** Signing keys remain non-exportable within smartcard cryptographic silicon (`CKA_SIGN`, `CKA_PRIVATE`). Synthetic JSON signature files are strictly blocked in production (`P2P_PRODUCTION=1`).
 
@@ -1220,9 +1220,12 @@ python secure_p2p.py node --role responder --bind <LOCAL_IP> --peer <INITIATOR_I
 
 The session key is cryptographically bound to the `SecP384r1MLKEM1024` hybrid KEM transcript, both ML-DSA-87 signatures, and the PSK. Compare the printed 128-bit Short Authentication String (SAS, rendered as eight 4-hex-character groups `XXXX-XXXX-...`) out-of-band before transmitting sensitive payloads.
 
-### 11.6 Standalone Zero-Python File Transmission (`secure-transmit`)
+### 11.6 Standalone Zero-Python Lab Key-File & Production Key Custody Discipline
+
+> **Security Gate Note on Key Provisioning:** Raw symmetric secrets on command-line arguments (`--key HEX` and `--psk HEX`) are **unconditionally rejected** across all commands so secrets never appear in `ps` process listings (`reject_forbidden_cli` in `rust_data_plane/src/main.rs`). Furthermore, raw symmetric key files (`--key-file` / `--key-stdin`) on `node`, `channel`, and `terminal` are restricted to **non-production `--lab` testing** and fail closed under `P2P_PRODUCTION=1`. Production deployments derive ephemeral keys via authenticated `SecP384r1MLKEM1024` KEX (`--psk-file`) bound to non-exportable `--auth-pkcs11` HSM or `--auth-tpm-sealed` identities.
+
 ```bash
-# Receiver Station:
+# Non-production / Lab File Transmission Example (--key-file):
 ./rust_data_plane/target/release/secure-transmit recv-file \
   --key-file keys/session.key \
   --state keys/recv.state \
@@ -1520,7 +1523,8 @@ python scripts/verify_mathematical_contracts.py --export-smt
 In compliance with defense engineering ethics, the following boundaries are explicitly disclosed:
 1. **Physical Hardware Independence:** The software platform cannot certify physical tamper-resistance or RF attenuation. Physical FIPS 140-3 Level 3/4 enclosures, TEMPEST SDIP-28 facilities, and physical optical data diodes must be procured from accredited hardware vendors.
 2. **Authorizing Official (AO) Accreditation & CMT Laboratory Evaluation:** Execution of automated tests and generation of OSCAL artifacts does not constitute a formal government Authority to Operate (ATO). Formal accreditation requires evaluation by an accredited testing laboratory and approval by the designated Authorizing Official. To operationalize this transition, the repository provides `scripts/package_cmt_laboratory_submittal.py` which compiles the 12-section Cryptographic Module Security Policy (`docs/FIPS_140_3_SECURITY_POLICY.md`), machine-readable OSCAL SSP/SAR, ACVP test evidence, and signed CBOM/SBOMs into a sealed, ML-DSA-87 signed submittal packet (`compliance_reports/cmt_lab_submission_packet.tar.gz`) for laboratory ingestion.
-3. **Draft Standards Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards are intentionally excluded until finalization and inclusion in NSA CNSA guidance.
+3. **Draft Standards & Custom Handshake Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards are intentionally excluded until finalization and inclusion in NSA CNSA guidance. **Custom protocol disclosure:** the Python `Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384` handshake substitutes FIPS 204 ML-DSA-87 signatures for classical Noise static-key DH (`es`/`se`); it has **no formal cryptographic reduction** to the Noise `hfs` draft or Signal PQNoise and has **not undergone independent third-party cryptanalytic review**. Workloads requiring externally vetted handshake protocols should rely on standards-track **PQ-hybrid TLS 1.3 (`RFC 10024`)** or audited designs such as **Signal PQXDH**.
+4. **Proof Scope Boundary (ProVerif & Kani vs. Runtime Code):** Symbolic ProVerif 2.05 models in [`docs/formal/`](docs/formal/) verify Dolev-Yao properties of the **abstract protocol models** — not the concrete Python or Rust code paths. Similarly, `rust_data_plane` Kani harnesses verify targeted Rust functions within bounded CBMC unwinding limits; neither constitutes a whole-program equivalence proof.
 
 ---
 

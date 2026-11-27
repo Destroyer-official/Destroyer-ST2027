@@ -130,7 +130,7 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
    ```text
    /nc3-verify <OFFICER_1_ID> <OFFICER_2_ID>
    ```
-4. Both officers authenticate within the 2.0-second synchronization window.
+4. Both officers authenticate within the project-defined 2.0-second concurrency window (configured to operationalize the Two-Person Concept; DoD S-5210.41M itself does not specify a numeric 2.0s timer).
 5. Engine checks temporal freshness ($\Delta t < 120\text{s}$), verifies ML-DSA-87 signatures, reassembles VSS shares over $GF(2^{256})$, and displays unsealed PAL unlock code on secure video display.
 
 ### SOP-04: Emergency Zeroization (/zeroize)
