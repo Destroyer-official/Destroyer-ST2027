@@ -186,8 +186,48 @@ pub fn parse_onion_v3_target(target: &str) -> Result<(String, u16, HsId), String
     Ok((host, port, hsid))
 }
 
+fn ensure_regular_non_symlink(path: &Path, label: &str) -> Result<fs::Metadata, String> {
+    let meta = fs::symlink_metadata(path)
+        .map_err(|e| format!("cannot stat {label} ({}): {e}", path.display()))?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return Err(format!(
+            "refusing symlink or non-regular file for {label}: {}",
+            path.display()
+        ));
+    }
+    Ok(meta)
+}
+
+fn write_new_file_strict(path: &Path, content: &str, restrict_mode: bool) -> Result<(), String> {
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return Err(format!("refusing symlink output target: {}", path.display()));
+        }
+        return Err(format!("refusing to overwrite existing file: {}", path.display()));
+    }
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    if restrict_mode {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts
+        .open(path)
+        .map_err(|e| format!("failed creating {}: {e}", path.display()))?;
+    f.write_all(content.as_bytes())
+        .map_err(|e| format!("failed writing {}: {e}", path.display()))?;
+    let _ = f.sync_all();
+    #[cfg(not(unix))]
+    let _ = restrict_mode;
+    Ok(())
+}
+
 fn parse_client_auth_pk(arg: &str) -> Result<HsClientDescEncKey, String> {
-    let raw = if Path::new(arg).is_file() {
+    let raw = if let Ok(meta) = fs::symlink_metadata(arg) {
+        if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+            return Err(format!("refusing symlink or non-regular file for --client-auth-pk: {arg}"));
+        }
         fs::read_to_string(arg).map_err(|e| format!("failed to read client auth pk: {e}"))?
     } else {
         arg.to_string()
@@ -226,21 +266,16 @@ fn cmd_client_auth_keygen(args: &[String]) {
     }
 
     if let Some(out_pk) = get_flag(args, "--out-pk") {
-        if let Err(e) = fs::write(&out_pk, format!("{desc_pk}\n")) {
-            fail(&format!("failed to write --out-pk: {e}"));
+        if let Err(e) = write_new_file_strict(Path::new(&out_pk), &format!("{desc_pk}\n"), false) {
+            fail(&format!("failed writing --out-pk: {e}"));
         }
     } else {
         println!("CLIENT_AUTH_PK={desc_pk}");
     }
 
     if let Some(out_sk) = get_flag(args, "--out-sk") {
-        if let Err(e) = fs::write(&out_sk, format!("{}\n", *sk_hex)) {
-            fail(&format!("failed to write --out-sk: {e}"));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&out_sk, fs::Permissions::from_mode(0o600));
+        if let Err(e) = write_new_file_strict(Path::new(&out_sk), &format!("{}\n", *sk_hex), true) {
+            fail(&format!("failed writing --out-sk: {e}"));
         }
     } else {
         println!("CLIENT_AUTH_SK_HEX={}", *sk_hex);
@@ -261,9 +296,7 @@ fn build_tor_config(
 
     if let Some(pt_bin) = get_flag(args, "--pt-binary") {
         let pt_path = Path::new(&pt_bin);
-        if !pt_path.is_file() {
-            return Err(format!("--pt-binary does not point to an existing file: {pt_bin}"));
-        }
+        ensure_regular_non_symlink(pt_path, "--pt-binary")?;
         let pt_type = get_flag(args, "--pt-type")
             .ok_or_else(|| "--pt-type <webtunnel|obfs4> is required with --pt-binary".to_string())?;
         let bridge_line = get_flag(args, "--pt-bridge")
@@ -448,6 +481,18 @@ async fn run_initiator(args: &[String], work: &VolatileWorkDir) -> Result<(), St
             .map_err(|e| format!("failed reading --auth-sk-stdin: {e}"))?;
         Some(s)
     } else if let Some(path) = get_flag(args, "--auth-sk-file") {
+        let meta = ensure_regular_non_symlink(Path::new(&path), "--auth-sk-file")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if (meta.permissions().mode() & 0o077) != 0 {
+                return Err(format!(
+                    "--auth-sk-file '{path}' must not have group/other permissions (require 0600)"
+                ));
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = meta;
         let s = fs::read_to_string(&path)
             .map_err(|e| format!("failed reading --auth-sk-file: {e}"))?;
         Some(Zeroizing::new(s))
@@ -636,5 +681,14 @@ mod tests {
             .unwrap();
         w.flush().await.unwrap();
         assert!(read_ipc_frame(&mut r).await.is_err());
+    }
+
+    #[test]
+    fn strict_file_write_refuses_overwrite() {
+        let work = VolatileWorkDir::create().unwrap();
+        let target = work.path.join("client_auth.sk");
+        write_new_file_strict(&target, "deadbeef\n", true).unwrap();
+        assert!(ensure_regular_non_symlink(&target, "test").is_ok());
+        assert!(write_new_file_strict(&target, "overwrite\n", true).is_err());
     }
 }

@@ -228,12 +228,55 @@ def test_tor_production_requires_client_auth_v3_fail_closed(tmp_path: Path):
     )
     assert resp.returncode != 0
     err = resp.stderr + resp.stdout
-    assert ("--onion-client-auth-pk" in err) or ("plaintext disk --auth-sk-file" in err)
+    assert (
+        "--tor-bridge-sha384" in err
+        or "--onion-client-auth-pk" in err
+        or "plaintext disk --auth-sk-file" in err
+    )
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_tor_production_requires_bridge_sha384_pin_fail_closed(tmp_path: Path):
+    """In production posture, --tor must fail closed without --tor-bridge-sha384 or P2P_TOR_BRIDGE_SHA384."""
+    env = os.environ.copy()
+    env["SECURE_P2P_PRODUCTION"] = "1"
+    env.pop("P2P_LAB_MODE", None)
+    env.pop("P2P_TOR_BRIDGE_SHA384", None)
+    psk = tmp_path / "psk.hex"
+    psk.write_text("44" * 32, encoding="utf-8")
+    os.chmod(psk, 0o600)
+    sk = tmp_path / "r.sk"
+    pk = tmp_path / "p.pk"
+    subprocess.run(
+        [str(RUST_BIN), "auth-keygen", "--out-sk", str(sk), "--out-pk", str(pk)],
+        check=True,
+        env=_clean_lab_env(),
+        capture_output=True,
+    )
+    resp = subprocess.run(
+        [
+            str(RUST_BIN),
+            "node",
+            "--role", "responder",
+            "--tor",
+            "--zero-footprint",
+            "--onion-client-auth-pk", "descriptor:x25519:" + ("A" * 52),
+            "--psk-file", str(psk),
+            "--auth-sk-file", str(sk),
+            "--peer-auth-pk-file", str(pk),
+            "--headless",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert resp.returncode != 0
+    assert "--tor-bridge-sha384" in (resp.stderr + resp.stdout)
 
 
 @pytest.mark.skipif(not TOR_BIN.exists(), reason="release secure-transmit-tor binary not built")
-def test_tor_bridge_client_auth_keygen_and_clearnet_refusal():
-    """Verify embedded Arti bridge generates valid ClientAuthV3 keys and refuses clearnet/IP targets."""
+def test_tor_bridge_client_auth_keygen_and_clearnet_refusal(tmp_path: Path):
+    """Verify embedded Arti bridge generates valid ClientAuthV3 keys, refuses overwrites, and refuses clearnet/IP targets."""
     gen = subprocess.run(
         [str(TOR_BIN), "--mode", "client-auth-keygen"],
         check=True,
@@ -242,6 +285,24 @@ def test_tor_bridge_client_auth_keygen_and_clearnet_refusal():
     )
     assert re.search(r"CLIENT_AUTH_PK=descriptor:x25519:[A-Z2-7]{52}", gen.stdout)
     assert re.search(r"CLIENT_AUTH_SK_HEX=[0-9a-f]{64}", gen.stdout)
+
+    pk_out = tmp_path / "cauth.pk"
+    sk_out = tmp_path / "cauth.sk"
+    subprocess.run(
+        [str(TOR_BIN), "--mode", "client-auth-keygen", "--out-pk", str(pk_out), "--out-sk", str(sk_out)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert re.search(r"^descriptor:x25519:[A-Z2-7]{52}$", pk_out.read_text(encoding="utf-8").strip())
+    assert re.search(r"^[0-9a-f]{64}$", sk_out.read_text(encoding="utf-8").strip())
+    overwrite = subprocess.run(
+        [str(TOR_BIN), "--mode", "client-auth-keygen", "--out-pk", str(pk_out), "--out-sk", str(sk_out)],
+        capture_output=True,
+        text=True,
+    )
+    assert overwrite.returncode != 0
+    assert "overwrite" in (overwrite.stderr + overwrite.stdout)
 
     bad = subprocess.run(
         [str(TOR_BIN), "--mode", "initiator", "--to", "example.com:443"],
@@ -366,6 +427,7 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
             "--role", "responder",
             "--tor",
             "--zero-footprint",
+            "--tor-bridge-sha384", "aa" * 48,
             "--psk-file", str(psk),
             "--auth-pkcs11-label", "HSM_KEY",
             "--auth-pk-file", str(pk),
@@ -379,6 +441,27 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
     assert r1.returncode != 0
     assert "ClientAuthV3" in (r1.stdout + r1.stderr)
 
+    # 1b. Production --tor without --tor-bridge-sha384 fails closed.
+    r1b = subprocess.run(
+        [
+            sys.executable, str(ROOT / "secure_p2p.py"), "node",
+            "--role", "responder",
+            "--tor",
+            "--zero-footprint",
+            "--onion-client-auth-pk", "descriptor:x25519:" + ("A" * 52),
+            "--psk-file", str(psk),
+            "--auth-pkcs11-label", "HSM_KEY",
+            "--auth-pk-file", str(pk),
+            "--peer-auth-pk-file", str(pk),
+        ],
+        env=prod_env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert r1b.returncode != 0
+    assert "--tor-bridge-sha384" in (r1b.stdout + r1b.stderr)
+
     # 2. Production --pt-binary without --pt-sha384 fails closed.
     dummy_pt = tmp_path / "lyrebird"
     dummy_pt.write_bytes(b"pt")
@@ -387,6 +470,7 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
             sys.executable, str(ROOT / "secure_p2p.py"), "node",
             "--role", "responder",
             "--tor",
+            "--tor-bridge-sha384", "aa" * 48,
             "--onion-client-auth-pk", "descriptor:x25519:" + ("A" * 52),
             "--pt-binary", str(dummy_pt),
             "--psk-file", str(psk),

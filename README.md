@@ -1094,16 +1094,16 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 |   └── docs/formal/nc3_dual_custody.pv (NC3 / PAL Two-Person Rule & dual hardware-token authorization)    |
 |       └── Structurally audited by tests/test_formal_proverif_models.py                                   |
 +---------------------------------------------------------------------------------------------------------+
-| Kani Rust Bounded Model Checking: 9 CBMC-executed harnesses (Linux CI `cargo kani`) + 10 property doubles:|
+| Kani Rust Bounded Model Checking: 8 CBMC-executed harnesses (Linux CI `cargo kani`) + 10 property doubles:|
 |   ├── #[kani::proof] kani_nonce_domain_separation .................... CBMC VERIFIED (Linux Kani CI)   |
 |   ├── #[kani::proof] kani_replay_window_monotonic .................... CBMC VERIFIED (Linux Kani CI)   |
 |   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... CBMC VERIFIED (Linux Kani CI)   |
 |   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. CBMC VERIFIED (Linux Kani CI)   |
 |   ├── #[kani::proof] kani_stream_frame_len_decoder_bounds ............ CBMC VERIFIED (Linux Kani CI)   |
 |   ├── #[kani::proof] kani_tamaraw_shaper_epoch_modulo_bounds ......... CBMC VERIFIED (Linux Kani CI)   |
-|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... CBMC VERIFIED (Linux Kani CI)   |
 |   ├── #[kani::proof] verify_tor_padding_never_overflows / verify_length_header_bounds .. CBMC VERIFIED  |
 |   ├── #[kani::proof] kani_cookie_gate_stateless_verification ......... DEFINED (property double passes) |
+|   ├── #[kani::proof] kani_frame_split_reassemble_roundtrip ........... DEFINED (property double passes) |
 |   ├── 10 deterministic property doubles + re-exported module unit tests execute green under `cargo test`  |
 |   └── NOTE: "HOLDS IN MODEL" applies strictly to the symbolic model; `cargo kani` requires Linux CBMC.  |
 +---------------------------------------------------------------------------------------------------------+
@@ -1116,7 +1116,7 @@ To bridge the gap between symbolic protocol logic (Dolev-Yao model in ProVerif 2
 1. **Tier 1 — Symbolic Protocol Logic (ProVerif 2.05 Applied Pi-Calculus)**:
    Verifies secrecy, mutual authentication (`S_Accepts ==> C_Accepts`), M2 authenticity (`C_VerifiedM2 ==> S_SentM2`), record layer integrity (`R_Receives ==> C_Sends`), and initiator identity privacy in [`docs/formal/st2027_handshake.pv`](docs/formal/st2027_handshake.pv); verifies the wire-level `kex_auth.rs` protocol in [`docs/formal/st2027_kex_auth.pv`](docs/formal/st2027_kex_auth.pv); and verifies Post-Compromise Security (PCS) healing under upfront epoch compromise in [`docs/formal/st2027_pcs.pv`](docs/formal/st2027_pcs.pv) and [`docs/formal/st2027_ratchet_pcs.pv`](docs/formal/st2027_ratchet_pcs.pv). Executed fail-closed in CI via [`docs/formal/check.sh`](docs/formal/check.sh) (`--strict`).
 2. **Tier 2 — Bit-Precise Software Verification (Kani Rust Bounded Model Checker)**:
-   The 8 `#[kani::proof]` harnesses in [`rust_data_plane/tests/kani_harness.rs`](rust_data_plane/tests/kani_harness.rs) (plus 2 library proofs in `src/shaper.rs` and `src/stream_transport.rs`) check buffer bounds, panic freedom on arbitrary wire frames, Tor-cell alignment math, stream frame length bounds, stateless cookie gates, and anti-replay sliding window monotonicity. Locally on hosts without Kani/CBMC, `cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features` executes the 10 deterministic property sweeps and re-exported unit checks (49 tests in `kani_harness`). In Linux CI ([`.github/workflows/kani-proofs.yml`](.github/workflows/kani-proofs.yml)), `cargo kani` executes 9 harnesses (2 library + 7 integration) via CBMC.
+   The 8 `#[kani::proof]` harnesses in [`rust_data_plane/tests/kani_harness.rs`](rust_data_plane/tests/kani_harness.rs) (plus 2 library proofs in `src/shaper.rs` and `src/stream_transport.rs`) check buffer bounds, panic freedom on arbitrary wire frames, Tor-cell alignment math, stream frame length bounds, stateless cookie gates, and anti-replay sliding window monotonicity. Locally on hosts without Kani/CBMC, `cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features` executes the 10 deterministic property sweeps and re-exported unit checks (49 tests in `kani_harness`). In Linux CI ([`.github/workflows/kani-proofs.yml`](.github/workflows/kani-proofs.yml)), `cargo kani` executes 8 harnesses (2 library + 6 integration) via CBMC.
 3. **Tier 3 — Side-Channel & Timing Attack Freedom (DudeCT Welch's t-test Statistical Leakage)**:
    Evaluates constant-time execution timing distributions under Welch's two-sample $t$-test (Reparaz et al. IEEE S&P / ePrint 2016/1123). Executed via `cargo test --manifest-path rust_data_plane/Cargo.toml --test dudect_ct` (12 tests) and `pytest tests/test_dudect_timing_analysis.py`. Requires $|t| < 4.5$ ($p > 99.999\%$ confidence) on production primitives (`ct::ct_eq`, `StackSecretBuffer::ct_eq`, and `hmac.compare_digest`), with positive-control leaky comparators triggering $|t| > 4.5$ to confirm detector sensitivity.
 

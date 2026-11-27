@@ -17586,6 +17586,10 @@ def main(argv=None) -> int:
         zero_footprint = bool(getattr(args, "zero_footprint", False))
 
         if _production() and is_tor_mode:
+            if not (getattr(args, "tor_bridge_sha384", None) or os.environ.get("P2P_TOR_BRIDGE_SHA384")):
+                print(f"{RED}[PRODUCTION REFUSAL] --tor requires --tor-bridge-sha384 or "
+                      f"P2P_TOR_BRIDGE_SHA384 (SHA-384 binary verification).{RESET}")
+                return 2
             if args.role == "responder" and not getattr(args, "onion_client_auth_pk", None):
                 print(f"{RED}[PRODUCTION REFUSAL] Responder --tor requires --onion-client-auth-pk "
                       f"(ClientAuthV3 Restricted Discovery).{RESET}")

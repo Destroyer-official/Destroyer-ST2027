@@ -407,9 +407,17 @@ def test_15_transmitter_target_validation():
 # 7. LIVE SIMPLEX UDP TRANSMISSION TESTS
 # =============================================================================
 
+def _free_udp_port(host: str = "127.0.0.1", ipv6: bool = False) -> int:
+    """Ask the OS for an unbound non-excluded ephemeral UDP port for loopback tests."""
+    family = socket.AF_INET6 if ipv6 else socket.AF_INET
+    with socket.socket(family, socket.SOCK_DGRAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
 def test_16_live_simplex_udp_clean_transmission():
     """Verify clean live simplex UDP broadcast with zero return channel."""
-    port = secrets.randbelow(10000) + 53000
+    port = _free_udp_port("127.0.0.1")
     test_payload = secrets.token_bytes(2500)
 
     sender = OpticalDiodeSender(target_host="127.0.0.1", target_port=port)
@@ -445,7 +453,7 @@ def test_17_live_simplex_udp_25_percent_burst_loss():
     Simulates physical optical fiber with 25% burst packet loss.
     Verifies 100% bitwise reconstruction with ZERO return channel / ZERO ACKs.
     """
-    port = secrets.randbelow(10000) + 54000
+    port = _free_udp_port("127.0.0.1")
     test_payload = secrets.token_bytes(7500)  # ~7 chunks of 1232B
     payload_sha384 = hashlib.sha384(test_payload).hexdigest()
 
@@ -561,7 +569,7 @@ def test_20_certified_hardware_registry_integration():
 
 def test_21_ipv6_simplex_udp_clean_transmission():
     """Verify live simplex UDP broadcast over IPv6 (::1 loopback)."""
-    port = secrets.randbelow(10000) + 55500
+    port = _free_udp_port("::1", ipv6=True)
     test_payload = b"IPV6-SIMPLEX-OPTICAL-GLASS-TRANSMIT-ONLY"
 
     sender = OpticalDiodeSender(target_host="::1", target_port=port)
@@ -651,7 +659,7 @@ def test_23_concurrent_interleaved_transfers():
 
 def test_24_multi_bundle_streaming_transmission():
     """Verify multi-bundle transmission for arbitrary-sized streaming payloads."""
-    port = secrets.randbelow(10000) + 55700
+    port = _free_udp_port("127.0.0.1")
     sender = OpticalDiodeSender(target_host="127.0.0.1", target_port=port)
     receiver = OpticalDiodeReceiver(
         bind_host="127.0.0.1",

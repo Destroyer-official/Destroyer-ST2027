@@ -3667,8 +3667,10 @@ fn verify_binary_sha384_pin(path: &std::path::Path, expected_hex: &str, label: &
     if expected.len() != 48 {
         fail(&format!("{label} SHA-384 pin must be exactly 96 hex chars (48 bytes)"));
     }
-    if !path.is_file() {
-        fail(&format!("{label} {:?} does not exist or is not a regular file", path));
+    let meta = std::fs::symlink_metadata(path)
+        .unwrap_or_else(|e| fail(&format!("cannot stat {label} {:?}: {e}", path)));
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        fail(&format!("{label} {:?} must be a regular non-symlink file", path));
     }
     let bin_bytes = std::fs::read(path)
         .unwrap_or_else(|e| fail(&format!("cannot read {label} {:?}: {e}", path)));
@@ -3792,6 +3794,24 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
     let is_headless = has_flag(args, "--headless");
     let use_stdin = has_flag(args, "--stdin") || !is_headless;
 
+    if is_tor && policy::is_production_env() {
+        let has_bridge_pin = get_flag(args, "--tor-bridge-sha384")
+            .or_else(|| std::env::var("P2P_TOR_BRIDGE_SHA384").ok())
+            .is_some_and(|s| !s.trim().is_empty());
+        if !has_bridge_pin {
+            fail("PRODUCTION REFUSAL: --tor requires --tor-bridge-sha384 or P2P_TOR_BRIDGE_SHA384 pin");
+        }
+        if role == "responder" && get_flag(args, "--onion-client-auth-pk").is_none() {
+            fail("production Tor responder requires --onion-client-auth-pk (ClientAuthV3 Restricted Discovery)");
+        }
+        if role == "initiator"
+            && get_flag(args, "--onion-auth-sk-file").is_none()
+            && !has_flag(args, "--onion-auth-sk-stdin")
+        {
+            fail("production Tor initiator requires --onion-auth-sk-file or --onion-auth-sk-stdin");
+        }
+    }
+
     let psk_path = get_flag(args, "--psk-file")
         .unwrap_or_else(|| fail("--psk-file PATH is required for authenticated in-stream KEX"));
     let psk = load_psk_file(&psk_path);
@@ -3834,18 +3854,6 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
     let rekey_interval: u64 = get_flag(args, "--rekey-interval")
         .and_then(|s| s.parse().ok())
         .unwrap_or(128);
-
-    if is_tor && policy::is_production_env() {
-        if role == "responder" && get_flag(args, "--onion-client-auth-pk").is_none() {
-            fail("production Tor responder requires --onion-client-auth-pk (ClientAuthV3 Restricted Discovery)");
-        }
-        if role == "initiator"
-            && get_flag(args, "--onion-auth-sk-file").is_none()
-            && !has_flag(args, "--onion-auth-sk-stdin")
-        {
-            fail("production Tor initiator requires --onion-auth-sk-file or --onion-auth-sk-stdin");
-        }
-    }
 
     let recv_dir: Option<std::path::PathBuf> = get_flag(args, "--recv-dir").map(std::path::PathBuf::from);
     if let Some(ref rd) = recv_dir {
@@ -3947,8 +3955,13 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
             if role == "responder" {
-                let tor_port = get_flag(args, "--tor-port").unwrap_or_else(|| "443".to_string());
-                cmd.arg("--mode").arg("responder").arg("--port").arg(tor_port);
+                let tor_port_str = get_flag(args, "--tor-port").unwrap_or_else(|| "443".to_string());
+                let tor_port: u16 = tor_port_str
+                    .parse()
+                    .ok()
+                    .filter(|&p| p > 0)
+                    .unwrap_or_else(|| fail("bad --tor-port: must be 1..=65535"));
+                cmd.arg("--mode").arg("responder").arg("--port").arg(tor_port.to_string());
                 if let Some(ca_pk) = get_flag(args, "--onion-client-auth-pk") {
                     cmd.arg("--client-auth-pk").arg(ca_pk);
                 }
@@ -3963,6 +3976,11 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                 peer_label = to.clone();
                 cmd.arg("--mode").arg("initiator").arg("--to").arg(to);
                 if let Some(skf) = get_flag(args, "--onion-auth-sk-file") {
+                    let skf_meta = std::fs::symlink_metadata(&skf)
+                        .unwrap_or_else(|e| fail(&format!("cannot stat --onion-auth-sk-file {skf:?}: {e}")));
+                    if skf_meta.file_type().is_symlink() || !skf_meta.file_type().is_file() {
+                        fail(&format!("--onion-auth-sk-file {skf:?} must be a regular non-symlink file"));
+                    }
                     cmd.arg("--auth-sk-file").arg(skf);
                 } else if has_flag(args, "--onion-auth-sk-stdin") {
                     cmd.arg("--auth-sk-stdin");
