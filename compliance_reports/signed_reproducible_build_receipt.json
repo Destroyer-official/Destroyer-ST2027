@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-27T10:03:22.392065+00:00",
+  "timestamp_utc": "2026-11-27T11:12:43.821044+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 949611,
-      "sha3_512": "e46e95638ced644502830d29b41d4cf34a276af3001a3f5a6f8c2e19789d0cc9dbe2a942cd03da6b5803d6a3f22e194bb126995e2664b5d6a044300e9de238d3"
+      "size_bytes": 949661,
+      "sha3_512": "093f493b854e231903b664a769e8d63a05a7bbd68e734103f6e1294163376ccc7aaeab7917b0e4d34a1cc95e371506d418ee915f93c799b8855094ca009ab2ca"
     }
   },
   "sbom_status": {
@@ -65,8 +65,8 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "e5c3b4c203c96df50daa9329f2b47874c56d7ffb45ce916ed9ff2289abf55f110b72de1b5f5bf0dc9bef95e293c80d1ce647e1f1b81e00295e3fae509ef1a5ef",
-  "full_source_merkle_root": "8389ff6c98dcf8fd3b2cc2818768e2e6da4dbe46d49d2e6405d377e6e793ca8c40e13bd4864eb1194b696a869b9b3644908436ebdbfd400b9993576af2645141",
+  "source_tree_merkle_root": "71c0bbb60a69644e2073e4e4d1ea8bf481ba758cdc606a1377486aa333f81d352bb22973feab39f4e6b5ba4c7afe64ea5124311aec3f5d2087274bae7ada4346",
+  "full_source_merkle_root": "5d142094dcae73c8398ee72b6d4591d3dbbabcca8d47a94f20fe83e2d4be4239f9a6353592634e22850a06beb90c607375bf923c15527208d9c0a2cb1f391080",
   "full_source_file_count": 61,
   "full_source_scope_description": "Authoritative Sovereign Data Plane (53 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {

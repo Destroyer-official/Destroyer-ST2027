@@ -17227,7 +17227,8 @@ def main(argv=None) -> int:
     outright whenever the production gate is armed.
     """
     parser = argparse.ArgumentParser(
-        description="Destroyer ST2027 — CNSA 2.0 L5 tactical P2P node"
+        description="Destroyer ST2027 — CNSA 2.0 L5 tactical P2P node",
+        allow_abbrev=False,
     )
     parser.add_argument("--lab", action="store_true",
                         help="Explicit lab opt-in for non-production demo surfaces")
@@ -17288,7 +17289,7 @@ def main(argv=None) -> int:
 
     sub = parser.add_subparsers(dest="command")
 
-    p_node = sub.add_parser("node", help="Run the production tactical node")
+    p_node = sub.add_parser("node", help="Run the production tactical node", allow_abbrev=False)
     p_node.add_argument("--role", choices=["initiator", "responder"], required=True, help="P2P role")
     p_node.add_argument("--bind", default="127.0.0.1", help="Local IP address to bind")
     p_node.add_argument("--peer", default="127.0.0.1", help="Peer IP address to reach")
