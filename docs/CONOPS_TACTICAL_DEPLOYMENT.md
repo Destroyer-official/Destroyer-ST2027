@@ -23,6 +23,7 @@ The system is engineered for high-consequence national security operations where
 | **ENV-AIRGAP** | Strategic Command Post (C2) | Isolated Fiber / Air-gapped LAN | Tier-6 (Nation-State Strategic) | Strict HW TPM 2.0, Simplex Optical Diode, No Internet Gateways |
 | **ENV-EDGE** | Tactical Edge Mobile Relay | Private Cellular APN / UHF Mesh | Tier-5 (EW / SIGINT Intercept) | Tactical Cloak Active, Fixed Quantum Sizing, Constant-Rate Pacing |
 | **ENV-DDIL** | Disconnected / Reconnaissance | Peer-to-Peer Ad-Hoc Direct UDP | Tier-6 (Battlefield Physical Overrun) | Stealth Mode, Out-of-Band Safety Pins, Auto-Zeroize Mesh |
+| **ENV-WAN-COVERT** | Adversarial Public WAN | Privilege-Separated Embedded Arti Tor v3 (`tor_transport`) | Tier-5 / ISP Surveillance | `ClientAuthV3` Restricted Discovery, `--tor-bridge-sha384`, `TamarawShaper` `496B` cells, `--zero-footprint` |
 | **ENV-CROSS-DOMAIN** | Isolated Enclave Transfer | Simplex Single-Strand Optical Diode | Tier-6 (Multi-Enclave Boundary) | Unidirectional Cauchy-RS FEC, Zero Reverse Wire, Air-Gap Enforcement |
 
 ---
@@ -341,9 +342,10 @@ The console integrates:
 
 ### SOP-10: Deploying Ephemeral Tor v3 Enclave Link (`--tor --zero-footprint`)
 ```bash
-# 1. Generate ClientAuthV3 Restricted Discovery keypair on Responder/Initiator provisioning station:
-./tor_transport/target/release/secure-transmit-tor --mode client-auth-keygen
-# Record CLIENT_AUTH_PK=descriptor:x25519:... (public, for Responder) and CLIENT_AUTH_SK_HEX=... (secret, for Initiator)
+# 1. Generate ClientAuthV3 Restricted Discovery keypair and capture SHA-384 bridge pin:
+./tor_transport/target/release/secure-transmit-tor --mode client-auth-keygen \
+  --out-pk keys/client_auth.pk --out-sk keys/client_auth.sk
+# Record CLIENT_AUTH_PK (descriptor:x25519:...) and SHA-384 digest of secure-transmit-tor
 
 # 2. Launch Responder (0 host listening TCP/UDP ports; RAM keystore; 496B Tor-aligned Tamaraw shaping):
 python secure_p2p.py node \
@@ -354,6 +356,7 @@ python secure_p2p.py node \
   --psk-file keys/tactical_shared.psk \
   --auth-tpm-sealed keys/resp_mldsa87.tpm.priv --auth-tpm-pub keys/resp_mldsa87.tpm.pub \
   --peer-auth-pk-file keys/init_mldsa87.pk \
+  --recv-dir received_docs \
   --quantum 496 --interval-ms 20 --tamaraw-l 16
 
 # 3. Launch Initiator after Responder prints [ONION] <56_char>.onion:443:
@@ -369,10 +372,11 @@ python secure_p2p.py node \
   --quantum 496 --interval-ms 20 --tamaraw-l 16
 ```
 In `--zero-footprint` Tor mode:
-- `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) executes in-band over the single Tor `DataStream` with keys locked exclusively in RAM (`VirtualLock`/`mlock`, OS crash-dump suppression active).
+- `--tor-bridge-sha384` (or `P2P_TOR_BRIDGE_SHA384`) is verified constant-time on a non-symlink binary **before** hardware key custody unlocks in `P2P_PRODUCTION=1`.
+- `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) executes in-band over the single Tor `DataStream` (`tokio::io::split` cancel-safe reader task) with keys locked exclusively in RAM (`VirtualLock`/`mlock`, OS crash-dump suppression active).
 - Static `--key-file` / `--key-stdin` and plaintext disk keys under `P2P_PRODUCTION=1` are refused fail-closed.
 - Interactive `/rekey` and chunked SHA-384-verified `/doc <path>` transfers (up to 256 KiB; saved only when `--recv-dir <dir>` is explicitly supplied) flow across `496B` Tor-aligned Tamaraw cells without leaking host files or open sockets.
-- Closing `/quit`, `/zeroize`, or `Ctrl+C` shuts down Arti handles and runs NIST SP 800-88 3-pass wipe on the volatile cache before exiting.
+- Closing `/quit`, `/zeroize`, or `Ctrl+C` shuts down Arti handles (`shutdown_timeout(250ms)`) and runs NIST SP 800-88 3-pass wipe on the volatile cache before exiting.
 
 ---
 

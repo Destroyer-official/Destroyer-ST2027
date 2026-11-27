@@ -216,9 +216,9 @@ Phase L implements rateless Luby Transform (LT) codes with belief propagation de
 ## 7. Unified Test & Verification Battery
 
 ```bash
-# 1. Native Rust Data Plane Cargo Suite:
-cargo test --manifest-path rust_data_plane/Cargo.toml
-# Results: 318 passed, 0 failed
+# 1. Native Rust Data Plane & Tor Transport Bridge Suites:
+cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features  # 340 passed, 0 failed
+cargo test --manifest-path tor_transport/Cargo.toml --locked                         # 5 passed, 0 failed
 
 # 2. Python Tactical Battery (Phases G through L):
 pytest tests/test_dtn_zero_rtt_mesh.py \

@@ -29,6 +29,8 @@ docs/
 ├── RESTRUCTURE_PLAN.md                      # Codebase restructuring & legacy testbed quarantine plan
 ├── EVALUATION_DOSSIER.md                    # Formal defense evaluation dossier for accredited lab testing
 ├── CONOPS_TACTICAL_DEPLOYMENT.md            # Tactical concept of operations in DDIL environments
+├── architecture/
+│   └── TOR_EPHEMERAL_2027_PLAN.md           # As-built architecture: embedded Arti Tor v3 + Tamaraw 496B/994B shaper
 ├── FIPS_140_3_SECURITY_POLICY.md            # FIPS 140-3 Cryptographic Module Security Policy (CMSP target)
 ├── NIAP_COMMON_CRITERIA_SECURITY_TARGET.md  # NIAP NDcPP / Common Criteria EAL4+ Security Target (target)
 ├── KEY_CEREMONY.md                          # Offline 3-of-5 threshold ML-DSA-87 Hardware Root CA SOP
@@ -49,6 +51,7 @@ docs/
 │   ├── st2027_kex_auth.pv                   # ProVerif model: ML-DSA-87 + transcript binding
 │   ├── st2027_pcs.pv                        # ProVerif model: post-compromise security (PCS) healing
 │   ├── st2027_ratchet_pcs.pv                # ProVerif model: ratchet rekey & epoch isolation
+│   ├── st2027_tor_rendezvous.pv             # ProVerif model: ClientAuthV3 Tor rendezvous + in-stream Noise_XXhfs
 │   ├── nc3_dual_custody.pv                  # ProVerif model: DoD S-5210.41M dual custody TPI
 │   └── handshake_model.pv                   # Structural baseline handshake model
 └── modules/                                 # Per-module technical charters and line audits (27 modules)
@@ -101,23 +104,25 @@ The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`]
 
 ### A. Automated Test Gates (100% Pass)
 
-The codebase is validated by the full automated battery (Python suites plus 328 `cargo test --no-default-features` Rust tests: 269 library unit tests + 12 DudeCT timing tests + 44 Kani/property harness tests + 2 MTU framing tests + 1 doc-test; 6 `#[kani::proof]` harnesses executed in Linux CI via `kani-proofs.yml`) maintaining zero regressions. Fixed historical totals are not cited; CI status is the source of truth:
+The codebase is validated by the full automated battery (Python suites plus 340 `cargo test --locked --no-default-features` Rust tests: 276 library unit tests + 12 DudeCT timing tests + 49 Kani/property harness tests + 2 MTU framing tests + 1 doc-test, plus 5 tests in `tor_transport`; 8 `#[kani::proof]` harnesses executed under CBMC in Linux CI via `kani-proofs.yml`) maintaining zero regressions:
 
 ```bash
-# Execute the unified 2027 Top-Secret test battery
+# Execute the unified 2027 Top-Secret + Tor/stream test battery
 pytest tests/test_ts_hw_layer.py tests/test_ts_runtime.py tests/test_secure_transmit_2027.py \
        tests/test_noise_pq_purity.py tests/test_proverif_st2027.py tests/test_spo_dpo.py \
        tests/test_transport_anonymity.py tests/test_trust_anchor.py tests/test_ts_attest.py \
-       tests/test_hw_readiness.py tests/test_runbooks_ps.py tests/test_rust_standalone_binary.py \
-       tests/test_no_marketing_buzzwords_property.py tests/test_no_emoji_property.py -v
+       tests/test_tor_and_stream_plane.py tests/test_hw_readiness.py tests/test_runbooks_ps.py \
+       tests/test_rust_standalone_binary.py tests/test_no_marketing_buzzwords_property.py \
+       tests/test_no_emoji_property.py -v
 
-# Execute the native Rust data-plane test battery
-cargo test --manifest-path rust_data_plane/Cargo.toml --no-default-features
+# Execute the native Rust data-plane & Tor transport bridge test batteries
+cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features
+cargo test --manifest-path tor_transport/Cargo.toml --locked
 ```
 
 ### B. Machine-Checked Formal Proofs
 
-Six protocol models in `docs/formal/` (`st2027_handshake.pv`, `st2027_kex_auth.pv`, `st2027_pcs.pv`, `st2027_ratchet_pcs.pv`, `nc3_dual_custody.pv`, and `handshake_model.pv`) are executed via ProVerif 2.05 (`tests/test_proverif_st2027.py` / `docs/formal/check.sh --strict`), proving payload secrecy, injective mutual authentication, dual-custody authorization invariants, and Post-Compromise Security (PCS) healing across epoch ratchets.
+Seven protocol files in `docs/formal/` (`st2027_handshake.pv`, `st2027_kex_auth.pv`, `st2027_pcs.pv`, `st2027_ratchet_pcs.pv`, `st2027_tor_rendezvous.pv`, `nc3_dual_custody.pv`, and structural `handshake_model.pv`) cover Dolev-Yao secrecy, injective mutual authentication, Tor rendezvous identity binding, dual-custody authorization invariants, and Post-Compromise Security (PCS) healing across epoch ratchets (`tests/test_proverif_st2027.py` / `docs/formal/check.sh --strict`).
 
 ---
 

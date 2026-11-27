@@ -12,16 +12,17 @@
 
 ```powershell
 $env:P2P_REQUIRE_AUTH='true'     # default true; never set false for real links
-$env:P2P_DATA_PLANE='python'     # set 'rust' only after wheel installed + gates green
+$env:P2P_DATA_PLANE='rust'       # authoritative native Rust production data plane
 # $env:P2P_ALLOW_LOOPBACK='1'    # LAB ONLY. Never on operational machines.
 ```
 
 ## 3. Pre-session checklist
 
-- [ ] `cargo test` 19+ green (if Rust plane used), suites 14+ green
+- [ ] `cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features` (340 green) and `cargo test --manifest-path tor_transport/Cargo.toml --locked` (5 green)
 - [ ] `verify_all_dependencies()` passes (oqs.dll sidecar sig + pip floors)
-- [ ] Firewall: allow ONLY peer /64 on P2P port, DROP rest; single `[::]` bind
-- [ ] OOB channel (verified voice / in person) available for ceremony
+- [ ] For Tor v3 links (`--tor`), verify SHA-384 pin of `secure-transmit-tor` (`--tor-bridge-sha384` / `P2P_TOR_BRIDGE_SHA384`) and `ClientAuthV3` credentials
+- [ ] Firewall: allow ONLY peer /64 on direct P2P port, DROP rest (or use zero-open-port Tor onion mode)
+- [ ] OOB channel (verified voice / in person) available for ceremony & SAS check
 
 ## 4. Connection ceremony (every session)
 
@@ -46,11 +47,11 @@ $env:P2P_DATA_PLANE='python'     # set 'rust' only after wheel installed + gates
 5. **Inner Hybrid Noise_XXhfs Handshake**:
    - Nodes exchange ephemeral `SecP384r1MLKEM1024` keys and authenticate transcripts via `ML-DSA-87`.
 6. **Traffic Shaping & Transmission**:
-   - Transmitted in constant-rate 50ms ticks using 1232-byte cells with AES-256-CTR whitening over Tor v3 / sovereign APN tunnel.
+   - Direct LAN/IPv6 mode transmits quantized frames (`256B`/`512B`/`1232B`) with constant-rate or Poisson cover traffic; public-WAN Tor v3 mode (`secure_p2p.py node --tor --zero-footprint`) routes via privilege-separated `secure-transmit-tor` (`ArtiEphemeralKeystore`, `ClientAuthV3`, `--tor-bridge-sha384`, `496B` Tamaraw cells, and optional `/doc <path>` with `--recv-dir`).
 
 ### 4.2. Legacy Prototype Chat (Research Lab Mode Only)
-1. Server: `python secure_p2.py --port 50007` → option 1.
-2. Client: option 2 → peer IPv6 + port.
+1. Server: `python secure_p2p.py chat --lab` (explicit `--lab` opt-in; blocked in `P2P_PRODUCTION=1`).
+2. Client: peer IPv6 + port in isolated lab harness only.
 3. TOFU safety number check and interactive chat exchange.
 
 ## 5. During operation

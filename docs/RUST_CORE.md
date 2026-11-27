@@ -104,7 +104,7 @@ interpreter copies, `panic="abort"` + LTO release profile.
 # 1. Native Rust Core & Tor Transport Bridge Cargo Tests
 cargo check --manifest-path rust_data_plane/Cargo.toml --no-default-features
 cargo test  --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features  # 276 unit + 12 dudect_ct + 49 kani + 2 MTU + 1 doctest = 340 passed, 0 failed
-cargo test  --manifest-path tor_transport/Cargo.toml --locked                         # 4 passed, 0 failed
+cargo test  --manifest-path tor_transport/Cargo.toml --locked                         # 5 passed, 0 failed
 
 # 2. Python-Rust Data Plane Unified Integration Battery
 pytest tests/test_dtn_zero_rtt_mesh.py \

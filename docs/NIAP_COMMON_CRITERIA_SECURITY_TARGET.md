@@ -23,11 +23,11 @@
 | **`FCS_RBG_EXT.1`** | Random Bit Generation | NIST SP 800-90A / Hardware Entropy Conditioning | Windows CNG `BCryptGenRandom`, `platform_hsm_interface.py`, `crypto_selftest.py` |
 | **`FIA_X509_EXT.1`** | Certificate Validation (PQ PKI) | RFC 9881 / Offline 3-of-5 Threshold ML-DSA-87 Root | `trust_anchor.py`, `pq_certificate_authority.py` |
 | **`FPT_TST_EXT.1`** | TSF Self-Test (Power-Up KATs) | FIPS 140-3 Known Answer Tests at Boot (Fail-Closed) | `crypto_selftest.py`, `acvp_validation_harness.py` |
-| **`FPT_TUD_EXT.1`** | Trusted Update & Supply Chain | SLSA Level 3+ / Ed25519 & ML-DSA-87 Signing | `scripts/verify_reproducible_build.py`, `generate_production_cbom.py` |
+| **`FPT_TUD_EXT.1`** | Trusted Update & Supply Chain | SLSA-Aligned Reproducible Build (target) / Ed25519 & ML-DSA-87 Signing | `scripts/verify_reproducible_build.py`, `scripts/generate_production_sbom.py`, `scripts/generate_slsa_provenance.py` |
 | **`FAU_GEN.1`** | Audit Data Generation | NIST SP 800-53 Rev 5 AU-2, AU-3 / HMAC-SHA384 Chaining | `remote_siem_forwarder.py`, `audit_logging_system.py` |
 | **`FAU_STG.1/WORM`** | Protected Audit Trail Storage | NIST SP 800-53 AU-9 / Head Anchor Tail Locking | `logs/siem_audit_head.anchor.json`, `secure_p2p_audit.db` |
 | **`FIA_UAU.1`** | Timing of Authentication & Two-Person Rule | DoD Zero Trust / DoD S-5210.41M Dual Persona Rule | `spo_dpo.py`, `ts_attest.py`, `zero_trust_engine.py` |
-| **`FTP_TRP.1/ANON`** | Trusted Path Network Obfuscation | SOCKS5 Tor v3 / Interface Pinning / 50ms Cell Shaping | `transport_anonymity.py`, `tactical_cloaking_router.py` |
+| **`FTP_TRP.1/ANON`** | Trusted Path Network Obfuscation | Privilege-Separated Arti Tor v3 / `ClientAuthV3` / `496B` Tamaraw Shaping | `tor_transport/src/main.rs`, `rust_data_plane/src/shaper.rs`, `rust_data_plane/src/stream_transport.rs`, `transport_anonymity.py` |
 | **`FPT_PHP.3`** | Physical Tamper & Zeroization Resistance | NATO SDIP-27/28/29 TEMPEST & Simplex Diode Framing | `ts_hw_layer.py`, `ts_runtime.py`, `secure_memory_wiper.py` |
 
 ---

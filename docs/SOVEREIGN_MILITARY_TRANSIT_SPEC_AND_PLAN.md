@@ -158,7 +158,7 @@ To achieve high-assurance security and address audit findings, we execute this 5
   - **Task 5.1:** Require high-consequence messages to contain an enveloped DPA manifest co-signed by two distinct ML-DSA-87 public keys registered in the sovereign authorization directory.
   - **Task 5.2:** Enforce maximum time delta between signatures (configurable operational window).
   - **Task 5.3:** Receiver station verifies both signatures against the root trust anchor before releasing payload to disk.
-* **Verification Gate:** 	est_spo_dpo.py validates that single-signed messages are dropped silently.
+* **Verification Gate:** `tests/test_spo_dpo.py` validates that single-signed messages are dropped silently.
 
 ---
 
@@ -166,13 +166,13 @@ To achieve high-assurance security and address audit findings, we execute this 5
 
 | Assurance Gate | Governing Tool | Verification Standard | Automated Test Target |
 | :--- | :--- | :--- | :--- |
-| **Protocol Logic Secrecy** | ProVerif 2.05 | Dolev-Yao Active Network Attacker | `test_proverif_st2027.py` |
-| **Injective Mutual Agreement** | ProVerif 2.05 | Replay, MITM, Impersonation Proofs | `test_proverif_st2027.py` |
-| **Memory & Slice Safety** | Kani / CBMC | Bounded Model Checking (Depth $k$) | `cargo kani --harness check_frame_bounds` |
-| **Anti-Replay Invariance** | Rust `AntiReplayWindow` | RFC 6479 Decoupled Read-Only Check | `test_exploit_regressions.py` |
-| **Nonce Uniqueness** | `STSTATE1` Atomic State | NIST SP 800-38D Exclusive OS Lock | `test_rust_standalone_binary.py` |
+| **Protocol Logic Secrecy** | ProVerif 2.05 | Dolev-Yao Active Network Attacker | `tests/test_proverif_st2027.py` |
+| **Injective Mutual Agreement** | ProVerif 2.05 | Replay, MITM, Impersonation Proofs | `tests/test_proverif_st2027.py` |
+| **Memory & Slice Safety** | Kani / CBMC | Bounded Model Checking | `.github/workflows/kani-proofs.yml` (8 CBMC harnesses) |
+| **Anti-Replay Invariance** | Rust `AntiReplayWindow` | RFC 6479 Decoupled Read-Only Check | `tests/test_exploit_regressions.py` |
+| **Nonce Uniqueness** | `STSTATE1` Atomic State | NIST SP 800-38D Exclusive OS Lock | `tests/test_rust_standalone_binary.py` |
 | **Cryptographic Purity** | CNSA 2.0 Scanner | NIST FIPS 203 / 204 Only | `crypto_selftest.py`, `cnsa_purity.py` |
-| **Supply Chain Integrity** | SLSA Level 3+ | Embedded Ed25519 & SHA-384 Pins | `scripts/verify_reproducible_build.py` |
+| **Supply Chain Integrity** | SLSA-Aligned Manifest | Embedded Ed25519 & SHA-384 Pins | `scripts/verify_reproducible_build.py` |
 
 ---
 

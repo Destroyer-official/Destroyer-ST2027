@@ -1,10 +1,10 @@
 # Sovereign Transmit 2027 (ST2027) — Technical Evaluation Dossier
 ## Cryptographic Defense Baseline & Mathematical Assurance Evidence
 
-**Target Standard:** NSA CNSA Suite 2.0 / RFC 9848 / RFC 6479 / SLSA Level 3+  
+**Target Standard:** NSA CNSA Suite 2.0 / RFC 10024 / RFC 6479 / SLSA-Aligned Reproducible Builds  
 **Assurance Level:** Formal Symbolic & Bounded Model Checked Tactical Transport Baseline  
-**Evaluation Status:** Pre-Evaluation Prototype / Research Baseline (Zero False Badges)  
-**Machine-Checkable Master Audit:** `python scripts/run_defense_audit.py` (Exit 0, 9/9 Gates Passed)  
+**Evaluation Status:** Pre-Evaluation Engineering Baseline (Zero False Badges; no CMVP / Common Criteria cert or ATO)  
+**Internal Developer Harness:** `python scripts/run_defense_audit.py` (10 internal gates; requires ProVerif >= 2.05)  
 **Digital Signature:** ML-DSA-87 (FIPS 204 Level 5, 4627-byte detached signature at `compliance_reports/defense_master_audit_receipt.json.sig`)
 
 ---
@@ -55,29 +55,25 @@ The network is controlled by an active adversary capable of intercepting, inject
 
 ## 4. Formal Verification & Invariant Proofs
 
-### 4.1 ProVerif 2.05 Symbolic Handshake Proofs
-Located at `docs/formal/st2027_handshake.pv` and `docs/formal/st2027_pcs.pv`. Verified by `test_proverif_st2027.py`:
-- **Query 1 (Payload Secrecy):** `query attacker(secret_payload)` $\implies$ **RESULT: true** (Secret payload unreachable by active Dolev-Yao attacker).
-- **Query 2 (Initiator Injective Agreement):** `query inj-event(R_Receives(pkA, pkB, m)) ==> inj-event(S_Accepts(pkA, pkB, m))` $\implies$ **RESULT: true** (No replay, no man-in-the-middle).
+### 4.1 ProVerif 2.05 Symbolic Handshake & Tor Rendezvous Proofs
+Located at `docs/formal/st2027_handshake.pv`, `docs/formal/st2027_pcs.pv`, `docs/formal/st2027_kex_auth.pv`, `docs/formal/st2027_ratchet_pcs.pv`, and `docs/formal/st2027_tor_rendezvous.pv`. Verified in CI (`tests/test_proverif_st2027.py` / `docs/formal/check.sh --strict`):
+- **Query 1 (Payload Secrecy):** `query attacker(secret_payload)` $\implies$ **RESULT: true** (within abstract Dolev-Yao model).
+- **Query 2 (Initiator Injective Agreement):** `query inj-event(R_Receives(pkA, pkB, m)) ==> inj-event(S_Accepts(pkA, pkB, m))` $\implies$ **RESULT: true**.
 - **Query 3 (Responder Injective Agreement):** `query inj-event(S_Accepts(pkA, pkB, m)) ==> inj-event(R_Receives(pkA, pkB, m))` $\implies$ **RESULT: true**.
-- **Query 4 (Post-Compromise Security):** State compromised at Phase 0, healed by Phase 2 $\implies$ **RESULT: true** (Attacker unable to decrypt messages in Phase 2 despite Phase 0 compromise).
+- **Query 4 (Post-Compromise Security & Tor Rendezvous Binding):** State compromised at Epoch 0 heals after fresh KEM step, and in-stream `Noise_XXhfs` stays confidential across compromised Tor HSDir/rendezvous relays within the model.
 
 ### 4.2 Kani Bounded Model Checking Proofs
-Located at `rust_data_plane/tests/kani_harness.rs`. Five `#[kani::proof]` harnesses are defined (execution requires the `cargo kani` + CBMC toolchain):
-1. `kani_frame_split_reassemble_roundtrip`: Bounded chunking and reassembly across frame boundaries.
-2. `kani_nonce_domain_separation`: Nonces in `DIR_SEND` and `DIR_RECV` never intersect across any $0 \le \text{seq} < 2^{64}$.
-3. `kani_replay_window_monotonic`: Sliding window invariant preserves all valid sequence numbers within 64-bit bitmap and drops ancient/duplicate packets.
-4. `kani_max_stream_bytes_cap`: Stream length bounds strictly rejected above 16 MiB.
-5. `kani_nostd_frame_parse_never_panics`: Core packet parsing is panic-free on arbitrary untrusted inputs.
+Located at `rust_data_plane/tests/kani_harness.rs` (plus library proofs in `src/shaper.rs` and `src/stream_transport.rs`). Linux CI (`.github/workflows/kani-proofs.yml`) executes 8 `#[kani::proof]` harnesses under `cargo kani` + CBMC:
+1. `kani_nonce_domain_separation` (integration)
+2. `kani_replay_window_monotonic` (integration)
+3. `kani_max_stream_bytes_cap` (integration)
+4. `kani_nostd_frame_parse_never_panics` (integration)
+5. `kani_stream_frame_len_decoder_bounds` (integration)
+6. `kani_tamaraw_shaper_epoch_modulo_bounds` (integration)
+7. `verify_tor_padding_never_overflows` (`src/shaper.rs`)
+8. `verify_length_header_bounds` (`src/stream_transport.rs`)
 
-Seven deterministic property doubles in `property_doubles` execute green under standard `cargo test`:
-- `frame_split_reassemble_roundtrip_bounded`
-- `nonce_domain_separation`
-- `replay_window_monotonic_and_drops`
-- `ct_eq_and_select_no_secret_branch`
-- `max_stream_bytes_cap_enforced`
-- `nostd_frame_parse_never_panics_property_sweep`
-- `nostd_stack_secret_ct_eq_property_sweep`
+Two additional `#[kani::proof]` harnesses (`kani_frame_split_reassemble_roundtrip`, `kani_cookie_gate_stateless_verification`) are defined in `kani_harness.rs` (exceeding per-job CBMC CI budgets) and covered locally alongside all properties by 10 deterministic `property_doubles` under `cargo test --no-default-features` (`frame_split_reassemble_roundtrip_bounded`, `nonce_domain_separation`, `replay_window_monotonic_and_drops`, `ct_eq_and_select_no_secret_branch`, `max_stream_bytes_cap_enforced`, `nostd_frame_parse_never_panics_property_sweep`, `nostd_stack_secret_ct_eq_property_sweep`, `cookie_gate_stateless_verification`, `tamaraw_shaper_epoch_modulo_invariant`, `stream_frame_len_decoder_bounds_sweep`).
 
 (Note: `test_stack_secret_zeroize_on_drop` is a unit test in `nostd_microcore`, re-exported into the harness binary; not a Kani proof.)
 
@@ -85,36 +81,34 @@ Seven deterministic property doubles in `property_doubles` execute green under s
 
 ## 5. Master Audit Reproduction Guide
 
-Any evaluator can execute the complete end-to-end verification battery with a single command:
+Evaluators on a host with ProVerif >= 2.05 installed can execute the internal 10-gate verification runner:
 
 ```bash
-# Execute all 9 defense assurance gates
+# Execute all 10 internal developer assurance gates
 python scripts/run_defense_audit.py
 ```
 
-### Expected Output:
+### Example Scorecard Output:
 ```text
 ====================================================================================
-ST2027 DEFENSE HARDENING & ASSURANCE SCORECARD — MILITARY AUDIT VERDICT
+ST2027 DEFENSE HARDENING & ASSURANCE SCORECARD — INTERNAL VERIFICATION RUN
 ====================================================================================
-Timestamp (UTC): 2026-09-29T...
-Overall Status : 10/10 SATISFIED — ALL GATES VERIFIED
+Overall Status : 10/10 PASSED (Internal Software Invariant Gates)
 ------------------------------------------------------------------------------------
-GATE     ASSURANCE CATEGORY                               STATUS   LATENCY   
+GATE     ASSURANCE CATEGORY
 ------------------------------------------------------------------------------------
-1.1      Rust Data-Plane Strict Clippy & Test Battery     PASS     ~36.0 s
-2.1      ts_rt Clippy & Memory Discipline Verification    PASS      ~0.9 s
-3.1      CNSA Suite 2.0 KATs & Algorithm Purity           PASS      ~0.4 s
-4.1      ProVerif 2.05 Symbolic Handshake & PCS Proofs    PASS      ~3.6 s
-5.1      Active Exploit Defenses (Replay DoS & Nonce Reuse) PASS     ~14.2 s
-6.1      Platform Gating (Signed ML-DSA-87 Waivers)       PASS      ~2.4 s
-7.1      SLSA Level 3+ Supply Chain & DLL Pinning         PASS      ~0.3 s
-8.1      Truth-in-Claims & Linguistic Purity              PASS      ~5.0 s
-9.1      In-Process Single-Command Operator Self-Test     PASS      ~4.5 s
+1.1      Rust Data-Plane & Tor Strict Clippy & Test Battery
+2.1      ts_rt & seL4 MILS Clippy, Test & Invariant Verification
+3.1      CNSA Suite 2.0 KATs & Algorithm Purity
+4.1      ProVerif 2.05 Symbolic Handshake & PCS Proofs
+5.1      Active Exploit Defenses (Replay DoS & Nonce Reuse)
+6.1      Platform Gating (Signed ML-DSA-87 Waivers)
+7.1      SLSA-Aligned Supply Chain & DLL Pinning
+8.1      Truth-in-Claims & Linguistic Purity
+9.1      In-Process Single-Command Operator Self-Test
+10.1     Cryptographic Audit Receipt Signing (ML-DSA-87 & VAS)
 ====================================================================================
-[+] Master defense evaluation receipt cryptographically signed with ML-DSA-87:
-    Receipt  : compliance_reports/defense_master_audit_receipt.json
-    Signature: compliance_reports/defense_master_audit_receipt.json.sig (4627 bytes)
+[+] Local receipt signed with ML-DSA-87: compliance_reports/defense_master_audit_receipt.json (.sig)
 ```
 
 ---

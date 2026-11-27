@@ -58,9 +58,9 @@ The ST2027 Trusted Computing Base (TCB) maintains strict physical and logical is
 |                                    REPOSITORY ARCHITECTURAL REALITY                                     |
 +---------------------------------------------------------------------------------------------------------+
 |                                                                                                         |
-|  [PLANE 1: HIGH-ASSURANCE STANDALONE RUST DATA PLANE] (High-Assurance Production Core Target)           |
-|  * Crate: rust_data_plane/ (Binaries: secure-transmit, verify-binaries; PyO3 extension: destroyer_core) |
-|  * Toolchain: Pure native Rust (--no-default-features release build strips lab-surfaces; zero ChaCha20) |
+|  [PLANE 1: HIGH-ASSURANCE STANDALONE RUST DATA PLANE & TOR BRIDGE] (Production Core Target)                  |
+|  * Crates: rust_data_plane/ (`secure-transmit`) + tor_transport/ (`secure-transmit-tor`, Arti 0.48.0)    |
+|  * Toolchain: Pure native Rust (`--no-default-features` strips lab surfaces; zero ChaCha20, zero Tor deps)|
 |  * Cryptography: Pure-Rust ML-DSA-87 + ML-KEM-1024 + P-384 (SecP384r1MLKEM1024), AES-256-GCM           |
 |  * Hardware Interface: PKCS#11 v2.40 HSM silicon (cryptoki) + TPM 2.0 NVRAM Monotonic Counters          |
 |  * Anti-Replay: 1024-packet circular sliding bitmask window (RFC 6479, 32 x u64 words, constant-time)  |
@@ -1378,10 +1378,10 @@ High-assurance tactical deployments operate exclusively via native Rust binaries
 To eliminate the CPython runtime memory boundary (immutable `bytes` retention in `obmalloc` arenas), operational node loops run entirely in compiled native Rust:
 
 - Page-locked memory via `LockedKey32` (`VirtualLock` on Windows / `mlock` on POSIX), OS crash-dump suppression (`SetErrorMode` + `WerSetFlags` / `PR_SET_DUMPABLE=0`), and strict ACG/extension-point hardening (`os_hardening.rs`)
-- Automated deterministic zeroization on drop (`ZeroizeOnDrop`)
+- Automated deterministic zeroization on drop (`ZeroizeOnDrop`), including interactive `/rekey` and `/doc <path>` SHA-384 transfers (`FTYPE_DOC = 0x08`, saved only when `--recv-dir <dir>` is supplied)
 - Sequential consistency compiler memory barriers (`compiler_fence(Ordering::SeqCst)`)
-- Continuous constant-rate pacing (`--quantum 1232` UDP or `--tor --quantum 496` Tamaraw fixed Tor relay cells, configurable cadence)
-- Privilege-separated embedded Tor v3 onion helper (`tor_transport/target/release/secure-transmit-tor`) with `ArtiEphemeralKeystore`, `ClientAuthV3`, and SHA-384 binary verification (`--tor-bridge-sha384`)
+- Continuous constant-rate pacing (`--quantum 1232` UDP or `--tor --quantum 496` Tamaraw fixed Tor relay cells, configurable cadence) with cancel-safe `tokio::io::split` stream frame reading
+- Privilege-separated embedded Tor v3 onion helper (`tor_transport/target/release/secure-transmit-tor`) with `ArtiEphemeralKeystore`, `ClientAuthV3` Restricted Discovery, and mandatory production SHA-384 binary verification (`--tor-bridge-sha384` / `P2P_TOR_BRIDGE_SHA384` before hardware custody init)
 - In production (`P2P_PRODUCTION=1`), the Python runtime strictly prohibits any network or cryptographic key transit (`ControlPlaneBoundaryViolation`).
 
 ```bash
@@ -1390,11 +1390,13 @@ To eliminate the CPython runtime memory boundary (immutable `bytes` retention in
   --role initiator \
   --tor \
   --zero-footprint \
+  --tor-bridge-sha384 <96_HEX_SHA384_OF_SECURE_TRANSMIT_TOR> \
   --to <ONION_ADDR>.onion:443 \
   --psk-file keys/psk.key \
-  --auth-sk-file - \
+  --auth-tpm-sealed keys/alpha.tpm.priv --auth-tpm-pub keys/alpha.tpm.pub \
   --peer-auth-pk-file keys/bravo_mldsa87.pk \
   --onion-auth-sk-file keys/client_auth.sk \
+  --recv-dir received_docs \
   --quantum 496 \
   --interval-ms 20 \
   --tamaraw-l 16 \
@@ -1522,7 +1524,7 @@ The Destroyer-ST2027 engineering baseline separates **software/CI verification e
 | --- | --- | --- |
 | **Cryptographic & Protocol Paths** | `HybridKeyExchange2027` (`SecP384r1MLKEM1024` + ML-DSA-87), Rust data plane (`SecP384r1MLKEM1024`, AES-256-GCM, SHA-384), NIST SP 800-38D composite + durable monotonic nonces, ProVerif 2.05 symbolic models, and DudeCT statistical timing tests | Quarantined Python `--lab` `SecureP2PChat` / `hybrid_kex_legacy` path retains X25519 legacy compatibility bindings (`P2P_PRODUCTION=1` prohibits `--lab`). Prebuilt `oqs.dll` / `libsodium.dll` carry Ed25519 + SHA3-512 integrity pins, **not** FIPS 140-3 CMVP certificates. |
 | **Fail-Closed Gate & Rust TCB** | `P2P_PRODUCTION=1` sticky latching (`production_gate.py`, Rust `policy.rs`), `--no-default-features` release builds stripping lab surfaces, TPM NVRAM dual-monotonic anti-rollback + `P2P_TPM_EMULATION` rejection, mandatory mutual authentication (including `--key-file`/`--key-stdin` `node` rejection without peer auth + pin in production), and PKCS#11 hardware-only `--auth-sk-file` exclusion in production | Target production hosts must provision `config_production.json` (`hsm_library_path`, OS-specific `tpm_device`/TBS, offline `.mldsa87.sig` via `scripts/sign_boot_config.py`), dedicated hardware TPM 2.0 NV indices, and physical PKCS#11 HSM/smartcards. |
-| **Supply Chain & Static Assurance** | `scripts/verify_reproducible_build.py` (SHA3-512 `critical_modules.hashes` pinning), `scripts/audit_pins.py` (fail-closed OSV/signed-mirror CVE gate), `pip-audit`, `cargo-audit` / `cargo-deny`, TruffleHog secret scanning, and Bandit SAST (**0 HIGH / 0 MEDIUM**, triaged in [`compliance_reports/bandit_low_triage.md`](compliance_reports/bandit_low_triage.md)) | SLSA Level 3+ target design and ML-DSA-87 build receipts (`certs/audit_signer.mldsa87.pub`) require external air-gapped hardware signing ceremonies for operational deployment. |
+| **Supply Chain & Static Assurance** | `scripts/verify_reproducible_build.py` (SHA3-512 `critical_modules.hashes` pinning), `scripts/audit_pins.py` (fail-closed OSV/signed-mirror CVE gate), `scripts/generate_production_sbom.py` (CycloneDX/SPDX across Python + Rust `Cargo.lock`s + `cbom.json`), `pip-audit`, `cargo-audit` / `cargo-deny`, TruffleHog secret scanning, and Bandit SAST (**0 HIGH / 0 MEDIUM**, triaged in [`compliance_reports/bandit_low_triage.md`](compliance_reports/bandit_low_triage.md)) | SLSA-aligned target design and ML-DSA-87 build receipts (`certs/audit_signer.mldsa87.pub`) require external air-gapped hardware signing ceremonies for operational deployment. |
 | **Host Hardware vs. Accredited Lab** | Software-driven host TPM 2.0 TBS tests (`tests/test_tpm_hardware_phase2.py`, `@pytest.mark.live`) when run on a TPM-equipped workstation | Physical smartcards (YubiKey/Luna/Nitrokey), hardware TEMPEST zoning, physical optical diodes, independent CAVP/CMVP FIPS 140-3 validation, Common Criteria EAL4+ evaluation, and Authorizing Official **ATO** are **not** claimed and remain mandatory prerequisites. |
 
 ### 12.2 Historical Forensic Remediation Ledger (November 2026)
@@ -1545,18 +1547,21 @@ In-repo audit reviews ([`docs/archive/AUDIT_REPORT_ST2027.md`](docs/archive/AUDI
 
 ## 13. Automated Verification Test Suite & Quality Gates
 
-The platform includes automated verification suites across Python, native Rust (`--no-default-features` and `--features lab-surfaces`), `ts_rt`, `sel4_mils_appliance`, DudeCT statistical timing tests, ProVerif symbolic models, and Linux Kani CBMC CI gates. Verified local run metrics (November 26, 2026) vs. external host/lab gates:
+The platform includes automated verification suites across Python, native Rust (`--no-default-features` and `--features lab-surfaces`), `tor_transport`, `ts_rt`, `sel4_mils_appliance`, DudeCT statistical timing tests, ProVerif symbolic models, and Linux Kani CBMC CI gates. Verified metrics (November 27, 2026) vs. external host/lab gates:
 
 ```bash
-# 1. Full Non-Live & Live Python Verification Suite (1979 non-live passed + 26/26 @live hardware tests passed on AMD TPM 2.0 Windows host = 2005 executed passes):
+# 1. Full Non-Live Python Verification Suite (1990 passed, 30 platform/archive skipped, 26 @live deselected) & @live Hardware Probe Suite (26 passed prior to commit 5a4c900):
 python -m pytest tests/ -q -m "not live"
 python -m pytest tests/ -q -m live
 
-# 2. Native Rust Data-Plane & Tor Transport Bridge Suites (340 tests under --no-default-features: 276 unit + 12 dudect_ct + 49 kani_harness + 2 mtu + 1 doc-test; plus 4 tests in tor_transport):
+# 2. Native Rust Data-Plane & Tor Transport Bridge Suites (340 tests under --no-default-features: 276 unit + 12 dudect_ct + 49 kani_harness + 2 mtu + 1 doc-test; plus 5 tests in tor_transport):
 cargo clippy --all-targets --manifest-path rust_data_plane/Cargo.toml -- -D warnings
 cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features
 cargo clippy --all-targets --manifest-path tor_transport/Cargo.toml -- -D warnings
 cargo test --manifest-path tor_transport/Cargo.toml --locked
+
+# 3. Stream, Embedded Tor Bridge Gates & Encrypted /doc Delivery Suite:
+pytest tests/test_tor_and_stream_plane.py -v
 
 # 3. Volatile-Memory Security Core & seL4 MILS Spec Verification (ts_rt: 3 tests; seL4: 21 tests + 5/5 strict checks):
 cargo test --manifest-path ts_rt/Cargo.toml

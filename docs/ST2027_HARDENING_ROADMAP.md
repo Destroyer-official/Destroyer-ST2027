@@ -62,8 +62,9 @@ All 12 advanced defense phases specified in the strategic hardening program are 
 ## 3. Verification Command Reference
 
 ```bash
-# Full Rust Data Plane Suite (318 Tests, 0 Failures):
-cargo test --manifest-path rust_data_plane/Cargo.toml
+# Full Rust Data Plane & Tor Transport Bridge Suites (340 + 5 tests, 0 Failures):
+cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features
+cargo test --manifest-path tor_transport/Cargo.toml --locked
 
 # Unified Advanced Defense Battery (Phases A through L):
 pytest tests/test_sel4_mils_spec.py \

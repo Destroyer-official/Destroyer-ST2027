@@ -323,13 +323,13 @@ The codebase undergoes automated verification across ten blocking assurance gate
 | GATE   | CATEGORY                            | VERIFICATION TOOL / METHODOLOGY   | AUDIT VERDICT   |
 +--------+-------------------------------------+-----------------------------------+-----------------+
 | G-1.1  | Rust Data Plane & Compiler Audit    | `cargo clippy -D warnings`        | PASS (0 warns)  |
-| G-1.2  | Rust Unit & Property Battery        | `cargo test --no-default-features`| PASS (328/328)  |
+| G-1.2  | Rust Unit & Property Battery        | `cargo test --no-default-features`| 340 + 5 Tor PASS|
 | G-2.1  | Native Core Memory Discipline       | `ts_rt` clippy + VirtualLock check| PASS (0 warns)  |
 | G-3.1  | CNSA 2.0 Power-Up Known Answer Tests| `crypto_selftest.py` KAT battery  | PASS (FIPS OK)  |
 | G-4.1  | Symbolic Formal Handshake Proofs    | ProVerif 2.05 (`st2027_*.pv`)     | PASS (Proven)   |
 | G-5.1  | Active Exploit Regressions          | Replay DoS & Nonce Reuse Battery  | PASS (0 bypass) |
 | G-6.1  | Hardware Platform Gating            | Win32 TBS TPM 2.0 PCR Validation  | PASS (Enforced) |
-| G-7.1  | SLSA Level 3+ Reproducible Build    | SHA-384 / Ed25519 Merkle Root     | PASS (100% Green|
+| G-7.1  | SLSA-Aligned Reproducible Build     | SHA-384 / Ed25519 Merkle Root     | PASS (CI Target)|
 | G-8.1  | Truth-in-Claims & Linguistic Purity | Hypothesis Property Test (0 buzz) | PASS (0 buzz)   |
 | G-9.1  | In-Process Operator Self-Test       | Loopback CER & Zeroization Probe  | PASS (Zero leak)|
 | G-10.1 | Master Defense Audit Receipt        | ML-DSA-87 Digital Signature       | PASS (Signed)   |
@@ -337,9 +337,9 @@ The codebase undergoes automated verification across ten blocking assurance gate
 ```
 
 ### 10.2 Machine-Checked Formal Verification Proofs (ProVerif 2.05)
-Formal models in [`docs/formal/`](formal/) provide mathematical proofs of protocol correctness:
-1. **`docs/formal/st2027_handshake.pv`**:
-   - `Query not attacker(secret_payload[]) is true.` (Payload secrecy against active Dolev-Yao attacker).
+Formal models in [`docs/formal/`](formal/) provide mathematical proofs of protocol correctness within their Dolev-Yao abstractions:
+1. **`docs/formal/st2027_handshake.pv` & `st2027_tor_rendezvous.pv`**:
+   - `Query not attacker(secret_payload[]) is true.` (Payload secrecy against active Dolev-Yao attacker, including compromised Tor HSDir/rendezvous relays in the Tor rendezvous model).
    - `Query inj-event(S_Accepts) ==> inj-event(R_Receives) is true.` (Mutual authentication and identity binding).
 2. **`docs/formal/st2027_pcs.pv`**:
    - `Query not attacker(post_compromise_secret[]) is true.` (Post-Compromise Security healing holds after state compromise upon fresh KEM exchange).

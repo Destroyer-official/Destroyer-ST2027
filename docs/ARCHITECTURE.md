@@ -28,21 +28,21 @@ and recovery.
 
 ## 3. Protocol Stacks
 
-### A. 2027 Strict Post-Quantum Pipeline (`secure_transmit_2027.py`)
-This is the formal, fail-closed production target conforming to CNSA Suite 2.0 and RFC 10024 Level 5:
+### A. 2027 Strict Post-Quantum Pipeline (`secure_transmit_2027.py` + `rust_data_plane` + `tor_transport`)
+Authoritative production paths enforce CNSA Suite 2.0 and RFC 10024 Category 5:
 
 ```
-[0] Anonymity Overlay (Tor v3 SOCKS5 / Dedicated APN / WireGuard) ... transport_anonymity.py
-[1] Constant-Rate Traffic Shaping (50ms tick, 1232B uniform cells) ... transport_anonymity.py
-[2] Stream Whitening (AES-256-CTR cryptographic uniform noise) ...... transport_anonymity.py
-[3] Outer TLS 1.3 Transport (TLS_AES_256_GCM_SHA384 only) ........... secure_transmit_2027.py
-[4] Inner Hybrid Handshake (Noise_XXhfs / SecP384r1MLKEM1024) ....... noise_pq.py / secure_transmit_2027.py
-[5] Transcript & Identity Authentication (ML-DSA-87 FIPS 204) ....... noise_pq.py / cnsa_purity.py
-[6] Two-Person Integrity Gate (DoD S-5210.41M; 2.0s DPO threshold) .... spo_dpo.py
-[7] Trust Anchor (Offline 3-of-5 Threshold ML-DSA-87 Hardware CA) ... trust_anchor.py
-[8] Native Memory Defense (OS-locked pages, volatile zeroize) ....... ts_rt/src/lib.rs (Rust cdylib)
-[9] Hardware & Platform Gating (FIPS 140-3, TEMPEST, seL4/VBS) ...... ts_hw_layer.py + ts_runtime.py
+[0] Privilege-Separated Tor v3 Onion (embedded Arti 0.48.0, ClientAuthV3, anonymous stdio IPC) ... tor_transport/src/main.rs
+[1] In-Stream Noise_XXhfs & Cancel-Safe Length Framing (`496B`/`994B`/`1232B`) .................... rust_data_plane/src/stream_transport.rs
+[2] Tamaraw Constant-Rate Cell Shaper & Chaff (`FTYPE_CHAFF`, `/doc` `FTYPE_DOC`) .............. rust_data_plane/src/shaper.rs, pacing.rs
+[3] Inner Hybrid Handshake (Noise_XXhfs / SecP384r1MLKEM1024 + ML-DSA-87 + PSK) ................. rust_data_plane/src/handshake.rs, noise_pq.py
+[4] Transcript & Identity Authentication (ML-DSA-87 FIPS 204; PKCS#11 / TPM 2.0) ................ rust_data_plane/src/auth.rs, cnsa_purity.py
+[5] Two-Person Integrity Gate (DoD S-5210.41M; 2.0s DPO threshold) .............................. rust_data_plane/src/nc3.rs, spo_dpo.py
+[6] Trust Anchor (Offline 3-of-5 Threshold ML-DSA-87 Hardware CA) ............................... rust_data_plane/src/pki.rs, trust_anchor.py
+[7] Native Memory Defense & OS Hardening (ACG, dump suppression, VirtualLock/mlock) ............. rust_data_plane/src/os_hardening.rs, ts_rt/src/lib.rs
+[8] Hardware & Platform Gating (TPM 2.0 PCRs, seL4/VBS) ......................................... ts_hw_layer.py + ts_runtime.py
 ```
+(Legacy SOCKS5 Tor carriage in `transport_anonymity.py` and outer TLS `secure_transmit_2027.py` remain supported for Python reference paths.)
 
 ### B. Legacy P2P Research Prototype (`secure_p2.py` / `secure_p2p.py`)
 Maintained for multi-party chat research and experimental comparison (contains non-CNSA Falcon/McEliece algorithms):
@@ -161,8 +161,9 @@ To enforce comprehensive security controls across electronic warfare (EW), signa
 ## 8. Master Verification & Compliance Registry
 
 ```bash
-# Unified Rust Data Plane Verification (318 Tests Passed, 0 Failures):
-cargo test --manifest-path rust_data_plane/Cargo.toml
+# Unified Rust Data Plane & Tor Transport Bridge Verification:
+cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features  # 340 passed, 0 failed
+cargo test --manifest-path tor_transport/Cargo.toml --locked                         # 5 passed, 0 failed
 
 # Unified Python Tactical Battery (53 Tests Passed in 1.96s):
 pytest tests/test_dtn_zero_rtt_mesh.py \

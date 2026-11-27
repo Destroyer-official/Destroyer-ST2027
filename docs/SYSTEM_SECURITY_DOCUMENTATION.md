@@ -561,7 +561,7 @@ combiners, `CEREMONY-APPROVAL-v1`, suite id
 python -m pytest -q --timeout=300 -p no:cacheprovider   # full suite
 python -m bandit -r . --exclude "./.venv,./secure_p2p_core,./notupload,./archive,./redesign,./scratch,./downloads"
 python verify_deployment.py                              # expect READY, FAIL: 0
-P2P_ALLOW_LOOPBACK=1 python -m pytest test_nc3_two_terminal_live_transfer.py
+P2P_ALLOW_LOOPBACK=1 python -m pytest tests/test_nc3_two_terminal_live_transfer.py
 ```
 
 ### 9.3 Adversarial self-findings fixed during development (sample)

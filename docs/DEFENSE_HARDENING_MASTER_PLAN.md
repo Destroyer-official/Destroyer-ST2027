@@ -387,7 +387,7 @@ Create a dedicated test file: `test_exploit_regressions.py` that directly incorp
 | **5.2** | Attack Surface Sprawl Purge | Project root | `[x] DONE 2026-09-29 — REINTERPRETED WITH EVIDENCE` | `test_production_surface_audit.py`: `allied_gateway.py` does not exist; `nc3_nuclear_command.py`/`zk_authenticator.py` have 10+ live test dependents + CI jobs, so physical moves would break the green battery without reducing reachable surface (nothing in the core closure imports them). Boundary ENFORCED by import-closure gate instead; quarantine charter at `archive/experimental/README.md`. Core surface: 10 modules + 2 crates = 12 entries (< 15). |
 | **5.3** | Unified Operator CLI Harness | `secure_transmit_2027.py` | `[x] DONE 2026-09-29` | `test_selftest_cli_returns_zero_with_clean_status` (`selftest` → exit 0, SELFTEST-OK) |
 Created DEFENSE_HARDENING_MASTER_PLAN.md
-Ran command: `pytest test_no_marketing_buzzwords_property.py test_no_emoji_property.py`
+Ran command: `pytest tests/test_no_marketing_buzzwords_property.py tests/test_no_emoji_property.py`
 Used tool: schedule
 Ran command: `git status`
 Ran command: `git add docs/DEFENSE_HARDENING_MASTER_PLAN.md`
@@ -519,7 +519,7 @@ Ran command: `git push origin main`
   1. Transmit valid frame $F_1$.
   2. Inject forged frame with `seq = 2**64 - 1` and invalid tag.
   3. Transmit valid frame $F_2$ and assert that $F_2$ is accepted and decrypted cleanly.
-- **Verification Gate:** `pytest test_exploit_regressions.py -v` passes 100%.
+- **Verification Gate:** `pytest tests/test_exploit_regressions.py -v` passes 100%.
 
 ---
 

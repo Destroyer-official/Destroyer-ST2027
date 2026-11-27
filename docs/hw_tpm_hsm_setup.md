@@ -35,7 +35,7 @@ section below shows how to opt a host in and how to verify it.
 5. Verify: `P2P_ALLOW_TPM_NATIVE=1 python -c
    "from platform_hsm_interface import is_tpm_available;
    print(is_tpm_available())"` must print `True`. Then run
-   `pytest test_hsm_platform.py` (mocked, no hardware needed).
+   `pytest tests/test_hsm_platform.py` (mocked, no hardware needed).
 
 What Linux actually uses when enabled: `LinuxTPMBackend` (FAPI keys under
 `/HS/SRK`, quote over PCR 0,1,2,3,7), ESAPI RNG via `tpmrm0` (libsodium

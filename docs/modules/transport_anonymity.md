@@ -2,7 +2,9 @@
 
 [Back to Documentation Index](../README.md) | [System Architecture](../ARCHITECTURE.md)
 
-This module implements **Pillar 4: Network Anonymity & Traffic Shaping** for the 2027 Top-Secret transmission pipeline. It provides metadata resistance, backbone traffic analysis mitigation, SOCKS5 Tor v3 carriage, interface-pinned sovereign routing, constant-rate cell shaping, AES-256-CTR stream whitening, and DoD Directive S-5210.41M Two-Person Integrity.
+> **Production Architecture Note:** For open-internet operations (`--tor`), the Python `SOCKS5` carriage in `transport_anonymity.py` is superseded on the native Rust production path by the privilege-separated embedded Arti bridge (`tor_transport/src/main.rs` / `secure-transmit-tor`) and `TamarawShaper` (`rust_data_plane/src/shaper.rs`) emitting `496B`/`994B` Tor-aligned cells with zero localhost SOCKS5 ports and zero disk keys.
+
+This module implements the Python reference/lab path for **Pillar 4: Network Anonymity & Traffic Shaping** (`transport_anonymity.py` + `spo_dpo.py`), providing metadata resistance, SOCKS5 Tor v3 carriage, interface-pinned sovereign routing, constant-rate cell shaping, AES-256-CTR stream whitening, and DoD Directive S-5210.41M Two-Person Integrity.
 
 ---
 
@@ -62,7 +64,8 @@ This module implements **Pillar 4: Network Anonymity & Traffic Shaping** for the
 ## 3. Test Coverage
 
 - **Suites:**
-  - `test_transport_anonymity.py`] (11 tests)
-  - `test_spo_dpo.py`] (8 tests)
+  - `tests/test_transport_anonymity.py` (11 tests)
+  - `tests/test_spo_dpo.py` (8 tests)
+  - `tests/test_tor_and_stream_plane.py` (native Rust stream/Tor bridge & `--zero-footprint` gates)
 - **Pass Rate:** **19 of 19 tests passing (100%)**
 - **Tested Behaviors:** SOCKS5 handshake framing, remote DNS formatting, 50ms scheduler tick compliance, 1232B cell serialization/deserialization, AES-256-CTR whitening/unwhitening, DPO dual-token approval, and 2.0s window timeout rejection.
