@@ -477,7 +477,67 @@ async fn run_initiator(args: &[String], work: &VolatileWorkDir) -> Result<(), St
         .map_err(|e| format!("stream bridge IO error: {e}"))
 }
 
+#[cfg(windows)]
+fn suppress_core_dumps() {
+    use std::ffi::{c_char, c_void};
+    const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+    const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+    const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+    const WER_FAULT_REPORTING_NO_UI: u32 = 0x0020;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetErrorMode(u_mode: u32) -> u32;
+        fn LoadLibraryA(lp_lib_file_name: *const c_char) -> *mut c_void;
+        fn GetProcAddress(h_module: *mut c_void, lp_proc_name: *const c_char) -> *mut c_void;
+    }
+
+    // SAFETY: Setting error-mode bitmask and resolving system wer.dll export safely with null checks.
+    unsafe {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+        let wer = LoadLibraryA(c"wer.dll".as_ptr());
+        if !wer.is_null() {
+            let sym = GetProcAddress(wer, c"WerSetFlags".as_ptr());
+            if !sym.is_null() {
+                let wer_set_flags: extern "system" fn(u32) -> i32 = std::mem::transmute(sym);
+                let _ = wer_set_flags(WER_FAULT_REPORTING_NO_UI);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn suppress_core_dumps() {
+    const PR_SET_DUMPABLE: i32 = 4;
+    const RLIMIT_CORE: i32 = 4;
+
+    #[repr(C)]
+    struct RLimit {
+        rlim_cur: u64,
+        rlim_max: u64,
+    }
+
+    extern "C" {
+        fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
+        fn setrlimit(resource: i32, rlim: *const RLimit) -> i32;
+    }
+
+    let zero_lim = RLimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: Standard Linux syscalls disabling ptrace/core dumps in this process.
+    unsafe {
+        let _ = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+        let _ = setrlimit(RLIMIT_CORE, &zero_lim as *const RLimit);
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "linux")))]
+fn suppress_core_dumps() {}
+
 fn main() {
+    suppress_core_dumps();
     let args: Vec<String> = std::env::args().collect();
     let mode = get_flag(&args, "--mode").unwrap_or_else(|| usage());
 
@@ -502,6 +562,9 @@ fn main() {
         }
     });
 
+    // Shut down Arti's background Tokio tasks so SQLite handles (dir.sqlite3)
+    // are released before VolatileWorkDir wipes and unlinks the temp tree.
+    rt.shutdown_timeout(std::time::Duration::from_millis(250));
     drop(work);
     if let Err(e) = res {
         fail(&e);

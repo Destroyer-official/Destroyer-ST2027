@@ -11,6 +11,7 @@ The protocol is formally modeled and **symbolically** verified in the applied pi
 2. **`st2027_pcs.pv`**: Symbolic model of the Continuous Epoch Ratchet (CER).
    - Evaluates Post-Compromise Security (PCS) healing: proves that an attacker who compromises epoch $N$ cannot compromise epoch $N+1$ once fresh ephemerals are exchanged.
 3. **`st2027_kex_auth.pv`**, **`st2027_ratchet_pcs.pv`**, **`nc3_dual_custody.pv`**, and **`handshake_model.pv`**: Domain-separated ML-DSA-87 KEX authentication, fresh-KEM ratchet epoch isolation, DoD S-5210.41M two-person custody authorization, and structural baseline handshake verification.
+4. **`st2027_tor_rendezvous.pv`**: Symbolic model of Tor v3 `ClientAuthV3` Restricted Discovery coupled with in-stream `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `PSK`) channel binding, preventing untrusted peer rendezvous discovery and key-confusion / cross-session MITM.
 
 ### Running ProVerif
 
@@ -22,6 +23,7 @@ proverif docs/formal/st2027_pcs.pv
 proverif docs/formal/st2027_kex_auth.pv
 proverif docs/formal/st2027_ratchet_pcs.pv
 proverif docs/formal/nc3_dual_custody.pv
+proverif docs/formal/st2027_tor_rendezvous.pv
 ```
 
 Automated verification suite:

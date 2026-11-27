@@ -115,7 +115,7 @@ ST2027 operates across six standardized operational environments, enforcing tail
 
 ### Operational Rules per Topology
 - **Topology 1 (Tactical Edge DDIL Radio):** Uses direct **IPv6 UDP** (never routed through Tor). Engineered for high-frequency (HF) / VHF tactical networks, unmanned aerial systems (UAS), and mobile ad-hoc networks (MANET). Eliminates TCP connection overhead. Prevents network amplification attacks via stateless cookie gates ([`rust_data_plane/src/cookie.rs`](rust_data_plane/src/cookie.rs)). Corrupted datagrams are dropped silently without ICMP or wire error emission to prevent RF direction-finding geolocation.
-- **Topology 2 (Adversarial Public WAN):** Operates exclusively via Tor v3 Onion Services over **TCP SOCKS5** (RFC 1928; Tor carries TCP streams only, never raw UDP). Length-prefixed 1,232-byte cells travel over TCP TLS 1.3 + `Noise_XXhfs` through Tor circuits with remote DNS resolution (`transport_anonymity.py`), and a 50ms pacing loop injects Poisson chaff during conversational pauses.
+- **Topology 2 (Adversarial Public WAN):** Operates exclusively via privilege-separated embedded Arti (`tor_transport` / `secure-transmit-tor`, `arti-client 0.48.0` with `ArtiEphemeralKeystore` + `ClientAuthV3` Restricted Discovery + `vanguards = Full`) over anonymous stdin/stdout pipes with zero external `tor.exe` or SOCKS5 TCP loopback sockets. In-stream `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) keys flow directly in locked Rust memory with `--zero-footprint` (`--tamaraw-l` fixed 496-byte Tor relay cells + `TamarawShaper` cover padding).
 - **Topology 3 (RED/BLACK Cross-Domain Boundary):** Unidirectional data transfer across physically severed optical fiber links. The transmit photodiode on the classified RED enclave pushes Cauchy-Reed-Solomon encoded frames to a receiver on the unclassified BLACK enclave. Reverse reflection is physically impossible (0.000 bps backchannel).
 - **Topology 4 (Air-Gapped Facility Station):** Designed for accredited SCIF operations. Ephemeral keys are exchanged using offline removable media envelopes authenticated via 3-of-5 threshold ML-DSA-87 signatures. Monotonic sequence counters prevent replay of expired command bundles.
 - **Topology 5 (Joint All-Domain CJADC2 Mesh):** Tactical situational awareness tracks formatted as NATO MIL-STD-6090 Cursor-on-Target (CoT) XML authenticated with FIPS 204 ML-DSA-87 signatures.
@@ -1023,6 +1023,8 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 |   │   └── Query not attacker(epoch-2 payload) under Epoch-1 total compromise ==> HOLDS IN MODEL (PCS heal) |
 |   ├── docs/formal/st2027_ratchet_pcs.pv (rust_data_plane/src/ratchet.rs Epoch-0 -> Epoch-1 PCS model)    |
 |   │   └── Verifies ML-DSA-87 + MAC verification before decaps/mutation under upfront Epoch-0 RAM reveal |
+|   ├── docs/formal/st2027_tor_rendezvous.pv (ClientAuthV3 Restricted Discovery + in-stream Noise_XXhfs binding)|
+|   │   └── Verifies payload secrecy & mutual agreement across compromised Tor HSDir/exit relays                |
 |   └── docs/formal/nc3_dual_custody.pv (NC3 / PAL Two-Person Rule & dual hardware-token authorization)    |
 |       └── Structurally audited by tests/test_formal_proverif_models.py                                   |
 +---------------------------------------------------------------------------------------------------------+
@@ -1295,22 +1297,27 @@ High-assurance tactical deployments operate exclusively via native Rust binaries
 
 #### Native Rust Operational Node Loop (`secure-transmit node`)
 To eliminate the CPython runtime memory boundary (immutable `bytes` retention in `obmalloc` arenas), operational node loops run entirely in compiled native Rust:
-- Page-locked memory via `LockedKey32` (`VirtualLock` on Windows / `mlock` on POSIX)
+- Page-locked memory via `LockedKey32` (`VirtualLock` on Windows / `mlock` on POSIX), OS crash-dump suppression (`SetErrorMode` + `WerSetFlags` / `PR_SET_DUMPABLE=0`), and strict ACG/extension-point hardening (`os_hardening.rs`)
 - Automated deterministic zeroization on drop (`ZeroizeOnDrop`)
 - Sequential consistency compiler memory barriers (`compiler_fence(Ordering::SeqCst)`)
-- Continuous constant-rate pacing (1232-byte uniform quantization, configurable 20ms/50ms cadence)
+- Continuous constant-rate pacing (`--quantum 1232` UDP or `--tor --quantum 496` Tamaraw fixed Tor relay cells, configurable cadence)
+- Privilege-separated embedded Tor v3 onion helper (`tor_transport/target/release/secure-transmit-tor`) with `ArtiEphemeralKeystore`, `ClientAuthV3`, and SHA-384 binary verification (`--tor-bridge-sha384`)
 - In production (`P2P_PRODUCTION=1`), the Python runtime strictly prohibits any network or cryptographic key transit (`ControlPlaneBoundaryViolation`).
 
 ```bash
-# Standalone native Rust production node (Initiator):
+# Standalone native Rust production node (Initiator — Ephemeral Tor v3 + ClientAuthV3 + 496B Tamaraw):
 ./rust_data_plane/target/release/secure-transmit node \
   --role initiator \
-  --bind 127.0.0.1:9061 \
-  --to 127.0.0.1:9060 \
+  --tor \
+  --zero-footprint \
+  --to <ONION_ADDR>.onion:443 \
   --psk-file keys/psk.key \
-  --auth-sk-file keys/alpha_mldsa87.sk \
+  --auth-sk-file - \
   --peer-auth-pk-file keys/bravo_mldsa87.pk \
+  --onion-auth-sk-file keys/client_auth.sk \
+  --quantum 496 \
   --interval-ms 20 \
+  --tamaraw-l 16 \
   --headless
 ```
 

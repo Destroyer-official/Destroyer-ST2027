@@ -249,3 +249,49 @@ def test_tor_bridge_client_auth_keygen_and_clearnet_refusal():
     )
     assert bad.returncode != 0
     assert ".onion" in (bad.stderr + bad.stdout)
+
+
+@pytest.mark.skipif(
+    not (RUST_BIN.exists() and TOR_BIN.exists()),
+    reason="release binaries not built",
+)
+def test_tor_bridge_bad_sha384_pin_refused_fail_closed(tmp_path: Path):
+    """--tor-bridge-sha384 must verify the exact SHA-384 of secure-transmit-tor before spawning."""
+    env = _clean_lab_env()
+    psk_path, i_sk, _i_pk, _r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+    gen = subprocess.run(
+        [str(TOR_BIN), "--mode", "client-auth-keygen"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    m_sk = re.search(r"CLIENT_AUTH_SK_HEX=([0-9a-f]{64})", gen.stdout)
+    assert m_sk is not None
+    cauth_sk = tmp_path / "client_auth.sk"
+    cauth_sk.write_text(m_sk.group(1), encoding="utf-8")
+
+    # Wrong 96-hex SHA-384 pin must fail closed before spawning Tor.
+    wrong_pin = "00" * 48
+    res = subprocess.run(
+        [
+            str(RUST_BIN),
+            "node",
+            "--role", "initiator",
+            "--tor",
+            "--zero-footprint",
+            "--to", "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion:443",
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(i_sk),
+            "--peer-auth-pk-file", str(r_pk),
+            "--onion-auth-sk-file", str(cauth_sk),
+            "--tor-bridge-bin", str(TOR_BIN),
+            "--tor-bridge-sha384", wrong_pin,
+            "--headless",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert res.returncode != 0
+    assert "SHA-384 mismatch" in (res.stderr + res.stdout)

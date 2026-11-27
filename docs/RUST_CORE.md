@@ -48,7 +48,8 @@ interpreter copies, `panic="abort"` + LTO release profile.
 | FSO Visual Airgap Transceiver | `hardware/visual_airgap_diode.py` | `fso_transceiver.rs` — Rateless Luby Transform peeling decoder, 60 FPS visual framing, TEMPEST Level A scrambling |
 | FFI | `liboqs_wrapper.py` ctypes | `ffi.rs` — thin control-plane bindings (`CoreHs*`, `CoreTransport`, `CoreRatchet`, `CoreAttestStore`, `CoreCookieGate`, `CoreAcdEngine`, `CoreZeroTrustEngine`, `CoreMemoryGuard`, `CoreSdrDsss`, `CorePqZkp`, `CoreDtnBundle`, `CoreDiode*`, `CoreTripleKex`, `CoreChameleonEngine`, `CoreBlindedCds`, `CoreFormalProofs`, `CoreFsoTransceiver`, TBS/derive helpers) |
 | Optional backend | (canonical modules above) | `rust_backend.py` — additive shim exposing native Rust secure-core with zero edits to Python reference path |
-| Framing/AEAD/replay | `transport_anonymity.py`, `secure_message_serializer.py` | existing `aead.rs`/`frame.rs`/`replay.rs`/`net.rs` (quanta-padded, check→verify→mark) |
+| Framing/AEAD/replay | `transport_anonymity.py`, `secure_message_serializer.py` | existing `aead.rs`/`frame.rs`/`replay.rs`/`net.rs` + `stream_transport.rs` (in-stream `Noise_XXhfs`, zero `.key` files), `shaper.rs` (`TamarawShaper` 496B/994B Tor-aligned cells), and `os_hardening.rs` (ACG/ExtensionPointDisable/crash-dump suppression) |
+| Privilege-separated Tor | (native sibling crate `tor_transport`) | `tor_transport/src/main.rs` (`secure-transmit-tor`) — embedded Arti 0.48.0 Tor v3 ephemeral onion (`ArtiEphemeralKeystore`, `ClientAuthV3`, `vanguards = Full`, `native-tls`, anonymous stdio IPC, zero disk state) |
 
 ## Research grounding (fetched Oct 2026)
 

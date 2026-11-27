@@ -3549,6 +3549,8 @@ fn cmd_node(args: &[String]) {
         println!("  --tamaraw-l CELLS              Tamaraw burst-tail alignment multiple L (default: 32)");
         println!("  --tor-port PORT                Virtual Tor onion service port (default: 443)");
         println!("  --tor-bridge-bin PATH          Explicit path to secure-transmit-tor helper binary");
+        println!("  --tor-bridge-sha384 HEX        Expected 96-hex SHA-384 pin of secure-transmit-tor (or P2P_TOR_BRIDGE_SHA384)");
+        println!("  --kex-timeout-ms MS            Handshake timeout in ms (default 120000 for Tor circuits; 0=infinite)");
         println!("  --pt-binary PATH               Optional pluggable transport binary (lyrebird) behind firewalls");
         println!("  --pt-type TYPE                 Pluggable transport type (webtunnel|obfs4)");
         println!("  --pt-bridge LINE               Bridge line for optional pluggable transport");
@@ -3687,8 +3689,9 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --tamaraw-l")))
         .unwrap_or(DEFAULT_TAMARAW_MOD_L)
         .max(1);
-    let kex_timeout_ms: u64 = get_flag(args, "--timeout-ms")
-        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
+    let kex_timeout_ms: u64 = get_flag(args, "--kex-timeout-ms")
+        .or_else(|| get_flag(args, "--timeout-ms"))
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --kex-timeout-ms/--timeout-ms")))
         .unwrap_or(120_000);
     let session_timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
@@ -3789,6 +3792,28 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         let peer_label: String;
         let mut transport: Box<dyn AsyncDuplex> = if is_tor {
             let bridge_bin = find_tor_bridge_binary(args);
+            let bridge_pin_opt = get_flag(args, "--tor-bridge-sha384")
+                .or_else(|| std::env::var("P2P_TOR_BRIDGE_SHA384").ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            if let Some(expected_hex) = bridge_pin_opt {
+                let expected = decode_hex(&expected_hex)
+                    .unwrap_or_else(|_| fail("bad --tor-bridge-sha384 hex"));
+                if expected.len() != 48 {
+                    fail("--tor-bridge-sha384 must be exactly 96 hex chars (48 bytes)");
+                }
+                let bin_bytes = std::fs::read(&bridge_bin)
+                    .unwrap_or_else(|e| fail(&format!("cannot read tor bridge {:?}: {e}", bridge_bin)));
+                let actual = Sha384::digest(&bin_bytes);
+                if !ct::ct_eq(actual.as_slice(), &expected) {
+                    fail(&format!(
+                        "SECURITY HALT: tor bridge {:?} SHA-384 mismatch (got {}, expected {})",
+                        bridge_bin,
+                        hex_of(actual.as_slice()),
+                        hex_of(&expected)
+                    ));
+                }
+            }
             let mut cmd = tokio::process::Command::new(&bridge_bin);
             cmd.stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())

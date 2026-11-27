@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-27T04:27:34.746174+00:00",
+  "timestamp_utc": "2026-11-27T08:30:27.906500+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -66,9 +66,9 @@
   },
   "overall_status": "PASS",
   "source_tree_merkle_root": "7fc0d5fb4e698a71414160a65ea7205f83361ab3451f705f66b0a0ea8f588c0b91fca1e8feb6192c1171e6a5e4b17621794c20aa38fd5eb4194f7b947bb0e0a5",
-  "full_source_merkle_root": "e4e865ccd69edb421e90ed4d494eb2500bf404152232a88f447aefe7af584095b80a888d5b30e2901299f83f706264c09ed0859f9ad54f9a0e6abd6670b137cb",
-  "full_source_file_count": 58,
-  "full_source_scope_description": "Authoritative Sovereign Data Plane (50 pure Rust modules) + Python Core Security Engine + Production Configuration",
+  "full_source_merkle_root": "7b99e4d14d08e69020285b58cdbc9acc14f3bc35369a6a3f7c8b1c3807c942e99695eaabf5f0d80269f8ab3e925f9c29f23e505cb2a3ad2e7176c79234a8c112",
+  "full_source_file_count": 61,
+  "full_source_scope_description": "Authoritative Sovereign Data Plane (53 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
       "expected_sha3_512": "642c68da1594d7e3010aee9bccf6f3c830c07a80b993c7aeaf37b0bf9959a714d95c62aa6d5a31869bea115632c16c1e7ac2b69ff188c3544997024238a9e2a7",
@@ -76,8 +76,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "885b913635927f5fcea689ea0dc816f86e6deebae5c20527d35f39b4a4d2ea8c4154378db4ef9b901f9df69b1f77534370af438aa590aa15ad30e174d1458b49",
-      "actual_sha3_512": "885b913635927f5fcea689ea0dc816f86e6deebae5c20527d35f39b4a4d2ea8c4154378db4ef9b901f9df69b1f77534370af438aa590aa15ad30e174d1458b49",
+      "expected_sha3_512": "876ce4d0ccb60ab44866316e8c9bacc60339d2b3fc67915e6c5c0043c13b670c848d6fac9ee644c5a1e78f7c93a314dd351f5c75e400bd9a66b7f7d9412b6abd",
+      "actual_sha3_512": "876ce4d0ccb60ab44866316e8c9bacc60339d2b3fc67915e6c5c0043c13b670c848d6fac9ee644c5a1e78f7c93a314dd351f5c75e400bd9a66b7f7d9412b6abd",
       "matched": true
     },
     "ts_runtime.py": {
