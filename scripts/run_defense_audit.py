@@ -320,8 +320,9 @@ def main():
             "gates": all_gates_for_receipt,
         }
 
-        # 1. Write the final canonical JSON file to disk
-        with open(receipt_file, "w", encoding="utf-8") as f:
+        # 1. Write the final canonical JSON file to disk with LF line endings
+        #    so `.gitattributes` (`eol=lf`) never invalidates the byte-exact ML-DSA-87 signature.
+        with open(receipt_file, "w", encoding="utf-8", newline="\n") as f:
             json.dump(receipt_data, f, indent=2, sort_keys=True)
 
         # 2. Read back the EXACT persisted bytes from disk to sign
@@ -374,7 +375,7 @@ def main():
                 "score": f"{sum(1 for g in failed_gates if g['status'] == 'PASS')}/{len(failed_gates)}",
                 "gates": failed_gates,
             }
-            with open(receipt_file, "w", encoding="utf-8") as f:
+            with open(receipt_file, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(failed_receipt, f, indent=2, sort_keys=True)
         except Exception:
             pass
