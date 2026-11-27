@@ -334,8 +334,22 @@ def test_pt_binary_bad_sha384_pin_refused_fail_closed(tmp_path: Path):
 def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
     """secure_p2p.py node enforces Tor ClientAuthV3/PT gates in prod and forwards stream/zero-footprint."""
     prod_env = os.environ.copy()
+    for weak_var in (
+        "P2P_LAB_MODE",
+        "P2P_ALLOW_CLASSICAL",
+        "P2P_ALLOW_INSECURE_PLAINTEXT",
+        "P2P_ALLOW_UNVERIFIED_TOFU",
+        "P2P_ALLOW_INSECURE_DANE_BYPASS",
+        "P2P_ALLOW_UNKEYED_CHUNKS",
+        "P2P_ALLOW_LEGACY_CERTS",
+        "P2P_ALLOW_LEGACY_KEY_MIGRATION",
+        "P2P_ALLOW_LEGACY_AUDIT_CHAIN",
+        "P2P_ALLOW_LEGACY_WORM_CHAIN",
+        "P2P_ALLOW_SOFTWARE_FALLBACK",
+        "P2P_REQUIRE_AUTH",
+    ):
+        prod_env.pop(weak_var, None)
     prod_env["P2P_PRODUCTION"] = "1"
-    prod_env.pop("P2P_LAB_MODE", None)
 
     psk = tmp_path / "psk.hex"
     psk.write_text("77" * 32, encoding="utf-8")
