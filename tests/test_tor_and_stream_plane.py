@@ -679,3 +679,289 @@ def test_stream_zero_footprint_doc_transfer_and_sha384_verification(tmp_path: Pa
         if resp.poll() is None:
             resp.kill()
             resp.wait(timeout=5)
+
+
+def _run_wire_observing_proxy(
+    target_host: str, target_port: int
+) -> tuple[str, dict[str, list[tuple[int, float]]], threading.Event]:
+    """Listen on 127.0.0.1:0, forward bidirectional TCP byte streams untouched to
+    (target_host, target_port), and parse every 2B-BE length-prefixed wire frame
+    + arrival timestamp from byte 0 in both directions."""
+    import socket
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    srv.settimeout(15.0)
+    proxy_host, proxy_port = srv.getsockname()
+
+    records: dict[str, list[tuple[int, float]]] = {"c2s": [], "s2c": []}
+    rec_lock = threading.Lock()
+    done_ev = threading.Event()
+
+    def _pipe_and_record(src: socket.socket, dst: socket.socket, key: str):
+        buf = bytearray()
+        try:
+            while True:
+                chunk = src.recv(4096)
+                if not chunk:
+                    break
+                t_now = time.perf_counter()
+                dst.sendall(chunk)
+                buf.extend(chunk)
+                while len(buf) >= 2:
+                    flen = int.from_bytes(buf[:2], "big")
+                    if len(buf) < 2 + flen:
+                        break
+                    with rec_lock:
+                        records[key].append((flen, t_now))
+                    del buf[: 2 + flen]
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    def _serve():
+        try:
+            cli, _ = srv.accept()
+            cli.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            upstream = socket.create_connection((target_host, target_port), timeout=10.0)
+            upstream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            t1 = threading.Thread(target=_pipe_and_record, args=(cli, upstream, "c2s"), daemon=True)
+            t2 = threading.Thread(target=_pipe_and_record, args=(upstream, cli, "s2c"), daemon=True)
+            t1.start()
+            t2.start()
+            t1.join(timeout=20.0)
+            t2.join(timeout=20.0)
+            cli.close()
+            upstream.close()
+        finally:
+            srv.close()
+            done_ev.set()
+
+    threading.Thread(target=_serve, daemon=True).start()
+    return f"{proxy_host}:{proxy_port}", records, done_ev
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_stream_wire_observer_constant_quantum_from_byte_zero_and_poisson(tmp_path: Path):
+    """Non-mocked wire proxy proves:
+    1) Zero unshaped Noise_XXhfs bursts (1665B / 8916B / 6000B): 100% of KEX + Rekey
+       + Msg + Pre/Post cover wire frames in both directions equal exact 496B quantum.
+    2) --poisson produces positive inter-frame timing jitter variance (no fixed 50Hz spike).
+    """
+    import statistics
+
+    env = _clean_lab_env()
+    psk_path, i_sk, i_pk, r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+
+    resp = subprocess.Popen(
+        [
+            str(RUST_BIN), "node",
+            "--role", "responder",
+            "--transport", "stream",
+            "--zero-footprint",
+            "--bind", "127.0.0.1:0",
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(r_sk),
+            "--peer-auth-pk-file", str(i_pk),
+            "--quantum", "496",
+            "--interval-ms", "20",
+            "--tamaraw-l", "8",
+            "--poisson",
+            "--pre-cover-ticks", "4",
+            "--post-cover-ticks", "4",
+            "--recv-count", "1",
+            "--drain-ticks", "4",
+            "--timeout-ms", "20000",
+            "--headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        listen_addr = None
+        lines: list[str] = []
+        deadline = time.monotonic() + 10.0
+        assert resp.stdout is not None
+        while time.monotonic() < deadline:
+            ln = resp.stdout.readline()
+            if not ln:
+                break
+            lines.append(ln.strip())
+            m = re.search(r"stream:\s+LISTENING\s+addr=(\S+)", ln)
+            if m:
+                listen_addr = m.group(1)
+                break
+        assert listen_addr is not None, "\n".join(lines)
+        host, port_s = listen_addr.rsplit(":", 1)
+        proxy_addr, records, done_ev = _run_wire_observing_proxy(host, int(port_s))
+
+        t = threading.Thread(
+            target=lambda: lines.extend(x.strip() for x in resp.stdout),  # type: ignore[union-attr]
+            daemon=True,
+        )
+        t.start()
+
+        init_res = subprocess.run(
+            [
+                sys.executable, str(ROOT / "secure_p2p.py"), "node",
+                "--role", "initiator",
+                "--transport", "stream",
+                "--zero-footprint",
+                "--to", proxy_addr,
+                "--psk-file", str(psk_path),
+                "--auth-sk-file", str(i_sk),
+                "--peer-auth-pk-file", str(r_pk),
+                "--quantum", "496",
+                "--interval-ms", "20",
+                "--tamaraw-l", "8",
+                "--poisson",
+                "--pre-cover-ticks", "4",
+                "--post-cover-ticks", "4",
+                "--msg", "POISSON-QUANTUM-WIRE-PROOF",
+                "--count", "16",
+                "--timeout-ms", "20000",
+                "--headless",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+        assert init_res.returncode == 0, init_res.stdout + init_res.stderr
+        assert "(poisson pacing)" in init_res.stdout
+        resp.wait(timeout=15)
+        t.join(timeout=5)
+        assert done_ev.wait(timeout=5)
+        joined = "\n".join(lines)
+        assert resp.returncode == 0, joined
+        assert "(poisson pacing)" in joined
+        assert "POISSON-QUANTUM-WIRE-PROOF" in joined
+
+        c2s = records["c2s"]
+        s2c = records["s2c"]
+        assert len(c2s) >= 20 and len(s2c) >= 20, f"c2s={len(c2s)}, s2c={len(s2c)}"
+        # Strictly zero variable-size handshake/control/payload bursts on wire from byte 0!
+        assert all(flen == 496 for flen, _ in c2s), f"non-496 c2s wire frame lengths: {[f for f, _ in c2s if f != 496]}"
+        assert all(flen == 496 for flen, _ in s2c), f"non-496 s2c wire frame lengths: {[f for f, _ in s2c if f != 496]}"
+
+        # Verify Poisson timing variance across wire intervals (not rigid periodic ticks).
+        deltas = [t2 - t1 for (_, t1), (_, t2) in zip(c2s, c2s[1:]) if t2 > t1]
+        assert len(deltas) >= 10
+        assert statistics.stdev(deltas) > 0.001, f"intervals look flat deterministic: stdev={statistics.stdev(deltas)}"
+    finally:
+        if resp.poll() is None:
+            resp.kill()
+            resp.wait(timeout=5)
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_stream_burst_only_omits_idle_chaff_after_tamaraw_batch(tmp_path: Path):
+    """--burst-only pads active bursts to a multiple of --tamaraw-l and suppresses idle chaff."""
+    env = _clean_lab_env()
+    psk_path, i_sk, i_pk, r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+
+    resp = subprocess.Popen(
+        [
+            str(RUST_BIN), "node",
+            "--role", "responder",
+            "--transport", "stream",
+            "--zero-footprint",
+            "--bind", "127.0.0.1:0",
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(r_sk),
+            "--peer-auth-pk-file", str(i_pk),
+            "--quantum", "496",
+            "--interval-ms", "15",
+            "--tamaraw-l", "8",
+            "--burst-only",
+            "--recv-count", "1",
+            "--drain-ticks", "16",
+            "--timeout-ms", "20000",
+            "--headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        listen_addr = None
+        lines: list[str] = []
+        deadline = time.monotonic() + 10.0
+        assert resp.stdout is not None
+        while time.monotonic() < deadline:
+            ln = resp.stdout.readline()
+            if not ln:
+                break
+            lines.append(ln.strip())
+            m = re.search(r"stream:\s+LISTENING\s+addr=(\S+)", ln)
+            if m:
+                listen_addr = m.group(1)
+                break
+        assert listen_addr is not None, "\n".join(lines)
+        host, port_s = listen_addr.rsplit(":", 1)
+        proxy_addr, records, done_ev = _run_wire_observing_proxy(host, int(port_s))
+
+        t = threading.Thread(
+            target=lambda: lines.extend(x.strip() for x in resp.stdout),  # type: ignore[union-attr]
+            daemon=True,
+        )
+        t.start()
+
+        init_res = subprocess.run(
+            [
+                sys.executable, str(ROOT / "secure_p2p.py"), "node",
+                "--role", "initiator",
+                "--transport", "stream",
+                "--zero-footprint",
+                "--to", proxy_addr,
+                "--psk-file", str(psk_path),
+                "--auth-sk-file", str(i_sk),
+                "--peer-auth-pk-file", str(r_pk),
+                "--quantum", "496",
+                "--interval-ms", "15",
+                "--tamaraw-l", "8",
+                "--burst-only",
+                "--msg", "BURST-ONLY-TAMARAW",
+                "--count", "48",
+                "--timeout-ms", "20000",
+                "--headless",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+        assert init_res.returncode == 0, init_res.stdout + init_res.stderr
+        assert "burst_only=true" in init_res.stdout
+        resp.wait(timeout=15)
+        t.join(timeout=5)
+        assert done_ev.wait(timeout=5)
+        joined = "\n".join(lines)
+        assert resp.returncode == 0, joined
+        assert "BURST-ONLY-TAMARAW" in joined
+
+        # KEX (M1 padded to multiple of 8 = 8 + M3 padded to multiple of 8 = 16 -> 24 KEX frames)
+        # + 1st batch (Advert + Msg padded to L=8 -> 8 frames) = 32 frames total for 48 active ticks!
+        # Without burst_only, 24 KEX + 48 continuous ticks = 72 frames.
+        c2s_lens = [flen for flen, _ in records["c2s"]]
+        assert all(flen == 496 for flen in c2s_lens)
+        assert len(c2s_lens) % 8 == 0, f"c2s frames not Tamaraw L=8 aligned: {len(c2s_lens)}"
+        assert len(c2s_lens) < 48, f"burst_only failed to suppress idle ticks: total c2s frames={len(c2s_lens)}"
+    finally:
+        if resp.poll() is None:
+            resp.kill()
+            resp.wait(timeout=5)

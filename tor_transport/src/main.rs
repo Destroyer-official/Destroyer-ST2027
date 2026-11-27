@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 use arti_client::config::pt::TransportConfigBuilder;
 use arti_client::config::{BridgeConfigBuilder, CfgPath, TorClientConfigBuilder};
-use arti_client::{KeystoreSelector, TorClient};
+use arti_client::{ErrorKind, HasKind, KeystoreSelector, TorClient};
 use futures::StreamExt;
 use safelog::DisplayRedacted;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -43,11 +43,26 @@ fn usage() -> ! {
          Modes:\n\
            --mode client-auth-keygen [--out-pk PATH] [--out-sk PATH]\n\
            --mode responder [--port 443] [--client-auth-pk KEY|PATH] [--require-restricted-discovery]\n\
-                            [--pt-binary PATH --pt-type webtunnel|obfs4 --pt-bridge LINE]\n\
+                            [--quantum BYTES] [--pt-binary PATH --pt-type webtunnel|obfs4 --pt-bridge LINE]\n\
            --mode initiator --to <56-char>.onion:<port> [--auth-sk-file PATH | --auth-sk-stdin]\n\
-                            [--pt-binary PATH --pt-type webtunnel|obfs4 --pt-bridge LINE]\n"
+                            [--quantum BYTES] [--pt-binary PATH --pt-type webtunnel|obfs4 --pt-bridge LINE]\n"
     );
     std::process::exit(2);
+}
+
+fn parse_enforced_quantum(args: &[String]) -> Result<Option<usize>, String> {
+    let Some(raw) = get_flag(args, "--quantum") else {
+        return Ok(None);
+    };
+    let q: usize = raw
+        .parse()
+        .map_err(|_| format!("invalid --quantum '{raw}'"))?;
+    if !matches!(q, 256 | 496 | 512 | 994 | 1232) {
+        return Err(format!(
+            "bad --quantum '{q}': must be 256, 496, 512, 994, or 1232"
+        ));
+    }
+    Ok(Some(q))
 }
 
 fn get_flag(args: &[String], name: &str) -> Option<String> {
@@ -333,7 +348,10 @@ async fn write_ipc_frame<W: AsyncWrite + Unpin>(w: &mut W, data: &[u8]) -> io::R
     w.flush().await
 }
 
-async fn read_ipc_frame<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Vec<u8>>> {
+async fn read_ipc_frame<R: AsyncRead + Unpin>(
+    r: &mut R,
+    enforced_quantum: Option<usize>,
+) -> io::Result<Option<Vec<u8>>> {
     let mut hdr = [0u8; 2];
     match r.read_exact(&mut hdr).await {
         Ok(_) => {}
@@ -341,10 +359,10 @@ async fn read_ipc_frame<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Ve
         Err(e) => return Err(e),
     }
     let len = u16::from_be_bytes(hdr) as usize;
-    if len == 0 || len > MAX_IPC_FRAME_LEN {
+    if len == 0 || len > MAX_IPC_FRAME_LEN || enforced_quantum.is_some_and(|q| len != q) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "malformed IPC frame length",
+            "malformed or non-quantum IPC frame length",
         ));
     }
     let mut buf = vec![0u8; len];
@@ -352,14 +370,18 @@ async fn read_ipc_frame<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Ve
     Ok(Some(buf))
 }
 
-/// Symmetrically bridge anonymous OS pipe (`stdin`/`stdout`) and an Arti `DataStream`.
-async fn pump_pipe_to_tor_stream<S: AsyncRead + AsyncWrite + Unpin>(stream: S) -> io::Result<()> {
+/// Symmetrically bridge anonymous OS pipe (`stdin`/`stdout`) and an Arti `DataStream`,
+/// optionally enforcing constant `enforced_quantum` frame lengths at the MILS process boundary.
+async fn pump_pipe_to_tor_stream<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
+    enforced_quantum: Option<usize>,
+) -> io::Result<()> {
     let (mut tor_r, mut tor_w) = tokio::io::split(stream);
     let mut pipe_in = tokio::io::stdin();
     let mut pipe_out = tokio::io::stdout();
 
     let up = async {
-        while let Some(frame) = read_ipc_frame(&mut pipe_in).await? {
+        while let Some(frame) = read_ipc_frame(&mut pipe_in, enforced_quantum).await? {
             write_ipc_frame(&mut tor_w, &frame).await?;
         }
         let _ = tor_w.shutdown().await;
@@ -367,7 +389,7 @@ async fn pump_pipe_to_tor_stream<S: AsyncRead + AsyncWrite + Unpin>(stream: S) -
     };
 
     let down = async {
-        while let Some(frame) = read_ipc_frame(&mut tor_r).await? {
+        while let Some(frame) = read_ipc_frame(&mut tor_r, enforced_quantum).await? {
             write_ipc_frame(&mut pipe_out, &frame).await?;
         }
         let _ = pipe_out.flush().await;
@@ -382,6 +404,7 @@ async fn pump_pipe_to_tor_stream<S: AsyncRead + AsyncWrite + Unpin>(stream: S) -
 }
 
 async fn run_responder(args: &[String], work: &VolatileWorkDir) -> Result<(), String> {
+    let enforced_quantum = parse_enforced_quantum(args)?;
     let port: u16 = get_flag(args, "--port")
         .map(|s| s.parse().map_err(|_| "invalid --port".to_string()))
         .transpose()?
@@ -431,6 +454,17 @@ async fn run_responder(args: &[String], work: &VolatileWorkDir) -> Result<(), St
         .onion_address()
         .ok_or_else(|| "ephemeral onion address unavailable".to_string())?;
     let onion_str = hsid.display_unredacted().to_string();
+
+    eprintln!("[TOR-BRIDGE] Publishing ephemeral v3 onion descriptor & building intro circuits...");
+    let mut hs_status = svc.status_events();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while let Some(st) = hs_status.next().await {
+            if st.state().is_fully_reachable() {
+                break;
+            }
+        }
+    })
+    .await;
     eprintln!("[ONION] {onion_str}:{port}");
 
     let mut stream_reqs = Box::pin(tor_hsservice::handle_rend_requests(rend_requests));
@@ -464,12 +498,13 @@ async fn run_responder(args: &[String], work: &VolatileWorkDir) -> Result<(), St
     };
 
     tokio::select! {
-        res = pump_pipe_to_tor_stream(data_stream) => res.map_err(|e| format!("stream bridge IO error: {e}")),
+        res = pump_pipe_to_tor_stream(data_stream, enforced_quantum) => res.map_err(|e| format!("stream bridge IO error: {e}")),
         _ = reject_extra => Ok(()),
     }
 }
 
 async fn run_initiator(args: &[String], work: &VolatileWorkDir) -> Result<(), String> {
+    let enforced_quantum = parse_enforced_quantum(args)?;
     let target = get_flag(args, "--to")
         .ok_or_else(|| "--to <56-char>.onion:<port> is required in initiator mode".to_string())?;
     let (host, port, hsid) = parse_onion_v3_target(&target)?;
@@ -515,13 +550,40 @@ async fn run_initiator(args: &[String], work: &VolatileWorkDir) -> Result<(), St
     }
 
     eprintln!("[TOR-BRIDGE] Dialing {host}:{port} via Tor v3 rendezvous circuit...");
-    let data_stream = client
-        .connect((host.as_str(), port))
-        .await
-        .map_err(|e| format!("Tor .onion connect failed: {e}"))?;
+    let mut data_stream = None;
+    let max_attempts = 12usize;
+    for attempt in 1..=max_attempts {
+        match client.connect((host.as_str(), port)).await {
+            Ok(ds) => {
+                data_stream = Some(ds);
+                break;
+            }
+            Err(e) => {
+                let kind = e.kind();
+                let retryable = matches!(
+                    kind,
+                    ErrorKind::BootstrapRequired
+                        | ErrorKind::OnionServiceNotFound
+                        | ErrorKind::TorNetworkTimeout
+                        | ErrorKind::RemoteNetworkTimeout
+                        | ErrorKind::OnionServiceConnectionFailed
+                        | ErrorKind::TorDirectoryUnusable
+                        | ErrorKind::TransientFailure
+                );
+                if !retryable || attempt == max_attempts {
+                    return Err(format!("Tor .onion connect failed: {e}"));
+                }
+                eprintln!(
+                    "[TOR-BRIDGE] Circuit/descriptor pending (attempt {attempt}/{max_attempts}: {kind}); retrying in 3s..."
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
+    }
+    let data_stream = data_stream.ok_or_else(|| "Tor .onion connect exhausted retries".to_string())?;
     eprintln!("[CONNECTED]");
 
-    pump_pipe_to_tor_stream(data_stream)
+    pump_pipe_to_tor_stream(data_stream, enforced_quantum)
         .await
         .map_err(|e| format!("stream bridge IO error: {e}"))
 }
@@ -673,14 +735,21 @@ mod tests {
         let (mut w, mut r) = tokio::io::duplex(4096);
         assert!(write_ipc_frame(&mut w, &[]).await.is_err());
         write_ipc_frame(&mut w, b"hello-tor-cell").await.unwrap();
-        let got = read_ipc_frame(&mut r).await.unwrap().unwrap();
+        let got = read_ipc_frame(&mut r, None).await.unwrap().unwrap();
         assert_eq!(got, b"hello-tor-cell");
 
         w.write_all(&((MAX_IPC_FRAME_LEN + 1) as u16).to_be_bytes())
             .await
             .unwrap();
         w.flush().await.unwrap();
-        assert!(read_ipc_frame(&mut r).await.is_err());
+        assert!(read_ipc_frame(&mut r, None).await.is_err());
+
+        // Strictly reject non-quantum IPC frame when MILS quantum gate is active.
+        let (mut w2, mut r2) = tokio::io::duplex(4096);
+        write_ipc_frame(&mut w2, &[0x42u8; 496]).await.unwrap();
+        assert_eq!(read_ipc_frame(&mut r2, Some(496)).await.unwrap().unwrap().len(), 496);
+        write_ipc_frame(&mut w2, &[0x42u8; 256]).await.unwrap();
+        assert!(read_ipc_frame(&mut r2, Some(496)).await.is_err());
     }
 
     #[test]

@@ -3558,7 +3558,11 @@ fn cmd_node(args: &[String]) {
         println!("  --key-file PATH                Raw symmetric 32B key file (non-production --lab only; refused with --zero-footprint)");
         println!("  --state PATH                   Path to sequence state file (default: session.state)");
         println!("  --quantum BYTES                Wire quantization size (256, 496, 512, 994, or 1232)");
-        println!("  --interval-ms MS               Constant-rate wire pacing interval in ms");
+        println!("  --interval-ms MS               Mean wire pacing interval in ms (default: 50 in stream/Tor mode)");
+        println!("  --poisson                      Use memoryless exponential Poisson inter-cell scheduling");
+        println!("  --burst-only                   Pad active bursts to --tamaraw-l multiples without idle chaff");
+        println!("  --pre-cover-ticks N            Emit N cover ticks before dequeuing real stream/Tor payloads");
+        println!("  --post-cover-ticks N           Emit N trailing cover ticks on graceful shutdown (/quit)");
         println!("  --tactical-profile NAME        Tactical profile: high-throughput, satellite, covert");
         println!("  --headless                     Run headless background operational daemon (no TTY)");
         println!("  --callsign TEXT                Tactical station callsign (default: TACTICAL-NODE)");
@@ -3827,10 +3831,29 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
     if !shaper::is_valid_quantum(quantum) {
         fail("bad --quantum: must be 256, 496, 512, 994, or 1232");
     }
+    let profile = get_flag(args, "--tactical-profile").map(|s| {
+        TacticalProfile::parse(&s).unwrap_or_else(|| {
+            fail("bad --tactical-profile: use high-throughput, satellite, or covert")
+        })
+    });
     let interval_ms: u64 = get_flag(args, "--interval-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --interval-ms")))
-        .unwrap_or(50)
+        .unwrap_or_else(|| profile.map(|p| p.default_interval_ms()).unwrap_or(50))
         .max(1);
+    let use_poisson = has_flag(args, "--poisson")
+        || profile.map(|p| p.default_poisson()).unwrap_or(false)
+        || std::env::var("P2P_POISSON_CHAFF")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+    let burst_only = has_flag(args, "--burst-only");
+    let pre_cover_ticks: u64 = get_flag(args, "--pre-cover-ticks")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --pre-cover-ticks")))
+        .unwrap_or(0)
+        .min(512);
+    let post_cover_ticks: u64 = get_flag(args, "--post-cover-ticks")
+        .map(|s| s.parse().unwrap_or_else(|_| fail("bad --post-cover-ticks")))
+        .unwrap_or(0)
+        .min(512);
     let tamaraw_l: usize = get_flag(args, "--tamaraw-l")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --tamaraw-l")))
         .unwrap_or(DEFAULT_TAMARAW_MOD_L)
@@ -3954,6 +3977,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
             cmd.stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
+            cmd.arg("--quantum").arg(quantum.to_string());
             if role == "responder" {
                 let tor_port_str = get_flag(args, "--tor-port").unwrap_or_else(|| "443".to_string());
                 let tor_port: u16 = tor_port_str
@@ -4092,22 +4116,33 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
             Box::new(sock)
         };
 
+        let kex_cfg = stream_transport::PacedKexConfig {
+            quantum,
+            tamaraw_l,
+            cell_interval: Duration::from_millis(interval_ms),
+            poisson: use_poisson,
+            deadline: if kex_timeout_ms > 0 {
+                Some(Duration::from_millis(kex_timeout_ms))
+            } else {
+                None
+            },
+        };
         let kex_res = if role == "initiator" {
-            stream_transport::in_stream_kex_initiator(
+            stream_transport::in_stream_kex_paced_initiator(
                 &mut transport,
                 signer,
                 psk,
                 &expected_peer_pk,
-                Duration::from_millis(kex_timeout_ms),
+                kex_cfg,
             )
             .await
         } else {
-            stream_transport::in_stream_kex_responder(
+            stream_transport::in_stream_kex_paced_responder(
                 &mut transport,
                 signer,
                 psk,
                 &expected_peer_pk,
-                Duration::from_millis(kex_timeout_ms),
+                kex_cfg,
             )
             .await
         };
@@ -4122,7 +4157,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
 
         let mut next_send_seq: u64 = 1;
         let mut window = AntiReplayWindow::from_parts(0, [0u64; 32]);
-        let mut shaper = TamarawShaper::new(tamaraw_l, true);
+        let mut shaper = TamarawShaper::new(tamaraw_l, !burst_only);
         let zt_engine = ZeroTrustEngine::new(50);
         zt_engine.register_peer(&peer_label, SecurityRole::Operator);
 
@@ -4151,8 +4186,9 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         }
 
         let mode_name = if is_tor { "TOR-ONION-STREAM" } else { "DIRECT-STREAM" };
+        let mode_suffix = if use_poisson { " (poisson pacing)" } else { "" };
         println!(
-            "stream: ACTIVE mode={mode_name} role={role} callsign={callsign} peer={peer_label} quantum={quantum}B interval={interval_ms}ms tamaraw_l={tamaraw_l} zero_footprint={zero_footprint} dumps_suppressed={} acg={} sas={}",
+            "stream: ACTIVE mode={mode_name} role={role} callsign={callsign} peer={peer_label} quantum={quantum}B interval={interval_ms}ms tamaraw_l={tamaraw_l} burst_only={burst_only} zero_footprint={zero_footprint} dumps_suppressed={} acg={} sas={}{mode_suffix}",
             report.dumps_suppressed,
             report.dynamic_code_prohibited,
             keys.sas
@@ -4165,12 +4201,26 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         let mut chaff_received = 0u64;
         let mut auth_drops = 0u64;
         let mut draining: Option<u64> = None;
+        let mut post_cover_remaining: Option<u64> = None;
         let mut manual_rekey_queued = false;
         let mut stdin_open = use_stdin;
         let mut zeroized = false;
         let start_time = Instant::now();
-        let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
-        tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let sample_stream_delay = |poisson: bool, mean_ms: u64| -> Duration {
+            if poisson {
+                match pacing::sample_poisson_interval(
+                    1000.0 / mean_ms.max(1) as f64,
+                    Duration::from_millis(5),
+                    Duration::from_millis((mean_ms * 3).max(15)),
+                ) {
+                    Ok(d) => d,
+                    Err(e) => fail(&format!("CSPRNG failure sampling Poisson interval: {e}")),
+                }
+            } else {
+                Duration::from_millis(mean_ms)
+            }
+        };
+        let mut tick_sleep = std::pin::pin!(tokio::time::sleep(sample_stream_delay(use_poisson, interval_ms)));
 
         let (mut rx_half, mut tx_half) = tokio::io::split(transport);
         let (rx_tx, mut rx_rx) = tokio::sync::mpsc::channel::<Option<Vec<u8>>>(64);
@@ -4191,19 +4241,25 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         });
 
         loop {
-            if count > 0 && ticks_emitted >= count {
-                break;
-            }
-            if recv_count > 0 && msgs_received >= recv_count && draining.is_none() {
-                draining = Some(drain_ticks);
-            }
-            if let Some(rem) = draining {
-                if rem == 0 {
-                    break;
-                }
-            }
             if session_timeout_ms > 0 && start_time.elapsed() >= Duration::from_millis(session_timeout_ms) {
                 break;
+            }
+            if let Some(0) = post_cover_remaining {
+                break;
+            }
+            if post_cover_remaining.is_none() {
+                if recv_count > 0 && msgs_received >= recv_count && draining.is_none() {
+                    draining = Some(drain_ticks);
+                }
+                let stop_requested = (count > 0 && ticks_emitted >= count) || matches!(draining, Some(0));
+                if stop_requested {
+                    if post_cover_ticks > 0 {
+                        post_cover_remaining = Some(post_cover_ticks);
+                        stdin_open = false;
+                    } else {
+                        break;
+                    }
+                }
             }
 
             tokio::select! {
@@ -4211,14 +4267,19 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                     zeroized = true;
                     break;
                 }
-                line_opt = stdin_rx.recv(), if stdin_open => {
+                line_opt = stdin_rx.recv(), if stdin_open && post_cover_remaining.is_none() => {
                     if let Some(line) = line_opt {
                         let trimmed = line.trim();
                         if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
                             zeroized = true;
                             break;
                         } else if trimmed == "/quit" || trimmed == "/exit" {
-                            break;
+                            if post_cover_ticks > 0 {
+                                post_cover_remaining = Some(post_cover_ticks);
+                                stdin_open = false;
+                            } else {
+                                break;
+                            }
                         } else if trimmed == "/clear" {
                             print!("\x1b[2J\x1b[3J\x1b[H");
                             let _ = std::io::stdout().flush();
@@ -4271,7 +4332,10 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                         stdin_open = false;
                     }
                 }
-                _ = tick_timer.tick() => {
+                _ = &mut tick_sleep => {
+                    let next_delay = sample_stream_delay(use_poisson, interval_ms);
+                    tick_sleep.as_mut().reset(tokio::time::Instant::now() + next_delay);
+
                     if let Some(ref _old) = prev_frame_key {
                         if prev_key_remaining_ticks > 0 {
                             prev_key_remaining_ticks -= 1;
@@ -4279,6 +4343,23 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                             let _ = prev_frame_key.take();
                         }
                     }
+
+                    if let Some(ref mut post_rem) = post_cover_remaining {
+                        let seq = next_send_seq;
+                        next_send_seq += 1;
+                        pcs_ratchet.note_transmission(0);
+                        let frame = pacing::build_chaff_frame_directed(&current_frame_key, seq, tx_dir, quantum)
+                            .unwrap_or_else(|_| fail("build post-cover chaff frame failed"));
+                        if stream_transport::write_stream_frame(&mut tx_half, &frame, max_frame_read).await.is_err() {
+                            break;
+                        }
+                        ticks_emitted += 1;
+                        if *post_rem > 0 {
+                            *post_rem -= 1;
+                        }
+                        continue;
+                    }
+
                     let auto_rekey_due = rekey_interval > 0
                         && ticks_emitted > 0
                         && ticks_emitted.is_multiple_of(rekey_interval)
@@ -4303,10 +4384,22 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                         }
                     }
 
-                    let has_app_data = !outbound_msgs.is_empty() || !outbound_docs.is_empty();
+                    let allow_app_data = ticks_emitted >= pre_cover_ticks;
+                    let has_app_data = allow_app_data && (!outbound_msgs.is_empty() || !outbound_docs.is_empty());
                     let action = shaper.next_action(!outbound_rekeys.is_empty(), has_app_data);
+                    if action == TamarawAction::Idle {
+                        ticks_emitted += 1;
+                        if let Some(ref mut rem) = draining {
+                            if *rem > 0 {
+                                *rem -= 1;
+                            }
+                        }
+                        continue;
+                    }
+
                     let seq = next_send_seq;
                     next_send_seq += 1;
+                    let mut emitted_msg_len: Option<usize> = None;
                     let frame = match action {
                         TamarawAction::EmitControlOrRekey => {
                             let p = outbound_rekeys.pop_front().unwrap_or_default();
@@ -4317,7 +4410,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                             if let Some(p) = outbound_msgs.pop_front() {
                                 pcs_ratchet.note_transmission(p.len());
                                 msgs_sent += 1;
-                                println!("stream: EMIT_MSG seq={seq} bytes={}", p.len());
+                                emitted_msg_len = Some(p.len());
                                 pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &p)
                                     .unwrap_or_else(|_| fail("build data frame failed"))
                             } else {
@@ -4335,6 +4428,9 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                     };
                     if stream_transport::write_stream_frame(&mut tx_half, &frame, max_frame_read).await.is_err() {
                         break;
+                    }
+                    if let Some(msg_len) = emitted_msg_len {
+                        println!("stream: EMIT_MSG seq={seq} bytes={msg_len}");
                     }
                     ticks_emitted += 1;
                     if let Some(ref mut rem) = draining {

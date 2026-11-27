@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-27T15:19:55.175304+00:00",
+  "timestamp_utc": "2026-11-27T16:51:37.629940+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -51,8 +51,8 @@
       "sha3_512": "ea2966c8df71a3ba1540e2ff872fcc93621e1b31d9dca223f802fd9e82bb5b423c26e84bec2513e10b51c0412df7ada0d8e42343c2c92101a6b6a172709f642e"
     },
     "secure_p2p.py": {
-      "size_bytes": 950289,
-      "sha3_512": "a79a7ece994bc6907a13435320dbc9e4cf96298869b4ee6793742aa42b43c29ac2a68a1d1c1c7f7aef6b277d337a3d95fe664f4db0519f3d66a2b939d911adb9"
+      "size_bytes": 951396,
+      "sha3_512": "6711f79981a9d4cd488ff860a7446b5c4bd54f9d834ba8129d15f50e994a7ba1f5a0325292499e5270adb511bbac9f73c260017d70ff58326ac6de0f84a31398"
     }
   },
   "sbom_status": {
@@ -65,8 +65,8 @@
     "trusted_anchor_verified": true
   },
   "overall_status": "PASS",
-  "source_tree_merkle_root": "2234603381915b108215e0d857e5be7a90ce8064f1895b7b159afdb5c70c63c52c4a6bdb98655a54c1cf5bca11047ec8ae2ecfc87b4175133e4f7d41606a4770",
-  "full_source_merkle_root": "06bc140ee29768991a0d6f36805328ebfa76be5b63277e5e8333d785e69de455e69cbda87594307babcb7491a2be5d665be600db8db7388242e368b51571aa66",
+  "source_tree_merkle_root": "a684e2f6faa9fe29f869cc15210b3f84b5dd9475ca9114e69fc30933ce32a76a2c7e6c4cf6ec44cda92880539a303fdf9037248812f6d0bea91ecfd686a17f5d",
+  "full_source_merkle_root": "ed3e06e0f6bd6f9262152b116ff79dace4f39fb17a8ae55fdcb65f745829eddd15d179fb9d93db076cc1b1d04bb25e269aa19b29e2ba3e1193c71e732ce4e77a",
   "full_source_file_count": 61,
   "full_source_scope_description": "Authoritative Sovereign Data Plane (53 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {
@@ -76,8 +76,8 @@
       "matched": true
     },
     "rust_data_plane/src/main.rs": {
-      "expected_sha3_512": "1fb1b2876c11e94f7596e3857c4cb54ab437b48388a529375f1ed3f79afaf46fdf39ec313ac07244fdd61d3bfe9638f89aa28f654a4c9f15b0f78157f88d4b5a",
-      "actual_sha3_512": "1fb1b2876c11e94f7596e3857c4cb54ab437b48388a529375f1ed3f79afaf46fdf39ec313ac07244fdd61d3bfe9638f89aa28f654a4c9f15b0f78157f88d4b5a",
+      "expected_sha3_512": "ad98a7699cf1c131e3591b0d4b830be2630b92116d975ae51772ed226784d26696b8b26c0dbe23c2db74ee0c5b926eab0b4db11cff95336ff20348bde4ff6ade",
+      "actual_sha3_512": "ad98a7699cf1c131e3591b0d4b830be2630b92116d975ae51772ed226784d26696b8b26c0dbe23c2db74ee0c5b926eab0b4db11cff95336ff20348bde4ff6ade",
       "matched": true
     },
     "ts_runtime.py": {
@@ -91,8 +91,8 @@
       "matched": true
     },
     "tor_transport/src/main.rs": {
-      "expected_sha3_512": "c7716c2bc189f5f85352a33edf1d662e4f631f846f3006afebbcde1655c00374b6d24779ad108e6f2d99f47cb28ce4fd85903f99003b5ab94ed8c8e3efd76010",
-      "actual_sha3_512": "c7716c2bc189f5f85352a33edf1d662e4f631f846f3006afebbcde1655c00374b6d24779ad108e6f2d99f47cb28ce4fd85903f99003b5ab94ed8c8e3efd76010",
+      "expected_sha3_512": "78b7e3c99f6d98c989d92f7367eb98bebff4f07a639addef2f06fdab8d33346d228638fc2b221b9275a4439207e9a7c1e71216d274f6a80fb53ef3d5a1cdd6d3",
+      "actual_sha3_512": "78b7e3c99f6d98c989d92f7367eb98bebff4f07a639addef2f06fdab8d33346d228638fc2b221b9275a4439207e9a7c1e71216d274f6a80fb53ef3d5a1cdd6d3",
       "matched": true
     }
   }

@@ -546,7 +546,9 @@ P(T > t + s \mid T > s) = P(T > t)
 $$
 an external adversary observing packet departure events learns zero statistical information about when the next packet will be emitted or whether a packet contains encrypted payload data or CSPRNG chaff.
 
-- **Chaff Injection (`FTYPE_CHAFF`):** If no operator keystrokes or data frames are queued when the tick fires, a 1232-byte pseudorandom chaff frame (Type `0xFF`) is encrypted and transmitted. An observer sees only an unbroken stream of uniform 1280-byte IPv6 datagrams.
+- **Chaff Injection (`FTYPE_CHAFF`):** If no operator keystrokes or data frames are queued when the tick fires, a fixed-quantum pseudorandom chaff frame (Type `0xFF`) is encrypted and transmitted (`1232B` UDP datagram / `496B` Tor-cell stream frame).
+- **Constant-Quantum Paced Stream KEX (`PacedKexConfig`):** In `--transport stream` and `--tor` modes, `Noise_XXhfs` (`M1`/`M2`/`M3`) is segmented and Tamaraw-padded with CSPRNG cover cells strictly into fixed `quantum` (`496B`) cells from byte 0 (`in_stream_kex_paced_*`), eliminating the unshaped ~1.6 KB / ~8.9 KB / ~6.0 KB handshake burst fingerprint on the wire and inside the `secure-transmit-tor` IPC boundary (`--quantum` guard).
+- **Session-Edge & Bandwidth Trade-Off Controls:** `--pre-cover-ticks` / `--post-cover-ticks` smear session start/stop transitions, and `--burst-only` switches `TamarawShaper` to finite `L`-cell burst-tail padding (omitting continuous idle ticks). Consistent with the Anonymity Trilemma (Das et al., CCS '18) and statistical disclosure / intersection limits, low-latency point-to-point transport (even over Tor v3 with `Vanguards::Full`) still cannot provide mathematical unlinkability against an omniscient Global Passive Adversary (GPA) observing both endpoints simultaneously.
 
 ### 3.13 Stateless Anti-DoS Cookie Challenge Gate
 

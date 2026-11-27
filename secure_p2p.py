@@ -17362,8 +17362,14 @@ def main(argv=None) -> int:
     p_node.add_argument("--onion-auth-sk-stdin", action="store_true", help="Read ClientAuthV3 x25519 key from stdin (initiator)")
     p_node.add_argument("--onion-open-descriptor", action="store_true", help="[LAB/BOOTSTRAP] Allow responder onion without Restricted Discovery")
     p_node.add_argument("--quantum", type=int, default=None, help="Wire quantum (256, 496, 512, 994, or 1232)")
-    p_node.add_argument("--interval-ms", type=int, default=None, help="Constant-rate shaping interval in ms")
+    p_node.add_argument("--interval-ms", type=int, default=None, help="Mean shaping interval in ms")
     p_node.add_argument("--tamaraw-l", type=int, default=None, help="Tamaraw batch-tail alignment L in cells")
+    p_node.add_argument("--poisson", action="store_true", help="Memoryless exponential Poisson inter-cell pacing")
+    p_node.add_argument("--burst-only", action="store_true", help="Pad active bursts to --tamaraw-l multiples without continuous idle chaff")
+    p_node.add_argument("--pre-cover-ticks", type=int, default=None, help="Cover ticks before dequeuing payloads in stream/Tor mode")
+    p_node.add_argument("--post-cover-ticks", type=int, default=None, help="Trailing cover ticks on graceful shutdown (/quit)")
+    p_node.add_argument("--tactical-profile", choices=["high-throughput", "satellite", "covert"], default=None,
+                        help="Preset pacing/quantum profile (covert enables Poisson scheduling)")
     p_node.add_argument("--pt-binary", default=None, help="Optional pluggable transport executable (e.g. lyrebird)")
     p_node.add_argument("--pt-type", default=None, help="Pluggable transport protocol (webtunnel or obfs4)")
     p_node.add_argument("--pt-bridge", default=None, help="Pluggable transport bridge line")
@@ -17667,6 +17673,9 @@ def main(argv=None) -> int:
                 ("quantum", "--quantum"),
                 ("interval_ms", "--interval-ms"),
                 ("tamaraw_l", "--tamaraw-l"),
+                ("pre_cover_ticks", "--pre-cover-ticks"),
+                ("post_cover_ticks", "--post-cover-ticks"),
+                ("tactical_profile", "--tactical-profile"),
                 ("pt_binary", "--pt-binary"),
                 ("pt_type", "--pt-type"),
                 ("pt_bridge", "--pt-bridge"),
@@ -17682,6 +17691,10 @@ def main(argv=None) -> int:
                 val = getattr(args, attr, None)
                 if val is not None:
                     native_cmd.extend([flag, str(val)])
+            if getattr(args, "poisson", False):
+                native_cmd.append("--poisson")
+            if getattr(args, "burst_only", False):
+                native_cmd.append("--burst-only")
             if getattr(args, "onion_auth_sk_stdin", False):
                 native_cmd.append("--onion-auth-sk-stdin")
             if getattr(args, "onion_open_descriptor", False):
