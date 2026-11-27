@@ -846,3 +846,18 @@ def test_loopback_transfer_with_midstream_rekey(tmp_path, monkeypatch):
     th.join(timeout=120)
     assert not errors, errors
     assert out["path"].read_bytes() == data
+
+
+def test_standards_track_only_refuses_custom_xxhfs(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setenv("P2P_STANDARDS_TRACK_ONLY", "1")
+    assert st.standards_track_only_required() is True
+    cli_h = st.generate_identity_hsm("cli-std")
+    srv_h = st.generate_identity_hsm("srv-std")
+    with pytest.raises(st.SecurityError, match="P2P_STANDARDS_TRACK_ONLY"):
+        st.xxhfs_initiate(cli_h, "std-peer")
+    with pytest.raises(st.SecurityError, match="P2P_STANDARDS_TRACK_ONLY"):
+        st.xxhfs_respond(b"\x00" * st.XXHFS_M1_LEN, srv_h, "std-peer")
+    pki = _make_test_pki(tmp_path)
+    srv_ctx, cli_ctx = _loopback_ctxs(pki)
+    assert srv_ctx is not None and cli_ctx is not None

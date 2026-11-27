@@ -489,6 +489,19 @@ def _assert_session_profile() -> None:
     assert_cnsa_kdf("HKDF-SHA384")
 
 
+def standards_track_only_required() -> bool:
+    """Return True when operator enforces standards-track KEX only (refuses custom Noise_XXhfs)."""
+    return _env_true("P2P_STANDARDS_TRACK_ONLY")
+
+
+def _assert_xxhfs_permitted() -> None:
+    if standards_track_only_required():
+        raise SecurityError(
+            "custom Noise_XXhfs refused under P2P_STANDARDS_TRACK_ONLY=1: "
+            "use standards-track RFC 10024 TLS 1.3 or native Rust kex_auth"
+        )
+
+
 def build_client_hello(kp, peer_id: str):
     """RETIRED (Tasks 2.1/2.2): transmitted sig_pk in cleartext M1.
 
@@ -547,6 +560,7 @@ def _xxhfs_new_session(is_initiator: bool, sig_pk: bytes, sig_sk: bytes,
                        peer_id: str, psk: Optional[bytes] = None):
     """Fresh Noise session with the session label bound into the transcript."""
     _assert_session_profile()
+    _assert_xxhfs_permitted()
     if not sig_pk:
         raise SecurityError("identity missing")
     sess = _npq.NoiseSession(bool(is_initiator), bytes(sig_pk), bytes(sig_sk), psk=psk)
@@ -613,6 +627,7 @@ def xxhfs_initiate(kp: HybridKeyPair | IdentityHandle, peer_id: str,
                    psk: Optional[bytes] = None):
     """M1: ephemeral-only (zero static keys). Returns (m1, sess, t0)."""
     _assert_session_profile()
+    _assert_xxhfs_permitted()
     sig_pk, sig_sk, _signer = _xxhfs_identity(kp)
     sess = _xxhfs_new_session(True, sig_pk, sig_sk, peer_id, psk=psk)
     try:
@@ -629,6 +644,7 @@ def xxhfs_respond(m1: bytes, kp: HybridKeyPair | IdentityHandle,
                   peer_id: str, psk: Optional[bytes] = None):
     """Process M1 (size-checked BEFORE any encaps/ECDH). Returns (m2, sess, t)."""
     _assert_session_profile()
+    _assert_xxhfs_permitted()
     try:
         if len(m1) != XXHFS_M1_LEN:
             raise SecurityError("handshake size violation")
@@ -669,6 +685,7 @@ def xxhfs_finalize(sess, m2: bytes, kp: HybridKeyPair | IdentityHandle,
                    expected_peer_pk: Optional[bytes] = None):
     """Process M2 (verify-before-derive), emit M3, Split -> (m3, state)."""
     _assert_session_profile()
+    _assert_xxhfs_permitted()
     st: Optional[HandshakeState] = None
     try:
         if abs(_now() - t0) > HANDSHAKE_MAX_AGE_S:
@@ -730,6 +747,7 @@ def xxhfs_complete(sess, m3: bytes, kp: HybridKeyPair | IdentityHandle,
                    expected_peer_pk: Optional[bytes] = None) -> HandshakeState:
     """Process M3 (verify-before-Split) -> HandshakeState."""
     _assert_session_profile()
+    _assert_xxhfs_permitted()
     st: Optional[HandshakeState] = None
     try:
         if abs(_now() - t_rsp) > HANDSHAKE_MAX_AGE_S:
@@ -2353,6 +2371,8 @@ def main(argv: Optional[list] = None) -> int:
     snd.add_argument("--no-elevate", action="store_true",
                      help="never relaunch elevated; accept reduced posture "
                           "explicitly (fail-closed gates still enforce)")
+    snd.add_argument("--standards-track-only", action="store_true",
+                     help="refuse unreviewed custom Noise_XXhfs (enforce P2P_STANDARDS_TRACK_ONLY=1)")
 
     rcv = sub.add_parser("recv", help="receive one file")
     rcv.add_argument("--port", type=int, required=True)
@@ -2381,6 +2401,8 @@ def main(argv: Optional[list] = None) -> int:
     rcv.add_argument("--no-elevate", action="store_true",
                      help="never relaunch elevated; accept reduced posture "
                           "explicitly (fail-closed gates still enforce)")
+    rcv.add_argument("--standards-track-only", action="store_true",
+                     help="refuse unreviewed custom Noise_XXhfs (enforce P2P_STANDARDS_TRACK_ONLY=1)")
 
     hw = sub.add_parser("check-hw",
                         help="hardware readiness checklist (HAVE/MISSING per "
@@ -2397,11 +2419,15 @@ def main(argv: Optional[list] = None) -> int:
     hw.add_argument("--assume-yes", action="store_true",
                     help="answer yes to the elevation consent prompt")
 
-    sub.add_parser("selftest",
+    st_sub = sub.add_parser("selftest",
                    help="local deployment self-test (hardware report, KATs, "
                         "handshake, replay, zeroization); exit 0 when green")
+    st_sub.add_argument("--standards-track-only", action="store_true",
+                        help="refuse unreviewed custom Noise_XXhfs (enforce P2P_STANDARDS_TRACK_ONLY=1)")
 
     a = ap.parse_args(argv)
+    if getattr(a, "standards_track_only", False):
+        os.environ["P2P_STANDARDS_TRACK_ONLY"] = "1"
     if getattr(a, "peer_cert", None) is not None:
         # Operators provision certificate files; fail closed on unreadable
         # paths instead of silently treating them as (invalid) inline JSON.

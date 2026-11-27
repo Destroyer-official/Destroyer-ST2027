@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-11-27T04:11:30.480151+00:00",
+  "timestamp_utc": "2026-11-27T04:27:34.746174+00:00",
   "verification_standard": "Reproducible Build / NIST SP 800-161 / FIPS 140-3 (SLSA L3 CI target per R28)",
   "binaries": {
     "oqs.dll": {
@@ -71,8 +71,8 @@
   "full_source_scope_description": "Authoritative Sovereign Data Plane (50 pure Rust modules) + Python Core Security Engine + Production Configuration",
   "critical_modules_manifest": {
     "secure_transmit_2027.py": {
-      "expected_sha3_512": "88783cf580004a94e459749dd780e21a97492277f51e588b0388d7acfc1b7dfb7519d8836cbc86dcb6132162cc2a12a19b80eb0725aef375e7956a044e62b331",
-      "actual_sha3_512": "88783cf580004a94e459749dd780e21a97492277f51e588b0388d7acfc1b7dfb7519d8836cbc86dcb6132162cc2a12a19b80eb0725aef375e7956a044e62b331",
+      "expected_sha3_512": "642c68da1594d7e3010aee9bccf6f3c830c07a80b993c7aeaf37b0bf9959a714d95c62aa6d5a31869bea115632c16c1e7ac2b69ff188c3544997024238a9e2a7",
+      "actual_sha3_512": "642c68da1594d7e3010aee9bccf6f3c830c07a80b993c7aeaf37b0bf9959a714d95c62aa6d5a31869bea115632c16c1e7ac2b69ff188c3544997024238a9e2a7",
       "matched": true
     },
     "rust_data_plane/src/main.rs": {

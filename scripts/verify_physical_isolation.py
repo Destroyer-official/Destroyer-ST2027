@@ -58,6 +58,8 @@ class PhysicalIsolationVerifier:
         self.strict = strict or is_production()
         self.allow_single_nic = allow_single_nic
         self.os_type = platform.system().lower()
+        self._tempest_provisioned = bool(tempest_registry or os.environ.get("P2P_TEMPEST_REGISTRY"))
+        self._diode_provisioned = bool(diode_registry or os.environ.get("P2P_DIODE_REGISTRY"))
         self.tempest_path = Path(tempest_registry) if tempest_registry else (
             Path(os.environ.get("P2P_TEMPEST_REGISTRY", "")) if os.environ.get("P2P_TEMPEST_REGISTRY") else DEFAULT_TEMPEST_REGISTRY
         )
@@ -115,6 +117,13 @@ class PhysicalIsolationVerifier:
         Verify TEMPEST facility accreditation and chassis enclosure certifications
         conforming to NATO SDIP-27/3, SDIP-28/2, and SDIP-29/2.
         """
+        if self.strict and not self._tempest_provisioned:
+            return {
+                "check": "tempest_accreditation",
+                "status": "FAIL",
+                "synthetic_fixture": True,
+                "details": "Strict/production mode refuses checked-in sample fixture; provision facility registry via P2P_TEMPEST_REGISTRY",
+            }
         if not self.tempest_path.exists():
             return {
                 "check": "tempest_accreditation",
@@ -136,9 +145,11 @@ class PhysicalIsolationVerifier:
             # Verify matching approval
             try:
                 cert = require_tempest_approval(zone=zone, classification=classification, registry_path=self.tempest_path)
+                prefix = "" if self._tempest_provisioned else "[SAMPLE FIXTURE] "
                 return {
                     "check": "tempest_accreditation",
                     "status": "PASS",
+                    "synthetic_fixture": not self._tempest_provisioned,
                     "facility": cert.facility,
                     "level": cert.level,
                     "zone": cert.zone,
@@ -146,7 +157,7 @@ class PhysicalIsolationVerifier:
                     "nta_ref": cert.nta_ref,
                     "zone_report": cert.zone_report_ref,
                     "install_ref": cert.install_ref,
-                    "details": f"Accredited TEMPEST SDIP-27 Level {cert.level} active for Zone {cert.zone} (Facility: {cert.facility}, NTA: {cert.nta_ref})",
+                    "details": f"{prefix}TEMPEST SDIP-27 Level {cert.level} entry for Zone {cert.zone} (Facility: {cert.facility}, NTA: {cert.nta_ref})",
                 }
             except Exception as ex_gate:
                 return {
@@ -166,6 +177,13 @@ class PhysicalIsolationVerifier:
         Verify certified commercial simplex optical data diode hardware accreditation
         conforming to Common Criteria ISO/IEC 15408 EAL4+/EAL7+.
         """
+        if self.strict and not self._diode_provisioned:
+            return {
+                "check": "data_diode_hardware",
+                "status": "FAIL",
+                "synthetic_fixture": True,
+                "details": "Strict/production mode refuses checked-in sample fixture; provision device registry via P2P_DIODE_REGISTRY",
+            }
         if not self.diode_path.exists():
             return {
                 "check": "data_diode_hardware",
@@ -186,10 +204,12 @@ class PhysicalIsolationVerifier:
 
             target_id = device_id if any(d.device_id == device_id for d in devs) else devs[0].device_id
             dev = require_diode(target_id, self.diode_path)
+            prefix = "" if self._diode_provisioned else "[SAMPLE FIXTURE] "
 
             return {
                 "check": "data_diode_hardware",
                 "status": "PASS",
+                "synthetic_fixture": not self._diode_provisioned,
                 "device_id": dev.device_id,
                 "vendor": dev.vendor,
                 "model": dev.model,
@@ -197,7 +217,7 @@ class PhysicalIsolationVerifier:
                 "cc_id": dev.cc_id,
                 "tx_only_attested": dev.tx_only_attested,
                 "install_ref": dev.install_ref,
-                "details": f"Common Criteria {dev.cc_cert} certified simplex diode verified: {dev.vendor} {dev.model} (Single Interconnect: {dev.install_ref})",
+                "details": f"{prefix}Common Criteria {dev.cc_cert} simplex diode entry: {dev.vendor} {dev.model} (Single Interconnect: {dev.install_ref})",
             }
         except Exception as e:
             return {

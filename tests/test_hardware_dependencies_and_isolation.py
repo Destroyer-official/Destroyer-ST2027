@@ -190,6 +190,20 @@ def test_physical_isolation_full_report_structure():
     assert "rf_discipline" in report["checks"]
 
 
+@pytest.mark.hermetic
+def test_physical_isolation_strict_refuses_sample_fixtures(monkeypatch):
+    """Strict/production mode refuses unprovisioned repo sample registries."""
+    monkeypatch.delenv("P2P_TEMPEST_REGISTRY", raising=False)
+    monkeypatch.delenv("P2P_DIODE_REGISTRY", raising=False)
+    verifier = PhysicalIsolationVerifier(strict=True)
+    t_rep = verifier.check_tempest_accreditation(zone=1, classification="TOP SECRET")
+    d_rep = verifier.check_data_diode_hardware(device_id="DIODE-OWL-1000G")
+    assert t_rep["status"] == "FAIL"
+    assert d_rep["status"] == "FAIL"
+    assert t_rep.get("synthetic_fixture") is True
+    assert d_rep.get("synthetic_fixture") is True
+
+
 # ==============================================================================
 # 4. Master Hardware Security & Deployment Verifier Integration Tests
 # ==============================================================================

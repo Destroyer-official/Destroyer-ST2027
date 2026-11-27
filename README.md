@@ -1096,9 +1096,9 @@ The complete engineering, cryptographic, and operational documentation suite is 
           ▼
     [RESEARCH TRACK 7]
   Master Engineering Compendiums & Forensic Audits
-  - docs/SYSTEM_SECURITY_DOCUMENTATION.md (Volume A — 44,577 lines: Tier 0-7 Architecture & Formal Wire Formats)
-  - docs/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md (Volume C — 10,780 lines: AST Logic Flows & Function Catalog)
-  - docs/security_audit_report.md, AUDIT_REPORT_ST2027.md & ST2027_FORENSIC_AUDIT_2026-11-26.md
+  - docs/SYSTEM_SECURITY_DOCUMENTATION.md (Volume A — Tier 0-7 Architecture & Formal Wire Formats)
+  - docs/SYSTEM_SECURITY_DOCUMENTATION_VOL_C.md (Volume C — AST Logic Flows & Function Catalog)
+  - docs/security_audit_report.md & historical audits archived in docs/archive/
   - docs/README.md (Master Documentation Portal & Architectural Cross-Reference Index)
 ```
 
@@ -1436,7 +1436,7 @@ The Destroyer-ST2027 engineering baseline separates **software/CI verification e
 
 ### 12.2 Historical Forensic Remediation Ledger (November 2026)
 
-In-repo audit reviews ([`AUDIT_REPORT_ST2027.md`](AUDIT_REPORT_ST2027.md) and [`ST2027_FORENSIC_AUDIT_2026-11-26.md`](ST2027_FORENSIC_AUDIT_2026-11-26.md)) documented critical and high-severity gaps prior to November 2026 software remediation. The table below summarizes concrete software/CI remediations implemented across those baselines; all external hardware, CMVP module, and ATO gates remain pending:
+In-repo audit reviews ([`docs/archive/AUDIT_REPORT_ST2027.md`](docs/archive/AUDIT_REPORT_ST2027.md) and [`docs/archive/ST2027_FORENSIC_AUDIT_2026-11-26.md`](docs/archive/ST2027_FORENSIC_AUDIT_2026-11-26.md)) documented critical and high-severity gaps prior to November 2026 software remediation. The table below summarizes concrete software/CI remediations implemented across those baselines; all external hardware, CMVP module, and ATO gates remain pending:
 
 | Remediation Wave / Area | Addressed Vulnerability / Gap | Concrete Defense Remediation Implemented in Code | Verification Basis |
 |---|---|---|---|
@@ -1457,8 +1457,9 @@ In-repo audit reviews ([`AUDIT_REPORT_ST2027.md`](AUDIT_REPORT_ST2027.md) and [`
 The platform includes automated verification suites across Python, native Rust (`--no-default-features` and `--features lab-surfaces`), `ts_rt`, `sel4_mils_appliance`, DudeCT statistical timing tests, ProVerif symbolic models, and Linux Kani CBMC CI gates. Verified local run metrics (November 26, 2026) vs. external host/lab gates:
 
 ```bash
-# 1. Full Non-Live Python Verification Suite (1979 passed, 30 platform/legacy skipped, 26 @live deselected; on AMD TPM 2.0 Windows host all 25 tests across test_ts_attest.py, test_tpm_quote.py, test_tpm_hardware_phase2.py passed live):
+# 1. Full Non-Live & Live Python Verification Suite (1979 non-live passed + 26/26 @live hardware tests passed on AMD TPM 2.0 Windows host = 2005 executed passes):
 python -m pytest tests/ -q -m "not live"
+python -m pytest tests/ -q -m live
 
 # 2. Native Rust Data-Plane Cryptographic Core & Harness Suite (328 tests under --no-default-features: 269 unit + 12 dudect_ct + 44 kani_harness + 2 mtu + 1 doc-test):
 cargo clippy --all-targets --manifest-path rust_data_plane/Cargo.toml -- -D warnings
@@ -1523,7 +1524,7 @@ python scripts/verify_mathematical_contracts.py --export-smt
 In compliance with defense engineering ethics, the following boundaries are explicitly disclosed:
 1. **Physical Hardware Independence:** The software platform cannot certify physical tamper-resistance or RF attenuation. Physical FIPS 140-3 Level 3/4 enclosures, TEMPEST SDIP-28 facilities, and physical optical data diodes must be procured from accredited hardware vendors.
 2. **Authorizing Official (AO) Accreditation & CMT Laboratory Evaluation:** Execution of automated tests and generation of OSCAL artifacts does not constitute a formal government Authority to Operate (ATO). Formal accreditation requires evaluation by an accredited testing laboratory and approval by the designated Authorizing Official. To operationalize this transition, the repository provides `scripts/package_cmt_laboratory_submittal.py` which compiles the 12-section Cryptographic Module Security Policy (`docs/FIPS_140_3_SECURITY_POLICY.md`), machine-readable OSCAL SSP/SAR, ACVP test evidence, and signed CBOM/SBOMs into a sealed, ML-DSA-87 signed submittal packet (`compliance_reports/cmt_lab_submission_packet.tar.gz`) for laboratory ingestion.
-3. **Draft Standards & Custom Handshake Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards are intentionally excluded until finalization and inclusion in NSA CNSA guidance. **Custom protocol disclosure:** the Python `Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384` handshake substitutes FIPS 204 ML-DSA-87 signatures for classical Noise static-key DH (`es`/`se`); it has **no formal cryptographic reduction** to the Noise `hfs` draft or Signal PQNoise and has **not undergone independent third-party cryptanalytic review**. Workloads requiring externally vetted handshake protocols should rely on standards-track **PQ-hybrid TLS 1.3 (`RFC 10024`)** or audited designs such as **Signal PQXDH**.
+3. **Draft Standards & Custom Handshake Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards are intentionally excluded until finalization and inclusion in NSA CNSA guidance. **Custom protocol disclosure:** the Python `Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384` handshake substitutes FIPS 204 ML-DSA-87 signatures for classical Noise static-key DH (`es`/`se`); it has **no formal cryptographic reduction** to the Noise `hfs` draft or Signal PQNoise and has **not undergone independent third-party cryptanalytic review**. Operators requiring strict exclusion of unreviewed custom handshakes can enforce `P2P_STANDARDS_TRACK_ONLY=1` (`--standards-track-only`), which refuses `Noise_XXhfs` fail-closed and restricts transport to **PQ-hybrid TLS 1.3 (`RFC 10024`)** or native Rust **`kex_auth`**.
 4. **Proof Scope Boundary (ProVerif & Kani vs. Runtime Code):** Symbolic ProVerif 2.05 models in [`docs/formal/`](docs/formal/) verify Dolev-Yao properties of the **abstract protocol models** — not the concrete Python or Rust code paths. Similarly, `rust_data_plane` Kani harnesses verify targeted Rust functions within bounded CBMC unwinding limits; neither constitutes a whole-program equivalence proof.
 
 ---
