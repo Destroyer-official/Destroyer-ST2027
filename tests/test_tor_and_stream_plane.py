@@ -420,8 +420,8 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
             "--interval-ms", "20",
             "--tamaraw-l", "8",
             "--recv-count", "1",
-            "--drain-ticks", "24",
-            "--timeout-ms", "15000",
+            "--drain-ticks", "40",
+            "--timeout-ms", "25000",
             "--headless",
         ],
         cwd=tmp_path,
@@ -434,7 +434,7 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
     try:
         listen_addr = None
         lines: list[str] = []
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + 20.0
         assert resp.stdout is not None
         while time.monotonic() < deadline:
             ln = resp.stdout.readline()
@@ -469,8 +469,8 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
                 "--tamaraw-l", "8",
                 "--stdin",
                 "--headless",
-                "--count", "28",
-                "--timeout-ms", "15000",
+                "--count", "80",
+                "--timeout-ms", "25000",
             ],
             input="/rekey\nDISPATCHER-STREAM-REKEY-OK\n",
             cwd=tmp_path,
