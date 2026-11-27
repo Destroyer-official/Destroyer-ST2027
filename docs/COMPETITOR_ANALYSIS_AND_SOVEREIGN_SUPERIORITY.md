@@ -1,8 +1,8 @@
 # ST2027: Architectural Comparison & Enclave Analysis
 
 **Classification:** UNCLASSIFIED // TECHNICAL WHITE PAPER & ARCHITECTURAL COMPARISON  
-**Standard Compliance:** NSA CNSA Suite 2.0, NIST SP 800-208, IETF RFC 10024, IETF RFC 6479, FIPS 140-3 Level 3/4 Design Targets  
-**Assurance Status:** 10/10 Defense Audit Compliance (Master Gates Verified; Signed ML-DSA-87 Receipt)
+**Design Targets:** NSA CNSA Suite 2.0, NIST SP 800-208, IETF RFC 10024, IETF RFC 6479, FIPS 140-3 CMVP (target only; not certified)  
+**Assurance Status:** Pre-Evaluation Engineering Baseline (internal automated developer harness verified; no external lab certification or ATO)
 
 ---
 
@@ -34,7 +34,7 @@ However, high-consequence command-and-control (C2), isolated tactical enclaves, 
 | **Key Agreement & Identity Assurance** | PQXDH + SPQR; Safety Numbers | Signal Protocol; Key Transparency (KT) | Classical DH with visual emojis | Static pre-shared configuration | **In-Stream `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87`)**; transcript-bound HKDF-SHA384; mutual HMAC tags; SAS verify; `--psk-file` |
 | **Emergency Zeroization / Media Purge** | Volatile OS app-delete only | App-delete only | Server-side wipe; leaves client remnants | Specialized tamper switches | **NIST SP 800-88 Rev 2 3-Pass Overwrite** (CSPRNG, inverted complement, zeros, sync_all, truncation, unlink) |
 | **Formal Verification Boundary** | Published formal proofs for PQXDH & ratchets | None published | None | Common Criteria EAL 4+ (hardware functional) | **Dual-Tier Formal Verification**: ProVerif 2.05 Symbolic Models + Kani Bounded Memory Verification |
-| **Supply Chain & SLSA Provenance** | Standard CI/CD binaries | Proprietary app store binaries | Proprietary app store binaries | Proprietary hardware vendor supply chain | **SLSA Level 3+ Reproducible Build** with Ed25519 DLL pinning and signed ML-DSA-87 receipts |
+| **Supply Chain & Build Provenance** | Standard CI/CD binaries | Proprietary app store binaries | Proprietary app store binaries | Proprietary hardware vendor supply chain | **SLSA-Aligned Reproducible Build** with Ed25519 / SHA-384 pinning and signed ML-DSA-87 local receipts |
 
 ---
 
@@ -90,42 +90,12 @@ However, high-consequence command-and-control (C2), isolated tactical enclaves, 
 ### Pillar 7: Formal Verification & Reproducible Supply Chain
 * **The Operational Requirement:** Formal verification must bound implementation invariants, and builds must be reproducible:
 * **The ST2027 Implementation:**
-  - **Symbolic Verification:** Evaluated with ProVerif 2.05 across formalized handshake models.
-  - **Bounded Model Checking:** Verified with Kani harnesses for memory safety, arithmetic overflow freedom, and slice indexing safety.
-  - **SLSA Level 3+ Reproducible Builds:** Dependencies are pinned via SHA-384 hashes and signed with Ed25519 and ML-DSA-87 cryptographic receipts.
+  - **Symbolic Verification:** Evaluated with ProVerif 2.05 across formalized handshake, PCS ratchet, and Tor rendezvous models (properties hold within the abstract Dolev-Yao models).
+  - **Bounded Model Checking:** Verified with Kani/CBMC harnesses on targeted `rust_data_plane` primitives in Linux CI alongside deterministic `cargo test` sweeps.
+  - **SLSA-Aligned Reproducible Builds:** Dependencies and critical modules are pinned via SHA-384 / SHA3-512 hashes and signed with Ed25519 and ML-DSA-87 local verification receipts.
 
 ---
 
-## 4. Empirical Test & Verification Audit Trail
+## 4. Internal Verification Harness Summary
 
-All capabilities claimed in this specification are backed by reproducible automated tests verified across 9 independent audit gates:
-
-```
-====================================================================================
-ST2027 DEFENSE HARDENING & ASSURANCE SCORECARD — MILITARY AUDIT VERDICT
-====================================================================================
-Timestamp (UTC): 2026-09-29T16:40:45.883408+00:00
-Repository Root: D:\code\Main_projects\p2p\p2p_6_1-26
-Overall Status : 10/10 SATISFIED — ALL GATES VERIFIED
-Total Duration : 57.28 seconds
-------------------------------------------------------------------------------------
-GATE     ASSURANCE CATEGORY                               STATUS   LATENCY   
-------------------------------------------------------------------------------------
-1.1      Rust Data-Plane Strict Clippy & Test Battery     PASS     23608.7 ms (78/78)
-2.1      ts_rt Clippy & Memory Discipline Verification    PASS       147.5 ms
-3.1      CNSA Suite 2.0 KATs & Algorithm Purity           PASS       427.4 ms
-4.1      ProVerif 2.05 Symbolic Handshake & PCS Proofs    PASS      3856.4 ms
-5.1      Active Exploit Defenses (Replay DoS & Nonce Reuse) PASS     14397.0 ms
-6.1      Platform Gating (Signed ML-DSA-87 Waivers)       PASS      2316.8 ms
-7.1      SLSA Level 3+ Supply Chain & DLL Pinning         PASS       283.2 ms
-8.1      Truth-in-Claims & Linguistic Purity              PASS      5389.5 ms
-9.1      In-Process Single-Command Operator Self-Test     PASS      6851.2 ms
-====================================================================================
-```
-
-* **Data-Plane Unit Tests:** 78/78 passed (49 core tests in `destroyer_core` including Galois Field arithmetic, Cauchy-RS FEC recovery, transcript-bound KEX, confirmation tags, NIST SP 800-88 multi-pass purge, and constant-rate pacing + 29 Kani formal harness tests).
-* **CLI Integration Battery:** 15/15 passed in `test_rust_standalone_binary.py` including simplex optical diode transfers, continuous chaff stream pacing, native ML-KEM-1024 hybrid key agreement, SAS fingerprint verification, RFC 8773 PSK authentication, active MITM tamper rejection, and emergency zeroization.
-* **Compiler Discipline:** 0 compiler warnings, 0 clippy warnings under strict `-D warnings` enforcement.
-* **Audit Receipt:** Formally signed with Post-Quantum ML-DSA-87:
-  - `compliance_reports/defense_master_audit_receipt.json`
-  - `compliance_reports/defense_master_audit_receipt.json.sig` (4,627 bytes)
+An internal developer audit script (`python scripts/run_defense_audit.py`) executes 10 automated checks spanning Rust Clippy/tests (`rust_data_plane` + `tor_transport`), `ts_rt` / `sel4_mils_appliance`, CNSA Suite 2.0 KATs, ProVerif 2.05 symbolic verification (`test_proverif_st2027.py`), active exploit regressions, signed waiver verification, reproducible-build hash verification, truth-in-claims checks, CLI `selftest`, and signed ML-DSA-87 local receipts (`compliance_reports/defense_master_audit_receipt.json` + `.sig`). This harness checks software invariants only and is not an external laboratory accreditation or Authority to Operate (ATO).

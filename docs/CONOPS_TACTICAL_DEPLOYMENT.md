@@ -371,6 +371,7 @@ python secure_p2p.py node \
 In `--zero-footprint` Tor mode:
 - `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) executes in-band over the single Tor `DataStream` with keys locked exclusively in RAM (`VirtualLock`/`mlock`, OS crash-dump suppression active).
 - Static `--key-file` / `--key-stdin` and plaintext disk keys under `P2P_PRODUCTION=1` are refused fail-closed.
+- Interactive `/rekey` and chunked SHA-384-verified `/doc <path>` transfers (up to 256 KiB; saved only when `--recv-dir <dir>` is explicitly supplied) flow across `496B` Tor-aligned Tamaraw cells without leaking host files or open sockets.
 - Closing `/quit`, `/zeroize`, or `Ctrl+C` shuts down Arti handles and runs NIST SP 800-88 3-pass wipe on the volatile cache before exiting.
 
 ---

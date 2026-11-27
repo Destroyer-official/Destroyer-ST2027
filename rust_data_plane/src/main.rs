@@ -35,8 +35,8 @@ use destroyer_core::ct;
 use destroyer_core::fec::CauchyReedSolomon;
 use destroyer_core::fragment;
 use destroyer_core::frame::{
-    self, FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG,
-    FTYPE_REKEY, FTYPE_REVOCATION,
+    self, FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_DOC, FTYPE_IN_BAND_EPOCH_REKEY,
+    FTYPE_MSG, FTYPE_REKEY, FTYPE_REVOCATION,
 };
 use destroyer_core::handshake::Handshake;
 use destroyer_core::kem::{self, EphemeralKeys, MLKEM_CT, MLKEM_PK, P384_PK};
@@ -3683,6 +3683,109 @@ fn verify_binary_sha384_pin(path: &std::path::Path, expected_hex: &str, label: &
     }
 }
 
+const MAX_STREAM_DOC_BYTES: usize = 256 * 1024;
+
+fn queue_stream_doc(
+    path_str: &str,
+    chunk_size: usize,
+    outbound_docs: &mut std::collections::VecDeque<Vec<u8>>,
+) -> Result<(destroyer_core::doc_transfer::DocTransferMeta, usize), String> {
+    let p = std::path::Path::new(path_str);
+    let fs_meta = std::fs::symlink_metadata(p)
+        .map_err(|e| format!("cannot stat document {path_str:?}: {e}"))?;
+    if fs_meta.file_type().is_symlink() || !fs_meta.file_type().is_file() {
+        return Err(format!("refusing non-regular or symlink document {path_str:?}"));
+    }
+    if fs_meta.len() > MAX_STREAM_DOC_BYTES as u64 {
+        return Err(format!(
+            "document exceeds stream cap ({} > {MAX_STREAM_DOC_BYTES} bytes)",
+            fs_meta.len()
+        ));
+    }
+    let filename = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "invalid UTF-8 document filename".to_string())?;
+    let safe_name = !filename.is_empty()
+        && filename.len() <= 128
+        && filename != "."
+        && filename != ".."
+        && filename
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if !safe_name {
+        return Err(format!("unsafe document filename {filename:?}"));
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("cannot read document {path_str:?}: {e}"))?;
+    if bytes.len() > MAX_STREAM_DOC_BYTES {
+        return Err(format!("document exceeds stream cap ({MAX_STREAM_DOC_BYTES} bytes)"));
+    }
+    let (meta, wire) = destroyer_core::doc_transfer::package_document(filename, &bytes);
+    let frags = fragment::fragment(&wire, chunk_size)
+        .map_err(|e| format!("document fragmentation failed: {e}"))?;
+    let frag_count = frags.len();
+    for f in frags {
+        outbound_docs.push_back(f.to_wire());
+    }
+    Ok((meta, frag_count))
+}
+
+fn reassemble_fragment_chunk(
+    buffers: &mut std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer>,
+    max_buffers: usize,
+    pt: &[u8],
+) -> Option<Vec<u8>> {
+    let frag = fragment::Fragment::from_wire(pt).ok()?;
+    let tx_id = frag.tx_id;
+    let total = frag.total;
+    if buffers.len() > max_buffers {
+        buffers.clear();
+    }
+    let buf = match buffers.entry(tx_id) {
+        std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+        std::collections::hash_map::Entry::Vacant(v) => {
+            v.insert(fragment::ReassemblyBuffer::new(tx_id, total).ok()?)
+        }
+    };
+    if let Ok(true) = buf.insert(frag) {
+        let finished = buf.reassemble().ok();
+        buffers.remove(&tx_id);
+        return finished;
+    }
+    None
+}
+
+fn persist_verified_doc(
+    recv_dir: &std::path::Path,
+    filename: &str,
+    content: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    if let Err(e) = std::fs::symlink_metadata(recv_dir) {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            std::fs::create_dir_all(recv_dir)
+                .map_err(|ce| format!("cannot create recv-dir {:?}: {ce}", recv_dir))?;
+        } else {
+            return Err(format!("cannot stat recv-dir {:?}: {e}", recv_dir));
+        }
+    }
+    let dir_meta = std::fs::symlink_metadata(recv_dir)
+        .map_err(|e| format!("cannot stat recv-dir {:?}: {e}", recv_dir))?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return Err(format!("refusing symlink or non-directory recv-dir {:?}", recv_dir));
+    }
+    let target = recv_dir.join(filename);
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| format!("cannot create received document {:?}: {e}", target))?;
+    f.write_all(content)
+        .map_err(|e| format!("failed writing received document {:?}: {e}", target))?;
+    let _ = f.sync_all();
+    Ok(target)
+}
+
 fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bool) {
     let report = os_hardening::harden_process(zero_footprint);
     let callsign = get_flag(args, "--callsign").unwrap_or_else(|| "TACTICAL-NODE".to_string());
@@ -3744,14 +3847,30 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         }
     }
 
+    let recv_dir: Option<std::path::PathBuf> = get_flag(args, "--recv-dir").map(std::path::PathBuf::from);
+    if let Some(ref rd) = recv_dir {
+        if let Ok(m) = std::fs::symlink_metadata(rd) {
+            if m.file_type().is_symlink() || !m.file_type().is_dir() {
+                fail("--recv-dir must be a regular directory (not a symlink)");
+            }
+        }
+    }
+
     let mut outbound_msgs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+    let mut outbound_docs: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
     let max_chunk = shaper::max_payload_for_quantum(quantum)
         .unwrap_or_else(|| fail("invalid quantum overhead"));
+    let frag_chunk_size = max_chunk.saturating_sub(fragment::FRAGMENT_HEADER_LEN).min(600);
     let mut idx = 0;
     while idx < args.len() {
         if args[idx] == "--msg" && idx + 1 < args.len() {
             for piece in args[idx + 1].as_bytes().chunks(max_chunk) {
                 outbound_msgs.push_back(piece.to_vec());
+            }
+            idx += 2;
+        } else if args[idx] == "--doc" && idx + 1 < args.len() {
+            if let Err(e) = queue_stream_doc(&args[idx + 1], frag_chunk_size, &mut outbound_docs) {
+                fail(&e);
             }
             idx += 2;
         } else {
@@ -3765,7 +3884,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
     let max_frame_read = quantum.max(1232);
-    let rekey_chunk_size = max_chunk.saturating_sub(fragment::FRAGMENT_HEADER_LEN).min(600);
+    let rekey_chunk_size = frag_chunk_size;
     let (tx_dir, rx_dir) = if role == "responder" {
         (DIR_RECV, DIR_SEND)
     } else {
@@ -3808,8 +3927,8 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
             }
         }
 
-        trait AsyncDuplex: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin {}
-        impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> AsyncDuplex for T {}
+        trait AsyncDuplex: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+        impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> AsyncDuplex for T {}
 
         let mut bridge_child: Option<tokio::process::Child> = None;
         let peer_label: String;
@@ -3992,6 +4111,8 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         let mut outbound_rekeys: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
         let mut inbound_rekey_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> =
             std::collections::HashMap::new();
+        let mut inbound_doc_buffers: std::collections::HashMap<[u8; 8], fragment::ReassemblyBuffer> =
+            std::collections::HashMap::new();
         let my_adv = pcs_ratchet.advertise_bundle();
         if let Ok(frags) = fragment::fragment(&ratchet::RekeyMessage::Advert(my_adv).to_wire(), rekey_chunk_size) {
             for f in frags {
@@ -4032,6 +4153,24 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         let start_time = Instant::now();
         let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
         tick_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        let (mut rx_half, mut tx_half) = tokio::io::split(transport);
+        let (rx_tx, mut rx_rx) = tokio::sync::mpsc::channel::<Option<Vec<u8>>>(64);
+        let reader_task = tokio::spawn(async move {
+            loop {
+                match stream_transport::read_stream_frame(&mut rx_half, max_frame_read).await {
+                    Ok(Some(frame_bytes)) => {
+                        if rx_tx.send(Some(frame_bytes)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) | Err(_) => {
+                        let _ = rx_tx.send(None).await;
+                        break;
+                    }
+                }
+            }
+        });
 
         loop {
             if count > 0 && ticks_emitted >= count {
@@ -4090,6 +4229,17 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                 manual_rekey_queued = true;
                                 println!("[POST-QUANTUM RATCHET] Rekey queued (awaiting peer ratchet bundle)");
                             }
+                        } else if let Some(raw_doc_path) = trimmed.strip_prefix("/doc ") {
+                            let doc_path = raw_doc_path.trim();
+                            match queue_stream_doc(doc_path, rekey_chunk_size, &mut outbound_docs) {
+                                Ok((meta, nfrags)) => {
+                                    println!(
+                                        "[DOC_TRANSFER] Queued file={} size={} sha384={} chunks={nfrags}",
+                                        meta.filename, meta.size_bytes, meta.sha384_hex
+                                    );
+                                }
+                                Err(e) => println!("[DOC_TRANSFER ERROR] {e}"),
+                            }
                         } else if !trimmed.is_empty() {
                             if let Err(indicator) = destroyer_core::nc3::check_nc3_safety_gate(trimmed.as_bytes()) {
                                 println!("[NC3 SAFETY GATE VIOLATION] '{indicator}' blocked");
@@ -4135,7 +4285,8 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                         }
                     }
 
-                    let action = shaper.next_action(!outbound_rekeys.is_empty(), !outbound_msgs.is_empty());
+                    let has_app_data = !outbound_msgs.is_empty() || !outbound_docs.is_empty();
+                    let action = shaper.next_action(!outbound_rekeys.is_empty(), has_app_data);
                     let seq = next_send_seq;
                     next_send_seq += 1;
                     let frame = match action {
@@ -4145,12 +4296,18 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                 .unwrap_or_else(|_| fail("build rekey frame failed"))
                         }
                         TamarawAction::EmitData => {
-                            let p = outbound_msgs.pop_front().unwrap_or_default();
-                            pcs_ratchet.note_transmission(p.len());
-                            msgs_sent += 1;
-                            println!("stream: EMIT_MSG seq={seq} bytes={}", p.len());
-                            pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &p)
-                                .unwrap_or_else(|_| fail("build data frame failed"))
+                            if let Some(p) = outbound_msgs.pop_front() {
+                                pcs_ratchet.note_transmission(p.len());
+                                msgs_sent += 1;
+                                println!("stream: EMIT_MSG seq={seq} bytes={}", p.len());
+                                pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &p)
+                                    .unwrap_or_else(|_| fail("build data frame failed"))
+                            } else {
+                                let p = outbound_docs.pop_front().unwrap_or_default();
+                                pcs_ratchet.note_transmission(p.len());
+                                pacing::build_doc_frame_directed(&current_frame_key, seq, tx_dir, quantum, &p)
+                                    .unwrap_or_else(|_| fail("build doc frame failed"))
+                            }
                         }
                         TamarawAction::EmitChaff | TamarawAction::Idle => {
                             pcs_ratchet.note_transmission(0);
@@ -4158,7 +4315,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                 .unwrap_or_else(|_| fail("build chaff frame failed"))
                         }
                     };
-                    if stream_transport::write_stream_frame(&mut transport, &frame, max_frame_read).await.is_err() {
+                    if stream_transport::write_stream_frame(&mut tx_half, &frame, max_frame_read).await.is_err() {
                         break;
                     }
                     ticks_emitted += 1;
@@ -4168,10 +4325,10 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                         }
                     }
                 }
-                recv_res = stream_transport::read_stream_frame(&mut transport, max_frame_read) => {
-                    let bytes = match recv_res {
-                        Ok(Some(b)) => b,
-                        Ok(None) | Err(_) => break,
+                recv_opt = rx_rx.recv() => {
+                    let bytes = match recv_opt {
+                        Some(Some(b)) => b,
+                        Some(None) | None => break,
                     };
                     if bytes.len() != quantum {
                         auth_drops += 1;
@@ -4219,27 +4376,39 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                         println!("stream: RECV_MSG seq={seq2} bytes={} payload={text}", pt.len());
                     } else if ftype == FTYPE_CHAFF {
                         chaff_received += 1;
+                    } else if ftype == FTYPE_DOC {
+                        if let Some(raw_doc) = reassemble_fragment_chunk(&mut inbound_doc_buffers, 8, &pt) {
+                            match destroyer_core::doc_transfer::unpack_and_verify_document(&raw_doc) {
+                                Ok((meta, content)) => {
+                                    if zt_engine.evaluate_ingress(&peer_label, &content, true).is_err() {
+                                        auth_drops += 1;
+                                        continue;
+                                    }
+                                    msgs_received += 1;
+                                    let saved_label = if let Some(ref rd) = recv_dir {
+                                        match persist_verified_doc(rd, &meta.filename, &content) {
+                                            Ok(saved_path) => saved_path.display().to_string(),
+                                            Err(e) => {
+                                                println!("stream: RECV_DOC_SAVE_ERROR file={} err={e}", meta.filename);
+                                                "save-refused".to_string()
+                                            }
+                                        }
+                                    } else {
+                                        "memory-only".to_string()
+                                    };
+                                    println!(
+                                        "stream: RECV_DOC seq={seq2} file={} size={} sha384={} saved={saved_label}",
+                                        meta.filename, meta.size_bytes, meta.sha384_hex
+                                    );
+                                }
+                                Err(_) => {
+                                    auth_drops += 1;
+                                }
+                            }
+                        }
                     } else if ftype == FTYPE_REKEY || ftype == FTYPE_IN_BAND_EPOCH_REKEY {
-                        if let Ok(frag) = fragment::Fragment::from_wire(&pt) {
-                            let tx_id = frag.tx_id;
-                            let total = frag.total;
-                            let mut finished = None;
-                            if inbound_rekey_buffers.len() > 16 {
-                                inbound_rekey_buffers.clear();
-                            }
-                            if let Ok(buf) = match inbound_rekey_buffers.entry(tx_id) {
-                                std::collections::hash_map::Entry::Occupied(o) => Ok(o.into_mut()),
-                                std::collections::hash_map::Entry::Vacant(v) => {
-                                    fragment::ReassemblyBuffer::new(tx_id, total).map(|b| v.insert(b))
-                                }
-                            } {
-                                if let Ok(true) = buf.insert(frag) {
-                                    finished = buf.reassemble().ok();
-                                    inbound_rekey_buffers.remove(&tx_id);
-                                }
-                            }
-                            if let Some(raw_rekey) = finished {
-                                match ratchet::RekeyMessage::from_wire(&raw_rekey) {
+                        if let Some(raw_rekey) = reassemble_fragment_chunk(&mut inbound_rekey_buffers, 16, &pt) {
+                            match ratchet::RekeyMessage::from_wire(&raw_rekey) {
                                     Ok(ratchet::RekeyMessage::Advert(bundle)) => {
                                         pcs_ratchet.set_peer_bundle(bundle);
                                     }
@@ -4284,14 +4453,15 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                         auth_drops += 1;
                                     }
                                 }
-                            }
                         }
                     }
                 }
             }
         }
 
-        drop(transport);
+        reader_task.abort();
+        let _ = reader_task.await;
+        drop(tx_half);
         if let Some(mut child) = bridge_child.take() {
             // Closing stdin triggers clean EOF in `secure-transmit-tor` so its
             // `VolatileWorkDir::drop` 3-pass wipe runs before process exit.

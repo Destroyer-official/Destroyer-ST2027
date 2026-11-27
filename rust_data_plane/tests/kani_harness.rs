@@ -84,8 +84,9 @@ mod kani_proofs {
         let len: usize = kani::any();
         kani::assume(len <= 1232);
         let fill: u8 = kani::any();
-        let payload = vec![fill; len];
-        let chunks = frame::split_payload(&payload);
+        let buf = [fill; 1232];
+        let payload = &buf[..len];
+        let chunks = frame::split_payload(payload);
         // Every chunk respects the per-frame cap.
         for c in &chunks {
             kani::assert(c.len() <= frame::CHUNK_MAX, "chunk respects CHUNK_MAX");
@@ -100,12 +101,17 @@ mod kani_proofs {
             chunks.len() == expected,
             "chunk count is ceil(len/CHUNK_MAX)",
         );
-        // Reassembly (sequence-order concatenation) is the identity.
-        let mut joined = Vec::new();
+        // Reassembly (sequence-order concatenation) is the identity at every byte index.
+        let mut joined = Vec::with_capacity(len);
         for c in &chunks {
             joined.extend_from_slice(c);
         }
-        kani::assert(joined == payload, "split/reassemble roundtrips");
+        kani::assert(joined.len() == len, "reassembled length matches input");
+        if len > 0 {
+            let idx: usize = kani::any();
+            kani::assume(idx < len);
+            kani::assert(joined[idx] == payload[idx], "split/reassemble roundtrips");
+        }
     }
 
     /// 2. Nonce domain separation: same seq under DIR_SEND vs DIR_RECV
@@ -239,12 +245,18 @@ mod kani_proofs {
         if let Some((q, pad)) =
             super::shaper::pad_to_explicit_quantum(plen, super::shaper::TOR_QUANTUM_SINGLE)
         {
-            kani::assert(q == super::shaper::TOR_QUANTUM_SINGLE, "exact 496B Tor quantum");
+            kani::assert(
+                q == super::shaper::TOR_QUANTUM_SINGLE,
+                "exact 496B Tor quantum",
+            );
             kani::assert(
                 plen + super::frame::FRAME_OVERHEAD + pad == q,
                 "exact padding sum",
             );
-            kani::assert(q + 2 == super::shaper::TOR_RELAY_PAYLOAD_BYTES, "498B cell match");
+            kani::assert(
+                q + 2 == super::shaper::TOR_RELAY_PAYLOAD_BYTES,
+                "498B cell match",
+            );
         }
     }
 
@@ -521,10 +533,7 @@ mod property_doubles {
             None
         );
         for v in 1u16..=u16::MAX {
-            let dec = super::decode_stream_frame_len(
-                v.to_be_bytes(),
-                super::MAX_DATA_STREAM_FRAME,
-            );
+            let dec = super::decode_stream_frame_len(v.to_be_bytes(), super::MAX_DATA_STREAM_FRAME);
             if (v as usize) <= super::MAX_DATA_STREAM_FRAME {
                 assert_eq!(dec, Some(v as usize));
             } else {

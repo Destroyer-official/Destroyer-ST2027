@@ -472,6 +472,40 @@ def verify_sbom_offline(sbom_path=None, pubkey_path=None):
     return True
 
 
+def _parse_cargo_lock_packages(lock_path: Path):
+    """Parse [[package]] entries (name, version, checksum) from a Cargo.lock file."""
+    if not lock_path.is_file():
+        return []
+    raw = lock_path.read_text(encoding="utf-8")
+    packages = []
+    try:
+        import tomllib
+        parsed = tomllib.loads(raw)
+        for pkg in parsed.get("package", []):
+            name = pkg.get("name")
+            ver = pkg.get("version")
+            if isinstance(name, str) and isinstance(ver, str) and name and ver:
+                packages.append((name, ver, str(pkg.get("checksum", ""))))
+        return packages
+    except ImportError:
+        pass
+    cur = {}
+    for line in raw.splitlines():
+        s = line.strip()
+        if s == "[[package]]":
+            if cur.get("name") and cur.get("version"):
+                packages.append((cur["name"], cur["version"], cur.get("checksum", "")))
+            cur = {}
+        elif "=" in s and not s.startswith("#"):
+            k, _, v = s.partition("=")
+            k = k.strip()
+            if k in ("name", "version", "checksum"):
+                cur[k] = v.strip().strip('"').strip("'")
+    if cur.get("name") and cur.get("version"):
+        packages.append((cur["name"], cur["version"], cur.get("checksum", "")))
+    return packages
+
+
 def main(argv=None):
     repo_root = Path(__file__).resolve().parent.parent
     # Parse CLI early for --output-dir (additive; default keeps legacy path).
@@ -559,7 +593,23 @@ def main(argv=None):
                 sha256=hash_val,
                 purl=f"pkg:pypi/{name}@{ver}"
             )
-                    
+
+    # Add Rust Cargo.lock dependencies from rust_data_plane and tor_transport.
+    seen_cargo = set()
+    for lock_rel in ("rust_data_plane/Cargo.lock", "tor_transport/Cargo.lock"):
+        for pkg_name, pkg_ver, pkg_sha256 in _parse_cargo_lock_packages(repo_root / lock_rel):
+            key = (pkg_name, pkg_ver)
+            if key in seen_cargo:
+                continue
+            seen_cargo.add(key)
+            sbom.add_component(
+                name=pkg_name,
+                version=pkg_ver,
+                supplier="Rust Crates.io / Cargo",
+                sha256=pkg_sha256,
+                purl=f"pkg:cargo/{pkg_name}@{pkg_ver}",
+            )
+
     spdx_path = reports_dir / "spdx_sbom.json"
     cdx_path = reports_dir / "cyclonedx_sbom.json"
     

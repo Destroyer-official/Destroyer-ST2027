@@ -17371,6 +17371,8 @@ def main(argv=None) -> int:
     p_node.add_argument("--headless", action="store_true", help="Non-interactive bounded run (CI / scripts)")
     p_node.add_argument("--stdin", action="store_true", help="Read commands/lines from stdin even with --headless")
     p_node.add_argument("--msg", default=None, help="One-shot payload message for headless runs")
+    p_node.add_argument("--doc", default=None, help="Encrypted document path to transfer in stream/Tor mode")
+    p_node.add_argument("--recv-dir", default=None, help="Destination directory for verified inbound stream/Tor /doc files")
     p_node.add_argument("--count", type=int, default=None, help="Fixed tick count before clean exit")
     p_node.add_argument("--recv-count", type=int, default=None, help="Exit responder cleanly after receiving N data messages")
     p_node.add_argument("--drain-ticks", type=int, default=None, help="Drain ticks after recv-count reached")
@@ -17666,6 +17668,8 @@ def main(argv=None) -> int:
                 ("pt_bridge", "--pt-bridge"),
                 ("pt_sha384", "--pt-sha384"),
                 ("msg", "--msg"),
+                ("doc", "--doc"),
+                ("recv_dir", "--recv-dir"),
                 ("count", "--count"),
                 ("recv_count", "--recv-count"),
                 ("drain_ticks", "--drain-ticks"),

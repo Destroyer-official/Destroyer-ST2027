@@ -5,6 +5,7 @@ quantization, and `--zero-footprint` fail-closed host security gates.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -486,6 +487,110 @@ def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
         assert resp.returncode == 0, joined
         assert "DISPATCHER-STREAM-REKEY-OK" in joined
         assert "Stream epoch advanced to 1" in joined, joined
+    finally:
+        if resp.poll() is None:
+            resp.kill()
+            resp.wait(timeout=5)
+
+
+def test_stream_zero_footprint_doc_transfer_and_sha384_verification(tmp_path: Path):
+    """Multi-fragment /doc transfer over 496B Tor-aligned stream with SHA-384 + safe filename checks."""
+    if not RUST_BIN.exists():
+        pytest.skip("rust release binary not built")
+    env = _clean_lab_env()
+    psk_path, i_sk, i_pk, r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+
+    src_doc = tmp_path / "sitrep_alpha.txt"
+    doc_payload = (b"CLASSIFIED-TEST-SITREP-CELL-001 " * 64) + b"END"
+    src_doc.write_bytes(doc_payload)
+    expected_sha384 = hashlib.sha384(doc_payload).hexdigest()
+
+    recv_dir = tmp_path / "received_docs"
+    recv_dir.mkdir()
+
+    resp = subprocess.Popen(
+        [
+            sys.executable, "-u", str(ROOT / "secure_p2p.py"), "node",
+            "--role", "responder",
+            "--transport", "stream",
+            "--zero-footprint",
+            "--bind", "127.0.0.1:0",
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(r_sk),
+            "--peer-auth-pk-file", str(i_pk),
+            "--recv-dir", str(recv_dir),
+            "--quantum", "496",
+            "--interval-ms", "15",
+            "--tamaraw-l", "8",
+            "--recv-count", "1",
+            "--drain-ticks", "24",
+            "--timeout-ms", "25000",
+            "--headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        listen_addr = None
+        lines: list[str] = []
+        deadline = time.monotonic() + 20.0
+        assert resp.stdout is not None
+        while time.monotonic() < deadline:
+            ln = resp.stdout.readline()
+            if not ln:
+                break
+            lines.append(ln.strip())
+            m = re.search(r"stream:\s+LISTENING\s+addr=(\S+)", ln)
+            if m:
+                listen_addr = m.group(1)
+                break
+        assert listen_addr is not None, "\n".join(lines)
+
+        t = threading.Thread(
+            target=lambda: lines.extend(x.strip() for x in resp.stdout),  # type: ignore[union-attr]
+            daemon=True,
+        )
+        t.start()
+
+        init_res = subprocess.run(
+            [
+                sys.executable, str(ROOT / "secure_p2p.py"), "node",
+                "--role", "initiator",
+                "--transport", "stream",
+                "--zero-footprint",
+                "--to", listen_addr,
+                "--psk-file", str(psk_path),
+                "--auth-sk-file", str(i_sk),
+                "--peer-auth-pk-file", str(r_pk),
+                "--quantum", "496",
+                "--interval-ms", "15",
+                "--tamaraw-l", "8",
+                "--stdin",
+                "--headless",
+                "--count", "60",
+                "--timeout-ms", "25000",
+            ],
+            input=f"/doc {src_doc}\n",
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+        assert init_res.returncode == 0, init_res.stdout + init_res.stderr
+        assert "[DOC_TRANSFER] Queued file=sitrep_alpha.txt" in init_res.stdout
+        resp.wait(timeout=15)
+        t.join(timeout=5)
+        joined = "\n".join(lines)
+        assert resp.returncode == 0, joined
+        assert f"RECV_DOC" in joined and f"sha384={expected_sha384}" in joined, joined
+        out_doc = recv_dir / "sitrep_alpha.txt"
+        assert out_doc.is_file()
+        assert out_doc.read_bytes() == doc_payload
     finally:
         if resp.poll() is None:
             resp.kill()

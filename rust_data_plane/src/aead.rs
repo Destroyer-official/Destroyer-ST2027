@@ -20,8 +20,8 @@ use aes_gcm::{
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::frame::{
-    FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY,
-    FTYPE_REVOCATION,
+    FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_DOC, FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG,
+    FTYPE_REKEY, FTYPE_REVOCATION,
 };
 
 /// Send/receive direction bit mixed into the nonce (domain separation).
@@ -103,6 +103,19 @@ fn compute_header_mask(hp_key: &[u8; 32], tag: &[u8; 16]) -> [u8; 11] {
     mask
 }
 
+fn is_valid_frame_type(ftype: u8) -> bool {
+    matches!(
+        ftype,
+        FTYPE_MSG
+            | FTYPE_CHAFF
+            | FTYPE_REKEY
+            | FTYPE_IN_BAND_EPOCH_REKEY
+            | FTYPE_ATTESTATION_EVIDENCE
+            | FTYPE_REVOCATION
+            | FTYPE_DOC
+    )
+}
+
 /// Seal a payload into a complete wire frame (whitened header + ct + tag).
 pub fn seal(
     key: &FrameKey,
@@ -111,13 +124,7 @@ pub fn seal(
     ftype: u8,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    if ftype != FTYPE_MSG
-        && ftype != FTYPE_CHAFF
-        && ftype != FTYPE_REKEY
-        && ftype != FTYPE_IN_BAND_EPOCH_REKEY
-        && ftype != FTYPE_ATTESTATION_EVIDENCE
-        && ftype != FTYPE_REVOCATION
-    {
+    if !is_valid_frame_type(ftype) {
         return Err(aes_gcm::aead::Error);
     }
     let payload_len = u16::try_from(plaintext.len()).map_err(|_| aes_gcm::aead::Error)?;
@@ -164,13 +171,7 @@ pub fn seal_with_len(
     true_len: u16,
     padded: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-    if ftype != FTYPE_MSG
-        && ftype != FTYPE_CHAFF
-        && ftype != FTYPE_REKEY
-        && ftype != FTYPE_IN_BAND_EPOCH_REKEY
-        && ftype != FTYPE_ATTESTATION_EVIDENCE
-        && ftype != FTYPE_REVOCATION
-    {
+    if !is_valid_frame_type(ftype) {
         return Err(aes_gcm::aead::Error);
     }
     if (true_len as usize) > padded.len() {
@@ -256,13 +257,7 @@ pub fn open_indexed(
     }
     let seq = u64::from_be_bytes(header[..8].try_into().map_err(|_| AeadError)?);
     let ftype = header[10];
-    if ftype != FTYPE_MSG
-        && ftype != FTYPE_CHAFF
-        && ftype != FTYPE_REKEY
-        && ftype != FTYPE_IN_BAND_EPOCH_REKEY
-        && ftype != FTYPE_ATTESTATION_EVIDENCE
-        && ftype != FTYPE_REVOCATION
-    {
+    if !is_valid_frame_type(ftype) {
         return Err(AeadError);
     }
     let cipher = Aes256Gcm::new(&key.0);

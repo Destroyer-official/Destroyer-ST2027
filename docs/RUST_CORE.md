@@ -88,9 +88,10 @@ interpreter copies, `panic="abort"` + LTO release profile.
 ## Honesty boundaries (unchanged)
 
 * Upstream Rust PQ crates are unaudited (their own warning) — no audit claim.
-* No FIPS 140-3 CMVP cert, no ATO, no executed Kani proofs (harnesses
-  defined; doubles green under `cargo test`), ProVerif models are
-  model-scoped (skeleton unproven).
+* No FIPS 140-3 CMVP cert, no ATO; targeted Kani/CBMC harnesses run in
+  Linux CI (`.github/workflows/kani-proofs.yml`) and 10 property doubles
+  run under local `cargo test` (`docs/formal/README.md`), while ProVerif
+  models are model-scoped (`handshake_model.pv` skeleton unproven).
 * `oqs.dll` floor stays 0.16.0 for the Python path; the Rust core never
   loads it (no ctypes PQ in production).
 * Vendored-binary trust remains self-anchored until a Sigstore/Rekor +
@@ -100,9 +101,10 @@ interpreter copies, `panic="abort"` + LTO release profile.
 ## Verification
 
 ```bash
-# 1. Native Rust Core Cargo Tests (Unit, Integration, Kani Doubles, MTU, Doc Tests)
-cargo check --manifest-path rust_data_plane/Cargo.toml          # clean, zero errors
-cargo test  --manifest-path rust_data_plane/Cargo.toml          # 259 unit + 12 dudect_ct + 44 kani + 2 MTU + 1 doctest = 318 passed, 0 failed
+# 1. Native Rust Core & Tor Transport Bridge Cargo Tests
+cargo check --manifest-path rust_data_plane/Cargo.toml --no-default-features
+cargo test  --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features  # 276 unit + 12 dudect_ct + 49 kani + 2 MTU + 1 doctest = 340 passed, 0 failed
+cargo test  --manifest-path tor_transport/Cargo.toml --locked                         # 4 passed, 0 failed
 
 # 2. Python-Rust Data Plane Unified Integration Battery
 pytest tests/test_dtn_zero_rtt_mesh.py \

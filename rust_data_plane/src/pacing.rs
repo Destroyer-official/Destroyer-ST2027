@@ -7,8 +7,8 @@
 
 use crate::aead::{self, FrameKey, DIR_SEND};
 use crate::frame::{
-    quantize, FRAME_OVERHEAD, FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_IN_BAND_EPOCH_REKEY,
-    FTYPE_MSG, FTYPE_REKEY, FTYPE_REVOCATION,
+    quantize, FRAME_OVERHEAD, FTYPE_ATTESTATION_EVIDENCE, FTYPE_CHAFF, FTYPE_DOC,
+    FTYPE_IN_BAND_EPOCH_REKEY, FTYPE_MSG, FTYPE_REKEY, FTYPE_REVOCATION,
 };
 use std::time::{Duration, Instant};
 
@@ -316,6 +316,17 @@ pub fn build_data_frame_directed(
     payload: &[u8],
 ) -> Result<Vec<u8>, aes_gcm::aead::Error> {
     build_padded_frame_directed(key, seq, dir, quantum, FTYPE_MSG, payload)
+}
+
+/// Build a quantum-padded document-transfer fragment frame (`FTYPE_DOC = 0x08`).
+pub fn build_doc_frame_directed(
+    key: &FrameKey,
+    seq: u64,
+    dir: u8,
+    quantum: usize,
+    payload: &[u8],
+) -> Result<Vec<u8>, aes_gcm::aead::Error> {
+    build_padded_frame_directed(key, seq, dir, quantum, FTYPE_DOC, payload)
 }
 
 /// Build a quantum-padded in-band rekey frame with CSPRNG filler to eliminate size side-channels.

@@ -131,20 +131,38 @@ def main():
 
     card = AuditScorecard(EXPECTED_GATES)
 
-    # Gate 1: Rust Data-Plane (Clippy with -D warnings + offline tests + no-default-features build)
-    print("\n[*] Gate 1: Auditing Rust Data Plane (destroyer_core)...")
+    # Gate 1: Rust Data-Plane & Tor Transport Bridge (Clippy -D warnings + offline tests)
+    print("\n[*] Gate 1: Auditing Rust Data Plane (destroyer_core) & Tor Bridge (tor_transport)...")
     code, out, dur = run_cmd(["cargo", "clippy", "--all-targets", "--offline", "--", "-D", "warnings"],
                              cwd=REPO_ROOT / "rust_data_plane")
-    if code != 0:
-        card.record_gate("1.1", "Rust Data-Plane Clippy Compiler Audit", False, dur, f"Clippy failure: {out[-150:]}")
+    code_tor_clip, out_tor_clip, dur_tor_clip = run_cmd(
+        ["cargo", "clippy", "--all-targets", "--offline", "--", "-D", "warnings"],
+        cwd=REPO_ROOT / "tor_transport",
+    )
+    if code != 0 or code_tor_clip != 0:
+        err_snip = out[-120:] if code != 0 else out_tor_clip[-120:]
+        card.record_gate("1.1", "Rust Data-Plane & Tor Clippy Compiler Audit", False, dur + dur_tor_clip, f"Clippy failure: {err_snip}")
     else:
         code2, out2, dur2 = run_cmd(["cargo", "test", "--offline", "--no-default-features"], cwd=REPO_ROOT / "rust_data_plane")
+        code_tor_test, out_tor_test, dur_tor_test = run_cmd(["cargo", "test", "--offline", "--locked"], cwd=REPO_ROOT / "tor_transport")
         import re
         passed_matches = [int(m) for m in re.findall(r"(\d+) passed; 0 failed", out2) if int(m) > 0]
+        tor_passed_matches = [int(m) for m in re.findall(r"(\d+) passed; 0 failed", out_tor_test) if int(m) > 0]
         total_passed = sum(passed_matches) if passed_matches else 0
-        passed = (code2 == 0 and "0 failed" in out2 and len(passed_matches) >= 2 and passed_matches[0] >= 110 and total_passed >= 200)
-        card.record_gate("1.1", "Rust Data-Plane Strict Clippy & Test Battery", passed, dur + dur2,
-                         f"{total_passed} tests passed (--no-default-features --offline); 0 compiler warnings" if passed else f"Cargo test failure: {out2[-150:]}")
+        tor_passed = sum(tor_passed_matches) if tor_passed_matches else 0
+        passed = (
+            code2 == 0 and "0 failed" in out2 and len(passed_matches) >= 2 and passed_matches[0] >= 110 and total_passed >= 200
+            and code_tor_test == 0 and "0 failed" in out_tor_test and tor_passed >= 1
+        )
+        card.record_gate(
+            "1.1",
+            "Rust Data-Plane & Tor Strict Clippy & Test Battery",
+            passed,
+            dur + dur2 + dur_tor_clip + dur_tor_test,
+            f"{total_passed} core + {tor_passed} tor tests passed (--offline); 0 compiler warnings"
+            if passed
+            else f"Cargo test failure: {out2[-100:]} | tor: {out_tor_test[-100:]}",
+        )
 
     # Gate 2: Native Top-Secret Runtime (ts_rt) & seL4 MILS Appliance
     print("\n[*] Gate 2: Auditing Native Deterministic Core (ts_rt) & seL4 MILS...")

@@ -54,6 +54,9 @@ pub async fn write_stream_frame<W: AsyncWrite + Unpin>(
 /// Read a 2-byte big-endian length-prefixed frame.
 /// - `Ok(None)` cleanly signals EOF on a frame boundary.
 /// - `Err(InvalidData)` rejects `len == 0` or `len > max_len` BEFORE allocating `len` bytes.
+///
+/// NOTE: NOT cancel-safe across partial reads (`read_exact`); callers using `tokio::select!`
+/// MUST drive this on a dedicated split reader task (`tokio::io::split`) and select on an `mpsc` channel.
 pub async fn read_stream_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
     max_len: usize,

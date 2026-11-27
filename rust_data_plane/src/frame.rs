@@ -15,6 +15,8 @@ pub const FTYPE_ATTESTATION_EVIDENCE: u8 = 0x05;
 pub const FTYPE_REVOCATION: u8 = 0x06;
 /// In-band Continuous Epoch Ratchet (CER) key replenishment frame (FTYPE_IN_BAND_EPOCH_REKEY = 0x07).
 pub const FTYPE_IN_BAND_EPOCH_REKEY: u8 = 0x07;
+/// Encrypted fragment of a SHA-384-verified document transfer payload (`DOC:<name>:<sha384>:<b64>`).
+pub const FTYPE_DOC: u8 = 0x08;
 /// Alias matching specification name: IN_BAND_EPOCH_REKEY = 0x07.
 pub const IN_BAND_EPOCH_REKEY: u8 = 0x07;
 /// Chaff / heartbeat replacement. Never surfaces to the application.

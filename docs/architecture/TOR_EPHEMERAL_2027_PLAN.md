@@ -1,8 +1,14 @@
-# 2027+ Sovereign Zero-Footprint P2P Implementation Plan (Hardened Edition)
+# 2027+ Sovereign Zero-Footprint P2P Implementation Plan (Hardened Edition — As-Built Record)
 
-**Target Architecture:** Feature-Gated Embedded Ephemeral Tor v3 Onion Service (`arti-client 0.48.0`) + In-Stream Post-Quantum `Noise_XXhfs` + In-House Pure-Rust Tamaraw Cell Shaper (`rust_data_plane` Single-Binary)  
-**Compliance & Cryptographic Posture:** NSA CNSA 2.0 (Inner E2EE Tunnel: `ML-KEM-1024`, `ML-DSA-87`, `AES-256-GCM`, `SHA-384`), NIST FIPS 203 / 204, RFC 10024 (`SecP384r1MLKEM1024`), Tor Proposal 359 (`CGO`) + Proposal 327/362 (`hs-pow-full`)  
+**Status:** Implemented & Verified (see **As-Built Reconciliation** below; original pre-implementation design notes follow)
+**Target Architecture:** Privilege-Separated Embedded Ephemeral Tor v3 Onion Bridge (`tor_transport` / `secure-transmit-tor`, `arti-client 0.48.0`) + In-Stream Post-Quantum `Noise_XXhfs` + In-House Pure-Rust Tamaraw Cell Shaper (`rust_data_plane`)
+**Compliance & Cryptographic Posture:** NSA CNSA 2.0 (Inner E2EE Tunnel: `ML-KEM-1024`, `ML-DSA-87`, `AES-256-GCM`, `SHA-384`), NIST FIPS 203 / 204, RFC 10024 (`SecP384r1MLKEM1024`), Tor Proposal 359 (`CGO`) + `ClientAuthV3` Restricted Discovery
 **Rollback Baseline on GitHub (`origin`):** Annotated tag `pre-tor-ephemeral-2027` pinned to commit `e13fb7b`
+
+> **As-Built Reconciliation (Deviations From Draft Plan):**
+> 1. **Privilege-Separated Sibling Crate (`tor_transport/src/main.rs`) vs Single-Binary Feature Module:** Instead of adding `arti-client` inside `rust_data_plane/src/tor_transport.rs`, Arti runs in a dedicated privilege-separated child process (`tor_transport` / `secure-transmit-tor`) speaking over anonymous stdin/stdout pipes. `rust_data_plane` spawns it with `--tor-bridge-sha384` (and optional `--pt-sha384`) binary verification and `kill_on_drop(true)`. This preserves air-gapped `rust_data_plane` isolation with zero Arti crates in `rust_data_plane/Cargo.lock`.
+> 2. **Restricted Discovery Without `hs-pow-full`:** `tor_transport/Cargo.toml` compiles `arti-client 0.48.0` with `["tokio", "native-tls", "static-sqlite", "onion-service-client", "onion-service-service", "vanguards", "ephemeral-keystore", "restricted-discovery", "experimental-api"]`. `ClientAuthV3` Restricted Discovery is enforced fail-closed in production without needing experimental `hs-pow-full`.
+> 3. **Encrypted In-Stream `/doc` Transfers & Bounded Rendezvous Wait:** Added `FTYPE_DOC = 0x08` (`doc_transfer::package_document` / `unpack_and_verify_document` + `fragment::fragment`, capped at 256 KiB, Zero-Trust checked, and non-overwriting `--recv-dir`), alongside `--kex-timeout-ms` bounded Tor rendezvous startup and formal verification in [`docs/formal/st2027_tor_rendezvous.pv`](../formal/st2027_tor_rendezvous.pv).
 
 > **Honest Layered Boundary (Outer Anonymity vs. Inner CNSA 2.0 Confidentiality):**
 > Tor circuits (`tor-proto` / `CGO`) use classical cryptography (`Curve25519 ntor`, `AES/UIV+`, `Ed25519` v3 `.onion` identities) because public Tor relays do not yet run NIST PQC. Tor provides **open-internet network metadata anonymity and relay tagging resistance**. **Quantum resistance and CNSA 2.0 compliance come strictly from the end-to-end inner `Noise_XXhfs` (`SecP384r1MLKEM1024` + `ML-DSA-87` + `--psk-file`) + Continuous Epoch Ratchet (`AES-256-GCM`) tunnel carried inside the Tor stream.** Official DoD/NSS accreditation still requires CMVP FIPS 140-3 validated modules, TPM/PKCS#11 hardware custody, and physical TEMPEST/facility controls.
