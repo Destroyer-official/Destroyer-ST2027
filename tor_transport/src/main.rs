@@ -260,6 +260,10 @@ fn build_tor_config(
         .mode(ExplicitOrAuto::Explicit(VanguardMode::Full));
 
     if let Some(pt_bin) = get_flag(args, "--pt-binary") {
+        let pt_path = Path::new(&pt_bin);
+        if !pt_path.is_file() {
+            return Err(format!("--pt-binary does not point to an existing file: {pt_bin}"));
+        }
         let pt_type = get_flag(args, "--pt-type")
             .ok_or_else(|| "--pt-type <webtunnel|obfs4> is required with --pt-binary".to_string())?;
         let bridge_line = get_flag(args, "--pt-bridge")
@@ -276,7 +280,7 @@ fn build_tor_config(
         let mut transport = TransportConfigBuilder::default();
         transport
             .protocols(vec![proto])
-            .path(CfgPath::new_literal(PathBuf::from(pt_bin)))
+            .path(CfgPath::new_literal(pt_path.to_path_buf()))
             .run_on_startup(true);
         cfg.bridges().transports().push(transport);
     }

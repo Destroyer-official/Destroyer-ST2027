@@ -3552,6 +3552,7 @@ fn cmd_node(args: &[String]) {
         println!("  --tor-bridge-sha384 HEX        Expected 96-hex SHA-384 pin of secure-transmit-tor (or P2P_TOR_BRIDGE_SHA384)");
         println!("  --kex-timeout-ms MS            Handshake timeout in ms (default 120000 for Tor circuits; 0=infinite)");
         println!("  --pt-binary PATH               Optional pluggable transport binary (lyrebird) behind firewalls");
+        println!("  --pt-sha384 HEX                Expected 96-hex SHA-384 pin of --pt-binary (mandatory in production; or P2P_PT_SHA384)");
         println!("  --pt-type TYPE                 Pluggable transport type (webtunnel|obfs4)");
         println!("  --pt-bridge LINE               Bridge line for optional pluggable transport");
         println!("  --key-file PATH                Raw symmetric 32B key file (non-production --lab only; refused with --zero-footprint)");
@@ -3658,6 +3659,28 @@ fn find_tor_bridge_binary(args: &[String]) -> std::path::PathBuf {
         }
     }
     std::path::PathBuf::from(exe_name)
+}
+
+fn verify_binary_sha384_pin(path: &std::path::Path, expected_hex: &str, label: &str) {
+    let expected = decode_hex(expected_hex)
+        .unwrap_or_else(|_| fail(&format!("bad {label} SHA-384 hex pin")));
+    if expected.len() != 48 {
+        fail(&format!("{label} SHA-384 pin must be exactly 96 hex chars (48 bytes)"));
+    }
+    if !path.is_file() {
+        fail(&format!("{label} {:?} does not exist or is not a regular file", path));
+    }
+    let bin_bytes = std::fs::read(path)
+        .unwrap_or_else(|e| fail(&format!("cannot read {label} {:?}: {e}", path)));
+    let actual = Sha384::digest(&bin_bytes);
+    if !ct::ct_eq(actual.as_slice(), &expected) {
+        fail(&format!(
+            "SECURITY HALT: {label} {:?} SHA-384 mismatch (got {}, expected {})",
+            path,
+            hex_of(actual.as_slice()),
+            hex_of(&expected)
+        ));
+    }
 }
 
 fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bool) {
@@ -3797,24 +3820,10 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
             if let Some(expected_hex) = bridge_pin_opt {
-                let expected = decode_hex(&expected_hex)
-                    .unwrap_or_else(|_| fail("bad --tor-bridge-sha384 hex"));
-                if expected.len() != 48 {
-                    fail("--tor-bridge-sha384 must be exactly 96 hex chars (48 bytes)");
-                }
-                let bin_bytes = std::fs::read(&bridge_bin)
-                    .unwrap_or_else(|e| fail(&format!("cannot read tor bridge {:?}: {e}", bridge_bin)));
-                let actual = Sha384::digest(&bin_bytes);
-                if !ct::ct_eq(actual.as_slice(), &expected) {
-                    fail(&format!(
-                        "SECURITY HALT: tor bridge {:?} SHA-384 mismatch (got {}, expected {})",
-                        bridge_bin,
-                        hex_of(actual.as_slice()),
-                        hex_of(&expected)
-                    ));
-                }
+                verify_binary_sha384_pin(&bridge_bin, &expected_hex, "tor bridge");
             }
             let mut cmd = tokio::process::Command::new(&bridge_bin);
+            cmd.kill_on_drop(true);
             cmd.stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
@@ -3841,6 +3850,19 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                 }
             }
             if let Some(pt_bin) = get_flag(args, "--pt-binary") {
+                let pt_path = std::path::Path::new(&pt_bin);
+                if !pt_path.is_file() {
+                    fail(&format!("--pt-binary {:?} does not point to an existing file", pt_path));
+                }
+                let pt_pin_opt = get_flag(args, "--pt-sha384")
+                    .or_else(|| std::env::var("P2P_PT_SHA384").ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                if let Some(ref pt_pin) = pt_pin_opt {
+                    verify_binary_sha384_pin(pt_path, pt_pin, "pt binary");
+                } else if policy::is_production_env() {
+                    fail("PRODUCTION REFUSAL: --pt-binary requires --pt-sha384 or P2P_PT_SHA384 pin");
+                }
                 cmd.arg("--pt-binary").arg(pt_bin);
                 if let Some(t) = get_flag(args, "--pt-type") {
                     cmd.arg("--pt-type").arg(t);
@@ -3869,9 +3891,22 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
             let mut err_lines = tokio::io::BufReader::new(stderr);
             use tokio::io::AsyncBufReadExt;
             let mut line = String::new();
+            let connect_deadline = tokio::time::Instant::now() + Duration::from_millis(kex_timeout_ms);
             loop {
                 line.clear();
-                match err_lines.read_line(&mut line).await {
+                let read_res = if kex_timeout_ms > 0 {
+                    match tokio::time::timeout_at(connect_deadline, err_lines.read_line(&mut line)).await {
+                        Ok(r) => r,
+                        Err(_) => {
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            fail("tor bridge timed out awaiting Tor rendezvous circuit (--kex-timeout-ms)");
+                        }
+                    }
+                } else {
+                    err_lines.read_line(&mut line).await
+                };
+                match read_res {
                     Ok(0) => fail("tor bridge exited unexpectedly before connecting"),
                     Ok(_) => {
                         let l = line.trim_end();
@@ -3948,7 +3983,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         let mut prev_frame_key: Option<FrameKey> = None;
         let mut prev_key_remaining_ticks: u32 = 0;
 
-        let mut next_send_seq: u64 = 0;
+        let mut next_send_seq: u64 = 1;
         let mut window = AntiReplayWindow::from_parts(0, [0u64; 32]);
         let mut shaper = TamarawShaper::new(tamaraw_l, true);
         let zt_engine = ZeroTrustEngine::new(50);
@@ -3991,6 +4026,8 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
         let mut chaff_received = 0u64;
         let mut auth_drops = 0u64;
         let mut draining: Option<u64> = None;
+        let mut manual_rekey_queued = false;
+        let mut stdin_open = use_stdin;
         let mut zeroized = false;
         let start_time = Instant::now();
         let mut tick_timer = tokio::time::interval(Duration::from_millis(interval_ms));
@@ -4017,7 +4054,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                     zeroized = true;
                     break;
                 }
-                line_opt = stdin_rx.recv(), if use_stdin => {
+                line_opt = stdin_rx.recv(), if stdin_open => {
                     if let Some(line) = line_opt {
                         let trimmed = line.trim();
                         if trimmed == "/zeroize" || trimmed == "ZEROIZE" {
@@ -4049,6 +4086,9 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                     }
                                     println!("[POST-QUANTUM RATCHET] Rekey emitted for Epoch {next_epoch}");
                                 }
+                            } else {
+                                manual_rekey_queued = true;
+                                println!("[POST-QUANTUM RATCHET] Rekey queued (awaiting peer ratchet bundle)");
                             }
                         } else if !trimmed.is_empty() {
                             if let Err(indicator) = destroyer_core::nc3::check_nc3_safety_gate(trimmed.as_bytes()) {
@@ -4059,6 +4099,8 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                 }
                             }
                         }
+                    } else {
+                        stdin_open = false;
                     }
                 }
                 _ = tick_timer.tick() => {
@@ -4069,15 +4111,18 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                             let _ = prev_frame_key.take();
                         }
                     }
-                    if rekey_interval > 0
+                    let auto_rekey_due = rekey_interval > 0
                         && ticks_emitted > 0
                         && ticks_emitted.is_multiple_of(rekey_interval)
-                        && role == "initiator"
+                        && role == "initiator";
+                    if (manual_rekey_queued || auto_rekey_due)
                         && pcs_ratchet.peer_bundle().is_some()
                         && pending_frame_key.is_none()
                         && outbound_rekeys.is_empty()
                     {
+                        manual_rekey_queued = false;
                         if let Ok((step, _)) = pcs_ratchet.send_step_auto() {
+                            let next_epoch = step.epoch;
                             if let Ok(fk) = pcs_ratchet.current_frame_key() {
                                 pending_frame_key = Some(fk);
                             }
@@ -4086,6 +4131,7 @@ fn cmd_stream_node(args: &[String], role: &str, is_tor: bool, zero_footprint: bo
                                     outbound_rekeys.push_back(f.to_wire());
                                 }
                             }
+                            println!("[POST-QUANTUM RATCHET] Rekey emitted for Epoch {next_epoch}");
                         }
                     }
 

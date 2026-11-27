@@ -78,6 +78,8 @@ KANI_PROOFS = [
     "kani_nonce_domain_separation",
     "kani_nostd_frame_parse_never_panics",
     "kani_replay_window_monotonic",
+    "kani_stream_frame_len_decoder_bounds",
+    "kani_tamaraw_shaper_epoch_modulo_bounds",
 ]
 PROPERTY_DOUBLES = [
     "cookie_gate_stateless_verification",
@@ -88,6 +90,8 @@ PROPERTY_DOUBLES = [
     "nostd_frame_parse_never_panics_property_sweep",
     "nostd_stack_secret_ct_eq_property_sweep",
     "replay_window_monotonic_and_drops",
+    "stream_frame_len_decoder_bounds_sweep",
+    "tamaraw_shaper_epoch_modulo_invariant",
 ]
 
 

@@ -295,3 +295,184 @@ def test_tor_bridge_bad_sha384_pin_refused_fail_closed(tmp_path: Path):
     )
     assert res.returncode != 0
     assert "SHA-384 mismatch" in (res.stderr + res.stdout)
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_pt_binary_bad_sha384_pin_refused_fail_closed(tmp_path: Path):
+    """--pt-binary with mismatched --pt-sha384 must fail closed before spawning Tor."""
+    env = _clean_lab_env()
+    psk_path, i_sk, _i_pk, _r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+    dummy_pt = tmp_path / ("lyrebird.exe" if sys.platform == "win32" else "lyrebird")
+    dummy_pt.write_bytes(b"not-a-real-lyrebird-binary")
+
+    res = subprocess.run(
+        [
+            str(RUST_BIN),
+            "node",
+            "--role", "initiator",
+            "--tor",
+            "--zero-footprint",
+            "--to", "2gzyxa5ihm7nsggfxnu52rck2vv4rvmdlkiu3zzui5du4xyclen53wid.onion:443",
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(i_sk),
+            "--peer-auth-pk-file", str(r_pk),
+            "--pt-binary", str(dummy_pt),
+            "--pt-type", "webtunnel",
+            "--pt-bridge", "webtunnel 127.0.0.1:443 0000000000000000000000000000000000000000 url=https://example.com/",
+            "--pt-sha384", "ff" * 48,
+            "--headless",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert res.returncode != 0
+    assert "SHA-384 mismatch" in (res.stderr + res.stdout)
+
+
+def test_secure_p2p_cli_node_tor_gates_and_stream_roundtrip(tmp_path: Path):
+    """secure_p2p.py node enforces Tor ClientAuthV3/PT gates in prod and forwards stream/zero-footprint."""
+    prod_env = os.environ.copy()
+    prod_env["P2P_PRODUCTION"] = "1"
+    prod_env.pop("P2P_LAB_MODE", None)
+
+    psk = tmp_path / "psk.hex"
+    psk.write_text("77" * 32, encoding="utf-8")
+    os.chmod(psk, 0o600)
+    pk = tmp_path / "peer.pk"
+    pk.write_text("01" * 2592, encoding="utf-8")
+    os.chmod(pk, 0o600)
+
+    # 1. Production --tor responder without --onion-client-auth-pk fails closed.
+    r1 = subprocess.run(
+        [
+            sys.executable, str(ROOT / "secure_p2p.py"), "node",
+            "--role", "responder",
+            "--tor",
+            "--zero-footprint",
+            "--psk-file", str(psk),
+            "--auth-pkcs11-label", "HSM_KEY",
+            "--auth-pk-file", str(pk),
+            "--peer-auth-pk-file", str(pk),
+        ],
+        env=prod_env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert r1.returncode != 0
+    assert "ClientAuthV3" in (r1.stdout + r1.stderr)
+
+    # 2. Production --pt-binary without --pt-sha384 fails closed.
+    dummy_pt = tmp_path / "lyrebird"
+    dummy_pt.write_bytes(b"pt")
+    r2 = subprocess.run(
+        [
+            sys.executable, str(ROOT / "secure_p2p.py"), "node",
+            "--role", "responder",
+            "--tor",
+            "--onion-client-auth-pk", "descriptor:x25519:" + ("A" * 52),
+            "--pt-binary", str(dummy_pt),
+            "--psk-file", str(psk),
+            "--auth-pkcs11-label", "HSM_KEY",
+            "--auth-pk-file", str(pk),
+            "--peer-auth-pk-file", str(pk),
+        ],
+        env=prod_env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert r2.returncode != 0
+    assert "--pt-sha384" in (r2.stdout + r2.stderr)
+
+    # 3. Real stream loopback launch via secure_p2p.py node --transport stream --zero-footprint + /rekey
+    if not RUST_BIN.exists():
+        return
+    env = _clean_lab_env()
+    psk_path, i_sk, i_pk, r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+    resp = subprocess.Popen(
+        [
+            sys.executable, "-u", str(ROOT / "secure_p2p.py"), "node",
+            "--role", "responder",
+            "--transport", "stream",
+            "--zero-footprint",
+            "--bind", "127.0.0.1:0",
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(r_sk),
+            "--peer-auth-pk-file", str(i_pk),
+            "--quantum", "496",
+            "--interval-ms", "20",
+            "--tamaraw-l", "8",
+            "--recv-count", "1",
+            "--drain-ticks", "24",
+            "--timeout-ms", "15000",
+            "--headless",
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        listen_addr = None
+        lines: list[str] = []
+        deadline = time.monotonic() + 10.0
+        assert resp.stdout is not None
+        while time.monotonic() < deadline:
+            ln = resp.stdout.readline()
+            if not ln:
+                break
+            lines.append(ln.strip())
+            m = re.search(r"stream:\s+LISTENING\s+addr=(\S+)", ln)
+            if m:
+                listen_addr = m.group(1)
+                break
+        assert listen_addr is not None, "\n".join(lines)
+
+        t = threading.Thread(
+            target=lambda: lines.extend(x.strip() for x in resp.stdout),  # type: ignore[union-attr]
+            daemon=True,
+        )
+        t.start()
+
+        # Initiator sends /rekey then payload via stdin to exercise interactive PQ epoch rotation + dispatch
+        init_res = subprocess.run(
+            [
+                sys.executable, str(ROOT / "secure_p2p.py"), "node",
+                "--role", "initiator",
+                "--transport", "stream",
+                "--zero-footprint",
+                "--to", listen_addr,
+                "--psk-file", str(psk_path),
+                "--auth-sk-file", str(i_sk),
+                "--peer-auth-pk-file", str(r_pk),
+                "--quantum", "496",
+                "--interval-ms", "20",
+                "--tamaraw-l", "8",
+                "--stdin",
+                "--headless",
+                "--count", "28",
+                "--timeout-ms", "15000",
+            ],
+            input="/rekey\nDISPATCHER-STREAM-REKEY-OK\n",
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert init_res.returncode == 0, init_res.stdout + init_res.stderr
+        resp.wait(timeout=15)
+        t.join(timeout=5)
+        joined = "\n".join(lines)
+        assert resp.returncode == 0, joined
+        assert "DISPATCHER-STREAM-REKEY-OK" in joined
+        assert "Stream epoch advanced to 1" in joined, joined
+    finally:
+        if resp.poll() is None:
+            resp.kill()
+            resp.wait(timeout=5)

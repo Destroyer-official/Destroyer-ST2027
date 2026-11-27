@@ -22,6 +22,7 @@ The system is designed to provide non-repudiation, tamper-evident auditability, 
 | **Physical Hardware Theft / Cold-Boot Attack** | **FAIL-CLOSED ZEROIZATION** | Motherboard TPM 2.0 PCR attestation (PCRs 0, 1, 2, 7) + HKDF-SHA3-512 PCR-sealed secret envelopes + Autonomous 7-Pass DoD 5220.22-M memory wiping. |
 | **Rogue Single-Operator / Coerced Commander** | **CRYPTOGRAPHICALLY FORBIDDEN** | Two-Person Integrity (TPI) via $GF(2^{256})$ Verifiable Secret Sharing (VSS), distinct hardware token authentication, and a physical 2.0-second temporal synchronization window. |
 | **Cross-Domain Data Exfiltration / Reverse Channel** | **SOFTWARE SIMPLEX ONLY** | Interface-pinned unidirectional UDP (`tactical_data_diode.py`, no wildcard binds, AST-enforced direction) with $GF(2^8)$ Cauchy Reed-Solomon Forward Error Correction. True reverse-channel impossibility requires OPTICAL DIODE HARDWARE (severed RX fiber) -- not present here. |
+| **Open-Internet Surveillance & Flow Correlation** | **EPHEMERAL TOR V3 + TAMARAW** | Privilege-separated embedded Arti (`tor_transport` / `secure-transmit-tor`) with `ArtiEphemeralKeystore`, `ClientAuthV3` Restricted Discovery, `vanguards = Full`, `496B` Tor-cell Tamaraw shaping (`shaper.rs`), and SHA-384 bridge/PT verification. |
 
 ---
 

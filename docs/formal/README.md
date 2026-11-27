@@ -45,7 +45,7 @@ RESULT Query inj-event(R_Receives(k,n,msg,pk)) ==> inj-event(C_Sends(k,n,msg)) i
 
 ## 2. Kani Inventory (audited against `rust_data_plane/tests/kani_harness.rs`)
 
-Six `#[kani::proof]` harnesses are DEFINED (exact names):
+Eight `#[kani::proof]` harnesses are DEFINED (exact names):
 
 ```
 kani_cookie_gate_stateless_verification
@@ -54,12 +54,14 @@ kani_max_stream_bytes_cap
 kani_nonce_domain_separation
 kani_nostd_frame_parse_never_panics
 kani_replay_window_monotonic
+kani_stream_frame_len_decoder_bounds
+kani_tamaraw_shaper_epoch_modulo_bounds
 ```
 
 Execution requires the Kani + CBMC toolchain (`cargo kani`); Kani is
 installed in Linux CI (`.github/workflows/kani-proofs.yml`), so "defined" is
 the honest status word in local environments until executed. What DOES execute
-green under plain `cargo test` in all environments are the 8 deterministic
+green under plain `cargo test` in all environments are the 10 deterministic
 property doubles in `property_doubles` (same properties, bounded sweeps):
 
 ```
@@ -71,13 +73,13 @@ nonce_domain_separation
 nostd_frame_parse_never_panics_property_sweep
 nostd_stack_secret_ct_eq_property_sweep
 replay_window_monotonic_and_drops
+stream_frame_len_decoder_bounds_sweep
+tamaraw_shaper_epoch_modulo_invariant
 ```
 
 (`test_stack_secret_zeroize_on_drop` is a plain `cargo test` unit test
-in `nostd_microcore`, included alongside the 8 property doubles and
-re-exported module unit tests in the 44-test `kani_harness` binary — part of
-328 total `--no-default-features` Rust tests: 269 lib unit + 12 `dudect_ct`
-+ 44 `kani_harness` + 2 `test_mtu_framing_budget` + 1 doc-test.)
+in `nostd_microcore`, included alongside the 10 property doubles and
+re-exported module unit tests in `kani_harness` under `--no-default-features`.)
 
 ## 3. Bridging Symbolic Models & Implementation: DudeCT Constant-Time Timing Analysis
 

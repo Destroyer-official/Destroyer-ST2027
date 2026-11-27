@@ -208,7 +208,7 @@ Every operational node MUST initialize an atomic 48-byte state record (`STSTATE1
   --count 0
 ```
 
-### SOP-4: Negotiating Authenticated ML-KEM-1024 + X25519 Session
+### SOP-4: Negotiating Authenticated SecP384r1MLKEM1024 Session
 ```bash
 # On the Responder Node:
 ./rust_data_plane/target/release/secure-transmit kex-listen \
@@ -367,7 +367,8 @@ The ST2027 baseline is empirically benchmarked against consumer messaging standa
 
 | Defense Vector | Consumer Messaging Standard | ST2027 Baseline | Advantage Factor |
 | :--- | :--- | :--- | :--- |
-| **Traffic Flow & Metadata Camouflage** | Variable-length bursts emitted only during user activity; leaks keystroke timing and identity | Constant-rate hardware-paced scheduler emitting fixed-size wire cells (1232B) with continuous CSPRNG chaff ($H > 7.95$ bits/byte) | **Constant-Rate Masking** (Continuous thermodynamic wire camouflage) |
+| **Traffic Flow & Metadata Camouflage** | Variable-length bursts emitted only during user activity; leaks keystroke timing and identity | Constant-rate hardware-paced scheduler emitting fixed-size wire cells (`1232B` UDP or `496B`/`994B` Tor-aligned Tamaraw cells) with continuous CSPRNG chaff ($H > 7.95$ bits/byte) | **Constant-Rate Masking** (Continuous thermodynamic wire camouflage) |
+| **Open-Internet Metadata Anonymity** | Direct IP socket or cloud broker exposes endpoint IP addresses | Privilege-separated embedded Arti (`secure-transmit-tor`, `arti-client 0.48.0`) with `ClientAuthV3` Restricted Discovery, `vanguards = Full`, and zero host listening ports | **Onion Rendezvous + Restricted Discovery** |
 | **Unidirectional Cross-Domain Transit** | Bidirectional TCP/TLS network stack vulnerable to reverse socket penetration | Physical simplex optical single-strand fiber with Cauchy-Reed-Solomon $GF(2^8)$ FEC; zero return wire | **Simplex Isolation** (Physical impossibility of reverse penetration) |
 | **Post-Quantum Security Margin** | Classical Curve25519 or partial hybrid schemes vulnerable to quantum collection | FIPS 203 ML-KEM-1024 + FIPS 204 ML-DSA-87 + AES-256-GCM + SHA-384 with transcript hash binding | **NIST Category 5 Margin** (Strict CNSA 2.0 Compliance) |
 | **Monotonic Nonce Collision Safety** | In-memory nonce counters susceptible to reset, rollback, or thread race collisions | Persistent locked atomic state file (`STSTATE1`) with sequence reservation before encryption and directional domain separation | **Deterministic Zero Nonce Collision** (NIST SP 800-38D) |

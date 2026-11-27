@@ -17341,8 +17341,39 @@ def main(argv=None) -> int:
     p_node.add_argument("--lab", action="store_true",
                         help="Explicit lab-only unauthenticated KEX; never allowed in production")
     p_node.add_argument("--kex-timeout", type=int, default=None, help="KEX timeout in seconds (default: 120)")
+    p_node.add_argument("--kex-timeout-ms", type=int, default=None, help="KEX timeout in milliseconds (overrides --kex-timeout)")
     p_node.add_argument("--require-hardware", action="store_true",
                         help="Fail closed unless hardware readiness (TPM/HSM/FIPS/etc.) is fully compliant")
+    p_node.add_argument("--tor", action="store_true",
+                        help="Route traffic over privilege-separated embedded Arti Tor v3 (.onion, zero host ports)")
+    p_node.add_argument("--transport", choices=["udp", "stream", "tor"], default=None,
+                        help="Explicit transport mode (udp, stream, or tor)")
+    p_node.add_argument("--zero-footprint", action="store_true",
+                        help="RAM-only AntiReplayWindow + OS dump/ACG suppression + volatile Arti workdir")
+    p_node.add_argument("--to", default=None,
+                        help="Explicit remote endpoint (<addr>.onion:443 or host:port)")
+    p_node.add_argument("--tor-port", type=int, default=None, help="Virtual onion service port (default: 443)")
+    p_node.add_argument("--tor-bridge-bin", default=None, help="Explicit path to secure-transmit-tor helper")
+    p_node.add_argument("--tor-bridge-sha384", default=None, help="Expected 96-hex SHA-384 pin for secure-transmit-tor")
+    p_node.add_argument("--onion-client-auth-pk", default=None,
+                        help="ClientAuthV3 descriptor:x25519:... key required for Responder Restricted Discovery")
+    p_node.add_argument("--onion-auth-sk-file", default=None, help="ClientAuthV3 x25519 private key hex file (initiator)")
+    p_node.add_argument("--onion-auth-sk-stdin", action="store_true", help="Read ClientAuthV3 x25519 key from stdin (initiator)")
+    p_node.add_argument("--onion-open-descriptor", action="store_true", help="[LAB/BOOTSTRAP] Allow responder onion without Restricted Discovery")
+    p_node.add_argument("--quantum", type=int, default=None, help="Wire quantum (256, 496, 512, 994, or 1232)")
+    p_node.add_argument("--interval-ms", type=int, default=None, help="Constant-rate shaping interval in ms")
+    p_node.add_argument("--tamaraw-l", type=int, default=None, help="Tamaraw batch-tail alignment L in cells")
+    p_node.add_argument("--pt-binary", default=None, help="Optional pluggable transport executable (e.g. lyrebird)")
+    p_node.add_argument("--pt-type", default=None, help="Pluggable transport protocol (webtunnel or obfs4)")
+    p_node.add_argument("--pt-bridge", default=None, help="Pluggable transport bridge line")
+    p_node.add_argument("--pt-sha384", default=None, help="Expected 96-hex SHA-384 pin for --pt-binary")
+    p_node.add_argument("--headless", action="store_true", help="Non-interactive bounded run (CI / scripts)")
+    p_node.add_argument("--stdin", action="store_true", help="Read commands/lines from stdin even with --headless")
+    p_node.add_argument("--msg", default=None, help="One-shot payload message for headless runs")
+    p_node.add_argument("--count", type=int, default=None, help="Fixed tick count before clean exit")
+    p_node.add_argument("--recv-count", type=int, default=None, help="Exit responder cleanly after receiving N data messages")
+    p_node.add_argument("--drain-ticks", type=int, default=None, help="Drain ticks after recv-count reached")
+    p_node.add_argument("--timeout-ms", type=int, default=None, help="Session timeout in milliseconds")
 
     p_alpha = sub.add_parser("alpha", help="Launch Base Alpha (NORAD Command) in full DEFCON-1 mode with zero manual flags")
     p_alpha.add_argument("--lab", action="store_true", help="Explicit lab mode")
@@ -17541,9 +17572,36 @@ def main(argv=None) -> int:
         peer_cert_file = getattr(args, "peer_cert_file", None) or os.environ.get("P2P_PEER_CERT_FILE")
         require_root_ca = bool(getattr(args, "require_root_ca", False)) or bool(root_ca_file)
 
-        if not lab_mode:
-            # High-Assurance Production Canonical Path (F-02, F-03, F-08 Remediation)
-            if _production():
+        to_arg = getattr(args, "to", None)
+        transport_arg = getattr(args, "transport", None)
+        is_tor_mode = bool(
+            getattr(args, "tor", False)
+            or transport_arg == "tor"
+            or (to_arg and ".onion" in to_arg.lower())
+        )
+        is_stream_mode = bool(is_tor_mode or transport_arg == "stream")
+        zero_footprint = bool(getattr(args, "zero_footprint", False))
+
+        if _production() and is_tor_mode:
+            if args.role == "responder" and not getattr(args, "onion_client_auth_pk", None):
+                print(f"{RED}[PRODUCTION REFUSAL] Responder --tor requires --onion-client-auth-pk "
+                      f"(ClientAuthV3 Restricted Discovery).{RESET}")
+                return 2
+            if args.role == "initiator" and not (
+                getattr(args, "onion_auth_sk_file", None) or getattr(args, "onion_auth_sk_stdin", False)
+            ):
+                print(f"{RED}[PRODUCTION REFUSAL] Initiator --tor requires --onion-auth-sk-file or "
+                      f"--onion-auth-sk-stdin (ClientAuthV3).{RESET}")
+                return 2
+        if _production() and getattr(args, "pt_binary", None) and not (
+            getattr(args, "pt_sha384", None) or os.environ.get("P2P_PT_SHA384")
+        ):
+            print(f"{RED}[PRODUCTION REFUSAL] --pt-binary requires --pt-sha384 or P2P_PT_SHA384.{RESET}")
+            return 2
+
+        if not lab_mode or is_stream_mode:
+            # High-Assurance Production Canonical Path (and Ephemeral Tor/Stream Plane)
+            if _production() and not lab_mode:
                 violations = _production_crypto_violations()
                 if violations:
                     print(f"{RED}[FATAL] Production crypto-policy self-check failed. "
@@ -17557,7 +17615,7 @@ def main(argv=None) -> int:
                 os.environ.get("P2P_REQUIRE_HARDWARE") == "1"
                 or os.environ.get("P2P_HARDWARE_STRICT") == "1"
             )
-            if require_hw:
+            if require_hw and not lab_mode:
                 if _production():
                     os.environ["P2P_FAIL_ON_SOFTWARE_FALLBACK"] = "1"
                 try:
@@ -17576,11 +17634,53 @@ def main(argv=None) -> int:
             native_cmd = [
                 str(NATIVE_BIN), "node",
                 "--role", args.role,
-                "--bind", _format_endpoint(args.bind, local_chan),
-                "--to", _format_endpoint(args.peer, peer_chan),
-                "--psk-file", psk_file,
                 "--callsign", args.name,
             ]
+            if psk_file:
+                native_cmd.extend(["--psk-file", psk_file])
+            if not is_tor_mode:
+                bind_ep = args.bind if ":" in args.bind else _format_endpoint(args.bind, local_chan)
+                native_cmd.extend(["--bind", bind_ep])
+            if to_arg:
+                native_cmd.extend(["--to", to_arg])
+            elif not is_tor_mode and not (is_stream_mode and args.role == "responder"):
+                native_cmd.extend(["--to", _format_endpoint(args.peer, peer_chan)])
+            if is_tor_mode:
+                native_cmd.append("--tor")
+            elif transport_arg:
+                native_cmd.extend(["--transport", transport_arg])
+            if zero_footprint:
+                native_cmd.append("--zero-footprint")
+            for attr, flag in (
+                ("tor_port", "--tor-port"),
+                ("tor_bridge_bin", "--tor-bridge-bin"),
+                ("tor_bridge_sha384", "--tor-bridge-sha384"),
+                ("onion_client_auth_pk", "--onion-client-auth-pk"),
+                ("onion_auth_sk_file", "--onion-auth-sk-file"),
+                ("quantum", "--quantum"),
+                ("interval_ms", "--interval-ms"),
+                ("tamaraw_l", "--tamaraw-l"),
+                ("pt_binary", "--pt-binary"),
+                ("pt_type", "--pt-type"),
+                ("pt_bridge", "--pt-bridge"),
+                ("pt_sha384", "--pt-sha384"),
+                ("msg", "--msg"),
+                ("count", "--count"),
+                ("recv_count", "--recv-count"),
+                ("drain_ticks", "--drain-ticks"),
+                ("timeout_ms", "--timeout-ms"),
+            ):
+                val = getattr(args, attr, None)
+                if val is not None:
+                    native_cmd.extend([flag, str(val)])
+            if getattr(args, "onion_auth_sk_stdin", False):
+                native_cmd.append("--onion-auth-sk-stdin")
+            if getattr(args, "onion_open_descriptor", False):
+                native_cmd.append("--onion-open-descriptor")
+            if getattr(args, "headless", False):
+                native_cmd.append("--headless")
+            if getattr(args, "stdin", False):
+                native_cmd.append("--stdin")
             if auth_sk_file:
                 native_cmd.extend(["--auth-sk-file", auth_sk_file])
             if auth_pkcs11_label:
@@ -17603,8 +17703,10 @@ def main(argv=None) -> int:
                 native_cmd.extend(["--pcrs", tpm_pcrs])
             if tpm_owner:
                 native_cmd.extend(["--tpm-owner", tpm_owner])
-            if args.kex_timeout:
-                native_cmd.extend(["--timeout-ms", str(args.kex_timeout * 1000)])
+            if getattr(args, "kex_timeout_ms", None) is not None:
+                native_cmd.extend(["--kex-timeout-ms", str(args.kex_timeout_ms)])
+            elif args.kex_timeout:
+                native_cmd.extend(["--kex-timeout-ms", str(args.kex_timeout * 1000)])
             print(f"\n{BOLD}{GREEN}[CANONICAL PRODUCTION PIPELINE] Launching standalone native Rust data plane:{RESET}")
             print(f"  {CYAN}{' '.join(native_cmd)}{RESET}")
             return subprocess.call(native_cmd)

@@ -1003,7 +1003,7 @@ $$
 
 ## 9. Machine-Checked Formal Analysis & Bounded Model Checking
 
-Symbolic models check the MODEL, not the running system. `handshake_model.pv` is a structural skeleton (intended properties NOT CI-enforced via ProVerif). The ProVerif models executed by `docs/formal/check.sh` hold inside their symbolic Dolev-Yao abstractions (perfect cryptography assumed; AES-GCM nonce uniqueness and constant-time memory hygiene sit outside the symbolic proof) — they are not a proof of the compiled Rust/Python implementation. In local environments without the Kani/CBMC toolchain installed (e.g., Windows workstations), the 6 `#[kani::proof]` harnesses in `rust_data_plane/tests/kani_harness.rs` are DEFINED (requiring `cargo kani` + CBMC on Linux) while the 8 deterministic property doubles execute under `cargo test`; on Linux CI ([`.github/workflows/kani-proofs.yml`](.github/workflows/kani-proofs.yml)), `cargo kani` runs the Kani harnesses under CBMC.
+Symbolic models check the MODEL, not the running system. `handshake_model.pv` is a structural skeleton (intended properties NOT CI-enforced via ProVerif). The ProVerif models executed by `docs/formal/check.sh` hold inside their symbolic Dolev-Yao abstractions (perfect cryptography assumed; AES-GCM nonce uniqueness and constant-time memory hygiene sit outside the symbolic proof) — they are not a proof of the compiled Rust/Python implementation. In local environments without the Kani/CBMC toolchain installed (e.g., Windows workstations), the 8 `#[kani::proof]` harnesses in `rust_data_plane/tests/kani_harness.rs` are DEFINED (requiring `cargo kani` + CBMC on Linux) while the 10 deterministic property doubles execute under `cargo test`; on Linux CI ([`.github/workflows/kani-proofs.yml`](.github/workflows/kani-proofs.yml)), `cargo kani` runs the Kani harnesses under CBMC.
 
 ```text
 +---------------------------------------------------------------------------------------------------------+
@@ -1035,7 +1035,9 @@ Symbolic models check the MODEL, not the running system. `handshake_model.pv` is
 |   ├── #[kani::proof] kani_replay_window_monotonic .................... DEFINED (runs in Linux Kani CI)  |
 |   ├── #[kani::proof] kani_max_stream_bytes_cap ....................... DEFINED (runs in Linux Kani CI)  |
 |   ├── #[kani::proof] kani_nostd_frame_parse_never_panics ............. DEFINED (runs in Linux Kani CI)  |
-|   ├── 8 deterministic property doubles + 44 harness-target tests green under `cargo test`               |
+|   ├── #[kani::proof] kani_stream_frame_len_decoder_bounds ............ DEFINED (runs in Linux Kani CI)  |
+|   ├── #[kani::proof] kani_tamaraw_shaper_epoch_modulo_bounds ......... DEFINED (runs in Linux Kani CI)  |
+|   ├── 10 deterministic property doubles + re-exported module unit tests execute green under `cargo test`  |
 |   └── NOTE: "HOLDS IN MODEL" applies strictly to the symbolic model; `cargo kani` requires Linux CBMC.  |
 +---------------------------------------------------------------------------------------------------------+
 ```

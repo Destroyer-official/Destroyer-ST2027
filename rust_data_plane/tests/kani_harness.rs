@@ -42,6 +42,8 @@ pub mod cookie;
 mod ct;
 #[path = "../src/nostd_microcore.rs"]
 pub mod nostd_microcore;
+#[path = "../src/shaper.rs"]
+pub mod shaper;
 
 /// Stream cap mirror: `destroyer_node.py::MAX_STREAM_BYTES = 16 * 1024 * 1024`.
 ///
@@ -49,10 +51,22 @@ pub mod nostd_microcore;
 /// pins the contract so Kani + `cargo test` guard the bound the
 /// stream assembler enforces (reject `len > MAX_STREAM_BYTES`).
 pub const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum length-prefixed data-plane frame on Tor / stream transports (`stream_transport.rs`).
+pub const MAX_DATA_STREAM_FRAME: usize = 1232;
 
 /// Pure acceptance predicate the future Rust stream assembler must enforce.
 pub fn stream_len_ok(len: usize) -> bool {
     len <= MAX_STREAM_BYTES
+}
+
+/// Fail-closed 2-byte big-endian length header decoder matching `stream_transport::read_stream_frame`.
+pub fn decode_stream_frame_len(hdr: [u8; 2], max_len: usize) -> Option<usize> {
+    let len = u16::from_be_bytes(hdr) as usize;
+    if len == 0 || len > max_len {
+        None
+    } else {
+        Some(len)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +205,63 @@ mod kani_proofs {
         let mut gate = super::cookie::StatelessCookieGate::with_secret([0x42; 32], 60, 256);
         let challenge = gate.create_challenge("127.0.0.1", port, b"M1_PREFIX", diff);
         kani::assert(!challenge.is_empty(), "challenge produced");
+    }
+
+    /// 7. Pure-Rust Tamaraw shaper modulo-L invariant and Tor quantum bounds:
+    /// `cells_in_epoch < batch_mod_l`, `Idle` never occurs mid-epoch or under cover,
+    /// and Tor-aligned `pad_to_explicit_quantum` preserves exact relay cell arithmetic.
+    #[kani::proof]
+    fn kani_tamaraw_shaper_epoch_modulo_bounds() {
+        let l: usize = kani::any();
+        kani::assume(l >= 1 && l <= 64);
+        let cover: bool = kani::any();
+        let has_ctrl: bool = kani::any();
+        let has_data: bool = kani::any();
+        let mut shaper = super::shaper::TamarawShaper::new(l, cover);
+        let act = shaper.next_action(has_ctrl, has_data);
+        kani::assert(shaper.cells_in_epoch() < l, "epoch index bounded by L");
+        if has_ctrl {
+            kani::assert(
+                act == super::shaper::TamarawAction::EmitControlOrRekey,
+                "control/rekey always preempts",
+            );
+        } else if has_data {
+            kani::assert(
+                act == super::shaper::TamarawAction::EmitData,
+                "app data emitted when idle of control",
+            );
+        } else if cover {
+            kani::assert(
+                act == super::shaper::TamarawAction::EmitChaff,
+                "continuous cover never enters idle",
+            );
+        }
+        let plen: usize = kani::any();
+        kani::assume(plen <= super::shaper::TOR_QUANTUM_SINGLE);
+        if let Some((q, pad)) =
+            super::shaper::pad_to_explicit_quantum(plen, super::shaper::TOR_QUANTUM_SINGLE)
+        {
+            kani::assert(q == super::shaper::TOR_QUANTUM_SINGLE, "exact 496B Tor quantum");
+            kani::assert(
+                plen + super::frame::FRAME_OVERHEAD + pad == q,
+                "exact padding sum",
+            );
+            kani::assert(q + 2 == super::shaper::TOR_RELAY_PAYLOAD_BYTES, "498B cell match");
+        }
+    }
+
+    /// 8. Fail-closed 2-byte big-endian stream frame length decoder:
+    /// Rejects 0-length headers and any length > MAX_DATA_STREAM_FRAME (1232B) before allocation.
+    #[kani::proof]
+    fn kani_stream_frame_len_decoder_bounds() {
+        let hdr = [kani::any::<u8>(), kani::any::<u8>()];
+        let decoded = super::decode_stream_frame_len(hdr, super::MAX_DATA_STREAM_FRAME);
+        let raw = u16::from_be_bytes(hdr) as usize;
+        if raw == 0 || raw > super::MAX_DATA_STREAM_FRAME {
+            kani::assert(decoded.is_none(), "zero and oversize headers fail closed");
+        } else {
+            kani::assert(decoded == Some(raw), "valid length decodes cleanly");
+        }
     }
 }
 
@@ -412,5 +483,55 @@ mod property_doubles {
 
         // Replay of same solution must fail (anti-replay cache):
         assert!(!gate.verify_response(&response, "127.0.0.1", 9000, m1_prefix, 2));
+    }
+
+    #[test]
+    fn tamaraw_shaper_epoch_modulo_invariant() {
+        use super::shaper::{
+            pad_to_explicit_quantum, TamarawAction, TamarawShaper, TOR_QUANTUM_DOUBLE,
+            TOR_QUANTUM_SINGLE, TOR_RELAY_PAYLOAD_BYTES,
+        };
+        assert_eq!(TOR_QUANTUM_SINGLE + 2, TOR_RELAY_PAYLOAD_BYTES);
+        assert_eq!(TOR_QUANTUM_DOUBLE + 2, TOR_RELAY_PAYLOAD_BYTES * 2);
+
+        for l in [1usize, 4, 8, 16, 32] {
+            let mut s = TamarawShaper::new(l, false);
+            for burst in 1..=l + 3 {
+                assert_eq!(s.next_action(false, true), TamarawAction::EmitData);
+                assert!(s.cells_in_epoch() < l);
+                if burst == 2 {
+                    assert_eq!(s.next_action(true, true), TamarawAction::EmitControlOrRekey);
+                }
+            }
+            while s.cells_in_epoch() != 0 {
+                assert_eq!(s.next_action(false, false), TamarawAction::EmitChaff);
+            }
+            assert_eq!((s.real_cells + s.chaff_cells) % (l as u64), 0);
+            assert_eq!(s.next_action(false, false), TamarawAction::Idle);
+        }
+
+        let (q, pad) = pad_to_explicit_quantum(100, TOR_QUANTUM_SINGLE).expect("fits 496B");
+        assert_eq!(q, 496);
+        assert_eq!(100 + frame::FRAME_OVERHEAD + pad, 496);
+        assert!(pad_to_explicit_quantum(470, TOR_QUANTUM_SINGLE).is_none());
+    }
+
+    #[test]
+    fn stream_frame_len_decoder_bounds_sweep() {
+        assert_eq!(
+            super::decode_stream_frame_len(0u16.to_be_bytes(), super::MAX_DATA_STREAM_FRAME),
+            None
+        );
+        for v in 1u16..=u16::MAX {
+            let dec = super::decode_stream_frame_len(
+                v.to_be_bytes(),
+                super::MAX_DATA_STREAM_FRAME,
+            );
+            if (v as usize) <= super::MAX_DATA_STREAM_FRAME {
+                assert_eq!(dec, Some(v as usize));
+            } else {
+                assert_eq!(dec, None);
+            }
+        }
     }
 }
