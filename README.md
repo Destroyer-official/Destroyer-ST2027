@@ -549,6 +549,18 @@ an external adversary observing packet departure events learns zero statistical 
 - **Chaff Injection (`FTYPE_CHAFF`):** If no operator keystrokes or data frames are queued when the tick fires, a fixed-quantum pseudorandom chaff frame (Type `0xFF`) is encrypted and transmitted (`1232B` UDP datagram / `496B` Tor-cell stream frame).
 - **Constant-Quantum Paced Stream KEX (`PacedKexConfig`):** In `--transport stream` and `--tor` modes, `Noise_XXhfs` (`M1`/`M2`/`M3`) is segmented and Tamaraw-padded with CSPRNG cover cells strictly into fixed `quantum` (`496B`) cells from byte 0 (`in_stream_kex_paced_*`), eliminating the unshaped ~1.6 KB / ~8.9 KB / ~6.0 KB handshake burst fingerprint on the wire and inside the `secure-transmit-tor` IPC boundary (`--quantum` guard).
 - **Session-Edge & Bandwidth Trade-Off Controls:** `--pre-cover-ticks` / `--post-cover-ticks` smear session start/stop transitions, and `--burst-only` switches `TamarawShaper` to finite `L`-cell burst-tail padding (omitting continuous idle ticks). Consistent with the Anonymity Trilemma (Das et al., CCS '18) and statistical disclosure / intersection limits, low-latency point-to-point transport (even over Tor v3 with `Vanguards::Full`) still cannot provide mathematical unlinkability against an omniscient Global Passive Adversary (GPA) observing both endpoints simultaneously.
+- **Relay & Dead-Drop Sealed-Sender Metadata Privacy (`BP7AN1` & `dtn-decoy`):** When latency tolerance allows asynchronous store-and-forward transfer, `dtn-seal --anonymous` wraps the `BP7PQC` 0-RTT bundle (`source_eid`, `destination_eid`, `creation_time`, pinned `sender_mldsa_pub`, and payload) inside a `BP7AN1` outer container using Key-Private (`IK-CCA`, Bellare et al.) `ML-KEM-1024` encapsulation + `HKDF-SHA512` + `AES-256-GCM` padded with CSPRNG bytes to fixed power-of-2 buckets (`>= 16 KiB`), stripping all plaintext routing/sender/size metadata from relays and untrusted storage. `dtn-decoy` generates wire-indistinguishable cover envelopes, and `dtn-open --anonymous` refuses unsealed `BP7PQC` downgrade bundles fail-closed.
+
+#### Peer-Reviewed GPA & Traffic-Analysis Boundary (Solved vs. Out-of-Scope / Bounded)
+
+| Threat / Problem Class | Research Status & Citation | ST2027 Status & Code/Spec Mapping |
+| :--- | :--- | :--- |
+| **Clear Handshake Burst & IPC Cell Leakage** | Solved via constant-quantum handshake framing (`Tamaraw`, Cai et al. CCS '14) | **Implemented:** `PacedKexConfig` / `in_stream_kex_paced_{initiator,responder}` (`496B` cells from byte 0 in `stream_transport.rs`) + MILS `--quantum` guard (`tor_transport/src/main.rs`). |
+| **Session-Edge Timing & Idle Bandwidth Bloat** | Solved via memoryless Poisson cover, edge smearing & bounded burst tails (`Shmatikov`/`Tamaraw`) | **Implemented:** `--poisson`, `--pre-cover-ticks`, `--post-cover-ticks`, `--burst-only` (`shaper.rs`), deferred `stream:`/`channel:` `EMIT_MSG` logs, RAM-only UDP KEX (`negotiate_ephemeral_kex_in_memory`). |
+| **Tor Directory / Guard Narrowing & Bridge Spoofing** | Mitigated via Restricted Discovery & Layer 2/3 Vanguards + SHA-384 pinning | **Implemented:** `ArtiEphemeralKeystore`, `ClientAuthV3`, `vanguards = Full`, `--tor-bridge-sha384`, `--pt-sha384` (`tor_transport/src/main.rs`). |
+| **Offline Relay / Dead-Drop Metadata & Size Leakage** | Solved via Key-Private PKE (`IK-CCA`, Bellare et al. ASIACRYPT '01) + Signal Sealed Sender + fixed bucket padding | **Implemented:** `BP7AN1` outer envelope (`to_anonymous_bytes` / `from_anonymous_bytes_pinned` in `dtn_bundle.rs`, `>= 16 KiB` power-of-2 buckets), `dtn-seal --anonymous`, `dtn-open --anonymous`, `dtn-decoy`. |
+| **Continuous Multi-Relay Crowd Mixnets & FHE Blind Retrieval** | Solved in literature via `Loopix` (USENIX '17), `Vuvuzela` (SOSP '15), `Karaoke` (OSDI '18), `OMR` (CRYPTO '22) | **Requires External Multi-Party Infra:** Independent crowd-operated mix relays or FHE OMR retrieval servers cannot be synthesized by two standalone P2P endpoints. |
+| **Omniscient GPA on Low-Latency Flows & Long-Term Intersection (SDA)** | **Mathematically Bounded** by the Anonymity Trilemma ($2^{\ell}(\beta + p') \ge 1$, Das et al. IEEE S&P '18 / PETS '20) and Danezis Statistical Disclosure | **Explicitly Disclosed Non-Claim:** Low-latency P2P cannot achieve strong unlinkability without latency/cover penalties against a GPA watching both endpoints; without FHE OMR servers, shared dead-drop boards require `O(N)` download / trial decapsulation. |
 
 ### 3.13 Stateless Anti-DoS Cookie Challenge Gate
 
@@ -1215,7 +1227,7 @@ cargo build --manifest-path rust_data_plane/Cargo.toml --features lab-surfaces -
 
 ### 11.2 Native Data-Plane Command Catalog (`secure-transmit` & `verify-binaries`)
 
-In [`rust_data_plane/src/main.rs`](rust_data_plane/src/main.rs), `secure-transmit` dispatches **33 subcommands** (`zeroize` also aliases `purge`), while standalone binary `verify-binaries` ([`rust_data_plane/src/bin/verify_binaries.rs`](rust_data_plane/src/bin/verify_binaries.rs)) performs out-of-process SHA-384 and SHA3-512 verification of `oqs.dll` and `libsodium.dll`. Commands marked `[lab-surfaces only]` are compiled out in release `--no-default-features` builds:
+In [`rust_data_plane/src/main.rs`](rust_data_plane/src/main.rs), `secure-transmit` dispatches **38 subcommands** (`zeroize` also aliases `purge`), while standalone binary `verify-binaries` ([`rust_data_plane/src/bin/verify_binaries.rs`](rust_data_plane/src/bin/verify_binaries.rs)) performs out-of-process SHA-384 and SHA3-512 verification of `oqs.dll` and `libsodium.dll`. Commands marked `[lab-surfaces only]` are compiled out in release `--no-default-features` builds:
 
 | Command | Category | Purpose & Security Enforcement |
 | --- | --- | --- |
@@ -1237,6 +1249,10 @@ In [`rust_data_plane/src/main.rs`](rust_data_plane/src/main.rs), `secure-transmi
 | `diode-recv` | Cross-Domain | Reconstructs diode stream from any $K$ received packets without return ACKs. |
 | `doc-seal` | Storage Envelope | Encrypts static document artifact with authenticated AEAD envelope & metadata. |
 | `doc-open` | Storage Envelope | Authenticates and decrypts sealed document envelope (fail-closed on tamper). |
+| `dtn-keygen` | DTN Dead-Drop | Generates 0-RTT ML-KEM-1024 recipient identity keypair (`0600` seed DK + EK). |
+| `dtn-seal` | DTN Dead-Drop | Seals RFC 9171 0-RTT bundle (`ML-KEM-1024` + pinned `ML-DSA-87`); `--anonymous` emits `BP7AN1` Key-Private sealed-sender buckets (`>= 16 KiB`). |
+| `dtn-open` | DTN Dead-Drop | Verifies pinned sender `ML-DSA-87` and lifetime, then opens `BP7AN1`/`BP7PQC` (`--anonymous` rejects unsealed `BP7PQC` downgrades). |
+| `dtn-decoy` | DTN Dead-Drop | Generates wire-indistinguishable `BP7AN1` CSPRNG decoy envelopes (`>= 16 KiB` or custom `--bucket-bytes`). |
 | `stream-chaff` | Anti-SIGINT | Emits continuous CSPRNG chaff cells with CBR, Poisson pacing, or tactical profiles (`--poisson`, `--tactical-profile`). |
 | `channel` | Enclave Link | Full-duplex paced link with directional nonces, in-band CER ratchets, and tactical profiles. |
 | `terminal` | Tactical C2 | Interactive tactical operator terminal with FIFO keystroke decoupling and ANSI anti-forensic screen wipe. |
@@ -1495,6 +1511,33 @@ Deploying Emergency Action Messages (`/eam`) in production requires physical spl
   --max-skew-ms 2000
 ```
 
+### 11.11 Anonymous DTN Sealed-Sender & Decoy Dead-Drops (`BP7AN1`)
+
+For store-and-forward delivery over untrusted relays, shared buckets, or air-gapped couriers where sender and recipient cannot be online simultaneously (eliminating bidirectional timing correlation), seal payloads inside Key-Private `BP7AN1` envelopes (`>= 16 KiB` power-of-2 buckets) alongside indistinguishable `dtn-decoy` cover blobs:
+
+```bash
+# 1. Recipient generates 0-RTT ML-KEM-1024 decapsulation seed (0600 custody) & shareable EK:
+./rust_data_plane/target/release/secure-transmit dtn-keygen \
+  --out-dk keys/recip.dtn.dk --out-ek keys/recip.dtn.ek
+
+# 2. Sender seals a 0-RTT authenticated message inside a fixed-bucket BP7AN1 envelope
+#    (hiding source EID, destination EID, timestamp, sender ML-DSA-87 PK, and payload length):
+./rust_data_plane/target/release/secure-transmit dtn-seal \
+  --src-eid dtn://alpha.nc3 --dst-eid dtn://bravo.nc3 \
+  --recipient-ek-file keys/recip.dtn.ek --out drop/msg_01.bp7 \
+  --msg "OFFLINE-0RTT-PAYLOAD" --auth-tpm-sealed keys/alpha.tpm.priv --anonymous
+
+# 3. Emit CSPRNG-indistinguishable BP7AN1 decoy cells matching the same bucket size:
+./rust_data_plane/target/release/secure-transmit dtn-decoy \
+  --out drop/decoy_01.bp7 --bucket-bytes 16384
+
+# 4. Recipient verifies pinned sender ML-DSA-87 identity + lifetime and opens fail-closed
+#    (--anonymous refuses unsealed BP7PQC downgrades, decoy cells, or wrong sender pins):
+./rust_data_plane/target/release/secure-transmit dtn-open \
+  --dk-file keys/recip.dtn.dk --sender-auth-pk-file keys/alpha.auth.pk \
+  --in drop/msg_01.bp7 --out recovered.txt --anonymous
+```
+
 ---
 
 ## 12. Standards & Authorizing Official (AO) Compliance Matrix
@@ -1627,6 +1670,7 @@ In compliance with defense engineering ethics, the following boundaries are expl
 2. **Authorizing Official (AO) Accreditation & CMT Laboratory Evaluation:** Execution of automated tests and generation of OSCAL artifacts does not constitute a formal government Authority to Operate (ATO). Formal accreditation requires evaluation by an accredited testing laboratory and approval by the designated Authorizing Official. To operationalize this transition, the repository provides `scripts/package_cmt_laboratory_submittal.py` which compiles the 12-section Cryptographic Module Security Policy (`docs/FIPS_140_3_SECURITY_POLICY.md`), machine-readable OSCAL SSP/SAR, ACVP test evidence, and signed CBOM/SBOMs into a sealed, ML-DSA-87 signed submittal packet (`compliance_reports/cmt_lab_submission_packet.tar.gz`) for laboratory ingestion.
 3. **Draft Standards & Custom Handshake Governance:** Algorithm bindings strictly follow NIST FIPS 203, FIPS 204, and FIPS 205 final standards (August 2024). Emerging draft standards are intentionally excluded until finalization and inclusion in NSA CNSA guidance. **Custom protocol disclosure:** the Python `Noise_XXhfs_P384_MLKEM1024_MLDSA87_AES256GCM_SHA384` handshake substitutes FIPS 204 ML-DSA-87 signatures for classical Noise static-key DH (`es`/`se`); it has **no formal cryptographic reduction** to the Noise `hfs` draft or Signal PQNoise and has **not undergone independent third-party cryptanalytic review**. Operators requiring strict exclusion of unreviewed custom handshakes can enforce `P2P_STANDARDS_TRACK_ONLY=1` (`--standards-track-only`), which refuses `Noise_XXhfs` fail-closed and restricts transport to **PQ-hybrid TLS 1.3 (`RFC 10024`)** or native Rust **`kex_auth`**.
 4. **Proof Scope Boundary (ProVerif & Kani vs. Runtime Code):** Symbolic ProVerif 2.05 models in [`docs/formal/`](docs/formal/) verify Dolev-Yao properties of the **abstract protocol models** — not the concrete Python or Rust code paths. Similarly, `rust_data_plane` Kani harnesses verify targeted Rust functions within bounded CBMC unwinding limits; neither constitutes a whole-program equivalence proof.
+5. **Global Passive Adversary (GPA) & Long-Term Intersection Boundary:** While `PacedKexConfig` (`496B` cells from byte 0), `--poisson` cover pacing, `Vanguards::Full` + `ClientAuthV3`, and `BP7AN1` Key-Private sealed-sender `>= 16 KiB` dead-drops resolve local burst, cell-alignment, and untrusted relay-metadata leaks, low-latency point-to-point transport remains bound by the Anonymity Trilemma ($2^{\ell}(\beta + p') \ge 1$) against an omniscient GPA watching both ends, human uptime churn remains susceptible to long-term Statistical Disclosure Attacks unless asynchronous (`BP7AN1`) or continuous `Loopix`/`Vuvuzela` crowd mixnets are used, and serverless `BP7AN1` shared boards trade FHE OMR (`CRYPTO '22`) server complexity for `O(N)` download / trial decapsulation.
 
 ---
 
@@ -1663,9 +1707,13 @@ In compliance with defense engineering ethics, the following boundaries are expl
    - *SDIP-28/3: NATO TEMPEST Installation Zoning Scheme*, 2020.
    - *STANAG 4591: The 2400 bps and 1200 bps Variable Data Rate Mixed Excitation Linear Predictive Enhanced (MELPe) Speech Compression Algorithm*, 2010.
 7. **Academic & Formal Verification Literature:**
+   - Bellare, M., Boldyreva, A., Desai, A., Pointcheval, D.: *Key-Privacy in Public-Key Encryption*, ASIACRYPT 2001 (IK-CCA security formalized for sealed-sender KEM/PKE routing).
    - Blanchet, B.: *Modeling and Verifying Security Protocols with the Applied Pi-Calculus and ProVerif*, Foundations and Trends in Privacy and Security, 2016.
-   - Perrin, T.: *The Noise Protocol Framework Specification*, Revision 34, 2018.
+   - Das, D., Meiser, S., Mohammadi, E., Kate, A.: *Anonymity Trilemma: Strong Anonymity, Low Bandwidth Overhead, Low Latency — Choose Two*, IEEE S&P 2018 / PoPETS 2020.
    - Klein, G. et al.: *seL4: Formal Verification of an OS Kernel*, Communications of the ACM, 2010.
+   - Liu, Z., Tromer, E.: *Oblivious Message Retrieval*, CRYPTO 2022.
+   - Perrin, T.: *The Noise Protocol Framework Specification*, Revision 34, 2018.
+   - Piotrowska, A. M., Hayes, J., Elahi, T., Meiser, S., Danezis, G.: *The Loopix Anonymity System*, 26th USENIX Security Symposium, 2017.
    - Song, D. X., Wagner, D., Tian, X.: *Timing Analysis of Keystrokes and Timing Attacks on SSH*, 10th USENIX Security Symposium, 2001.
 
 ---

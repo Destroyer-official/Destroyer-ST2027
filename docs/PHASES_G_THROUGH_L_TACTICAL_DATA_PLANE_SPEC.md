@@ -52,10 +52,11 @@ Phase G implements RFC 9171 Bundle Protocol v7 (BPv7) with non-interactive 0-RTT
      $$P_{(a, b)} = P_{(a, b)\text{old}} + (1 - P_{(a, b)\text{old}}) \cdot P_{\text{encounter}}$$
    - **Custody Transfer:** Hop-by-hop custody signals (`BundleCustodySignal`) guarantee zero message loss across contested relays.
 
-### 1.3 Primary Implementation Files
-- Rust Data Plane: [`rust_data_plane/src/dtn_bundle.rs`](../rust_data_plane/src/dtn_bundle.rs)
+### 1.3 Primary Implementation Files & Anonymous `BP7AN1` Sealed-Sender Container
+- Rust Data Plane: [`rust_data_plane/src/dtn_bundle.rs`](../rust_data_plane/src/dtn_bundle.rs) (`dtn-keygen`, `dtn-seal [--anonymous [--bucket-bytes N]]`, `dtn-open [--anonymous]`, `dtn-decoy`)
+- **Key-Private Dead-Drop Container (`BP7AN1`):** Wrapping a serialized `BP7PQC` 0-RTT bundle inside `BP7AN1` (`ML-KEM-1024` Key-Private encapsulation + `HKDF-SHA512` + `AES-256-GCM` padded to `>= 16 KiB` power-of-2 buckets) strips cleartext source/destination EIDs, creation timestamp, sender ML-DSA-87 public key, inner magic, and payload length from relays/storage while `dtn-decoy` emits wire-indistinguishable cover blobs. `dtn-open --anonymous` refuses unsealed `BP7PQC` downgrade bundles fail-closed.
 - Python Mesh Router: [`network/dtn_mesh_router.py`](../network/dtn_mesh_router.py)
-- Test Suite: [`tests/test_dtn_zero_rtt_mesh.py`](../tests/test_dtn_zero_rtt_mesh.py) (14/14 passed)
+- Test Suite: [`tests/test_dtn_zero_rtt_mesh.py`](../tests/test_dtn_zero_rtt_mesh.py) and `tests/test_tor_and_stream_plane.py::test_dtn_anonymous_sealed_sender_and_decoy_hide_metadata`
 
 ---
 

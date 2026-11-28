@@ -104,7 +104,7 @@ The modern 2027 production target is orchestrated by [`secure_transmit_2027.py`]
 
 ### A. Automated Test Gates (100% Pass)
 
-The codebase is validated by the full automated battery (Python suites plus 340 `cargo test --locked --no-default-features` Rust tests: 276 library unit tests + 12 DudeCT timing tests + 49 Kani/property harness tests + 2 MTU framing tests + 1 doc-test, plus 5 tests in `tor_transport`; 8 `#[kani::proof]` harnesses executed under CBMC in Linux CI via `kani-proofs.yml`) maintaining zero regressions:
+The codebase is validated by the full automated battery (Python suites plus 344 `cargo test --locked --no-default-features` Rust tests: 280 library unit tests + 12 DudeCT timing tests + 49 Kani/property harness tests + 2 MTU framing tests + 1 doc-test, plus 5 tests in `tor_transport`; 8 `#[kani::proof]` harnesses executed under CBMC in Linux CI via `kani-proofs.yml`) maintaining zero regressions:
 
 ```bash
 # Execute the unified 2027 Top-Secret + Tor/stream test battery

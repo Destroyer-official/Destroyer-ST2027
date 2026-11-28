@@ -127,8 +127,8 @@ To enforce comprehensive security controls across electronic warfare (EW), signa
 ```
 
 ### Phase G: Asynchronous DTN & 0-RTT Post-Quantum Mesh
-- **Threat Model:** Contested space-to-ground, lunar/orbital delay, and deep subterranean bunker links characterized by intermittent, asymmetric, or disrupted connectivity.
-- **Protocol:** Implements RFC 9171 Bundle Protocol v7 (BPv7) with asynchronous 0-RTT ML-KEM-1024 envelopes. Eliminates multi-round-trip handshakes, enabling instantaneous first-packet decryption.
+- **Threat Model:** Contested space-to-ground, lunar/orbital delay, deep subterranean bunker links, and untrusted dead-drop relays characterized by intermittent connectivity or required uptime decoupling.
+- **Protocol:** Implements RFC 9171 Bundle Protocol v7 (BPv7) with asynchronous 0-RTT ML-KEM-1024 + pinned ML-DSA-87 envelopes (`dtn-keygen`/`dtn-seal`/`dtn-open`) and optional `BP7AN1` Key-Private sealed-sender outer containers (`dtn-seal --anonymous` / `dtn-open --anonymous` / `dtn-decoy`) padded to `>= 16 KiB` power-of-2 buckets to conceal EIDs, sender public keys, timestamps, and message sizes on untrusted relays.
 - **Routing:** Contact Graph Routing (CGR) and Probabilistic Routing using History of Encounters (PRoPHET) with multi-priority custody transfer (`CustodyManager`).
 
 ### Phase H: Post-Quantum Zero-Knowledge Identity Attestation (PQ-ZKP)
@@ -162,7 +162,7 @@ To enforce comprehensive security controls across electronic warfare (EW), signa
 
 ```bash
 # Unified Rust Data Plane & Tor Transport Bridge Verification:
-cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features  # 340 passed, 0 failed
+cargo test --manifest-path rust_data_plane/Cargo.toml --locked --no-default-features  # 344 passed, 0 failed
 cargo test --manifest-path tor_transport/Cargo.toml --locked                         # 5 passed, 0 failed
 
 # Unified Python Tactical Battery (53 Tests Passed in 1.96s):
