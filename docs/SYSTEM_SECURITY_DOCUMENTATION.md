@@ -486,7 +486,7 @@ exponential Poisson pacing (`--poisson`), session-edge cover smear
 (`--pre-cover-ticks` / `--post-cover-ticks`), finite burst-tail
 shaping (`--burst-only`), zero-disk-temp RAM KEX (`LockedKey32`), and
 offline 0-RTT ML-KEM-1024 + pinned ML-DSA-87 RFC 9171 DTN bundles
-(`dtn-keygen`, `dtn-seal`, `dtn-open`) for uptime-decoupled relays.
+(`dtn-keygen`, `dtn-seal [--anonymous]`, `dtn-open [--anonymous]`, `dtn-decoy`) for uptime-decoupled relays and `BP7AN1` Key-Private sealed-sender fixed-bucket dead-drops.
 
 ### 6.3 Supply chain (Tier-2 trade controls)
 

@@ -31,6 +31,12 @@ use crate::policy::{CoreError, MLDSA87_PK, MLDSA87_SIG};
 
 /// RFC 9171 Magic Wire Header for Post-Quantum DTN Bundles.
 pub const DTN_MAGIC: &[u8; 6] = b"BP7PQC";
+/// Wire Magic for Key-Private Sealed-Sender Anonymous DTN Envelopes (hides sender/receiver/size).
+pub const DTN_ANON_MAGIC: &[u8; 6] = b"BP7AN1";
+/// Minimum quantized bucket size for Sealed-Sender Anonymous DTN Envelopes (16 KiB).
+pub const DTN_ANON_MIN_BUCKET: usize = 16 * 1024;
+/// Fixed outer overhead for `BP7AN1`: `magic(6) + MLKEM1024_CT(1568) + nonce(12) + GCM_TAG(16)`.
+const ANON_OUTER_OVERHEAD: usize = 6 + MLKEM_CT + 12 + 16;
 
 /// RFC 9171 Bundle Protocol Version.
 pub const BP_VERSION_7: u8 = 7;
@@ -52,6 +58,7 @@ pub const DEFAULT_HOP_LIMIT: u32 = 32;
 /// Domain separation tags.
 const DOMAIN_0RTT_KDF: &[u8] = b"RFC9171-BPv7-0RTT-MLKEM1024-AES256GCM";
 const DOMAIN_0RTT_SIGN: &[u8] = b"RFC9171-BPv7-0RTT-SIGNATURE-MLDSA87:";
+const DOMAIN_ANON_SEAL_KDF: &[u8] = b"BP7AN1-SEALED-SENDER-MLKEM1024-V1";
 
 /// ML-KEM-1024 Keypair container for DTN node identity.
 pub struct DtnMlKemKeypair {
@@ -558,6 +565,139 @@ impl DtnBundle {
         out
     }
 
+    /// Wrap this bundle in a key-private (`ML-KEM-1024` IK-CCA) fixed-bucket **Sealed-Sender**
+    /// anonymous wire envelope (`BP7AN1`), hiding `source_eid`, `destination_eid`, timestamp,
+    /// `sender_mldsa_pub`, and exact message length under AES-256-GCM before storing or relaying.
+    pub fn to_anonymous_bytes(
+        &self,
+        recipient_mlkem_pk: &[u8],
+        bucket_bytes_opt: Option<usize>,
+    ) -> Result<Vec<u8>, CoreError> {
+        if recipient_mlkem_pk.len() != MLKEM_PK {
+            return Err(CoreError::Malformed);
+        }
+        let inner = zeroize::Zeroizing::new(self.to_bytes());
+        let min_needed = ANON_OUTER_OVERHEAD
+            .checked_add(4)
+            .and_then(|n| n.checked_add(inner.len()))
+            .ok_or(CoreError::Oversize)?;
+        let total_len = match bucket_bytes_opt {
+            Some(b) => {
+                if b < min_needed || b > 32 * 1024 * 1024 {
+                    return Err(CoreError::Oversize);
+                }
+                b
+            }
+            None => {
+                let auto = min_needed.checked_next_power_of_two().ok_or(CoreError::Oversize)?;
+                let target = auto.max(DTN_ANON_MIN_BUCKET);
+                if target > 32 * 1024 * 1024 {
+                    return Err(CoreError::Oversize);
+                }
+                target
+            }
+        };
+
+        let pt_len = total_len - ANON_OUTER_OVERHEAD;
+        let mut pt = zeroize::Zeroizing::new(vec![0u8; pt_len]);
+        getrandom::fill(pt.as_mut_slice()).map_err(|_| CoreError::Malformed)?;
+        pt[0..4].copy_from_slice(&(inner.len() as u32).to_be_bytes());
+        pt[4..4 + inner.len()].copy_from_slice(&inner);
+
+        let (kem_ct, shared_secret) =
+            crate::kem::encapsulate_mlkem(recipient_mlkem_pk).map_err(|_| CoreError::Malformed)?;
+        let hk = Hkdf::<Sha512>::new(Some(&kem_ct), shared_secret.as_slice());
+        let mut okm = zeroize::Zeroizing::new([0u8; 44]);
+        hk.expand(DOMAIN_ANON_SEAL_KDF, &mut *okm)
+            .map_err(|_| CoreError::Malformed)?;
+
+        let mut key_bytes = zeroize::Zeroizing::new([0u8; 32]);
+        key_bytes.copy_from_slice(&okm[0..32]);
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&okm[32..44]);
+
+        let mut aad = [0u8; 14];
+        aad[0..6].copy_from_slice(DTN_ANON_MAGIC);
+        aad[6..14].copy_from_slice(&(total_len as u64).to_be_bytes());
+
+        let cipher = Aes256Gcm::new_from_slice(&*key_bytes).map_err(|_| CoreError::Malformed)?;
+        let ct = cipher
+            .encrypt(
+                &Nonce::from(nonce_bytes),
+                Payload {
+                    msg: &pt,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| CoreError::Malformed)?;
+
+        let mut out = Vec::with_capacity(total_len);
+        out.extend_from_slice(DTN_ANON_MAGIC);
+        out.extend_from_slice(&kem_ct);
+        out.extend_from_slice(&nonce_bytes);
+        out.extend_from_slice(&ct);
+        if out.len() != total_len {
+            return Err(CoreError::Malformed);
+        }
+        Ok(out)
+    }
+
+    /// Decapsulate, authenticate, and verify a key-private `BP7AN1` anonymous DTN envelope,
+    /// enforcing pinned sender `ML-DSA-87` verifying key before releasing inner bundle + plaintext.
+    pub fn from_anonymous_bytes_pinned(
+        wire: &[u8],
+        recipient_dk: &DecapsulationKey<MlKem1024>,
+        expected_sender_mldsa_pk: &[u8],
+    ) -> Result<(Self, Vec<u8>), CoreError> {
+        if expected_sender_mldsa_pk.len() != MLDSA87_PK {
+            return Err(CoreError::Malformed);
+        }
+        if wire.len() < ANON_OUTER_OVERHEAD + 4
+            || wire.len() > 32 * 1024 * 1024
+            || &wire[..6] != DTN_ANON_MAGIC
+        {
+            return Err(CoreError::Malformed);
+        }
+        let kem_ct_slice = &wire[6..6 + MLKEM_CT];
+        let nonce_slice = &wire[6 + MLKEM_CT..18 + MLKEM_CT];
+        let ct = &wire[18 + MLKEM_CT..];
+
+        let ct_arr: [u8; MLKEM_CT] = kem_ct_slice.try_into().map_err(|_| CoreError::Malformed)?;
+        let shared_secret: SharedKey<MlKem1024> = recipient_dk.decapsulate(&ct_arr.into());
+        let hk = Hkdf::<Sha512>::new(Some(kem_ct_slice), shared_secret.as_slice());
+        let mut okm = zeroize::Zeroizing::new([0u8; 44]);
+        hk.expand(DOMAIN_ANON_SEAL_KDF, &mut *okm)
+            .map_err(|_| CoreError::Malformed)?;
+
+        if !ct_eq(nonce_slice, &okm[32..44]) {
+            return Err(CoreError::Malformed);
+        }
+        let mut key_bytes = zeroize::Zeroizing::new([0u8; 32]);
+        key_bytes.copy_from_slice(&okm[0..32]);
+
+        let mut aad = [0u8; 14];
+        aad[0..6].copy_from_slice(DTN_ANON_MAGIC);
+        aad[6..14].copy_from_slice(&(wire.len() as u64).to_be_bytes());
+
+        let cipher = Aes256Gcm::new_from_slice(&*key_bytes).map_err(|_| CoreError::Malformed)?;
+        let nonce_arr: [u8; 12] = nonce_slice.try_into().map_err(|_| CoreError::Malformed)?;
+        let pt = zeroize::Zeroizing::new(
+            cipher
+                .decrypt(&Nonce::from(nonce_arr), Payload { msg: ct, aad: &aad })
+                .map_err(|_| CoreError::Malformed)?,
+        );
+        if pt.len() < 4 {
+            return Err(CoreError::Malformed);
+        }
+        let inner_len = u32::from_be_bytes(pt[0..4].try_into().map_err(|_| CoreError::Malformed)?) as usize;
+        if inner_len == 0 || 4usize.checked_add(inner_len).is_none_or(|end| end > pt.len()) {
+            return Err(CoreError::Malformed);
+        }
+        let bundle = Self::from_bytes(&pt[4..4 + inner_len])?;
+        let plaintext = bundle.open_0rtt_pinned(recipient_dk, expected_sender_mldsa_pk)?;
+        Ok((bundle, plaintext))
+    }
+
     /// Deserializes a bundle from RFC 9171 Post-Quantum Wire Format.
     pub fn from_bytes(wire: &[u8]) -> Result<Self, CoreError> {
         if wire.len() < 50 || &wire[..6] != DTN_MAGIC {
@@ -737,6 +877,22 @@ impl DtnBundle {
             payload,
         })
     }
+}
+
+/// Generate a computationally indistinguishable `BP7AN1` anonymous decoy envelope
+/// (`[DTN_ANON_MAGIC | valid fresh ML-KEM-1024 ct | CSPRNG bytes]`) of exact `bucket_bytes` size
+/// for dead-drop / bulletin-board cover padding.
+pub fn generate_anonymous_decoy(bucket_bytes: usize) -> Result<Vec<u8>, CoreError> {
+    if !(DTN_ANON_MIN_BUCKET..=32 * 1024 * 1024).contains(&bucket_bytes) {
+        return Err(CoreError::Oversize);
+    }
+    let ephem = DtnMlKemKeypair::generate()?;
+    let (kem_ct, _) = crate::kem::encapsulate_mlkem(&ephem.ek_bytes).map_err(|_| CoreError::Malformed)?;
+    let mut out = vec![0u8; bucket_bytes];
+    out[0..6].copy_from_slice(DTN_ANON_MAGIC);
+    out[6..6 + MLKEM_CT].copy_from_slice(&kem_ct);
+    getrandom::fill(&mut out[6 + MLKEM_CT..]).map_err(|_| CoreError::Malformed)?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -925,5 +1081,72 @@ mod tests {
                 .unwrap(),
             b"authentic 0rtt dead-drop"
         );
+    }
+
+    #[test]
+    fn test_anonymous_sealed_sender_hides_metadata_and_indistinguishable_decoy() {
+        let recipient = DtnMlKemKeypair::generate().unwrap();
+        let recipient2 = DtnMlKemKeypair::generate().unwrap();
+        let (sender_sk, sender_vk) = Mldsa87SigningKey::generate().unwrap();
+        let (attacker_sk, attacker_vk) = Mldsa87SigningKey::generate().unwrap();
+        let sender_pk = sender_vk.to_bytes();
+
+        let short = DtnBundle::create_0rtt_with_signer(
+            "dtn://secret-station-alpha",
+            "dtn://secret-sub-bravo",
+            "dtn://secret-station-alpha/rep",
+            1700000000123,
+            99,
+            60000,
+            8,
+            &recipient.ek_bytes,
+            &AuthSigner::SoftwareOrTpmUnsealed(sender_sk),
+            b"X",
+        )
+        .unwrap();
+        let long = DtnBundle::create_0rtt_with_signer(
+            "dtn://other",
+            "dtn://dest2",
+            "dtn://other/rep",
+            1700000000123,
+            100,
+            60000,
+            8,
+            &recipient.ek_bytes,
+            &AuthSigner::SoftwareOrTpmUnsealed(attacker_sk),
+            &[0x41u8; 900],
+        )
+        .unwrap();
+
+        let w_short = short.to_anonymous_bytes(&recipient.ek_bytes, None).unwrap();
+        let w_long = long.to_anonymous_bytes(&recipient.ek_bytes, None).unwrap();
+        let decoy = generate_anonymous_decoy(DTN_ANON_MIN_BUCKET).unwrap();
+
+        // Identical fixed 16384B wire buckets across distinct payload lengths and decoys.
+        assert_eq!(w_short.len(), DTN_ANON_MIN_BUCKET);
+        assert_eq!(w_long.len(), DTN_ANON_MIN_BUCKET);
+        assert_eq!(decoy.len(), DTN_ANON_MIN_BUCKET);
+        assert_eq!(&w_short[..6], DTN_ANON_MAGIC);
+        assert_eq!(&decoy[..6], DTN_ANON_MAGIC);
+
+        // Zero plaintext leakage of EIDs, inner magic, or sender ML-DSA-87 public key.
+        assert!(!w_short.windows(DTN_MAGIC.len()).any(|w| w == DTN_MAGIC));
+        assert!(!w_short.windows(24).any(|w| w == b"dtn://secret-station-alp"));
+        assert!(!w_short.windows(22).any(|w| w == b"dtn://secret-sub-bravo"));
+        assert!(!w_short.windows(64).any(|w| w == &sender_pk[..64]));
+
+        // Authorized recipient + pinned sender opens cleanly.
+        let (opened_bundle, pt) =
+            DtnBundle::from_anonymous_bytes_pinned(&w_short, &recipient.dk, &sender_pk).unwrap();
+        assert_eq!(pt, b"X");
+        assert_eq!(opened_bundle.primary.source_eid, "dtn://secret-station-alpha");
+
+        // Wrong recipient dk fails closed; wrong pinned sender PK fails closed; decoy fails closed.
+        assert!(DtnBundle::from_anonymous_bytes_pinned(&w_short, &recipient2.dk, &sender_pk).is_err());
+        assert!(
+            DtnBundle::from_anonymous_bytes_pinned(&w_short, &recipient.dk, &attacker_vk.to_bytes())
+                .is_err()
+        );
+        assert!(DtnBundle::from_anonymous_bytes_pinned(&decoy, &recipient.dk, &sender_pk).is_err());
     }
 }

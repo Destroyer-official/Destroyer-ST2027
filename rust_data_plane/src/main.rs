@@ -124,8 +124,9 @@ fn usage() -> ! {
          tactical-msg [--precedence (Y|Z|O|P|R)] [--clearance LEVEL] [--caveats CAVEAT] --msg TEXT  format classified military telegram (RTB scan always ON; --scan-rtb accepted as no-op)\n\
          eam-auth --directive TEXT --officer1-pk PATH --officer1-sig PATH --officer2-pk PATH --officer2-sig PATH [--officers-manifest PATH]  verify NC3 dual-officer EAM (optional roster manifest)\n\
          dtn-keygen --out-dk PATH --out-ek PATH                                         generate 0-RTT DTN ML-KEM-1024 identity keypair (0600 DK custody)\n\
-         dtn-seal   --src-eid EID --dst-eid EID --recipient-ek-file PATH --out PATH (--msg TEXT | --in PATH) [--auth-sk-file PATH | --auth-tpm-sealed PATH | --auth-pkcs11-label LABEL] [--lifetime-ms MS] [--hop-limit N]\n\
-         dtn-open   --dk-file PATH --sender-auth-pk-file PATH --in PATH [--out PATH]    verify pinned sender ML-DSA-87, check lifetime, and decapsulate 0-RTT DTN bundle\n\
+         dtn-seal   --src-eid EID --dst-eid EID --recipient-ek-file PATH --out PATH (--msg TEXT | --in PATH) [--auth-sk-file PATH | --auth-tpm-sealed PATH | --auth-pkcs11-label LABEL] [--lifetime-ms MS] [--hop-limit N] [--anonymous [--bucket-bytes BYTES]]\n\
+         dtn-open   --dk-file PATH --sender-auth-pk-file PATH --in PATH [--out PATH] [--anonymous]  verify pinned sender ML-DSA-87, check lifetime, and decapsulate 0-RTT DTN bundle\n\
+         dtn-decoy  --out PATH [--bucket-bytes BYTES]                                   generate Key-Private ML-KEM-1024 cover decoy indistinguishable from BP7AN1\n\
          zeroize --target PATH...|--state PATH|--key-file PATH  NIST SP 800-88 3-pass cryptographic media purge\n\
          selftest                        deterministic module self-checks\n\
          \n\
@@ -5710,10 +5711,24 @@ fn cmd_dtn_seal(args: &[String]) {
     )
     .unwrap_or_else(|e| fail(&format!("DTN 0-RTT bundle creation failed: {e:?}")));
 
-    let wire = bundle.to_bytes();
+    let anonymous_mode = args.iter().any(|a| a == "--anonymous");
+    let bucket_bytes_opt = get_flag(args, "--bucket-bytes").map(|raw| {
+        if !anonymous_mode {
+            fail("--bucket-bytes is only valid with --anonymous");
+        }
+        raw.parse::<usize>()
+            .unwrap_or_else(|_| fail("--bucket-bytes must be a positive integer"))
+    });
+    let wire = if anonymous_mode {
+        bundle
+            .to_anonymous_bytes(&recipient_ek, bucket_bytes_opt)
+            .unwrap_or_else(|e| fail(&format!("anonymous DTN 0-RTT seal failed: {e:?}")))
+    } else {
+        bundle.to_bytes()
+    };
     write_exclusive_regular_file(&out_path, &wire, "--out");
     println!(
-        "dtn-seal: SUCCESS id={} bytes={} out={out_path}",
+        "dtn-seal: SUCCESS id={} bytes={} out={out_path} anon={anonymous_mode}",
         bundle.bundle_id(),
         wire.len()
     );
@@ -5725,6 +5740,7 @@ fn cmd_dtn_open(args: &[String]) {
     let sender_pk_path = get_flag(args, "--sender-auth-pk-file")
         .unwrap_or_else(|| fail("missing --sender-auth-pk-file PATH (pinning mandatory)"));
     let in_path = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
+    let require_anon = args.iter().any(|a| a == "--anonymous");
 
     let dk_seed = keystore::read_secret_hex_file(&dk_path, 64)
         .unwrap_or_else(|e| fail(&format!("--dk-file custody failure: {e:?}")));
@@ -5733,31 +5749,53 @@ fn cmd_dtn_open(args: &[String]) {
     let sender_vk = load_peer_verifying_key(&sender_pk_path);
     ensure_non_symlink_regular_input(&in_path, "--in");
     let meta = std::fs::metadata(&in_path).unwrap_or_else(|e| fail(&format!("stat --in: {e}")));
-    if meta.len() > 20 * 1024 * 1024 {
-        fail("--in exceeds 20 MiB DTN wire cap");
+    if meta.len() > 32 * 1024 * 1024 {
+        fail("--in exceeds 32 MiB DTN wire cap");
     }
     let wire = std::fs::read(&in_path).unwrap_or_else(|e| fail(&format!("read --in: {e}")));
-    let bundle = destroyer_core::dtn_bundle::DtnBundle::from_bytes(&wire)
-        .unwrap_or_else(|e| fail(&format!("malformed DTN bundle: {e:?}")));
-
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    let exp_ms = bundle
-        .primary
-        .creation_time
-        .time_ms
-        .saturating_add(bundle.primary.lifetime_ms);
-    if now_ms > exp_ms {
-        fail("dtn-open REFUSED: bundle lifetime expired (stale)");
-    }
 
-    let plaintext = Zeroizing::new(
-        bundle
-            .open_0rtt_pinned(&dk, &sender_vk.to_bytes())
-            .unwrap_or_else(|e| fail(&format!("DTN 0-RTT open/pinning failed: {e:?}"))),
-    );
+    let (bundle, plaintext) = if wire.starts_with(destroyer_core::dtn_bundle::DTN_ANON_MAGIC) {
+        let (b, pt) = destroyer_core::dtn_bundle::DtnBundle::from_anonymous_bytes_pinned(
+            &wire,
+            &dk,
+            &sender_vk.to_bytes(),
+        )
+        .unwrap_or_else(|e| fail(&format!("anonymous DTN 0-RTT open/pinning failed: {e:?}")));
+        let pt = Zeroizing::new(pt);
+        let exp_ms = b
+            .primary
+            .creation_time
+            .time_ms
+            .saturating_add(b.primary.lifetime_ms);
+        if now_ms > exp_ms {
+            drop(pt);
+            fail("dtn-open REFUSED: bundle lifetime expired (stale)");
+        }
+        (b, pt)
+    } else if require_anon {
+        fail("dtn-open --anonymous REFUSED unsealed BP7PQC envelope (metadata downgrade rejected)");
+    } else {
+        let b = destroyer_core::dtn_bundle::DtnBundle::from_bytes(&wire)
+            .unwrap_or_else(|e| fail(&format!("malformed DTN bundle: {e:?}")));
+        let exp_ms = b
+            .primary
+            .creation_time
+            .time_ms
+            .saturating_add(b.primary.lifetime_ms);
+        if now_ms > exp_ms {
+            fail("dtn-open REFUSED: bundle lifetime expired (stale)");
+        }
+        let pt = Zeroizing::new(
+            b.open_0rtt_pinned(&dk, &sender_vk.to_bytes())
+                .unwrap_or_else(|e| fail(&format!("DTN 0-RTT open/pinning failed: {e:?}"))),
+        );
+        (b, pt)
+    };
+
     if let Some(out_path) = get_flag(args, "--out") {
         write_exclusive_regular_file(&out_path, &plaintext, "--out");
         println!(
@@ -5775,6 +5813,24 @@ fn cmd_dtn_open(args: &[String]) {
             String::from_utf8_lossy(&plaintext)
         );
     }
+}
+
+fn cmd_dtn_decoy(args: &[String]) {
+    reject_forbidden_cli(args);
+    let out_path = get_flag(args, "--out").unwrap_or_else(|| fail("missing --out PATH"));
+    let bucket_bytes = match get_flag(args, "--bucket-bytes") {
+        Some(raw) => raw
+            .parse::<usize>()
+            .unwrap_or_else(|_| fail("--bucket-bytes must be a positive integer")),
+        None => destroyer_core::dtn_bundle::DTN_ANON_MIN_BUCKET,
+    };
+    let wire = destroyer_core::dtn_bundle::generate_anonymous_decoy(bucket_bytes)
+        .unwrap_or_else(|e| fail(&format!("dtn-decoy failed: {e:?}")));
+    write_exclusive_regular_file(&out_path, &wire, "--out");
+    println!(
+        "dtn-decoy: SUCCESS bytes={} out={out_path}",
+        wire.len()
+    );
 }
 
 fn cmd_auth_tpm_seal(args: &[String]) {
@@ -6203,6 +6259,7 @@ fn main() {
         "dtn-keygen" => cmd_dtn_keygen(&args[2..]),
         "dtn-seal" => cmd_dtn_seal(&args[2..]),
         "dtn-open" => cmd_dtn_open(&args[2..]),
+        "dtn-decoy" => cmd_dtn_decoy(&args[2..]),
         "zeroize" | "purge" => cmd_zeroize(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),

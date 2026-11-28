@@ -1153,3 +1153,208 @@ def test_udp_node_ephemeral_kex_writes_zero_temp_key_files(tmp_path: Path):
         if resp.poll() is None:
             resp.kill()
             resp.wait(timeout=5)
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_dtn_anonymous_sealed_sender_and_decoy_hide_metadata(tmp_path: Path):
+    """Verify BP7AN1 Key-Private ML-KEM-1024 sealed-sender DTN + decoy envelopes
+    equalize packet length to 16 KiB, strip plaintext EIDs / BP7PQC / sender ML-DSA PK,
+    refuse legacy BP7PQC downgrade under --anonymous, and fail closed on wrong pin / tamper.
+    """
+    env = _clean_lab_env()
+    _, i_sk, i_pk, _r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+    sender_pk_bytes = bytes.fromhex(i_pk.read_text(encoding="utf-8").strip())
+
+    dk_path = tmp_path / "recip.dk"
+    ek_path = tmp_path / "recip.ek"
+    kg = subprocess.run(
+        [str(RUST_BIN), "dtn-keygen", "--out-dk", str(dk_path), "--out-ek", str(ek_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert kg.returncode == 0, kg.stdout + kg.stderr
+    recip_ek_bytes = bytes.fromhex(ek_path.read_text(encoding="utf-8").strip())
+
+    legacy_path = tmp_path / "legacy.bp7"
+    anon_short_path = tmp_path / "anon_short.bp7"
+    anon_long_path = tmp_path / "anon_long.bp7"
+    decoy_path = tmp_path / "decoy.bp7"
+
+    res_legacy = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-seal",
+            "--src-eid", "dtn://alpha.nc3",
+            "--dst-eid", "dtn://bravo.nc3",
+            "--recipient-ek-file", str(ek_path),
+            "--out", str(legacy_path),
+            "--msg", "LEGACY-UNSEALED",
+            "--auth-sk-file", str(i_sk),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert res_legacy.returncode == 0, res_legacy.stdout + res_legacy.stderr
+    assert legacy_path.read_bytes().startswith(b"BP7PQC")
+
+    long_msg = "ALPHA-LONG-PAYLOAD-" + ("Z" * 500)
+    for out_p, msg in ((anon_short_path, "A"), (anon_long_path, long_msg)):
+        res = subprocess.run(
+            [
+                str(RUST_BIN), "dtn-seal",
+                "--src-eid", "dtn://alpha.nc3",
+                "--dst-eid", "dtn://bravo.nc3",
+                "--recipient-ek-file", str(ek_path),
+                "--out", str(out_p),
+                "--msg", msg,
+                "--auth-sk-file", str(i_sk),
+                "--anonymous",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "anon=true" in res.stdout
+
+    res_decoy = subprocess.run(
+        [str(RUST_BIN), "dtn-decoy", "--out", str(decoy_path), "--bucket-bytes", "16384"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert res_decoy.returncode == 0, res_decoy.stdout + res_decoy.stderr
+
+    short_raw = anon_short_path.read_bytes()
+    long_raw = anon_long_path.read_bytes()
+    decoy_raw = decoy_path.read_bytes()
+
+    assert len(short_raw) == 16384
+    assert len(long_raw) == 16384
+    assert len(decoy_raw) == 16384
+    assert short_raw.startswith(b"BP7AN1")
+    assert long_raw.startswith(b"BP7AN1")
+    assert decoy_raw.startswith(b"BP7AN1")
+
+    for raw in (short_raw, long_raw, decoy_raw):
+        assert b"BP7PQC" not in raw
+        assert b"dtn://alpha.nc3" not in raw
+        assert b"dtn://bravo.nc3" not in raw
+        assert sender_pk_bytes[:32] not in raw
+        assert recip_ek_bytes[:32] not in raw
+    assert b"ALPHA-LONG-PAYLOAD" not in long_raw
+
+    out_short = tmp_path / "open_short.txt"
+    out_long = tmp_path / "open_long.txt"
+    for in_p, out_p, expected in (
+        (anon_short_path, out_short, b"A"),
+        (anon_long_path, out_long, long_msg.encode("utf-8")),
+    ):
+        opened = subprocess.run(
+            [
+                str(RUST_BIN), "dtn-open",
+                "--dk-file", str(dk_path),
+                "--sender-auth-pk-file", str(i_pk),
+                "--in", str(in_p),
+                "--out", str(out_p),
+                "--anonymous",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert opened.returncode == 0, opened.stdout + opened.stderr
+        assert out_p.read_bytes() == expected
+
+    # Fail closed on legacy BP7PQC downgrade when --anonymous is enforced
+    downgrade = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(dk_path),
+            "--sender-auth-pk-file", str(i_pk),
+            "--in", str(legacy_path),
+            "--anonymous",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert downgrade.returncode != 0
+
+    # Fail closed on CSPRNG decoy envelope
+    open_decoy = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(dk_path),
+            "--sender-auth-pk-file", str(i_pk),
+            "--in", str(decoy_path),
+            "--anonymous",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert open_decoy.returncode != 0
+
+    # Fail closed on wrong pinned sender identity
+    wrong_pin = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(dk_path),
+            "--sender-auth-pk-file", str(r_pk),
+            "--in", str(anon_short_path),
+            "--anonymous",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert wrong_pin.returncode != 0
+
+    # Fail closed on bit-flipped ciphertext tampering
+    tampered_path = tmp_path / "tampered.bp7"
+    tampered_bytes = bytearray(short_raw)
+    tampered_bytes[-10] ^= 0xFF
+    tampered_path.write_bytes(bytes(tampered_bytes))
+    tampered = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(dk_path),
+            "--sender-auth-pk-file", str(i_pk),
+            "--in", str(tampered_path),
+            "--anonymous",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert tampered.returncode != 0
+
+    # Fail closed if --bucket-bytes is passed without --anonymous
+    bad_flags = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-seal",
+            "--src-eid", "dtn://a",
+            "--dst-eid", "dtn://b",
+            "--recipient-ek-file", str(ek_path),
+            "--out", str(tmp_path / "bad.bp7"),
+            "--msg", "X",
+            "--auth-sk-file", str(i_sk),
+            "--bucket-bytes", "16384",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert bad_flags.returncode != 0
