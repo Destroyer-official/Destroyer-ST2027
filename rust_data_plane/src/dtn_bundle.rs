@@ -18,13 +18,14 @@ use aes_gcm::{
 use hkdf::Hkdf;
 use ml_kem::{
     kem::{Decapsulate, KeyExport, SharedKey},
-    Ciphertext, DecapsulationKey, Kem, MlKem1024,
+    Ciphertext, DecapsulationKey, Kem, MlKem1024, Seed,
 };
 use sha2::Sha512;
 use sha3::{Digest, Sha3_256};
 use zeroize::Zeroize;
 
-use crate::auth::{Mldsa87SigningKey, Mldsa87VerifyingKey};
+use crate::auth::{AuthSigner, Mldsa87SigningKey, Mldsa87VerifyingKey};
+use crate::ct::ct_eq;
 use crate::kem::{MLKEM_CT, MLKEM_PK};
 use crate::policy::{CoreError, MLDSA87_PK, MLDSA87_SIG};
 
@@ -67,6 +68,25 @@ impl DtnMlKemKeypair {
             return Err(CoreError::Malformed);
         }
         Ok(Self { dk, ek_bytes })
+    }
+
+    /// Reconstruct an ML-KEM-1024 decapsulation key strictly from a 64-byte FIPS 203 seed.
+    pub fn decapsulation_key_from_seed(
+        seed_bytes: &[u8],
+    ) -> Result<DecapsulationKey<MlKem1024>, CoreError> {
+        if seed_bytes.len() != 64 {
+            return Err(CoreError::Malformed);
+        }
+        let mut seed = Seed::default();
+        seed.copy_from_slice(seed_bytes);
+        let dk = DecapsulationKey::<MlKem1024>::from_seed(seed);
+        seed.zeroize();
+        Ok(dk)
+    }
+
+    /// Export the 64-byte FIPS 203 ML-KEM-1024 seed bytes wrapped in `Zeroizing`.
+    pub fn dk_seed_bytes(&self) -> zeroize::Zeroizing<Vec<u8>> {
+        zeroize::Zeroizing::new(self.dk.to_bytes().as_slice().to_vec())
     }
 }
 
@@ -166,9 +186,8 @@ impl DtnBundle {
         )
     }
 
-    /// Creates an asynchronous 0-RTT post-quantum encrypted bundle using ML-KEM-1024 and ML-DSA-87.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_0rtt(
+    fn seal_0rtt_with<F>(
         source_eid: &str,
         destination_eid: &str,
         report_to_eid: &str,
@@ -177,10 +196,13 @@ impl DtnBundle {
         lifetime_ms: u64,
         hop_limit: u32,
         recipient_mlkem_pk: &[u8],
-        sender_mldsa_sk: &Mldsa87SigningKey,
         sender_mldsa_pk: &[u8],
+        sign_fn: F,
         payload: &[u8],
-    ) -> Result<Self, CoreError> {
+    ) -> Result<Self, CoreError>
+    where
+        F: FnOnce(&[u8]) -> Result<Vec<u8>, CoreError>,
+    {
         if recipient_mlkem_pk.len() != MLKEM_PK {
             return Err(CoreError::Malformed);
         }
@@ -200,7 +222,11 @@ impl DtnBundle {
                 time_ms: creation_time_ms,
                 sequence,
             },
-            lifetime_ms: if lifetime_ms == 0 { DEFAULT_BUNDLE_LIFETIME_MS } else { lifetime_ms },
+            lifetime_ms: if lifetime_ms == 0 {
+                DEFAULT_BUNDLE_LIFETIME_MS
+            } else {
+                lifetime_ms
+            },
         };
 
         let primary_hash = primary.transcript_hash();
@@ -236,7 +262,10 @@ impl DtnBundle {
         sig_msg.extend_from_slice(&nonce_bytes);
         sig_msg.extend_from_slice(&ciphertext);
 
-        let signature = sender_mldsa_sk.sign(DOMAIN_0RTT_SIGN, &sig_msg);
+        let signature = sign_fn(&sig_msg)?;
+        if signature.len() != MLDSA87_SIG {
+            return Err(CoreError::Malformed);
+        }
 
         let security = Dtn0RttSecurityBlock {
             kem_ct,
@@ -257,6 +286,87 @@ impl DtnBundle {
             security: Some(security),
             payload: None, // Sealed in security block
         })
+    }
+
+    /// Creates an asynchronous 0-RTT post-quantum encrypted bundle using ML-KEM-1024 and ML-DSA-87.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_0rtt(
+        source_eid: &str,
+        destination_eid: &str,
+        report_to_eid: &str,
+        creation_time_ms: u64,
+        sequence: u64,
+        lifetime_ms: u64,
+        hop_limit: u32,
+        recipient_mlkem_pk: &[u8],
+        sender_mldsa_sk: &Mldsa87SigningKey,
+        sender_mldsa_pk: &[u8],
+        payload: &[u8],
+    ) -> Result<Self, CoreError> {
+        Self::seal_0rtt_with(
+            source_eid,
+            destination_eid,
+            report_to_eid,
+            creation_time_ms,
+            sequence,
+            lifetime_ms,
+            hop_limit,
+            recipient_mlkem_pk,
+            sender_mldsa_pk,
+            |msg| Ok(sender_mldsa_sk.sign(DOMAIN_0RTT_SIGN, msg)),
+            payload,
+        )
+    }
+
+    /// Creates an asynchronous 0-RTT post-quantum encrypted bundle using hardware-agnostic `AuthSigner`
+    /// (PKCS#11 HSM, TPM 2.0 PCR-unsealed key, or ML-DSA-87 signing key).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_0rtt_with_signer(
+        source_eid: &str,
+        destination_eid: &str,
+        report_to_eid: &str,
+        creation_time_ms: u64,
+        sequence: u64,
+        lifetime_ms: u64,
+        hop_limit: u32,
+        recipient_mlkem_pk: &[u8],
+        signer: &AuthSigner,
+        payload: &[u8],
+    ) -> Result<Self, CoreError> {
+        let sender_pk = signer.verifying_bytes();
+        Self::seal_0rtt_with(
+            source_eid,
+            destination_eid,
+            report_to_eid,
+            creation_time_ms,
+            sequence,
+            lifetime_ms,
+            hop_limit,
+            recipient_mlkem_pk,
+            &sender_pk,
+            |msg| signer.sign(DOMAIN_0RTT_SIGN, msg),
+            payload,
+        )
+    }
+
+    /// Opens an incoming 0-RTT post-quantum bundle AND enforces constant-time
+    /// pinning of the sender's 2592-byte ML-DSA-87 verifying key BEFORE decapsulation.
+    pub fn open_0rtt_pinned(
+        &self,
+        recipient_dk: &DecapsulationKey<MlKem1024>,
+        expected_sender_mldsa_pk: &[u8],
+    ) -> Result<Vec<u8>, CoreError> {
+        if expected_sender_mldsa_pk.len() != MLDSA87_PK {
+            return Err(CoreError::Malformed);
+        }
+        let sec = self.security.as_ref().ok_or(CoreError::Malformed)?;
+        if sec.sender_mldsa_pub.len() != MLDSA87_PK {
+            return Err(CoreError::Malformed);
+        }
+        if !ct_eq(&sec.sender_mldsa_pub, expected_sender_mldsa_pk) {
+            return Err(CoreError::KeyMismatch);
+        }
+        self.open_0rtt(recipient_dk)
     }
 
     /// Opens an incoming 0-RTT post-quantum bundle using the recipient's ML-KEM-1024 decapsulation key.
@@ -766,5 +876,54 @@ mod tests {
         assert_eq!(seed.len(), 64);
         let dk2 = DecapsulationKey::<MlKem1024>::new(&seed);
         assert_eq!(dk2.to_bytes().as_slice(), seed.as_slice());
+        let dk3 = DtnMlKemKeypair::decapsulation_key_from_seed(seed.as_slice()).unwrap();
+        assert_eq!(dk3.to_bytes().as_slice(), seed.as_slice());
+    }
+
+    #[test]
+    fn test_open_0rtt_pinned_rejects_spoofed_sender() {
+        let recipient = DtnMlKemKeypair::generate().unwrap();
+        let (good_sk, good_vk) = Mldsa87SigningKey::generate().unwrap();
+        let (attacker_sk, _attacker_vk) = Mldsa87SigningKey::generate().unwrap();
+
+        let forged = DtnBundle::create_0rtt_with_signer(
+            "dtn://spoof",
+            "dtn://dest",
+            "dtn://spoof/rep",
+            1700000000000,
+            7,
+            60000,
+            8,
+            &recipient.ek_bytes,
+            &AuthSigner::SoftwareOrTpmUnsealed(attacker_sk),
+            b"spoofed payload",
+        )
+        .unwrap();
+
+        assert_eq!(
+            forged.open_0rtt_pinned(&recipient.dk, &good_vk.to_bytes()),
+            Err(CoreError::KeyMismatch)
+        );
+
+        let authentic = DtnBundle::create_0rtt_with_signer(
+            "dtn://alpha",
+            "dtn://bravo",
+            "dtn://alpha/rep",
+            1700000000000,
+            8,
+            60000,
+            8,
+            &recipient.ek_bytes,
+            &AuthSigner::SoftwareOrTpmUnsealed(good_sk),
+            b"authentic 0rtt dead-drop",
+        )
+        .unwrap();
+
+        assert_eq!(
+            authentic
+                .open_0rtt_pinned(&recipient.dk, &good_vk.to_bytes())
+                .unwrap(),
+            b"authentic 0rtt dead-drop"
+        );
     }
 }

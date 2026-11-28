@@ -61,12 +61,32 @@ fn reject_symlink_or_reparse(path: &str) -> Result<(), CoreError> {
 /// symlinks/reparse points refused). Returns a locked key container; the
 /// file-content copy is wiped after parse.
 pub fn read_key_file(path: &str) -> Result<LockedKey32, CoreError> {
+    let mut raw = read_secret_hex_file(path, 32)?;
+    if raw.len() != 32 {
+        return Err(CoreError::Malformed);
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&raw);
+    let locked = LockedKey32::new(arr);
+    use zeroize::Zeroize;
+    arr.zeroize();
+    raw.zeroize();
+    Ok(locked)
+}
+
+/// Read an arbitrary fixed-length hex secret file under strict custody enforcement
+/// (non-symlink/non-reparse, Unix 0600, Windows owner-only DACL).
+pub fn read_secret_hex_file(
+    path: &str,
+    expected_byte_len: usize,
+) -> Result<zeroize::Zeroizing<Vec<u8>>, CoreError> {
     reject_symlink_or_reparse(path)?;
     let meta = std::fs::metadata(path).map_err(|_| CoreError::Malformed)?;
     if !meta.is_file() {
         return Err(CoreError::Malformed);
     }
-    if meta.len() > MAX_KEY_FILE_LEN {
+    let max_len = (expected_byte_len as u64).saturating_mul(2).saturating_add(64).max(MAX_KEY_FILE_LEN);
+    if meta.len() > max_len {
         return Err(CoreError::Malformed);
     }
     #[cfg(unix)]
@@ -85,22 +105,40 @@ pub fn read_key_file(path: &str) -> Result<LockedKey32, CoreError> {
         .read(true)
         .open(path)
         .map_err(|_| CoreError::Malformed)?;
-    let mut buf = Vec::new();
+    let mut buf = zeroize::Zeroizing::new(Vec::new());
     f.read_to_end(&mut buf).map_err(|_| CoreError::Malformed)?;
-    let text = std::str::from_utf8(&buf).map_err(|_| CoreError::Malformed)?;
-    let key = parse_key_hex(text.trim())?;
-    // Wipe the file-content copy immediately.
-    use zeroize::Zeroize;
-    buf.zeroize();
-    Ok(key)
+    let clean = std::str::from_utf8(&buf)
+        .map_err(|_| CoreError::Malformed)?
+        .trim();
+    if clean.len() != expected_byte_len * 2 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(CoreError::Malformed);
+    }
+    let mut out = zeroize::Zeroizing::new(Vec::with_capacity(expected_byte_len));
+    let (pairs, _) = clean.as_bytes().as_chunks::<2>();
+    for chunk in pairs {
+        let s = std::str::from_utf8(chunk).map_err(|_| CoreError::Malformed)?;
+        let byte = u8::from_str_radix(s, 16).map_err(|_| CoreError::Malformed)?;
+        out.push(byte);
+    }
+    Ok(out)
 }
 
 /// Write `hex` (64 chars + newline) exclusively. Fails if the path exists
 /// (no truncate races); callers remove-then-write explicitly when rotation
 /// is intended. Unix sets 0600 atomically at create.
 pub fn write_key_file_exclusive(path: &str, hex: &str) -> Result<(), CoreError> {
+    write_secret_hex_file_exclusive(path, hex, 64)
+}
+
+/// Exclusively create and harden (`0600` / Windows owner-only DACL, no symlinks)
+/// a hex-encoded secret file of exact `expected_hex_len` characters.
+pub fn write_secret_hex_file_exclusive(
+    path: &str,
+    hex: &str,
+    expected_hex_len: usize,
+) -> Result<(), CoreError> {
     let clean = hex.trim();
-    if clean.len() != 64 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if clean.len() != expected_hex_len || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(CoreError::Malformed);
     }
     reject_symlink_or_reparse(path)?;

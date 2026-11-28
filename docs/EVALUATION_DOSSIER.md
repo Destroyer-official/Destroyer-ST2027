@@ -35,7 +35,7 @@ The network is controlled by an active adversary capable of intercepting, inject
 
 ### 2.2 Physical & Runtime Boundaries (Honest Disclosures)
 - **Memory Hygiene Boundary:** Python immutable `bytes` objects cannot be deterministically zeroized by user code due to CPython memory allocator pools and garbage collector reallocations. Mission-critical deployments requiring guaranteed volatile memory wiping must execute the native Rust data plane (`secure-transmit` / `ts_rt`), which uses page-locked buffers (`VirtualLock`/`mlock`) with explicit volatile compiler fences.
-- **Traffic Analysis Boundary:** Constant-rate traffic shaping (50ms interval with uniform quantized cells) provides statistical masking against localized ISP/packet sniffers. It does **not** provide mathematical security against a Global Passive Adversary (GPA) possessing autonomous system-wide visibility across all network entry and exit nodes.
+- **Traffic Analysis Boundary:** Constant-rate traffic shaping (`50ms` default or `--poisson` exponential inter-cell jitter with `496B` Tamaraw-aligned cells across both `Noise_XXhfs` KEX via `PacedKexConfig` and active session/cover ticks, plus `--pre-cover-ticks` / `--post-cover-ticks` and `--burst-only`) provides statistical masking against localized ISP/packet sniffers and eliminates unshaped handshake bursts. It does **not** provide mathematical security against a Global Passive Adversary (GPA) possessing autonomous system-wide visibility across all network entry and exit nodes (Anonymity Trilemma bound); asynchronous `dtn-keygen` / `dtn-seal` / `dtn-open` (`RFC 9171` 0-RTT ML-KEM-1024 + pinned ML-DSA-87) supports disconnected store-and-forward transfer when online presence must be decoupled.
 
 ---
 

@@ -1,66 +1,66 @@
 {
   "audit_version": "ST2027-EVAL-V1",
-  "commit": "0e60d58481094d5d969f9a7b02d77e5bd26f3bd3",
+  "commit": "fe658336222593e2c99eb4b6221e7b066109ad6e",
   "gates": [
     {
-      "details": "342 core + 5 tor tests passed (--offline); 0 compiler warnings",
-      "duration_ms": 68685.25,
+      "details": "343 core + 5 tor tests passed (--offline); 0 compiler warnings",
+      "duration_ms": 67071.06,
       "gate_id": "1.1",
       "name": "Rust Data-Plane & Tor Strict Clippy & Test Battery",
       "status": "PASS"
     },
     {
       "details": "0 warnings; ts_rt & sel4_mils tests + validate_mils --strict PASSED",
-      "duration_ms": 723.92,
+      "duration_ms": 904.25,
       "gate_id": "2.1",
       "name": "ts_rt & seL4 MILS Clippy, Test & Invariant Verification",
       "status": "PASS"
     },
     {
       "details": "ML-KEM-1024, ML-DSA-87, AES-256-GCM KATs verified",
-      "duration_ms": 793.39,
+      "duration_ms": 1119.45,
       "gate_id": "3.1",
       "name": "CNSA Suite 2.0 KATs & Algorithm Purity",
       "status": "PASS"
     },
     {
       "details": "2/2 models proven; inj-event & secrecy conclude TRUE",
-      "duration_ms": 52861.1,
+      "duration_ms": 33792.85,
       "gate_id": "4.1",
       "name": "ProVerif 2.05 Symbolic Handshake & PCS Proofs",
       "status": "PASS"
     },
     {
       "details": "RFC 6479 decoupled window & atomic monotonic state pass",
-      "duration_ms": 3995.1,
+      "duration_ms": 5320.44,
       "gate_id": "5.1",
       "name": "Active Exploit Defenses (Replay DoS & Nonce Reuse)",
       "status": "PASS"
     },
     {
       "details": "Unsigned waivers & unverified records fail closed",
-      "duration_ms": 4485.36,
+      "duration_ms": 2422.49,
       "gate_id": "6.1",
       "name": "Platform Gating (Signed ML-DSA-87 Waivers)",
       "status": "PASS"
     },
     {
       "details": "Ed25519 & SHA-384 embedded pins; Merkle root verified",
-      "duration_ms": 655.93,
+      "duration_ms": 460.16,
       "gate_id": "7.1",
       "name": "SLSA Level 3+ Supply Chain & DLL Pinning",
       "status": "PASS"
     },
     {
       "details": "Purged badges; exact Kani bounds; 0 buzzwords; 0 emojis",
-      "duration_ms": 111456.12,
+      "duration_ms": 70682.05,
       "gate_id": "8.1",
       "name": "Truth-in-Claims & Linguistic Purity",
       "status": "PASS"
     },
     {
       "details": "In-memory loopback roundtrip, CER, and zeroization verified",
-      "duration_ms": 11080.71,
+      "duration_ms": 6900.57,
       "gate_id": "9.1",
       "name": "In-Process Single-Command Operator Self-Test",
       "status": "PASS"
@@ -76,6 +76,6 @@
   "overall_status": "PASS",
   "score": "10/10",
   "signer_pk_sha3_256": "f3c0ae0d5b6c20299791d3ca6d9cfd5d8fa2f5f54e406a7cefd7bcd9e24268f4",
-  "timestamp_utc": "2026-11-27T17:48:28.985455+00:00",
-  "tree_merkle_root": "e0c459eba277769f7b22af7ae5ed716b22220a36"
+  "timestamp_utc": "2026-11-28T05:16:48.984523+00:00",
+  "tree_merkle_root": "e5b3f2cefa7f2f86f5971b447ddf55f7ad85e205"
 }

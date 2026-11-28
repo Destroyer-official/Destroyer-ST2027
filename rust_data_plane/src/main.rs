@@ -123,6 +123,9 @@ fn usage() -> ! {
          cot-beacon [--callsign CALL] [--lat LAT] [--lon LON] [--type TYPE] [--sk-file PATH] [--out PATH]  emit MIL-STD-6090 Cursor-on-Target event (demo formatter)\n\
          tactical-msg [--precedence (Y|Z|O|P|R)] [--clearance LEVEL] [--caveats CAVEAT] --msg TEXT  format classified military telegram (RTB scan always ON; --scan-rtb accepted as no-op)\n\
          eam-auth --directive TEXT --officer1-pk PATH --officer1-sig PATH --officer2-pk PATH --officer2-sig PATH [--officers-manifest PATH]  verify NC3 dual-officer EAM (optional roster manifest)\n\
+         dtn-keygen --out-dk PATH --out-ek PATH                                         generate 0-RTT DTN ML-KEM-1024 identity keypair (0600 DK custody)\n\
+         dtn-seal   --src-eid EID --dst-eid EID --recipient-ek-file PATH --out PATH (--msg TEXT | --in PATH) [--auth-sk-file PATH | --auth-tpm-sealed PATH | --auth-pkcs11-label LABEL] [--lifetime-ms MS] [--hop-limit N]\n\
+         dtn-open   --dk-file PATH --sender-auth-pk-file PATH --in PATH [--out PATH]    verify pinned sender ML-DSA-87, check lifetime, and decapsulate 0-RTT DTN bundle\n\
          zeroize --target PATH...|--state PATH|--key-file PATH  NIST SP 800-88 3-pass cryptographic media purge\n\
          selftest                        deterministic module self-checks\n\
          \n\
@@ -2382,6 +2385,7 @@ fn cmd_channel_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
                     let seq = next_send_seq;
                     next_send_seq += 1;
 
+                    let mut emitted_msg_len: Option<usize> = None;
                     let frame = if let Some(attest_frag) = outbound_attestations.pop_front() {
                         pacing::build_attestation_frame_directed(&current_frame_key, seq, tx_dir, quantum, &attest_frag)
                             .unwrap_or_else(|_| fail("build attestation frame failed"))
@@ -2393,7 +2397,7 @@ fn cmd_channel_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
                         let f = pacing::build_data_frame_directed(&current_frame_key, seq, tx_dir, quantum, &payload)
                             .unwrap_or_else(|_| fail("build data frame failed"));
                         msgs_sent += 1;
-                        println!("channel: EMIT_MSG seq={seq} bytes={}", payload.len());
+                        emitted_msg_len = Some(payload.len());
                         f
                     } else if let Some(rekey_payload) = outbound_rekeys.pop_front() {
                         pacing::build_rekey_frame_directed(&current_frame_key, seq, tx_dir, quantum, &rekey_payload)
@@ -2406,6 +2410,8 @@ fn cmd_channel_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
 
                     if ep.send_raw(&frame, to).await.is_err() {
                         ep.drops += 1;
+                    } else if let Some(n) = emitted_msg_len {
+                        println!("channel: EMIT_MSG seq={seq} bytes={n}");
                     }
                     ticks_emitted += 1;
                     if let Some(ref mut rem) = draining {
@@ -2833,126 +2839,67 @@ fn cmd_channel_core(args: &[String], kb: LockedKey32, key_id: [u8; 16]) {
     );
 }
 
-fn negotiate_ephemeral_kex(args: &[String], role: &str) -> String {
+/// Run hybrid KEX (P-384 + ML-KEM-1024 + mutual ML-DSA-87) directly in locked RAM
+/// (`LockedKey32`) without creating temporary `.key` files on disk.
+fn negotiate_ephemeral_kex_in_memory(args: &[String], role: &str) -> (LockedKey32, [u8; 16]) {
     let psk = get_flag(args, "--psk-file")
         .unwrap_or_else(|| fail("either --key-file PATH or --psk-file PATH must be specified"));
-    let mut rand_bytes = [0u8; 8];
-    if getrandom::fill(&mut rand_bytes).is_err() {
-        fail("getrandom failed during ephemeral kex negotiation");
-    }
-    let rand_val = u64::from_ne_bytes(rand_bytes);
-    let temp_key_path = std::env::temp_dir().join(format!("st2027_ephem_{role}_{}_{:016x}.key", std::process::id(), rand_val));
-    let temp_key = temp_key_path.to_string_lossy().to_string();
     let mut kex_args = Vec::new();
     if role == "responder" {
         kex_args.push("--bind".to_string());
         kex_args.push(get_flag(args, "--bind").unwrap_or_else(|| fail("--bind required for responder")));
-        kex_args.push("--out-key".to_string());
-        kex_args.push(temp_key.clone());
-        kex_args.push("--psk-file".to_string());
-        kex_args.push(psk);
-        if let Some(sk) = get_flag(args, "--auth-sk-file") {
-            kex_args.push("--auth-sk-file".to_string());
-            kex_args.push(sk);
-        }
-        if let Some(pk) = get_flag(args, "--peer-auth-pk-file") {
-            kex_args.push("--peer-auth-pk-file".to_string());
-            kex_args.push(pk);
-        }
-        if has_flag(args, "--lab") {
-            kex_args.push("--lab".to_string());
-        }
-        if has_flag(args, "--require-mutual-auth") {
-            kex_args.push("--require-mutual-auth".to_string());
-        }
-        for flag in &[
-            "--cert-file",
-            "--cert",
-            "--ca-file",
-            "--ca",
-            "--crl-file",
-            "--crl",
-            "--peer-subject",
-            "--auth-tpm-sealed",
-            "--auth-tpm-pub",
-            "--pcrs",
-            "--tpm-owner",
-            "--auth-pkcs11-label",
-            "--auth-pkcs11-id",
-            "--auth-pk-file",
-            "--timeout-ms",
-        ] {
-            if let Some(val) = get_flag(args, flag) {
-                kex_args.push((*flag).to_string());
-                kex_args.push(val);
-            }
-        }
-        if has_flag(args, "--auth-pkcs11") {
-            kex_args.push("--auth-pkcs11".to_string());
-        }
-        println!("[KEX] Listening for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
-        cmd_kex_listen(&kex_args);
     } else {
         kex_args.push("--to".to_string());
         kex_args.push(get_flag(args, "--to").unwrap_or_else(|| fail("--to required for initiator")));
-        kex_args.push("--out-key".to_string());
-        kex_args.push(temp_key.clone());
-        kex_args.push("--psk-file".to_string());
-        kex_args.push(psk);
-        if let Some(sk) = get_flag(args, "--auth-sk-file") {
-            kex_args.push("--auth-sk-file".to_string());
-            kex_args.push(sk);
-        }
-        if let Some(pk) = get_flag(args, "--peer-auth-pk-file") {
-            kex_args.push("--peer-auth-pk-file".to_string());
-            kex_args.push(pk);
-        }
-        if has_flag(args, "--lab") {
-            kex_args.push("--lab".to_string());
-        }
-        if has_flag(args, "--require-mutual-auth") {
-            kex_args.push("--require-mutual-auth".to_string());
-        }
-        for flag in &[
-            "--cert-file",
-            "--cert",
-            "--ca-file",
-            "--ca",
-            "--crl-file",
-            "--crl",
-            "--peer-subject",
-            "--auth-tpm-sealed",
-            "--auth-tpm-pub",
-            "--pcrs",
-            "--tpm-owner",
-            "--auth-pkcs11-label",
-            "--auth-pkcs11-id",
-            "--auth-pk-file",
-            "--timeout-ms",
-        ] {
-            if let Some(val) = get_flag(args, flag) {
-                kex_args.push((*flag).to_string());
-                kex_args.push(val);
-            }
-        }
-        if has_flag(args, "--auth-pkcs11") {
-            kex_args.push("--auth-pkcs11".to_string());
-        }
-        println!("[KEX] Connecting to peer for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
-        cmd_kex_connect(&kex_args);
     }
-    temp_key
-}
-
-fn negotiate_ephemeral_kex_in_memory(args: &[String], role: &str) -> (LockedKey32, [u8; 16]) {
-    let temp_key = negotiate_ephemeral_kex(args, role);
-    let out = keystore::read_key_file(&temp_key)
-        .unwrap_or_else(|_| fail("ephemeral KEX session key unreadable"));
-    let _ = purge::purge_file(&temp_key);
-    let digest = Sha384::digest(out.as_bytes());
-    let mut key_id = [0u8; 16];
-    key_id.copy_from_slice(&digest[..16]);
-    (out, key_id)
+    kex_args.push("--psk-file".to_string());
+    kex_args.push(psk);
+    if let Some(sk) = get_flag(args, "--auth-sk-file") {
+        kex_args.push("--auth-sk-file".to_string());
+        kex_args.push(sk);
+    }
+    if let Some(pk) = get_flag(args, "--peer-auth-pk-file") {
+        kex_args.push("--peer-auth-pk-file".to_string());
+        kex_args.push(pk);
+    }
+    if has_flag(args, "--lab") {
+        kex_args.push("--lab".to_string());
+    }
+    if has_flag(args, "--require-mutual-auth") {
+        kex_args.push("--require-mutual-auth".to_string());
+    }
+    for flag in &[
+        "--cert-file",
+        "--cert",
+        "--ca-file",
+        "--ca",
+        "--crl-file",
+        "--crl",
+        "--peer-subject",
+        "--auth-tpm-sealed",
+        "--auth-tpm-pub",
+        "--pcrs",
+        "--tpm-owner",
+        "--auth-pkcs11-label",
+        "--auth-pkcs11-id",
+        "--auth-pk-file",
+        "--timeout-ms",
+    ] {
+        if let Some(val) = get_flag(args, flag) {
+            kex_args.push((*flag).to_string());
+            kex_args.push(val);
+        }
+    }
+    if has_flag(args, "--auth-pkcs11") {
+        kex_args.push("--auth-pkcs11".to_string());
+    }
+    if role == "responder" {
+        println!("[KEX] Listening for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
+        cmd_kex_listen_core(&kex_args, None).unwrap_or_else(|| fail("RAM KEX listener failed"))
+    } else {
+        println!("[KEX] Connecting to peer for post-quantum hybrid handshake (ML-KEM-1024 + ECDH P-384)...");
+        cmd_kex_connect_core(&kex_args, None).unwrap_or_else(|| fail("RAM KEX initiator failed"))
+    }
 }
 
 fn cmd_terminal(args: &[String]) {
@@ -4614,11 +4561,16 @@ fn require_kex_auth(psk_present: bool) {
 
 fn cmd_kex_listen(args: &[String]) {
     reject_forbidden_cli(args);
+    let out = get_flag(args, "--out-key").unwrap_or_else(|| usage());
+    let _ = cmd_kex_listen_core(args, Some(&out));
+}
+
+fn cmd_kex_listen_core(args: &[String], out_opt: Option<&str>) -> Option<(LockedKey32, [u8; 16])> {
+    reject_forbidden_cli(args);
     let bind: SocketAddr = get_flag(args, "--bind")
         .unwrap_or_else(|| usage())
         .parse()
         .unwrap_or_else(|_| fail("bad --bind ADDR (host:port)"));
-    let out = get_flag(args, "--out-key").unwrap_or_else(|| usage());
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
@@ -4672,7 +4624,7 @@ fn cmd_kex_listen(args: &[String]) {
         .build()
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
-    let (key_hex, sas) = rt.block_on(async {
+    let (mut raw_key, sas) = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind(bind)
             .await
             .unwrap_or_else(|_| fail("kex-listen bind failed"));
@@ -4774,8 +4726,10 @@ fn cmd_kex_listen(args: &[String]) {
                             .map_err(|_| "invalid initiator CRL DER")?;
                         recv_crl.verify_threshold(custodians, now)
                             .map_err(|_| "initiator CRL failed 3-of-5 threshold CA verification or freshness")?;
-                        let crl_sidecar = format!("{out}.crl_seq");
-                        tpm_nv::guard_crl_sequence(Some(&crl_sidecar), recv_crl.crl_number)
+                        let crl_sidecar = out_opt
+                            .map(|out| format!("{out}.crl_seq"))
+                            .or_else(|| get_flag(args, "--state").map(|s| format!("{s}.crl_seq")));
+                        tpm_nv::guard_crl_sequence(crl_sidecar.as_deref(), recv_crl.crl_number)
                             .map_err(|_| "initiator CRL rejected by TPM 2.0 anti-rollback counter")?;
                         active_crl = Some(recv_crl);
                     }
@@ -4857,8 +4811,7 @@ fn cmd_kex_listen(args: &[String]) {
             }
 
             let sas = kem::compute_sas(&frame_key, &binding);
-            let hex = hex_of(&frame_key);
-            Ok::<(String, String), &'static str>((hex, sas))
+            Ok::<([u8; 32], String), &'static str>((frame_key, sas))
         };
 
         match tokio::time::timeout(Duration::from_millis(timeout_ms), accept_fut).await {
@@ -4868,29 +4821,48 @@ fn cmd_kex_listen(args: &[String]) {
         }
     });
 
-    write_key_file(&out, &key_hex);
-    if is_pki {
-        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (RFC 9881 X.509 3-of-5 threshold PKI + mutual ML-DSA-87 authenticated)");
-    } else if mutual {
-        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
-    } else if psk_bytes.is_some() {
-        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
-    } else {
-        println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
-    }
     // Wipe the PSK stack copy now that derivation is complete.
     if let Some(ref mut b) = psk_bytes {
         b.zeroize();
+    }
+
+    if let Some(out) = out_opt {
+        let key_hex = Zeroizing::new(hex_of(&raw_key));
+        write_key_file(out, &key_hex);
+        raw_key.zeroize();
+        if is_pki {
+            println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (RFC 9881 X.509 3-of-5 threshold PKI + mutual ML-DSA-87 authenticated)");
+        } else if mutual {
+            println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
+        } else if psk_bytes.is_some() {
+            println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
+        } else {
+            println!("kex-listen SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+        }
+        None
+    } else {
+        let locked = LockedKey32::new(raw_key);
+        let digest = Sha384::digest(raw_key);
+        let mut key_id = [0u8; 16];
+        key_id.copy_from_slice(&digest[..16]);
+        raw_key.zeroize();
+        println!("[KEX] SecP384r1MLKEM1024 RAM session key established [SAS: {sas}] (zero disk key)");
+        Some((locked, key_id))
     }
 }
 
 fn cmd_kex_connect(args: &[String]) {
     reject_forbidden_cli(args);
+    let out = get_flag(args, "--out-key").unwrap_or_else(|| usage());
+    let _ = cmd_kex_connect_core(args, Some(&out));
+}
+
+fn cmd_kex_connect_core(args: &[String], out_opt: Option<&str>) -> Option<(LockedKey32, [u8; 16])> {
+    reject_forbidden_cli(args);
     let to: SocketAddr = get_flag(args, "--to")
         .unwrap_or_else(|| usage())
         .parse()
         .unwrap_or_else(|_| fail("bad --to ADDR (host:port)"));
-    let out = get_flag(args, "--out-key").unwrap_or_else(|| usage());
     let timeout_ms: u64 = get_flag(args, "--timeout-ms")
         .map(|s| s.parse().unwrap_or_else(|_| fail("bad --timeout-ms")))
         .unwrap_or(30000);
@@ -4944,7 +4916,7 @@ fn cmd_kex_connect(args: &[String]) {
         .build()
         .unwrap_or_else(|_| fail("tokio runtime unavailable"));
 
-    let (key_hex, sas) = rt.block_on(async {
+    let (mut raw_key, sas) = rt.block_on(async {
         let connect_fut = async {
             let start = tokio::time::Instant::now();
             let deadline = tokio::time::Duration::from_millis(timeout_ms);
@@ -5037,8 +5009,10 @@ fn cmd_kex_connect(args: &[String]) {
                             .map_err(|_| "invalid responder CRL DER")?;
                         recv_crl.verify_threshold(custodians, now)
                             .map_err(|_| "responder CRL failed 3-of-5 threshold CA verification or freshness")?;
-                        let crl_sidecar = format!("{out}.crl_seq");
-                        tpm_nv::guard_crl_sequence(Some(&crl_sidecar), recv_crl.crl_number)
+                        let crl_sidecar = out_opt
+                            .map(|out| format!("{out}.crl_seq"))
+                            .or_else(|| get_flag(args, "--state").map(|s| format!("{s}.crl_seq")));
+                        tpm_nv::guard_crl_sequence(crl_sidecar.as_deref(), recv_crl.crl_number)
                             .map_err(|_| "responder CRL rejected by TPM 2.0 anti-rollback counter")?;
                         active_crl = Some(recv_crl);
                     }
@@ -5133,8 +5107,7 @@ fn cmd_kex_connect(args: &[String]) {
                 .map_err(|_| "initiator confirmation tag write failed")?;
 
             let sas = kem::compute_sas(&frame_key, &binding);
-            let hex = hex_of(&frame_key);
-            Ok::<(String, String), &'static str>((hex, sas))
+            Ok::<([u8; 32], String), &'static str>((frame_key, sas))
         };
 
         match tokio::time::timeout(Duration::from_millis(timeout_ms), connect_fut).await {
@@ -5144,19 +5117,33 @@ fn cmd_kex_connect(args: &[String]) {
         }
     });
 
-    write_key_file(&out, &key_hex);
-    if is_pki {
-        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (RFC 9881 X.509 3-of-5 threshold PKI + mutual ML-DSA-87 authenticated)");
-    } else if mutual {
-        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
-    } else if psk_bytes.is_some() {
-        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
-    } else {
-        println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
-    }
     // Wipe the PSK stack copy now that derivation is complete.
     if let Some(ref mut b) = psk_bytes {
         b.zeroize();
+    }
+
+    if let Some(out) = out_opt {
+        let key_hex = Zeroizing::new(hex_of(&raw_key));
+        write_key_file(out, &key_hex);
+        raw_key.zeroize();
+        if is_pki {
+            println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (RFC 9881 X.509 3-of-5 threshold PKI + mutual ML-DSA-87 authenticated)");
+        } else if mutual {
+            println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK + mutual ML-DSA-87 authenticated)");
+        } else if psk_bytes.is_some() {
+            println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (PSK-authenticated; SAS OOB-verify still recommended)");
+        } else {
+            println!("kex-connect SUCCESS: SecP384r1MLKEM1024 hybrid key [SAS: {sas}] -> {out} (UNAUTHENTICATED — VERIFY SAS OOB BEFORE USE, lab only)");
+        }
+        None
+    } else {
+        let locked = LockedKey32::new(raw_key);
+        let digest = Sha384::digest(raw_key);
+        let mut key_id = [0u8; 16];
+        key_id.copy_from_slice(&digest[..16]);
+        raw_key.zeroize();
+        println!("[KEX] SecP384r1MLKEM1024 RAM session key established [SAS: {sas}] (zero disk key)");
+        Some((locked, key_id))
     }
 }
 
@@ -5623,6 +5610,173 @@ fn cmd_doc_open(args: &[String]) {
     }
 }
 
+fn ensure_non_symlink_regular_input(path: &str, label: &str) {
+    let meta = std::fs::symlink_metadata(path)
+        .unwrap_or_else(|e| fail(&format!("{label} '{path}' inaccessible: {e}")));
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        fail(&format!("{label} '{path}' must be a regular non-symlink file"));
+    }
+}
+
+fn write_exclusive_regular_file(path: &str, data: &[u8], label: &str) {
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            fail(&format!("{label} '{path}' refuses symlink target"));
+        }
+    }
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap_or_else(|e| fail(&format!("cannot exclusively create {label} '{path}': {e}")));
+    f.write_all(data)
+        .unwrap_or_else(|e| fail(&format!("failed writing {label} '{path}': {e}")));
+    let _ = f.sync_all();
+}
+
+fn cmd_dtn_keygen(args: &[String]) {
+    reject_forbidden_cli(args);
+    let out_dk = get_flag(args, "--out-dk").unwrap_or_else(|| fail("missing --out-dk PATH"));
+    let out_ek = get_flag(args, "--out-ek").unwrap_or_else(|| fail("missing --out-ek PATH"));
+    let kp = destroyer_core::dtn_bundle::DtnMlKemKeypair::generate()
+        .unwrap_or_else(|e| fail(&format!("DTN ML-KEM-1024 keygen failed: {e:?}")));
+    let dk_seed = kp.dk_seed_bytes();
+    let dk_hex = Zeroizing::new(hex_of(&dk_seed));
+    keystore::write_secret_hex_file_exclusive(&out_dk, &dk_hex, 128)
+        .unwrap_or_else(|e| fail(&format!("failed writing hardened DTN DK '{out_dk}': {e:?}")));
+    let ek_line = format!("{}\n", hex_of(&kp.ek_bytes));
+    write_exclusive_regular_file(&out_ek, ek_line.as_bytes(), "--out-ek");
+    println!(
+        "dtn-keygen: SUCCESS dk={out_dk} ek={out_ek} (ML-KEM-1024 64B seed / 1568B EK)"
+    );
+}
+
+fn cmd_dtn_seal(args: &[String]) {
+    reject_forbidden_cli(args);
+    let src_eid = get_flag(args, "--src-eid").unwrap_or_else(|| "dtn://sender".to_string());
+    let dst_eid = get_flag(args, "--dst-eid").unwrap_or_else(|| "dtn://recipient".to_string());
+    let ek_path = get_flag(args, "--recipient-ek-file")
+        .unwrap_or_else(|| fail("missing --recipient-ek-file PATH"));
+    let out_path = get_flag(args, "--out").unwrap_or_else(|| fail("missing --out PATH"));
+    let lifetime_ms: u64 = get_flag(args, "--lifetime-ms")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(destroyer_core::dtn_bundle::DEFAULT_BUNDLE_LIFETIME_MS);
+    let hop_limit: u32 = get_flag(args, "--hop-limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(destroyer_core::dtn_bundle::DEFAULT_HOP_LIMIT);
+
+    ensure_non_symlink_regular_input(&ek_path, "--recipient-ek-file");
+    let ek_str = std::fs::read_to_string(&ek_path)
+        .unwrap_or_else(|e| fail(&format!("unreadable --recipient-ek-file: {e}")));
+    let recipient_ek = decode_hex(&ek_str)
+        .unwrap_or_else(|_| fail("invalid hex in --recipient-ek-file"));
+
+    let signer = load_auth_signing_key_from_args(args);
+    let payload: Zeroizing<Vec<u8>> = if let Some(in_path) = get_flag(args, "--in") {
+        ensure_non_symlink_regular_input(&in_path, "--in");
+        let meta = std::fs::metadata(&in_path).unwrap_or_else(|e| fail(&format!("stat --in: {e}")));
+        if meta.len() > 16 * 1024 * 1024 {
+            fail("--in exceeds 16 MiB DTN bundle cap");
+        }
+        Zeroizing::new(std::fs::read(&in_path).unwrap_or_else(|e| fail(&format!("read --in: {e}"))))
+    } else if let Some(msg) = get_flag(args, "--msg") {
+        Zeroizing::new(msg.into_bytes())
+    } else {
+        fail("dtn-seal requires either --msg TEXT or --in PATH");
+    };
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let mut seq_rnd = [0u8; 8];
+    if getrandom::fill(&mut seq_rnd).is_err() {
+        fail("CSPRNG failure generating DTN sequence");
+    }
+    let sequence = u64::from_le_bytes(seq_rnd);
+
+    let bundle = destroyer_core::dtn_bundle::DtnBundle::create_0rtt_with_signer(
+        &src_eid,
+        &dst_eid,
+        &src_eid,
+        now_ms,
+        sequence,
+        lifetime_ms,
+        hop_limit,
+        &recipient_ek,
+        &signer,
+        &payload,
+    )
+    .unwrap_or_else(|e| fail(&format!("DTN 0-RTT bundle creation failed: {e:?}")));
+
+    let wire = bundle.to_bytes();
+    write_exclusive_regular_file(&out_path, &wire, "--out");
+    println!(
+        "dtn-seal: SUCCESS id={} bytes={} out={out_path}",
+        bundle.bundle_id(),
+        wire.len()
+    );
+}
+
+fn cmd_dtn_open(args: &[String]) {
+    reject_forbidden_cli(args);
+    let dk_path = get_flag(args, "--dk-file").unwrap_or_else(|| fail("missing --dk-file PATH"));
+    let sender_pk_path = get_flag(args, "--sender-auth-pk-file")
+        .unwrap_or_else(|| fail("missing --sender-auth-pk-file PATH (pinning mandatory)"));
+    let in_path = get_flag(args, "--in").unwrap_or_else(|| fail("missing --in PATH"));
+
+    let dk_seed = keystore::read_secret_hex_file(&dk_path, 64)
+        .unwrap_or_else(|e| fail(&format!("--dk-file custody failure: {e:?}")));
+    let dk = destroyer_core::dtn_bundle::DtnMlKemKeypair::decapsulation_key_from_seed(&dk_seed)
+        .unwrap_or_else(|e| fail(&format!("invalid DTN decapsulation seed: {e:?}")));
+    let sender_vk = load_peer_verifying_key(&sender_pk_path);
+    ensure_non_symlink_regular_input(&in_path, "--in");
+    let meta = std::fs::metadata(&in_path).unwrap_or_else(|e| fail(&format!("stat --in: {e}")));
+    if meta.len() > 20 * 1024 * 1024 {
+        fail("--in exceeds 20 MiB DTN wire cap");
+    }
+    let wire = std::fs::read(&in_path).unwrap_or_else(|e| fail(&format!("read --in: {e}")));
+    let bundle = destroyer_core::dtn_bundle::DtnBundle::from_bytes(&wire)
+        .unwrap_or_else(|e| fail(&format!("malformed DTN bundle: {e:?}")));
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let exp_ms = bundle
+        .primary
+        .creation_time
+        .time_ms
+        .saturating_add(bundle.primary.lifetime_ms);
+    if now_ms > exp_ms {
+        fail("dtn-open REFUSED: bundle lifetime expired (stale)");
+    }
+
+    let plaintext = Zeroizing::new(
+        bundle
+            .open_0rtt_pinned(&dk, &sender_vk.to_bytes())
+            .unwrap_or_else(|e| fail(&format!("DTN 0-RTT open/pinning failed: {e:?}"))),
+    );
+    if let Some(out_path) = get_flag(args, "--out") {
+        write_exclusive_regular_file(&out_path, &plaintext, "--out");
+        println!(
+            "dtn-open: SUCCESS src={} dst={} bytes={} out={out_path}",
+            bundle.primary.source_eid,
+            bundle.primary.destination_eid,
+            plaintext.len()
+        );
+    } else {
+        println!(
+            "dtn-open: SUCCESS src={} dst={} bytes={} payload={}",
+            bundle.primary.source_eid,
+            bundle.primary.destination_eid,
+            plaintext.len(),
+            String::from_utf8_lossy(&plaintext)
+        );
+    }
+}
+
 fn cmd_auth_tpm_seal(args: &[String]) {
     reject_forbidden_cli(args);
     let out_priv = get_flag(args, "--out-priv").unwrap_or_else(|| fail("missing --out-priv PATH"));
@@ -6046,6 +6200,9 @@ fn main() {
         "nc3-safety-gate" => cmd_nc3_safety_gate(&args[2..]),
         "doc-seal" => cmd_doc_seal(&args[2..]),
         "doc-open" => cmd_doc_open(&args[2..]),
+        "dtn-keygen" => cmd_dtn_keygen(&args[2..]),
+        "dtn-seal" => cmd_dtn_seal(&args[2..]),
+        "dtn-open" => cmd_dtn_open(&args[2..]),
         "zeroize" | "purge" => cmd_zeroize(&args[2..]),
         "selftest" => cmd_selftest(),
         "-h" | "--help" | "help" => usage(),

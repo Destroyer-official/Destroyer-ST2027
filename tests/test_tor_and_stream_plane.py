@@ -965,3 +965,191 @@ def test_stream_burst_only_omits_idle_chaff_after_tamaraw_batch(tmp_path: Path):
         if resp.poll() is None:
             resp.kill()
             resp.wait(timeout=5)
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_dtn_0rtt_async_dead_drop_cli_roundtrip_and_pin_refusal(tmp_path: Path):
+    """RFC 9171 0-RTT ML-KEM-1024 + pinned ML-DSA-87 dead-drop CLI flow:
+    1) Recipient & senders generate keys offline cleanly (`dtn-keygen`, `auth-keygen`).
+    2) Sender seals offline bundle (`dtn-seal`) without recipient online.
+    3) Recipient opens with pinned sender ML-DSA-87 PK (`dtn-open`).
+    4) Wrong pinned sender PK and tampered bundle bytes fail closed.
+    """
+    env = _clean_lab_env()
+    _, s_sk, s_pk, wrong_sk, wrong_pk = _provision_identity_and_psk(tmp_path, env)
+
+    r_dk = tmp_path / "recip.dtn.dk"
+    r_ek = tmp_path / "recip.dtn.ek"
+    kg = subprocess.run(
+        [str(RUST_BIN), "dtn-keygen", "--out-dk", str(r_dk), "--out-ek", str(r_ek)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert kg.returncode == 0, kg.stdout + kg.stderr
+    assert "dtn-keygen: SUCCESS" in kg.stdout
+
+    bundle_path = tmp_path / "dead_drop.bp7"
+    seal = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-seal",
+            "--src-eid", "dtn://alpha/cmd",
+            "--dst-eid", "dtn://bravo/rx",
+            "--recipient-ek-file", str(r_ek),
+            "--auth-sk-file", str(s_sk),
+            "--msg", "ASYNC-DEAD-DROP-0RTT-VERIFIED",
+            "--out", str(bundle_path),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert seal.returncode == 0, seal.stdout + seal.stderr
+    assert "dtn-seal: SUCCESS" in seal.stdout
+
+    # Open with correct pinned sender PK -> succeeds cleanly.
+    out_plain = tmp_path / "opened.txt"
+    open_ok = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(r_dk),
+            "--sender-auth-pk-file", str(s_pk),
+            "--in", str(bundle_path),
+            "--out", str(out_plain),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert open_ok.returncode == 0, open_ok.stdout + open_ok.stderr
+    assert out_plain.read_bytes() == b"ASYNC-DEAD-DROP-0RTT-VERIFIED"
+
+    # Open expecting attacker/wrong sender PK -> fail-closed KeyMismatch.
+    bad_pin = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(r_dk),
+            "--sender-auth-pk-file", str(wrong_pk),
+            "--in", str(bundle_path),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert bad_pin.returncode != 0
+    assert "KeyMismatch" in (bad_pin.stdout + bad_pin.stderr)
+
+    # Corrupt ciphertext/bundle tail byte -> fail-closed.
+    tampered = tmp_path / "tampered.bp7"
+    raw = bytearray(bundle_path.read_bytes())
+    raw[-100] ^= 0xFF
+    tampered.write_bytes(bytes(raw))
+    bad_sig = subprocess.run(
+        [
+            str(RUST_BIN), "dtn-open",
+            "--dk-file", str(r_dk),
+            "--sender-auth-pk-file", str(s_pk),
+            "--in", str(tampered),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert bad_sig.returncode != 0
+
+
+@pytest.mark.skipif(not RUST_BIN.exists(), reason="release secure-transmit binary not built")
+def test_udp_node_ephemeral_kex_writes_zero_temp_key_files(tmp_path: Path):
+    """UDP ephemeral KEX keeps session keys in LockedKey32 RAM with ZERO TEMP .key files."""
+    import socket
+
+    def _free_port() -> int:
+        while True:
+            st = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            st.bind(("127.0.0.1", 0))
+            p = st.getsockname()[1]
+            su = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                su.bind(("127.0.0.1", p))
+                return p
+            except OSError:
+                continue
+            finally:
+                su.close()
+                st.close()
+
+    env = _clean_lab_env()
+    iso_tmp = tmp_path / "isolated_tmp"
+    iso_tmp.mkdir()
+    env["TMP"] = str(iso_tmp)
+    env["TEMP"] = str(iso_tmp)
+    env["TMPDIR"] = str(iso_tmp)
+
+    psk_path, i_sk, i_pk, r_sk, r_pk = _provision_identity_and_psk(tmp_path, env)
+    p_resp = _free_port()
+    p_init = _free_port()
+    addr_resp = f"127.0.0.1:{p_resp}"
+    addr_init = f"127.0.0.1:{p_init}"
+
+    resp = subprocess.Popen(
+        [
+            str(RUST_BIN), "node",
+            "--role", "responder",
+            "--transport", "udp",
+            "--bind", addr_resp,
+            "--to", addr_init,
+            "--psk-file", str(psk_path),
+            "--auth-sk-file", str(r_sk),
+            "--peer-auth-pk-file", str(i_pk),
+            "--state", str(tmp_path / "resp.state"),
+            "--interval-ms", "20",
+            "--recv-count", "1",
+            "--drain-ticks", "4",
+            "--timeout-ms", "15000",
+            "--headless",
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        time.sleep(0.35)
+        init_res = subprocess.run(
+            [
+                str(RUST_BIN), "node",
+                "--role", "initiator",
+                "--transport", "udp",
+                "--bind", addr_init,
+                "--to", addr_resp,
+                "--psk-file", str(psk_path),
+                "--auth-sk-file", str(i_sk),
+                "--peer-auth-pk-file", str(r_pk),
+                "--state", str(tmp_path / "init.state"),
+                "--interval-ms", "20",
+                "--msg", "UDP-RAM-ONLY-KEX-OK",
+                "--count", "12",
+                "--timeout-ms", "15000",
+                "--headless",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert init_res.returncode == 0, init_res.stdout + init_res.stderr
+        assert "(zero disk key)" in init_res.stdout
+        out_resp, _ = resp.communicate(timeout=15)
+        assert resp.returncode == 0, out_resp
+        assert "UDP-RAM-ONLY-KEX-OK" in out_resp
+        assert "(zero disk key)" in out_resp
+        assert list(iso_tmp.glob("st2027_ephem_*")) == []
+    finally:
+        if resp.poll() is None:
+            resp.kill()
+            resp.wait(timeout=5)

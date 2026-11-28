@@ -477,6 +477,17 @@ shaping (50ms interval) provides statistical masking against localized
 ISP/packet sniffers. It does not provide mathematical security against
 a global passive adversary with full autonomous network vantage points.
 
+Additional implemented mitigations narrowing localized and semi-global
+metadata leakage include: constant-quantum Tamaraw-padded in-stream
+`Noise_XXhfs` key exchange (`PacedKexConfig`, eliminating unshaped
+1.6 KB / 8.9 KB / 6.0 KB handshake bursts), MILS `--quantum` pipe
+length enforcement inside `secure-transmit-tor`, memoryless
+exponential Poisson pacing (`--poisson`), session-edge cover smear
+(`--pre-cover-ticks` / `--post-cover-ticks`), finite burst-tail
+shaping (`--burst-only`), zero-disk-temp RAM KEX (`LockedKey32`), and
+offline 0-RTT ML-KEM-1024 + pinned ML-DSA-87 RFC 9171 DTN bundles
+(`dtn-keygen`, `dtn-seal`, `dtn-open`) for uptime-decoupled relays.
+
 ### 6.3 Supply chain (Tier-2 trade controls)
 
 - TUF-lite 4-role metadata (`root/timestamp/snapshot/targets` + sigs),
